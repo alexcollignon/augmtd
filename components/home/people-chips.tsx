@@ -89,7 +89,14 @@ export function PeopleSuggestInput({ placeholder, onPick }: { placeholder: strin
 }
 
 /** The editable invite chips (attendees) — typeahead over known people, remove via ✕. Never invents. */
-export function AttendeeChips({ attendees, onChange }: { attendees: string[]; onChange: (next: string[]) => void }) {
+export function AttendeeChips({ attendees, onChange, placeholder, suggestions }: {
+  attendees: string[]; onChange: (next: string[]) => void;
+  /** The empty field's question (W7.3 — "Who should this go to?"); defaults to the address hint. */
+  placeholder?: string;
+  /** People the host resolved as CANDIDATES (never recipients): one tap adds one. */
+  suggestions?: Array<{ email: string; label: string }>;
+}) {
+  const offered = (suggestions ?? []).filter((x) => x.email && !attendees.includes(x.email));
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {attendees.map((a) => (
@@ -101,9 +108,20 @@ export function AttendeeChips({ attendees, onChange }: { attendees: string[]; on
         </span>
       ))}
       <PeopleSuggestInput
-        placeholder={attendees.length ? 'Add another…' : 'attendee@email.com'}
+        placeholder={attendees.length ? 'Add another…' : (placeholder ?? 'attendee@email.com')}
         onPick={(email) => { if (!attendees.includes(email)) onChange([...attendees, email]); }}
       />
+      {offered.length > 0 && (
+        <span className="flex w-full flex-wrap items-center gap-1.5 pt-0.5">
+          {offered.map((x) => (
+            <button key={x.email} type="button" title={x.email}
+              onClick={() => onChange([...attendees, x.email])}
+              className="aug-focus inline-flex items-center rounded-full border border-dashed border-neutral-300 px-2.5 py-0.5 text-[11.5px] text-neutral-600 transition-colors hover:border-indigo-300 hover:text-indigo-700">
+              + {x.label}
+            </button>
+          ))}
+        </span>
+      )}
     </div>
   );
 }

@@ -56,31 +56,53 @@ console.log('\nA · (a) the composed brief reaches the first paint (compose befo
     && /export async function ensureLooseRoomBrief\([\s\S]*?\): Promise<RoomResponse \| null>/.test(brief));
 
   const view = src('app/api/items/view/route.ts');
-  gate('A4 /api/items/view composes BEFORE the paint on BOTH doors (entity + loose) and keeps the overrun alive under after()',
+  gate('A4 /api/items/view paints LAST-GOOD at once and composes the item\'s OWN room under after() — never awaited',
     // ⟲ RE-POINTED (W3.7): the compose is wrapped in joinCompose (a warm in flight is joined).
-    /briefBeforePaint\(supabase, uid, eid, \(\) => joinCompose\(uid, eid, \(\) => ensureRoomBrief\(supabase, uid, eid\)\)\)/.test(view)
-    && /briefBeforePaint\(supabase, uid, looseKey, \(\) => joinCompose\(uid, looseKey, \(\) => ensureLooseRoomBrief\(supabase, uid, looseKey, anchorForBrief\)\)\)/.test(view)
-    && /after\(async \(\) => \{ try \{ await \(await paintP\)\.settled; \}/.test(view)
+    // ⟲ RE-POINTED (W7.2 ONE OBJECT, ONE DOOR): the item door composes under its own `<kind>:<id>`
+    // key whatever it is linked to — the linked→entity branch is DEAD (it served a machine
+    // container's agenda under the item's title). smoke-one-door owns the full law.
+    // ⟲ RE-POINTED (W8.4 THE ROOM SPEAKS TRUE AND FAST — owner's call, dev logs Sep 23): the door
+    // no longer WAITS up to a budget for the compose (≈1s of every open was "brief-pending"). The
+    // paint carries last-good (one select, older version flagged); the compose runs under after()
+    // through the SAME joinCompose + ensureLooseRoomBrief; a landing where nothing was painted is
+    // APPENDED on the client's one re-check (A7/A8 — the append rule is unchanged). smoke-room-voice
+    // owns the "no await on compose" floor.
+    /const lastGoodP = readRoomResponse\(supabase, user\.id, looseKey, \{ allowStaleVersion: true \}\)/.test(view)
+    && /onOpen\(\(\) => joinCompose\(uid, looseKey, \(\) => ensureLooseRoomBrief\(supabase, uid, looseKey, anchorForBrief\)\)\);/.test(view)
+    && /const onOpen = \(work: \(\) => Promise<unknown>\) => \{ if \(!warm\) after\(/.test(view)
+    && !/await[^;\n]*ensureLooseRoomBrief/.test(view) && !/briefBeforePaint\(/.test(view)
+    && !/ensureRoomBrief\(supabase, uid, eid\)/.test(view)
     // the old after()-only compose is gone
     && !/after\(async \(\) => \{\s*try \{ const \{ ensureRoomBrief \}/.test(view)
     && !/after\(async \(\) => \{\s*try \{ const \{ ensureLooseRoomBrief \}/.test(view));
-  gate('A5 the view serves the composition on the entity overlay / the loose fields, plus briefPending + briefStaleVersion',
-    /\{ \.\.\.room\.entity, brief: r\.text, move: r\.move, offers: r\.offers, briefAt: r\.at \}/.test(view)
-    && /briefPending: paint\.pending,/.test(view)
+  gate('A5 the view serves the composition on the door\'s OWN fields (never an entity overlay), plus briefPending + briefStaleVersion',
+    // ⟲ RE-POINTED (W7.2): the entity is served VOICELESS on an item door; the composition rides
+    // brief/move/offers/briefAt unconditionally.
+    !/\{ \.\.\.room\.entity, brief: r\.text, move: r\.move, offers: r\.offers, briefAt: r\.at \}/.test(view)
+    && /\{ \.\.\.room\.entity, brief: null, move: null, offers: \[\], briefAt: null \}/.test(view)
+    && /const looseBrief = r\?\.text \?\? null;/.test(view)
+    // ⟲ RE-POINTED (W8.4): pending = nothing current painted (no last-good, or an older version).
+    && /const briefPending = !r \|\| !!r\.staleVersion;/.test(view) && /\n      briefPending,\n/.test(view)
     && /briefStaleVersion: true/.test(view));
 
   const room = src('app/api/entities/[id]/room/route.ts');
-  gate('A6 /api/entities/[id]/room composes before the paint the same way (overlay + briefPending)',
+  gate('A6 /api/entities/[id]/room serves its brief the same way as the item door (overlay + briefPending)',
     // ⟲ RE-POINTED (W3.7): joinCompose-wrapped, as on the item door.
-    /briefBeforePaint\(supabase, uid, id, \(\) => joinCompose\(uid, id, \(\) => ensureRoomBrief\(supabase, uid, id\)\)\)/.test(room)
+    // ⟲ RE-POINTED (W8.5 — the W8.4 law on the project door): the door no longer waits on the
+    // compose — last-good in the read wave, the joinCompose-wrapped compose under after() only, and
+    // pending = nothing current painted (smoke-room-voice I1–I4 hold the never-await floors).
+    /readRoomResponse\(supabase, uid, id, \{ allowStaleVersion: true \}\)/.test(room)
+    && /after\(async \(\) => \{ try \{ await joinCompose\(uid, id, \(\) => ensureRoomBrief\(supabase, uid, id\)\); \} catch/.test(room)
     && /brief: r\.text, move: r\.move, offers: r\.offers, briefAt: r\.at/.test(room)
-    && /briefPending: paint\.pending,/.test(room));
+    && /const briefPending = !r \|\| !!r\.staleVersion;/.test(room) && /\n      briefPending,\n/.test(room));
 
   const detail = src('components/home/item-detail.tsx');
   const eroom = src('components/entities/entity-room.tsx');
   gate('A7 a late brief ARRIVES AS AN APPEND on both doors (one re-check → lateBrief; the painted opening never swaps)',
     /if \(d\.briefPending && !paintedBrief && !lateCheckedRef\.current\)/.test(detail)
-    && /lateBrief: \{ text, at: d2\.briefAt \?\? d2\.entity\?\.briefAt \?\? null \}/.test(detail)
+    // ⟲ RE-POINTED (W7.2 ONE OBJECT, ONE DOOR): the item door's late brief is ITS OWN field — the
+    // entity's brief is never read on an item door.
+    && /lateBrief: \{ text, at: d2\.briefAt \?\? null \}/.test(detail)
     && !/setView\(d2\)[^\n]*lateBrief/.test(detail)
     && /if \(data\.briefPending && !data\.entity\.brief\)/.test(eroom)
     && /setRail\(\(prev\) => \(prev \? \{ \.\.\.prev, lateBrief: \{ text, at: d2\.entity\.briefAt \?\? null \} \} : prev\)\)/.test(eroom));
@@ -93,7 +115,11 @@ console.log('\nA · (a) the composed brief reaches the first paint (compose befo
     !/secondarySummary/.test(rail) && !/owesYou/.test(rail) && !/owesThem/.test(rail)
     && !/fallbackMove/.test(rail) && !/function echoesAnchor/.test(rail)
     && !/label: `Next: \$\{ent\.nextMove\}`/.test(rail)
-    && /: \(anchorLine\s*\?\? \(!view\.anchor\?\.ask && !pending/.test(rail));
+    // ⟲ RE-POINTED (W8.4 THE ROOM SPEAKS TRUE): the item door's fallback is the ONE pure ladder
+    // (lib/room/opening-fallback.ts) — the item's own ask or nothing; the "standalone" claim made
+    // from absence is gone (smoke-room-voice holds the ladder's fixtures).
+    && /: anchorLine\);/.test(rail) && /fallbackOpeningLine\(\{ who, ask: a\?\.ask \?\? null, preparedClause: prep \}\)/.test(rail)
+    && !/keep it standalone/.test(rail));
 }
 
 // ═══ B · (b) THE MOVE YIELDS TO ANY MOUNTED CARD ═══

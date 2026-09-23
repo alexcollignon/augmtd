@@ -230,7 +230,9 @@ const src = (p: string) => readFileSync(p, 'utf8');
     room.includes('Accept all') && room.includes("setProposedStatus(p.id, 'open')"));
   // Structural: a multi-ask motion = ONE composer + the steps checklist (never N surfaces).
   check('J5 · multi-ask motion — ONE composer with the steps checklist (view serves steps; the detail mounts it)',
-    src('app/api/items/view/route.ts').includes("kind === 'commitment' && tasks.length >= 2") &&
+    // ⟲ RE-POINTED (W7.3 NO INTERNAL TEXT): the steps are the extractor's CLAUSES only
+    // (motionClausesOf) — the identified-tasks plan never renders as "this message should cover".
+    src('app/api/items/view/route.ts').includes("kind === 'commitment' ? motionClausesOf(tasks) : null") &&
     detail.includes('<MotionChecklist'));
   // Live sweep — which matrix rows each user's real data instantiates (vacuous rows named honestly).
   for (const [uid, label] of [[A, 'user A'], [B, 'user B']] as const) {

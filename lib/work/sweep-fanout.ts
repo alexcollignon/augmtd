@@ -36,18 +36,20 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { insertPlan, updatePlan } from '@/lib/store/item-plans';
 import { stampServed, type SweepMarkerKind } from '@/lib/work/sweep-users';
 
-export type SweepLane = 'judgment' | 'draft';
-export const SWEEP_LANES: readonly SweepLane[] = ['judgment', 'draft'] as const;
-export const isSweepLane = (x: unknown): x is SweepLane => x === 'judgment' || x === 'draft';
+// W7.1 HEARTBEAT THROUGHPUT: 'evidence' = the commitments sweep's per-account pass (evidence settles
+// + LAW 2 expiry, lib/work/evidence-sweep.ts) — the third lane through the same kick, claim and rotation.
+export type SweepLane = 'judgment' | 'draft' | 'evidence';
+export const SWEEP_LANES: readonly SweepLane[] = ['judgment', 'draft', 'evidence'] as const;
+export const isSweepLane = (x: unknown): x is SweepLane => x === 'judgment' || x === 'draft' || x === 'evidence';
 
 /** The rotation marker each lane stamps on completion (item_plans kind, user-scoped, zero-migration).
  *  The draft lane used to order by the newest prep_outcome — an account with nothing to prepare
  *  never wrote one and so led EVERY run forever; a completion stamp is the honest "last served". */
-export const SWEEP_MARKER = { judgment: 'judgment_sweep', draft: 'draft_sweep' } as const satisfies Record<SweepLane, SweepMarkerKind>;
+export const SWEEP_MARKER = { judgment: 'judgment_sweep', draft: 'draft_sweep', evidence: 'evidence_sweep' } as const satisfies Record<SweepLane, SweepMarkerKind>;
 
 /** Each job's own wall clock — well inside the per-user route's maxDuration of 300s. The draft lane
  *  keeps ~100s back for the entity maintenance that rides it (state refresh, reflection, orphans). */
-export const USER_BUDGET_MS: Record<SweepLane, number> = { judgment: 240_000, draft: 180_000 };
+export const USER_BUDGET_MS: Record<SweepLane, number> = { judgment: 240_000, draft: 180_000, evidence: 240_000 };
 
 /** Acceptance POSTs in flight at once per dispatch (floor 1). */
 export const DISPATCH_CONCURRENCY = 8;
@@ -163,7 +165,8 @@ export async function claimSweepJob(
 
 export type UserSweepResult =
   | { lane: 'judgment'; result: import('@/lib/work/judgment-sweep').JudgmentSweepResult }
-  | { lane: 'draft'; result: import('@/lib/prepare/pass').PrepareResult };
+  | { lane: 'draft'; result: import('@/lib/prepare/pass').PrepareResult }
+  | { lane: 'evidence'; result: import('@/lib/work/evidence-sweep').EvidenceSweepResult };
 
 /**
  * THE ONE PER-USER BODY — what the fan-out route runs and what the in-process fallback runs. The
@@ -177,7 +180,22 @@ export async function runUserSweep(
   if (lane === 'judgment') {
     const { runJudgmentSweep } = await import('@/lib/work/judgment-sweep');
     const r = await runJudgmentSweep(admin, userId, { budgetMs });
-    await stampServed(admin, userId, SWEEP_MARKER.judgment, { visited: r.visited, fresh: r.fresh, leftBehind: r.leftBehind });
+    await stampServed(admin, userId, SWEEP_MARKER.judgment, {
+      visited: r.visited, fresh: r.fresh, leftBehind: r.leftBehind,
+      // W8.6 · the not-judged lane's reach, on the per-user record (its caps' remainder is counted).
+      notJudged: { population: r.notJudged.population, visited: r.notJudged.visited, leftBehind: r.notJudged.leftBehind, skipped: r.notJudged.skipped },
+    });
+    return { lane, result: r };
+  }
+  if (lane === 'evidence') {
+    // EVIDENCE SETTLES + LAW 2 EXPIRY for ONE account (W7.1) — its own budget, the priority order,
+    // fresh-only caps, the people-scoped pool; every close through the one settle module.
+    const { runEvidenceSweep } = await import('@/lib/work/evidence-sweep');
+    const r = await runEvidenceSweep(admin, userId, { budgetMs });
+    await stampServed(admin, userId, SWEEP_MARKER.evidence, {
+      nominated: r.commitments.nominated + r.inbox.nominated, fresh: r.commitments.fresh + r.inbox.fresh,
+      closed: r.commitments.closed + r.inbox.closed, expired: r.expiry.expired, leftBehind: r.leftBehind,
+    });
     return { lane, result: r };
   }
   // THE PREPARATION PASS — the ONE door to ambient prepared work (drafts, nudges, invites, forwards,

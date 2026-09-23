@@ -16,7 +16,9 @@ import { assembleLedger } from '@/lib/entities/state';
 import { renderGroundEvidence } from '@/lib/room/ground-evidence';
 import { clipLedgerLine } from '@/lib/inbox/thread-now';
 import { clipForPrompt, clipLabel, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
-import { loadEvidencePool, matchEvidence, resolveCommitmentAddresses, type Evidence, type EvidencePool } from '@/lib/work/evidence-nominator';
+import { loadEvidencePool, matchEvidence, resolveCommitmentAddresses, SETTLE_MATCH, type Evidence, type EvidencePool } from '@/lib/work/evidence-nominator';
+import { actorLabel } from '@/lib/evidence/actor';
+import { deedWords } from '@/lib/evidence/sources';
 import { getPersonEntities, type PersonEntity } from '@/lib/entities/people';
 import { normalizeEmail } from '@/lib/core/email';
 import { withdrawnReasonOf } from '@/lib/prepare/read';
@@ -80,22 +82,29 @@ function atLocalRoom(iso: string, tz: string): string {
 }
 
 /** THE EVIDENCE LINES — pure: one short dated fact per piece, newest first, bounded. Exported for
- *  the gate. A held meeting is stated as HELD; a booked one as booked; sent mail as sent. */
+ *  the gate. A held meeting is stated as HELD; a booked one as booked; sent mail as sent.
+ *  W8.7 THE ROOM SEES WHAT THE SETTLE SEES: matched with SETTLE_MATCH, so a TEAMMATE's mail is stated
+ *  as theirs ("a teammate (<name>) SENT …", never the user's) and a deed done THROUGH AUGMTD (the
+ *  commit-door ledger) as a dated deed. The legacy line shapes are unchanged. */
 export function evidenceLinesOf(ev: Evidence[], tz: string): string[] {
   const q = (t: string) => `"${clipLabel(String(t || 'untitled'), 60)}"`;
   return [...ev].sort((a, b) => b.at.localeCompare(a.at)).slice(0, ROOM_EVIDENCE_MAX_LINES).map((e) => {
     if (e.type === 'calendar') return `meeting ${q(e.title)} ${e.status === 'held' ? 'HELD' : 'BOOKED (upcoming)'} ${atLocalRoom(e.at, tz)}`;
     if (e.type === 'transcript') return `meeting ${q(e.title)} RECORDED ${atLocalRoom(e.at, tz)}`;
+    if (e.type === 'deed') return `the user ${deedWords(e).toUpperCase()} ${q(e.title)} through AUGMTD ${atLocalRoom(e.at, tz)}`;
+    if (e.by === 'teammate') return `a teammate (${clipLabel(actorLabel(e.actor), 40)}) SENT ${q(e.title)} ${atLocalRoom(e.at, tz)}`;
     return e.by === 'user' ? `the user SENT ${q(e.title)} ${atLocalRoom(e.at, tz)}` : `received ${q(e.title)} from them ${atLocalRoom(e.at, tz)}`;
   });
 }
 
-/** THE EVIDENCE RULE for the board (one copy, beside the lines it governs). */
+/** THE EVIDENCE RULE for the board (one copy, beside the lines it governs). W8.7: a teammate's line
+ *  is the user's SIDE acting — a delivery the team made, never narrated as the user's own. */
 export const BOARD_EVIDENCE_RULE =
   'A LATER EVIDENCE line is the user\'s own record AFTER the item, with this counterparty (dated facts, ' +
   'resolved by address): a meeting HELD or mail SENT there is a deed that HAPPENED — never say it was ' +
   'missed, skipped or not done, never demand it again; if the item asked for that meeting or that ' +
-  'message, treat it as settled unless the evidence itself says otherwise.';
+  'message, treat it as settled unless the evidence itself says otherwise. A line naming a TEAMMATE is ' +
+  'the user\'s side acting — say that teammate did it (never that the user did), and never demand it again.';
 
 export type RoomGrounding = {
   roomKey: string;
@@ -157,7 +166,7 @@ export function preparedWordsOf(st: Pick<import('@/lib/prepare/read').PreparedSt
     expired: st.expired.map((a) => `${word(a)} — proposed time already passed, NOT ready`),
     // Everything else the reader hides (expired has its own line above). The reason is THE ONE
     // READER's own word, so the composer states WHY the team is re-preparing it.
-    withdrawn: st.all.filter((a) => !a.expired && (a.stale || a.outsideWindow || a.falseClaim))
+    withdrawn: st.all.filter((a) => !a.expired && (a.stale || a.outsideWindow || a.falseClaim || a.misaddressed))
       .map((a) => `${word(a)} — ${withdrawnReasonOf(a) ?? 'not ready'}`),
     by: st.badge && st.badge !== 'draft' ? st.badge : null,
   };
@@ -202,17 +211,14 @@ export async function assembleRoomGrounding(
   client: SupabaseClient, userId: string, scope: RoomScope, opts: GroundingOptions = {},
 ): Promise<RoomGrounding> {
   const speaker = opts.speaker ?? null;
-  // Resolve the room: an item linked to an entity grounds as the ENTITY's room (one conversation
-  // per deal); a loose item grounds on its own context.
-  let entityId: string | null = scope.kind === 'entity' ? scope.entityId : null;
-  if (!entityId && scope.kind === 'item') {
-    const linkKind = scope.itemKind === 'inbox' ? 'inbox_item' : scope.itemKind;
-    const { data: link } = await client.from('entity_links').select('entity_id')
-      .eq('user_id', userId).eq('item_kind', linkKind).eq('item_id', scope.itemId)
-      .not('entity_id', 'is', null).maybeSingle();
-    entityId = (link?.entity_id as string) ?? null;
-  }
-  const roomKey = entityId ?? (scope.kind === 'item' ? `${scope.itemKind}:${scope.itemId}` : scope.entityId);
+  // ONE OBJECT, ONE DOOR (stabilization W7.2 — lib/room/door.ts): the scope IS the room. An ITEM
+  // scope grounds on the item's own context and its own key — its board is the one item, so the
+  // component note and the claims floor downstream are computed from what THAT door mounts. It
+  // used to widen to the linked entity ("one conversation per deal"), which is how a commitment's
+  // door composed a machine container's whole agenda under the commitment's title the moment
+  // recognition-on-open wrote an UNTRACKED link. The entity's page is the ENTITY door's grounding.
+  const entityId: string | null = scope.kind === 'entity' ? scope.entityId : null;
+  const roomKey = scope.kind === 'item' ? `${scope.itemKind}:${scope.itemId}` : scope.entityId;
 
   // ── The parallel reads: entity + ledger, the linked items, the room's turns, the files,
   //    the standing production (THE ENTITY EDGE reverse read — workflows scoped to this work). ──
@@ -327,7 +333,7 @@ export async function assembleRoomGrounding(
             kind: 'commitment', id: String(c.id), afterISO: String(c.created_at ?? ''),
             counterpartyEmail: addresses.get(String(c.id)) ?? null, threadId: (c.thread_id as string | null) ?? null,
             fulfiller: String(c.direction ?? '') === 'awaiting' ? 'counterparty' : 'user', description: String(c.description ?? ''),
-          }, nowISO);
+          }, nowISO, SETTLE_MATCH);
           if (ev.length) out.set(`commit:${String(c.id)}`, evidenceLinesOf(ev, tz));
         }
         for (const it of inboxRows) {
@@ -337,7 +343,7 @@ export async function assembleRoomGrounding(
             kind: 'inbox', id: String(it.id), afterISO: String(it.last_activity_at ?? sd.received_at ?? ''),
             counterpartyEmail: from, threadId: (sd.thread_id as string | null) ?? null, fulfiller: 'user',
             description: String(it.work_title ?? sd.subject ?? ''),
-          }, nowISO);
+          }, nowISO, SETTLE_MATCH);
           if (ev.length) out.set(`inbox:${String(it.id)}`, evidenceLinesOf(ev, tz));
         }
       } catch { /* evidence is an enhancement of the page, never a blocker */ }

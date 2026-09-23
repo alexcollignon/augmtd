@@ -98,7 +98,8 @@ export const ITEM_PLAN_REGISTRY = {
   followup:    spec('plan', 'commitment id', 'lib/home/item-plan.ts', planSteps),
 
   // ── the brain's verdict caches ──
-  judgment:             spec('cache', '`inbox:<id>` | `commitment:<id>`', 'lib/work/judge.ts', sigVerdict),
+  // `ev` (W7.1): the evidence set the verdict was judged against — the re-judgment's prior-vs-new-evidence read.
+  judgment:             spec('cache', '`inbox:<id>` | `commitment:<id>`', 'lib/work/judge.ts', obj({ sig: str, verdict: z.unknown().optional(), ev: str })),
   fulfillment:          spec('cache', '`<kind>:<obligation id>`', 'lib/commitments/fulfillment.ts', sigVerdict),
   expiry:               spec('cache', '`commitment:<id>`', 'lib/commitments/expiry.ts', sigVerdict),
   room_brief:           spec('cache', 'room key (entity id | `<kind>:<id>`)', 'lib/room/brief.ts',
@@ -126,10 +127,11 @@ export const ITEM_PLAN_REGISTRY = {
   catch_up:      spec('token', 'claim key', 'lib/work/catch-up.ts'),
 
   // ── sweep rotation + claims ──
-  sweep_claim:    spec('token', 'lane (`judgment` | `draft`)', 'lib/work/sweep-fanout.ts', obj({ at: str })),
+  sweep_claim:    spec('token', 'lane (`judgment` | `draft` | `evidence`)', 'lib/work/sweep-fanout.ts', obj({ at: str })),
   judgment_sweep: spec('marker', '`user`', 'lib/work/sweep-users.ts', obj({ at: str })),
   draft_sweep:    spec('marker', '`user`', 'lib/work/sweep-users.ts', obj({ at: str })),
   label_sweep:    spec('marker', '`user`', 'lib/work/sweep-users.ts', obj({ at: str })),
+  evidence_sweep: spec('marker', '`user`', 'lib/work/sweep-users.ts', obj({ at: str })),
 
   // ── staging between a card and its commit door ──
   chat_email:     spec('staging', 'draft id', 'lib/prepare/chat-email-store.ts', anyObj, 180),

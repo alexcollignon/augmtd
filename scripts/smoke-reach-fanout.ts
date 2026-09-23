@@ -88,7 +88,9 @@ async function main() {
     ok('   …a cap of 0 dispatches nothing and leaves everyone counted', planDispatch(['a', 'b'], { maxUsers: 0 }).leftBehind.length === 2);
     ok('maxDispatchPerRun: default when unset/garbage', maxDispatchPerRun({}) === DEFAULT_MAX_DISPATCH && maxDispatchPerRun({ SWEEP_FANOUT_MAX_USERS: 'x' }) === DEFAULT_MAX_DISPATCH);
     ok('   …clamped — never unlimited', maxDispatchPerRun({ SWEEP_FANOUT_MAX_USERS: '99999' }) === 500 && maxDispatchPerRun({ SWEEP_FANOUT_MAX_USERS: '7' }) === 7);
-    ok('isSweepLane accepts only the two lanes', isSweepLane('judgment') && isSweepLane('draft') && !isSweepLane('x') && !isSweepLane(undefined));
+    // ⟲ RE-POINTED (W7.1 HEARTBEAT THROUGHPUT): the commitments sweep's per-account pass became the
+    // third lane ('evidence') through the same kick/claim/rotation — the guard still admits ONLY the lanes.
+    ok('isSweepLane accepts only the three lanes', isSweepLane('judgment') && isSweepLane('draft') && isSweepLane('evidence') && !isSweepLane('x') && !isSweepLane(undefined));
 
     // Pure-ish: the dispatcher against a fake transport — bounded in-flight, every id in exactly one bucket.
     const prevBase = process.env.AUGMTD_WEBHOOK_BASE_URL, prevSecret = process.env.AGENTOS_SECRET, prevApp = process.env.NEXT_PUBLIC_APP_URL;

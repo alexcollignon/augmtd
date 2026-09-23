@@ -47,7 +47,7 @@ console.log('\nDD1 · A PLAIN EXCERPT NEVER SHOWS AN ESCAPE SEQUENCE');
 
   const ctx = shapeDeckContext({
     commitment: { id: 'c1', description: 'Send the deck', source: 'email' },
-    lastEmail: { from_name: 'Sam', body: 'It&#39;s ready when you are.' }, inboxItemId: 'i1', meeting: null, verdict: null,
+    lastEmail: { from_name: 'Sam', body: 'It&#39;s ready when you are.' }, inboxItemId: 'i1', meeting: null,
   });
   ok('the deck card\'s founding line decodes', ctx.founding?.line === "It's ready when you are.", JSON.stringify(ctx.founding));
 
@@ -122,7 +122,10 @@ console.log('\nDD2 · NOISE NEVER WEARS A DRAFT, NEVER LEADS THE BAND');
 console.log('\nDD3 · ONE ROW PER CONVERSATION, AND AN HONEST FOOTER');
 {
   ok('the footer never says fewer than it shows (92 rendered of 91 served → no "92 of 91")', heldFooter(92, 91) === null);
-  ok('   …and speaks when rows are held back', heldFooter(60, 91) === 'showing 60 of 91');
+  // ⟲ RE-POINTED (W8.3 — NO SILENT CAPS): a footer that shows fewer than it counts now SAYS WHY —
+  // the bound it hit, or that the rest is still being counted — never a bare "showing N of M".
+  ok('   …and speaks when rows are held back, naming why', heldFooter(60, 91) === 'showing 60 of 91 — the rest are still being counted'
+    && heldFooter(500, 507, 500) === 'showing 500 of 507 — this list serves 500 at most; the rest stay in your Inbox');
   ok('   …and is silent when everything is shown', heldFooter(12, 12) === null);
   ok('once the ledger lands the LIST drops the warm stack (deck rows stay — the ledger cannot see them)',
     JSON.stringify(listHanded(['c1'], ['w1', 'w2'], true)) === '["c1"]' && JSON.stringify(listHanded(['c1'], ['w1'], false)) === '["c1","w1"]');
@@ -147,10 +150,13 @@ console.log('\nDD3 · ONE ROW PER CONVERSATION, AND AN HONEST FOOTER');
 
   const held = src('components/home/held-quiet.tsx');
   ok('the list renders folds, and its footer is heldFooter (the raw "showing {rows} of {count}" is gone)',
-    /listFolds\.map\(\(g\) =>/.test(held) && /heldFooter\(waitingRows\.length, waitingCount\)/.test(held)
+    // ⟲ RE-POINTED (W8.3): the footer is handed the band's declared bound too.
+    /listFolds\.map\(\(g\) =>/.test(held) && /heldFooter\(waitingRows\.length, waitingCount, HELD_ROWS_PER_BAND \+ deckHeld\.length\)/.test(held)
     && !held.includes('showing {waitingRows.length} of {waitingCount}'));
   ok('   …list mode reads listHanded; the deck keeps its warm opening', /rowsOf\(listHanded\(deckHeld, warmHeld, !!bands\)\)/.test(held)
-    && /deckMode \? mergeQueue\(queueRef\.current, incomingRows\) : listRows/.test(held));
+    // ⟲ RE-POINTED (W8.3 — ONE COUNT): the deck opens on the warm rows while the account is read,
+    // and is handed the counted rows once it lands (the deck merges/settles its own stack).
+    && /deckMode \? \(deckComplete \? listRows : incomingRows\) : listRows/.test(held));
   ok('   …every folded member keeps its own row and hands', /members\.slice\(1\)\.map\(\(r\) => \(\s*<HeldRow/.test(held));
 }
 

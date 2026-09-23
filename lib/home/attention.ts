@@ -35,9 +35,18 @@ import { clipForPrompt } from '@/lib/utils/clip-for-prompt';
 // THE ONE ENTITY DECODER (W5b): provider snippets arrive HTML-escaped; a plain excerpt never shows
 // `&#39;` as text.
 import { decodeEntities } from '@/lib/core/text';
-// THE ONE PREPARED-WORK READER's pure half — no queries, so the ledger's own pool read is the only
-// IO on this path. The deck needs to know a card HAS prepared work before it offers to review it.
-import { preparedFromSourceData } from '@/lib/prepare/read';
+// THE ONE PREPARED-WORK READER's pure LIVE verdict — no queries, so the ledger's own pool read is the
+// only IO on this path. The deck needs to know a card HAS prepared work before it offers to review it,
+// and it may only say so for work the ONE READER calls live (W7.5 — the raw list once chipped a draft
+// the reader withdraws as misaddressed).
+import { liveFromSourceData } from '@/lib/prepare/read';
+import type { UserForms } from '@/lib/commitments/extraction-truth';
+// W8.3 · THE KIND FLOOR — the judge's own predicate, read again here for verdicts cached under an
+// older law (pure, client-safe; the judge applies the same one before any AI).
+import { kindFloor } from '@/lib/work/kind-floor';
+// W8.3 · THE ONE SHORT-DATE GRAMMAR — a served sentence never prints a raw ISO date.
+import { fmtMonthDay } from '@/lib/utils/format-date';
+import { HELD_BAND_ROWS_BOUND } from '@/lib/deeds/held-words-bulk';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -351,7 +360,7 @@ export function rankAttention(
  */
 export type HeldClassId =
   | 'brought_forward' | 'own_outreach' | 'judged_quiet' | 'bulk_mail'
-  | 'notices' | 'cc_watch' | 'quieter_threads';
+  | 'notices' | 'cc_watch' | 'not_judged' | 'quieter_threads';
 
 /** The facts a held item is classified from. EVERY ONE already exists somewhere in the house —
  *  this module derives nothing new and calls nothing. (A3: "zero new AI passes at serve time".) */
@@ -384,6 +393,17 @@ export type HeldFacts = {
    *  owns no clock). The arrival is what lifts the row back into WAITING and what makes the row's
    *  why-line say the person asked for it. */
   userParkDue?: boolean;
+  /** W8.3 · THE LIST SAYS ONLY WHAT WAS JUDGED. `true` = NO cached judgment exists for this item at
+   *  all (item_plans kind 'judgment' key `inbox:<id>` absent). Its only "work" evidence is an
+   *  understanding — often a July-era one, written before the reasoned kind existed and miscalibrated
+   *  (a streaming service's sign-in code read as `you_owe · action`). Such a row may NEVER claim to be
+   *  real, alive and held for the budget: it files as `not_judged` and says so. Three-valued like
+   *  `provedAlive`: absent = the caller did not compute it (the legacy behaviour holds). */
+  neverJudged?: boolean;
+  /** W8.3 · the cached verdict is WORK (not none) and was judged under the CURRENT JUDGE_VERSION —
+   *  i.e. the judge already applied the kind floor with the thread in view. Absent/false → the kind
+   *  floor is re-applied here (a pitch judged `schedule` under the older law is not work). */
+  judgedCurrent?: boolean;
 };
 
 /**
@@ -459,18 +479,32 @@ export function classifyHeld(f: HeldFacts): HeldClassId {
     campaignEcho: false,
     listMail: listMailOf(sd),
   }) : noMove);
-  if (f.calendarAdjacent && f.budgetOverflow === true && kindWord !== 'calendar' && !bulk && !noticeApartFromEcho) return 'brought_forward';
+  // W8.3 · THE KIND FLOOR, re-read at serve time (the judge applies it before AI; a verdict cached
+  // under an older law — or no verdict at all — did not). A current-law WORK verdict is the judge's
+  // own word with the thread in view (the only way an unsolicited kind is work: the user answered).
+  // Three-valued like every W8.3 fact: `undefined` = the caller computed no judgment facts (the legacy
+  // law holds, the floor stays silent); `true` = the judge's current-law word stands.
+  const kf = f.judgedCurrent !== false ? { refuses: false as const }
+    : kindFloor({ kind: (sd.kind_override as string) || u?.mailKind || null, ownership: u?.ownership ?? null });
+  const floorBulk = kf.refuses && kf.why === 'unsolicited';
+  const floorNotice = kf.refuses && kf.why === 'notice';
+  // A ROW NOBODY JUDGED IS NEVER BROUGHT FORWARD (W8.3): adjacency promotes something already
+  // judged alive — never a row whose only evidence is a stale understanding.
+  if (f.calendarAdjacent && f.budgetOverflow === true && f.neverJudged !== true && kindWord !== 'calendar' && !bulk && !noticeApartFromEcho && !kf.refuses) return 'brought_forward';
   if (f.isEcho) return 'own_outreach';
   if (f.judgedNone && f.judgedResolution) return 'judged_quiet';
 
-  if (bulk) return 'bulk_mail';
-  if (notice) return 'notices';
+  if (bulk || floorBulk) return 'bulk_mail';
+  if (notice || floorNotice) return 'notices';
 
   const bystander = sd.is_cc_only === true || u?.role === 'bystander' || u?.role === 'one_of_many';
   const owesNothing = u?.ownership !== 'you_owe';
   if (bystander && owesNothing) return 'cc_watch';
 
   if (f.judgedNone) return 'judged_quiet';
+  // W8.3 · THE LIST SAYS ONLY WHAT WAS JUDGED: a deck-eligible row with no judgment at all is not
+  // "real, but it did not make today's five" — nobody has judged it. It says so, in its own class.
+  if (f.budgetOverflow === true && f.neverJudged === true) return 'not_judged';
   return 'quieter_threads';
 }
 
@@ -507,6 +541,11 @@ export const HELD_CLASSES: Record<HeldClassId, { label: string; consequence: str
     consequence: 'watched — you’ll hear if anyone asks you something',
     deed: 'archive',
   },
+  not_judged: {
+    label: 'Not yet judged',
+    consequence: 'never judged against your work — open one and it is judged; none is claimed as yours to do',
+    deed: 'archive',
+  },
   quieter_threads: {
     label: 'Quieter threads',
     consequence: 'nothing changes if these wait',
@@ -515,7 +554,7 @@ export const HELD_CLASSES: Record<HeldClassId, { label: string; consequence: str
 };
 
 export const HELD_CLASS_ORDER: HeldClassId[] = [
-  'brought_forward', 'own_outreach', 'judged_quiet', 'bulk_mail', 'notices', 'cc_watch', 'quieter_threads',
+  'brought_forward', 'own_outreach', 'judged_quiet', 'bulk_mail', 'notices', 'cc_watch', 'not_judged', 'quieter_threads',
 ];
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -554,7 +593,9 @@ const WATCHED_CLASSES: ReadonlySet<HeldClassId> = new Set<HeldClassId>(['cc_watc
 export const HELD_BANDS: Record<HeldBandId, { title: string; sentence: string }> = {
   waiting: {
     title: 'Waiting',
-    sentence: 'real, alive, and held only because today’s five were fuller — bring any of them forward',
+    // W8.3: every row in this band carries a WORK judgment (or the person's own park) — the sentence
+    // claims exactly that and nothing a stale understanding could have supplied.
+    sentence: 'judged yours to do, and held only because today’s five were fuller — bring any of them forward',
   },
   watched: {
     title: 'Watched',
@@ -585,6 +626,9 @@ export function bandOf(cls: HeldClassId, f: HeldFacts): HeldBandId {
   // while the date is still ahead the row stays filed, which is the whole point of parking it.
   if (f.userParkedUntil && f.userParkDue === true) return 'waiting';
   if (WATCHED_CLASSES.has(cls) || f.waitingOnOthers === true) return 'watched';
+  // W8.3 · NOTHING UNJUDGED WAITS. The waiting band claims a judgment; a row with none — whatever its
+  // class, deadline or adjacency — is filed, with its own honest account (`not_judged`).
+  if (f.neverJudged === true || cls === 'not_judged') return 'handled';
   if (f.budgetOverflow === true) {
     if (!NOISE_CLASSES.has(cls)) return 'waiting';
     if (DEADLINE_LIFTABLE.has(cls) && f.deadlineAhead === true) return 'waiting';
@@ -655,7 +699,20 @@ const WEEKDAY = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(
  * whose whole honest account is "nothing changes if these wait" must not contradict itself one line
  * later. Two classes are structurally exempt — the ones where the counterpart is talking to itself.
  */
-const NO_DEADLINE_CLASSES: ReadonlySet<HeldClassId> = new Set<HeldClassId>(['bulk_mail', 'own_outreach']);
+// W8.3: `not_judged` joins them — its dates are an unjudged understanding's, never a claim the
+// ledger may speak as "a real deadline".
+const NO_DEADLINE_CLASSES: ReadonlySet<HeldClassId> = new Set<HeldClassId>(['bulk_mail', 'own_outreach', 'not_judged']);
+
+/** W8.3 · A date in a served sentence is PLAIN WORDS — "today" / "tomorrow" / a weekday inside the
+ *  week / else the one short-date grammar ("Oct 14"). Never a raw ISO string. */
+export function plainDay(iso: string, todayISO: string): string {
+  const days = Math.round((Date.parse(iso) - Date.parse(todayISO)) / 86_400_000);
+  if (days === 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  if (days === -1) return 'yesterday';
+  if (days > 1 && days <= 6) return WEEKDAY(iso);
+  return fmtMonthDay(iso) || iso;
+}
 
 export function consequenceOf(cls: HeldClassId, dueDates: Array<string | null | undefined>, todayISO: string): string {
   if (NO_DEADLINE_CLASSES.has(cls)) return HELD_CLASSES[cls].consequence;
@@ -663,8 +720,7 @@ export function consequenceOf(cls: HeldClassId, dueDates: Array<string | null | 
     .sort();
   if (!real.length) return HELD_CLASSES[cls].consequence;
   const nearest = real[0];
-  const days = Math.round((Date.parse(nearest) - Date.parse(todayISO)) / 86_400_000);
-  const when = days === 0 ? 'today' : days === 1 ? 'tomorrow' : days <= 6 ? WEEKDAY(nearest) : nearest;
+  const when = plainDay(nearest, todayISO);
   return real.length === 1
     ? `one has a real deadline — ${when}`
     : `${real.length} have real deadlines — the nearest is ${when}`;
@@ -672,7 +728,7 @@ export function consequenceOf(cls: HeldClassId, dueDates: Array<string | null | 
 
 /** The per-item line the ledger prints beside a held row — why THIS one is held. Deterministic,
  *  the class's account narrowed by the item's own fact where one exists. */
-export function whyHeldOf(cls: HeldClassId, f: HeldFacts): string {
+export function whyHeldOf(cls: HeldClassId, f: HeldFacts, todayISO?: string): string {
   // Q9 · THE PARK SPEAKS FIRST, because the person's own instruction outranks every machine account
   // of why a row is here. "You asked to see this today" is the only why-line on this page authored
   // by the reader rather than about them.
@@ -684,14 +740,37 @@ export function whyHeldOf(cls: HeldClassId, f: HeldFacts): string {
       : f.judgedResolution === 'expired' ? 'the moment it asked about has passed'
         : 'judged: nothing to do here';
   }
-  if (cls === 'bulk_mail') return 'list mail — nobody wrote this to you';
+  if (cls === 'bulk_mail') {
+    // The kind floor's own account for a pitch — it was written to the reader, but it owes them nothing.
+    const k = String(rawMailKindOf((f.item.source_data ?? {}) as Record<string, unknown>) ?? '').toLowerCase();
+    return k === 'cold_outreach' ? 'unsolicited outreach — nothing is owed until you answer it' : 'list mail — nobody wrote this to you';
+  }
   // A notice that EARNED a waiting seat did so on its deadline — the words must say that fact, never
   // "no reply is possible" inside a band that claims alive (the one-screen-contradiction rule).
   if (cls === 'notices') return f.deadlineAhead === true && f.budgetOverflow === true
     ? 'automated, but it names a real deadline'
     : 'an automated notice — no reply is possible';
   if (cls === 'cc_watch') return 'you were copied, not asked';
-  return f.budgetOverflow ? 'real, but it did not make today’s five' : 'quiet — nothing has moved on it';
+  if (cls === 'not_judged') return notJudgedWhy(f, todayISO);
+  return f.budgetOverflow ? 'judged work — it did not make today’s five' : 'quiet — nothing has moved on it';
+}
+
+/** W8.3 · THE STALE UNDERSTANDING, defined once: an understanding with NO reasoned kind (`mailKind`)
+ *  predates the M1 schema — every understanding written since carries one — and was calibrated
+ *  before the kind/notice laws existed (the July-era read that stamped sign-in codes `you_owe`).
+ *  It may still be read as a hint; it never qualifies an item as waiting work on its own. */
+export function isStaleUnderstanding(sd: Record<string, unknown> | null | undefined): boolean {
+  const u = ((sd ?? {}) as { understanding?: { mailKind?: unknown } | null }).understanding;
+  return !!u && typeof u === 'object' && !u.mailKind;
+}
+
+/** The not-judged row's own why — plain, and the date (when one passed) in plain words. */
+export function notJudgedWhy(f: HeldFacts, today?: string): string {
+  const todayISO = today ?? new Date().toISOString().slice(0, 10);
+  const due = statedDueOf(f.item);
+  if (due && due < todayISO) return `its stated date (${plainDay(due, todayISO)}) has passed — never judged`;
+  if (isStaleUnderstanding((f.item.source_data ?? null) as Record<string, unknown> | null)) return 'an early read flagged this — never judged against your work';
+  return 'not judged against your work yet';
 }
 
 export type HeldMember = {
@@ -764,8 +843,11 @@ export type HeldBandsOut = {
   };
 };
 
-/** How many rows one band serves in a response. `count` is always the real total. */
-export const HELD_ROWS_PER_BAND = 60;
+/** How many rows one band serves in a response. `count` is always the real total.
+ *  W8.3 · ONE COUNT: the waiting band is judged work only, small by construction, so it serves
+ *  WHOLE up to this declared bound — the header, the deck and the list read the same number. Past the
+ *  bound `hasMore` is true and the list's footer says so, naming the bound (never a silent cap). */
+export const HELD_ROWS_PER_BAND = HELD_BAND_ROWS_BOUND;
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // Q3 · THE GRADUATION LAW — the pure half (the lane that acts on it lives in lib/work/graduation.ts)
@@ -826,7 +908,7 @@ export function selectGraduates(
 export const graduationSentence = (days: number): string =>
   `quiet things file themselves after ${days} days — nothing is deleted, and anything comes back`;
 
-const memberOf = (cls: HeldClassId, m: HeldFacts): HeldBandRow => {
+const memberOf = (cls: HeldClassId, m: HeldFacts, user: UserForms | null = null, todayISO?: string): HeldBandRow => {
   const sd = (m.item.source_data ?? {}) as Record<string, unknown>;
   // DECODED ONCE, BEFORE THE CLIP (W5b): the clip measures characters the reader will see, and an
   // escaped snippet ("wasn&#39;t") must never reach a card as literal text.
@@ -837,7 +919,7 @@ const memberOf = (cls: HeldClassId, m: HeldFacts): HeldBandRow => {
   return {
     itemId: String(m.item.id),
     subject: clipSubject(decodeEntities(String((sd as any).subject ?? m.item.work_title ?? '(no subject)'))),
-    why: whyHeldOf(cls, m),
+    why: whyHeldOf(cls, m, todayISO),
     dueDate: statedDueOf(m.item),
     cls,
     from: from ? decodeEntities(from) : null,
@@ -847,7 +929,10 @@ const memberOf = (cls: HeldClassId, m: HeldFacts): HeldBandRow => {
     // floor (or slipped past it) is not prepared work the reader should be offered. A row filed in
     // a NOISE class serves no prepared kind, so no surface can chip it. The artifact itself is
     // stripped by the verdict's own consequence module when the item is next judged.
-    prepared: NOISE_CLASSES.has(cls) ? null : (preparedFromSourceData(sd as never)[0]?.kind ?? null),
+    // ONE READER PER OBJECT (W7.5): the kind comes from the reader's LIVE set — same floors (time ·
+    // window · claim · THE ADDRESSEE FLOOR with the user's code-owned forms) the room applies.
+    prepared: NOISE_CLASSES.has(cls) ? null
+      : (liveFromSourceData(sd, { user, lastActivityAt: (m.item as { last_activity_at?: string | null }).last_activity_at ?? null })[0]?.kind ?? null),
   };
 };
 
@@ -863,8 +948,9 @@ const memberOf = (cls: HeldClassId, m: HeldFacts): HeldBandRow => {
  */
 export function buildHeldLedger(
   facts: HeldFacts[], todayISO: string,
-  opts: { membersPerClass?: number; offset?: number; rowsPerBand?: number; graduationDays?: number } = {},
+  opts: { membersPerClass?: number; offset?: number; rowsPerBand?: number; graduationDays?: number; /** the user's code-owned forms — THE ADDRESSEE FLOOR on the served `prepared` kind */ user?: UserForms | null } = {},
 ): { total: number; classes: HeldClassOut[]; bands: HeldBandsOut } {
+  const user = opts.user ?? null;
   const perClass = opts.membersPerClass ?? HELD_MEMBERS_PER_CLASS;
   const perBand = opts.rowsPerBand ?? HELD_ROWS_PER_BAND;
   const offset = Math.max(0, opts.offset ?? 0);
@@ -881,12 +967,12 @@ export function buildHeldLedger(
       waitingCount++;
       const due = statedDueOf(f.item);
       if (due && due <= todayISO) urgent++;
-      if (waiting.length < perBand) waiting.push(memberOf(cls, f));
+      if (waiting.length < perBand) waiting.push(memberOf(cls, f, user, todayISO));
       continue;
     }
     if (band === 'watched') {
       watchedCount++;
-      if (watched.length < perBand) watched.push(memberOf(cls, f));
+      if (watched.length < perBand) watched.push(memberOf(cls, f, user, todayISO));
       continue;
     }
     handledCount++;
@@ -908,7 +994,7 @@ export function buildHeldLedger(
       consequence: consequenceOf(id, dues, todayISO),
       deed: HELD_CLASSES[id].deed,
       count: members.length,
-      members: members.slice(offset, offset + perClass).map((m) => memberOf(id, m)),
+      members: members.slice(offset, offset + perClass).map((m) => memberOf(id, m, user, todayISO)),
       hasMore: offset + perClass < members.length,
     });
   }

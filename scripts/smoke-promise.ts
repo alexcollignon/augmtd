@@ -1966,8 +1966,9 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       // own body — both of its closing doors are shared modules, and EACH settles the asks after its
       // flip: settleCommitmentByEvidence → afterClose (evidence-settle.ts) and applyExpiryVerdict
       // (expiry.ts). The sweep door still settles asks; only the call moved one module down.
-      /settleCommitmentByEvidence\(sb, c,/.test(src('app/api/cron/commitments-sweep/route.ts')) &&
-      /applyExpiryVerdict\(sb, c\.user_id, c, ev\)/.test(src('app/api/cron/commitments-sweep/route.ts')) &&
+      // ⟲ RE-POINTED (W7.1): the sweep is a dispatcher; its closing doors run in the per-account pass.
+      /settleWorkByEvidence\(admin, userId, e\.work, e\.evidence\)/.test(src('lib/work/evidence-sweep.ts')) &&
+      /applyExpiryVerdict\(admin, userId, c, ev\)/.test(src('lib/work/evidence-sweep.ts')) &&
       /async function afterClose[\s\S]{0,1400}settleAsksForItem/.test(src('lib/work/evidence-settle.ts')) &&
       (src('lib/work/evidence-settle.ts').match(/await afterClose\(/g) ?? []).length >= 2 &&
       /export async function applyExpiryVerdict[\s\S]{0,2500}settleAsksForItem/.test(src('lib/commitments/expiry.ts')) &&
@@ -2022,14 +2023,17 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       src('lib/commitments/fulfillment.ts').includes('UNKNOWN (metadata unavailable') &&
       src('lib/inbox/resolve-on-reply.ts').includes('meta.attachments.length : null') &&
       // W3.1: the sweep reads attachment facts through the evidence pool (one loader, same UNKNOWN-never-zero rule)
-      src('lib/work/evidence-nominator.ts').includes('Array.isArray(a) ? a.length : null'));
+      // ⟲ RE-POINTED (W8.1): the mail lane lives in its registry row (lib/evidence/sources.ts) now.
+      src('lib/evidence/sources.ts').includes('Array.isArray(a) ? a.length : null'));
     check('P33 · the watermark law — the judge and the entity ledger read the thread\'s PRESENT, never only the founding snapshot',
       src('lib/work/judge.ts').includes('WHERE THE THREAD STANDS NOW') &&
       src('lib/entities/state.ts').includes('nowByThread') &&
       src('lib/entities/state.ts').includes('spoke last'));
     check('P33 · the honest budget at the commitments sweep (recency-first · leftBehind counted, never silent) + nominate→judge at the inbound door (a pure closure settles, never resurrects)',
-      src('app/api/cron/commitments-sweep/route.ts').includes('leftBehind') &&
-      src('app/api/cron/commitments-sweep/route.ts').includes("order('updated_at'") &&
+      // ⟲ RE-POINTED (W7.1): recency-first became THE PRIORITY ORDER (never-judged-under-this-law first,
+      // then oldest due) in the per-account pass — the honest budget + leftBehind count stand.
+      src('lib/work/evidence-sweep.ts').includes('leftBehind') &&
+      src('lib/work/evidence-sweep.ts').includes('orderEvidenceQueue(') &&
       src('lib/inbox/reactivate-on-reply.ts').includes('closure') &&
       src('lib/inbox/reactivate-on-reply.ts').includes('topMessageOf'));
     // LIVE — the STC replay: a delivery whose quoted tail carries last week's promise, with an
@@ -2056,7 +2060,7 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     src('lib/commitments/fulfillment.ts').includes("kind: 'fulfillment'") &&
     src('lib/inbox/resolve-on-reply.ts').includes('judgeCommitmentFulfillment') &&
     // W3.1 EVIDENCE SETTLES: the sweep consults the judge through the evidence door (multi-candidate)
-    src('app/api/cron/commitments-sweep/route.ts').includes('settleCommitmentByEvidence') &&
+    src('lib/work/evidence-sweep.ts').includes('settleWorkByEvidence') &&
     src('lib/work/evidence-settle.ts').includes('judgeFulfillmentFromEvidence') &&
     src('scripts/sweep-false-fulfillment.ts').includes('judgeCommitmentFulfillment'));
   check('P32 · the STAMPED cache — an action surface never paints from a cache too old to trust (saveLS stamps __at; the deck + horizon demand freshness; a legacy unstamped blob never satisfies a freshness demand)',

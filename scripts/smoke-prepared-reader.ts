@@ -103,7 +103,8 @@ console.log('\nA · source floors');
 
   gate('A12 W5a: the reader stamps TRUTH (outsideWindow · falseClaim) in BOTH readers and the live predicate honors both',
     /export function stampTruth</.test(read) && (read.match(/stampTruth\(/g) ?? []).length >= 2
-    && /return !a\.stale && !a\.expired && !a\.outsideWindow && !a\.falseClaim;/.test(read));
+    // ⟲ RE-POINTED (W7.3): the live predicate gained its truth-floor twin — `misaddressed`.
+    && /return !a\.stale && !a\.expired && !a\.outsideWindow && !a\.falseClaim && !a\.misaddressed;/.test(read));
 
   const compose = src('app/api/compose/draft/route.ts');
   gate('A11 the commitment composer serves the POOLED nudge first (preparedState live) — a fresh AI draft only when nothing is pooled',

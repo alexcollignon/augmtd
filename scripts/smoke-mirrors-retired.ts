@@ -100,7 +100,8 @@ console.log('THE MIRRORS-RETIRED GATE\n');
     src('lib/work/judgment-sweep.ts').includes('buildWorkItems(') && src('lib/prepare/pass.ts').includes('buildWorkItems('));
   // Readers scoped to source='email' by construction (a mirror can never enter): the label sweep, the
   // evidence nominator, the reply reconcile, the sweep's inbox evidence lane, the sync tail.
-  const emailScoped = ['app/api/cron/label-sweep/route.ts', 'lib/work/evidence-nominator.ts', 'lib/inbox/reconcile-replied.ts', 'app/api/cron/commitments-sweep/route.ts'];
+  // ⟲ RE-POINTED (W7.1): the sweep's inbox evidence lane moved into the per-account pass.
+  const emailScoped = ['app/api/cron/label-sweep/route.ts', 'lib/work/evidence-nominator.ts', 'lib/inbox/reconcile-replied.ts', 'lib/work/evidence-sweep.ts'];
   for (const f of emailScoped) ok(`M2 ${f} lists inbox rows only under source='email'`, src(f).includes(".eq('source', 'email')"));
   // No reader spells its own exclusion literal — the one predicate, never a per-site `.neq`.
   const privateLiterals: string[] = [];

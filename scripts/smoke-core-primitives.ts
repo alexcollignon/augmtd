@@ -72,7 +72,9 @@ const EMAIL_RE_TO_FOLD_LATER = new Set([
   const pagingSites = [
     'lib/work/sweep-users.ts',
     'lib/entities/people.ts',
-    'app/api/cron/commitments-sweep/route.ts',
+    // ⟲ RE-POINTED (W7.1): the commitments sweep is a dispatcher; its full-listing reads (every open
+    // commitment + actionable item of an account, the dispatch set) live in the per-account pass.
+    'lib/work/evidence-sweep.ts',
     'lib/company/ai-operations-metrics.ts',
     'lib/platform/status.ts',
   ];

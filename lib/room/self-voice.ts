@@ -127,6 +127,64 @@ export function collapseSelfVoice(text: string, speaker: string | null | undefin
   return out.replace(/[ \t]{2,}/g, ' ').trim();
 }
 
+// ── THE THIRD-PERSON REFUSAL'S NAME TEST (stabilization W8.4 — THE ROOM SPEAKS TRUE, Sep 23) ────
+// The composer's belt behind the collapse used to be `\b<SpeakerFirst>\s+\p{Ll}` — any occurrence of
+// the seat's given name followed by a lowercase word. Live: a real colleague's SURNAME was the seat's
+// given name, so "…<Given> <Seat> messaged on September…" was refused on EVERY open (six refusals in
+// one session), each one re-buying the model and serving the fallback. The refusal must fire only
+// when the name DENOTES THE SPEAKER:
+//   · a known person's full name (the grounding's own people — board counterparties, entity people)
+//     that spans this occurrence is that person, never the speaker;
+//   · a capitalized word immediately before is a name token ("<Given> <Seat>") — a different person
+//     — UNLESS it is a sentence-opening adverb/conjunction ("Yesterday <Seat> drafted it"), which is
+//     not a name and leaves the speaker narrated in the third person.
+// Leaving one ambiguous mention standing costs a sentence; refusing a true paragraph costs the whole
+// room its voice on every open. Pure; the gate holds both fixtures against it.
+const SENTENCE_OPENERS = new Set([
+  'yesterday', 'today', 'tomorrow', 'then', 'now', 'also', 'meanwhile', 'so', 'but', 'and', 'here',
+  'there', 'once', 'after', 'before', 'when', 'while', 'since', 'earlier', 'later', 'last', 'next',
+  'this', 'that', 'already', 'still', 'again', 'first', 'finally', 'otherwise', 'instead', 'however',
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'overnight', 'recently',
+]);
+
+function nameTokens(s: string | null | undefined): string[] {
+  return String(s ?? '').replace(/<[^>]*>/g, ' ').split(/[\s,]+/).map((t) => t.replace(/^["'“(]+|["'”).:;!?]+$/g, '')).filter(Boolean);
+}
+
+/**
+ * Does `text` narrate the SPEAKER by name in the third person ("<Seat> drafted it")? `knownPeople` =
+ * the full names the page is about (the grounding's people). An occurrence that is part of a longer
+ * proper name — a known person's, or any "<Capitalized> <Seat>" whose first word is not a
+ * sentence-opener — is someone else and never counts.
+ */
+export function narratesSpeakerInThirdPerson(
+  text: string, speaker: string | null | undefined, knownPeople: Array<string | null | undefined> = [],
+): boolean {
+  const first = String(speaker ?? '').trim().split(/\s+/)[0] ?? '';
+  if (first.length < 2 || !text) return false;
+  const lc = first.toLowerCase();
+  // Known multi-token names carrying the seat's given name as one of their tokens (the clash class).
+  const clashing = knownPeople.map(nameTokens).filter((toks) => toks.length >= 2 && toks.some((t) => t.toLowerCase() === lc));
+  const re = new RegExp(`\\b${escapeRe(first)}\\b(?=\\s+\\p{Ll})`, 'gu');
+  for (const m of text.matchAll(re)) {
+    const at = m.index ?? 0;
+    // (1) a known person's full name spans this occurrence → that person.
+    const spansKnown = clashing.some((toks) => {
+      const idx = toks.findIndex((t) => t.toLowerCase() === lc);
+      const lead = toks.slice(0, idx).join(' ');
+      const before = text.slice(0, at).trimEnd();
+      return !!lead && before.toLowerCase().endsWith(lead.toLowerCase());
+    });
+    if (spansKnown) continue;
+    // (2) a capitalized word right before → a name token, unless it is a sentence-opening word.
+    const lead = text.slice(0, at);
+    const prev = lead.match(/([\p{Lu}][\p{L}'’-]*)\s+$/u);
+    if (prev && !SENTENCE_OPENERS.has(prev[1].toLowerCase())) continue;
+    return true;
+  }
+  return false;
+}
+
 /** Does this text still narrate the speaker in the third person? The gate's question, and the
  *  composer's own post-check assertion. */
 export function namesSelfInThirdPerson(text: string, speaker: string | null | undefined): boolean {

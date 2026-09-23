@@ -43,13 +43,17 @@ export function heldIntro(l: HeldWordsLedger, deckHeld: number): string {
   if (waiting + watched + handled === 0) return 'Nothing is being held back right now.';
 
   const parts: string[] = [];
+  // W8.3 · THE LIST SAYS ONLY WHAT WAS JUDGED. The waiting band now holds judged work only (the
+  // ledger files an unjudged row as "Not yet judged"), so the sentence claims exactly that — never
+  // "real … all alive" over rows nobody judged — and its date fact is a DUE fact ("due today or
+  // past due"), never "a deadline that has landed" over a July golf day.
   if (waiting > 0) {
     const shape = urgent > 0
-      ? `${urgent} of them ${urgent === 1 ? 'has' : 'have'} a deadline that has landed`
-      : 'none urgent';
+      ? `${urgent} of them ${urgent === 1 ? 'is' : 'are'} due today or past due`
+      : 'none due yet';
     parts.push(served > 0
-      ? `${waiting} real thing${waiting === 1 ? '' : 's'} wait behind today's ${served} — ${shape}, all alive.`
-      : `${waiting} real thing${waiting === 1 ? '' : 's'} ${waiting === 1 ? 'is' : 'are'} waiting — ${shape}, all alive.`);
+      ? `${waiting} judged thing${waiting === 1 ? '' : 's'} wait behind today's ${served} — ${shape}.`
+      : `${waiting} judged thing${waiting === 1 ? '' : 's'} ${waiting === 1 ? 'is' : 'are'} waiting — ${shape}.`);
   }
   if (handled > 0) {
     parts.push(`Everything else is handled: ${handled.toLocaleString()} filed quietly${watched > 0 ? `, ${watched} more being watched` : ''}.`);

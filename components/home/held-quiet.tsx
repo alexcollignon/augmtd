@@ -60,7 +60,7 @@
 // on a subset — the ids ride the SAME preview door, and there is no second path to a commit.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeftIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import BulkDeedCard from '@/components/home/bulk-deed-card';
@@ -70,17 +70,17 @@ import { useRowActions, RowControls, RowHoverRail, exitCls } from '@/components/
 import { showUndoToast } from '@/lib/activity/undo-toast';
 import type { DoItem, DoSource } from '@/lib/home/agenda';
 // THE CLIENT-SAFE IMPORT: the deed's pure words, never the engine (the server-graph law).
-import { BULK_VERBS, MAX_DEED_ITEMS, type BulkDeed, type BulkVerb } from '@/lib/deeds/words';
+import { BULK_VERBS, deedBoundFor, type BulkDeed, type BulkVerb } from '@/lib/deeds/words';
 // THE SENTENCES live apart for the same reason the deed's words do: pure, client-safe, and
 // assertable by a CLI gate that cannot import a component. Re-exported so this page stays the one
 // import for anything rendering the ledger.
 import { heldIntro, heldReceipts } from '@/lib/home/held-words';
 // Q9 · THE TRIAGE DECK — the SECOND RENDER of the waiting band (never a second derivation of it).
 import { TriageDeck, type TriageRow } from '@/components/triage/triage-deck';
-// THE QUEUE'S OWN LAW, pure and gate-assertable: a later arrival EXTENDS the stack, never reorders it.
-import { mergeQueue } from '@/lib/triage/queue';
 // THE LIST'S SHAPE (W5b): the fold, the honest footer, and which handed rows the list reads.
 import { foldHeldRows, foldCountWord, heldFooter, listHanded, type HeldFold } from '@/lib/home/held-list';
+// W8.3 · the pure bulk-label law (client-safe, gate-assertable) and the band's declared bound.
+import { bulkVerbLabel, bulkScopeLine, HELD_BAND_ROWS_BOUND as HELD_ROWS_PER_BAND } from '@/lib/deeds/held-words-bulk';
 import { warmDeckContexts } from '@/lib/triage/deck-context-door';
 // The stamped-cache idiom: the reader's choice of shape sticks, and a stale blob cannot claim one.
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
@@ -269,13 +269,10 @@ function ClassRow({ c, open, onToggle, deed, busy, error, picked, onPick, onPick
   const allPicked = picked.size > 0 && c.members.every((m) => picked.has(m.itemId));
   // THE VERB SAYS WHAT IT WILL ACT ON — the whole class, or exactly the ones picked. It never moves
   // anything: the next thing the reader sees is the preview card. AND IT NEVER PROMISES MORE THAN A
-  // DEED CAN HOLD: past `MAX_DEED_ITEMS` a deed is not a deed, it is a migration, so the word says
-  // the real number rather than "all 4,939" over a card that will honestly count 200.
-  const verbLabel = verb
-    ? (picked.size > 0 ? `${VERB_WORD[verb]} ${picked.size}`
-      : c.count > MAX_DEED_ITEMS ? `${VERB_WORD[verb]} ${MAX_DEED_ITEMS}`
-        : `${VERB_WORD[verb]} all ${c.count}`)
-    : null;
+  // DEED CAN HOLD — W8.3: nor LESS than the truth about the group. "Archive 200" beside "Notices ·
+  // 1,223" read as the group's size; the label now says it is the newest 200 OF the group.
+  // W8.6: the deed acts on the WHOLE group to its verb's own bound ("Archive all 1,223").
+  const verbLabel = verb ? bulkVerbLabel(VERB_WORD[verb], c.count, picked.size, deedBoundFor(verb)) : null;
 
   return (
     <div className="flex flex-col">
@@ -305,7 +302,8 @@ function ClassRow({ c, open, onToggle, deed, busy, error, picked, onPick, onPick
       {error && <p className="px-3 pb-1 text-[12px] text-rose-600">{error}</p>}
       {deed && (
         <div className="px-3 py-2">
-          <BulkDeedCard deedId={deed.id} deed={deed} onDone={onDeedDone} />
+          <BulkDeedCard deedId={deed.id} deed={deed} onDone={onDeedDone}
+            scopeLine={picked.size > 0 ? null : bulkScopeLine(deed.items.length, c.count)} />
         </div>
       )}
 
@@ -497,6 +495,9 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
   };
   const incomingRows: WaitingRow[] = rowsOf(handed);
   const listRows: WaitingRow[] = rowsOf(listHanded(deckHeld, warmHeld, !!bands));
+  // W8.3 · ONE COUNT, ONE READER. The header, the intro, the deck's counter and the list's footer all
+  // speak THIS number — the ledger's waiting band plus the deck's own non-mail rows — and the deck is
+  // handed exactly the rows it counts once the account has landed (the deck settles its own stack).
   const waitingCount = (bands?.waiting.count ?? 0) + deckHeld.length;
   const folded = bands?.handled.classes ?? ledger?.classes ?? [];
   // ── THE DECK OPENS INSTANTLY (owner, live Sep 18: "not opening" — 20–30s of "Reading the
@@ -510,23 +511,24 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
   // the account as read RIGHT NOW (rows a deed removed must leave it — the merge is append-only by
   // design, which is exactly right under a live cursor and exactly wrong for a settled list).
   const deckMode = shape === 'deck' && !exited;
-  const queueRef = useRef<WaitingRow[]>([]);
-  const waitingRows = deckMode ? mergeQueue(queueRef.current, incomingRows) : listRows;
+  // THE STACK'S STATE LIVES IN THE DECK NOW (W8.3): it merges while the account is being read and
+  // SETTLES to the account once it is complete — the only party that knows the cursor keeps the stack.
+  const deckComplete = !!ledger && !ledger.warm;
+  const waitingRows = deckMode ? (deckComplete ? listRows : incomingRows) : listRows;
   // ONE CONVERSATION, ONE OBLIGATION on the list (W5b): same who + same subject fold under ONE row
   // with its count; every member stays one click away with its own hands. The deck is unfolded —
   // each card is its own decision.
   const listFolds = foldHeldRows(waitingRows, (r) => ({ who: r.triage.who, subject: r.triage.title }));
-  // THE FOOTER NEVER SAYS FEWER THAN IT SHOWS — every member of every fold is a shown item.
-  const waitingFooter = heldFooter(waitingRows.length, waitingCount);
-  queueRef.current = deckMode ? waitingRows : [];
+  // THE FOOTER NEVER SAYS FEWER THAN IT SHOWS — every member of every fold is a shown item — and
+  // (W8.3) a footer that says fewer names WHY: the band's declared bound, never a bare "N of M".
+  const waitingFooter = heldFooter(waitingRows.length, waitingCount, HELD_ROWS_PER_BAND + deckHeld.length);
   // THE DECK NEEDS A SERVED DAY (its whens are dates) — the ledger's own, else the BRIEF's, which
   // is the same server clock one route earlier. No served day at all → the deck's own chrome with a
   // quiet card holding the place, never the bare list flashing up underneath it.
   const deckDay = ledger?.today ?? servedDay ?? null;
   const deckShown = deckMode && !!deckDay;
-  // THE STACK IS COMPLETE only when THIS visit's read has landed: a warm paint is a real account,
-  // but not yet the whole of one, so the deck states what it has and admits the rest is coming.
-  const deckComplete = !!ledger && !ledger.warm;
+  // THE STACK IS COMPLETE only when THIS visit's read has landed (`deckComplete`, above): a warm
+  // paint is a real account, but not yet the whole of one, so the deck states what it has.
   // ── Q9v2 · 2 · TRUE FOCUS ─────────────────────────────────────────────────────────────────────
   // "Entering the deck takes the room." The owner's walk read the page as hard to follow because
   // the card sat inside a full ledger page — a title, an intro paragraph, a band header with its
@@ -667,7 +669,7 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
                 ))}
                 {bands.watched.hasMore && (
                   <p className="px-3 py-1.5 text-[12px] text-neutral-300">
-                    showing {bands.watched.rows.length} of {bands.watched.count}
+                    {heldFooter(bands.watched.rows.length, bands.watched.count, HELD_ROWS_PER_BAND)}
                   </p>
                 )}
               </div>

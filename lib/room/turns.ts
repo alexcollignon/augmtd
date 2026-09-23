@@ -5,9 +5,15 @@
 // readRoomTurns. Non-fatal by design: a missing table (migration not yet applied) or a transient
 // failure degrades to the in-memory store, never breaks the surface.
 //
-// ROOM KEY CONVENTION (locked in the plan): the ENTITY id for deal rooms; `inbox:<id>` /
-// `commitment:<id>` / `meeting:<id>` for loose anchors. An item linked to an entity converses in
-// the DEAL's room — navigating between a deal's artifacts keeps ONE conversation.
+// ROOM KEY CONVENTION: the ENTITY id for the entity (project) door; `inbox:<id>` /
+// `commitment:<id>` / `meeting:<id>` for every ITEM door.
+//
+// ONE OBJECT, ONE DOOR (stabilization W7.2, Sep 23 — lib/room/door.ts): an item converses under
+// its OWN key whatever it is linked to. The old rule ("an item linked to an entity converses in the
+// DEAL's room") let a link written by recognition-on-open re-home a commitment's conversation into
+// an UNTRACKED machine container mid-visit — and the door then spoke that container's agenda under
+// the commitment's title. A link is a fact about the item, never a new address for it. Turns
+// already written under entity keys stay where they are, as the entity door's own record.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -37,21 +43,19 @@ export type RoomTurn = {
 };
 
 type LooseItemKind = 'inbox' | 'commitment' | 'meeting';
-const LINK_KIND: Record<LooseItemKind, string> = { inbox: 'inbox_item', commitment: 'commitment', meeting: 'meeting' };
 
 /** The loose anchor's own room key. */
 export const looseRoomKey = (kind: LooseItemKind, id: string): string => `${kind}:${id}`;
 
-/** Resolve WHERE an item converses: its entity's room when linked, else its own loose key. */
+/** Resolve WHERE an item converses: ALWAYS its own loose key (ONE OBJECT, ONE DOOR — the header).
+ *  THE ONE RESOLVER for every narration writer (prepare pass, delegation, verdicts, standing,
+ *  handoffs, steer): the signature is kept so no writer forks a key of its own; the link read it
+ *  used to make is gone — a link never decides where an item's story is told. Same rule as
+ *  lib/room/door.ts `roomKeyForDoor`, which the rail consumes. */
 export async function roomKeyForItem(
-  client: SupabaseClient, userId: string, kind: LooseItemKind, id: string,
+  _client: SupabaseClient, _userId: string, kind: LooseItemKind, id: string,
 ): Promise<string> {
-  try {
-    const { data } = await client.from('entity_links').select('entity_id')
-      .eq('user_id', userId).eq('item_kind', LINK_KIND[kind]).eq('item_id', id)
-      .not('entity_id', 'is', null).maybeSingle();
-    return (data?.entity_id as string) ?? looseRoomKey(kind, id);
-  } catch { return looseRoomKey(kind, id); }
+  return looseRoomKey(kind, id);
 }
 
 /** Append a turn (dedupe_key replaces the prior same-key turn — the keyed-turn idiom). Non-fatal. */

@@ -69,7 +69,12 @@ export function listHanded<T>(deckHeld: T[], warmHeld: T[], ledgerLanded: boolea
 
 /** THE FOOTER NEVER SAYS FEWER THAN IT SHOWS. `rendered` = items on the list (every member of every
  *  fold), `total` = the served count. Null when nothing is held back from the list. */
-export function heldFooter(rendered: number, total: number): string | null {
+export function heldFooter(rendered: number, total: number, bound?: number): string | null {
   const t = Math.max(total, rendered);
-  return rendered < t ? `showing ${rendered} of ${t}` : null;
+  if (rendered >= t) return null;
+  // W8.3 · NO BARE "N of M". A footer that shows fewer than it counts says WHY, naming the bound —
+  // "showing 88 of 90" with no way to the other 2 was a silent cap wearing a footer.
+  return typeof bound === 'number' && rendered >= bound
+    ? `showing ${rendered} of ${t} — this list serves ${bound} at most; the rest stay in your Inbox`
+    : `showing ${rendered} of ${t} — the rest are still being counted`;
 }

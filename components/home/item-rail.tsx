@@ -32,14 +32,18 @@ import { moveTargetId, mergedArtifactKey, stageOfArtifactKey } from '@/lib/room/
 import DecisionCard, { type DecisionSpec, type DecisionOutcome } from '@/components/home/decision-card';
 // THE ONE OBJECT CARD's host mount — the room shows WHAT IT IS TALKING ABOUT (THE OPENING
 // CONTRACT, clause 1): one read of the thread door, one kit card, one viewer, every seat.
-import { SourceObjectMount } from '@/components/room/source-object';
+import { SourceObjectMount, MeetingSourceMount, type MeetingSourceFacts } from '@/components/room/source-object';
 import { panelPlan } from '@/lib/room/render-plan';
 import { offerLineFor } from '@/lib/room/cta-law';
+import { roomKeyForDoor, targetOwnedByDoor, cardMayBindTarget, objectIdForDoor, idsNamedByCard, type Door } from '@/lib/room/door';
 // THE OPENING'S SPEECH LAWS, imported — the pre-compose stitch obeys exactly what the composed
 // brief obeys (ONE copy of each law; a hand-written second version is how the excerpt law rotted).
 import { collapseSelfVoice } from '@/lib/room/self-voice';
 import { nameOncePerSentence } from '@/lib/room/opening-discipline';
+import { fallbackOpeningLine, prepareNoneLine } from '@/lib/room/opening-fallback';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+// W8.4 · NO RAW ISO ON SCREEN — the ONE short-date grammar.
+import { fmtMonthDay } from '@/lib/utils/format-date';
 // THE FRESHNESS FLOOR IS ONE NUMBER, IMPORTED — never restated at a second site.
 import { ROOM_CACHE_MAX_AGE_MS } from '@/lib/room/no-mutation';
 // ONE KEY PRODUCER, shared with the warm that fills the envelope this mount reads.
@@ -373,7 +377,7 @@ function Chip({ icon, label, onClick }: { icon?: React.ReactNode; label: string;
   );
 }
 
-export function ItemRail({ kind, id, view, pending = false, onDraft, decision, artifacts, onOpenHref, onStage, onHistory, sourceItemId }: {
+export function ItemRail({ kind, id, view, pending = false, onDraft, decision, artifacts, onOpenHref, onStage, onHistory, sourceItemId, sourceMeeting, onOpenThread }: {
   kind: RailKind; id: string; view: RailView;
   /** THE STRUCTURAL FRAME (UX arc): true while the view is still loading — the rail mounts its
    *  shell (header, turns, composer) immediately and shows a quiet shimmer instead of anchor
@@ -429,11 +433,33 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
    *  `id` IS the item — and a project room with a mail MOVE falls back to the move's target, so no
    *  new server plumbing exists at either door. */
   sourceItemId?: string | null;
+  /** W7.3 · A MEETING-BORN COMMITMENT'S SOURCE: the meeting itself, served by the door. It takes the
+   *  object card's ONE seat when the door has no mail object — the promise shows where it was made. */
+  sourceMeeting?: MeetingSourceFacts | null;
+  /** W8.4 · ONE CARD, ONE DOOR — the object card's "Thread →" opens the thread WHERE THE HOST READS
+   *  IT: the deep-dive raises its ONE drawer on the thread section (the same door the reply card's
+   *  "Thread →" uses). Absent (the project room) → the room's own in-room focus (onOpenHref), never a
+   *  separate page hop. */
+  onOpenThread?: (itemId: string) => void;
 }) {
   const router = useRouter();
   const ent = view.entity;
   const sib = view.siblings;
   const inRoom = kind === 'entity';
+  // ══ ONE OBJECT, ONE DOOR (stabilization W7.2 — lib/room/door.ts) ═════════════════════════════
+  // This rail speaks for the object in its title. THE DOOR decides three things below, in code:
+  // the room key it converses under, WHOSE opening it pins (the entity door's composition on the
+  // entity door, the item's own on an item door — never the linked entity's), and what it may
+  // point at (a MOVE, an object card or a bound card must target something this door OWNS).
+  const door: Door = inRoom
+    ? { kind: 'entity', id }
+    : { kind: 'item', itemKind: kind === 'commitment' || kind === 'followup' ? 'commitment' : kind === 'meeting' ? 'meeting' : 'inbox', id };
+  // THE OPENING IS THE DOOR'S OWN. The server strips the entity's voice from an item door's payload;
+  // this read is the belt for a payload cached before it did (a stale LS blob carrying the entity's
+  // brief under an item's key must not speak here either).
+  const opening = inRoom
+    ? { brief: ent?.brief ?? null, move: ent?.move ?? null, offers: ent?.offers ?? [], at: ent?.briefAt ?? null }
+    : { brief: view.brief ?? null, move: view.move ?? null, offers: view.offers ?? [], at: view.briefAt ?? null };
   // ONE DEED ONE OBJECT — derived from THE PRESENTATION LAW (lib/room/presentation, the one
   // composition every pane consumes): the responder block promotes the matched artifact into
   // the action card; the stream suppresses its duplicate; the truth pane yields (its host reads
@@ -443,7 +469,14 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   // stream's duplicate-suppression, the click target) agrees — nulling it only at render left
   // mergedArtKey excluding an artifact whose card no longer existed.
   const decisionIsPrimary = !!(decision && decision.options.length >= 2);
-  const respMove = (ent?.brief || view.brief) && !decisionIsPrimary ? (ent?.move ?? view.move ?? null) : null;
+  // A MOVE TARGETS WHAT THIS DOOR OWNS (W7.2): on an ITEM door a move whose ref names another
+  // object — the shape a brief cached under an entity key leaves behind — does not render at all
+  // (an unlinked move would still stand as an obligation about someone else's mail). The entity
+  // door's ref was validated against its own board server-side: that board IS what it owns.
+  const composedMove = opening.brief && !decisionIsPrimary ? opening.move : null;
+  const respMove = composedMove && (inRoom || !composedMove.ref || targetOwnedByDoor(door, moveTargetId(composedMove.ref), {
+    cardIds: (artifacts ?? []).flatMap((a) => idsNamedByCard(a)),
+  })) ? composedMove : null;
   const respMoveTargetId = moveTargetId(respMove?.ref ?? null);
   // THE CARD IS THE CTA (Sep 8, the interactive-card wave): the merge law folds a covered artifact
   // into the pinned card as a TEXT LINE — right for an "Open →" row, wrong for a card that IS the
@@ -480,8 +513,12 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
       // already covers an unbound ref covers a ref whose row went missing: with exactly ONE card of
       // the move's own kind in the thread there is no guess to make, so the door leads to it. Two
       // cards of a kind and it stays null — code never guesses between two.
+      // A BOUND CARD IS THIS DOOR'S OWN (W7.2 — lib/room/door.ts cardMayBindTarget): the one card
+      // must NAME the target, or carry no id on an ITEM door (whose cards are its own by
+      // construction). On the entity door a nameless sole card is never bound to a member's ref —
+      // the latent guess this rule closes.
       const ofKind = mountedCards.filter((a) => (stageOfArtifactKey(a.key) === 'reply') === moveIsMail);
-      return ofKind.length === 1 ? ofKind[0] : null;
+      return ofKind.length === 1 && cardMayBindTarget(door, ofKind[0], respMoveTargetId) ? ofKind[0] : null;
     }
     // A MOVE WITHOUT A VALIDATED REF STILL HAS ONE OBJECT (Sep 14): the composed move names the
     // deed in words but the board couldn't bind its ref, and the room mounts EXACTLY ONE card. That
@@ -493,10 +530,11 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   // ONE-NAVIGATION LAW: every rail link goes through here — the host's in-room opener first
   // (focus/summoned stage), page navigation only when unhandled.
   const go = (href: string) => { if (onOpenHref?.(href)) return; router.push(href); };
-  // R1 — the ONE room-key convention: the entity id for deal rooms; `<kind>:<id>` for loose
-  // anchors (inbox | commitment | meeting — matches lib/room/turns.ts `looseRoomKey`).
-  const roomKey = ent?.id ?? (kind === 'entity' ? id
-    : `${kind === 'commitment' || kind === 'followup' ? 'commitment' : kind === 'meeting' ? 'meeting' : 'inbox'}:${id}`);
+  // R1 — the ONE room-key convention: the entity id for the entity door; `<kind>:<id>` for every
+  // item door (inbox | commitment | meeting — matches lib/room/turns.ts `looseRoomKey`).
+  // ONE OBJECT, ONE DOOR: the key is the DOOR's, never the linked entity's (`ent?.id` used to win
+  // here — the item door then read and wrote a machine container's conversation).
+  const roomKey = roomKeyForDoor(door);
   const [turns, setTurnsRaw] = useState<Turn[]>(() => _dealTurns.get(roomKey) ?? []);
   const setTurns = (updater: (prev: Turn[]) => Turn[]) => {
     setTurnsRaw((prev) => { const next = updater(prev); _dealTurns.set(roomKey, next); return next; });
@@ -688,7 +726,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
     if (!inRoom) return null;                              // the project door's own grammar
     if (turns.some((t) => t.role === 'user')) return null;  // the exchange has started — step aside
     const name = ent?.name?.trim();
-    const pinned = ent?.brief ?? view.brief ?? null;
+    const pinned = opening.brief;
     const sum = (ent?.summary ?? '').trim();
     // ── A ROOM WITH A RECORD IS NEVER GREETED AS A NEW ONE (owner, Sep 18 — a two-month-old
     // project answered "Fresh start on <project>") ────────────────────────────────────────────────
@@ -699,7 +737,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
     // DERIVED FROM WHAT THE ROOM ALREADY HOLDS (no second fetch, no new fact): a composed brief, a
     // brief watermark, a synthesized summary and any standing narration each exist only because
     // this work has a past. Only a room with none of them is genuinely new.
-    const hasRecord = !!pinned || !!(ent?.briefAt ?? view.briefAt) || !!sum || turns.length > 0;
+    const hasRecord = !!pinned || !!opening.at || !!sum || turns.length > 0;
     const invite = hasRecord
       ? (name ? `Picking ${name} back up — what do you want to look at?` : 'Picking this back up — what do you want to look at?')
       : (name ? `Fresh start on ${name}. What do you want to pick up?` : 'Fresh start. What do you want to pick up?');
@@ -777,12 +815,14 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
       const d = await res.json().catch(() => ({}));
       if (stale(gen)) { dropStale(); return; }     // the room was reset while this was in flight
       const by = d.worker ? String(d.worker).split(' ')[0] : null; // O3: the work always has a name
-      const say = !res.ok ? (d.error || "I couldn't prepare that just now.")
+      const say = !res.ok ? "I couldn't prepare that just now."
         : d.did === 'draft' ? `${by ? `${by} drafted it` : 'Drafted'} — it’s ready below. Send it as-is or tell me what to change.`
           : d.did === 'nudge' ? `${by ? `${by} drafted the nudge` : 'Nudge drafted'} — it’s on the task.`
             : d.did === 'docsend' ? `${by ? `${by} found the file and drafted the send` : 'Found the file and drafted the send'} — it’s ready below.`
               : d.did === 'delegated' ? `${String(d.worker || 'A coworker').split(' ')[0]} is on it — the work lands here when it’s ready.`
-                : (d.reason || 'Nothing to prepare here.');
+                // W8.4 · NO INTERNAL TEXT: `reason` can carry the judge's own reasoning — a log line,
+                // never the colleague's reply. The room speaks the house line for its class.
+                : prepareNoneLine(d.reason);
       addTurn({ role: 'system', text: say });
       if (res.ok && d.did && d.did !== 'none') { try { window.dispatchEvent(new CustomEvent('aug:prepared', { detail: {} })); } catch { /* SSR-safe */ } }
     } catch {
@@ -938,7 +978,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   // — the cached brief mismatches, nothing serves an `at`, and this rule switched OFF exactly in the
   // window where the room is most likely to be carrying stale narration. A narration older than the
   // grace window is history whether or not a brief exists to digest it.
-  const foldBriefAt = ent?.briefAt ?? view.briefAt ?? null;
+  const foldBriefAt = opening.at;
   const NARRATION_GRACE_MS = 48 * 60 * 60 * 1000;
   const narrationAged = (at: string, graceMs: number) => {
     const ms = Date.parse(at);
@@ -1067,7 +1107,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   // THE ONE-VOICE BRIEF: when the responder has spoken, the paragraph IS the opening. The stitched
   // fields (anchor · summary · debts) are ONLY the fallback until the first compose lands — and
   // they ride the SAME pinned seat, so there is never a second prose opening anywhere.
-  const composed = ent?.brief ?? view.brief ?? null;
+  const composed = opening.brief;
   // ══ THE ASK LINE SPEAKS THE COUNTERPARTY'S OWN ASK (THE OPENING CONTRACT, clauses 2+3 — the
   // owner's Sep 19 walk) ═══════════════════════════════════════════════════════════════════════
   //
@@ -1092,11 +1132,6 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   const anchorLine = (() => {
     const a = view.anchor;
     const who = a?.who ? spokenName(a.who) : null;
-    const askText = a?.ask ? a.ask.charAt(0).toLowerCase() + a.ask.slice(1).replace(/\.+$/, '') : null;
-    // OUR disposition, not their request — the verbs the judge uses to say what the reader must do
-    // with what arrived. A counterparty asks for a thing; they do not ask you to "decide".
-    const machineFramed = !!askText
-      && /^(decide|choose|determine|assess|evaluate|weigh|consider|review|triage|judge)\b/.test(askText);
     // THE CLAIM RENDERS OR IT IS NOT MADE: "below" is true only while the card is in this stream.
     const replyMounted = mountedCards.some((c) => c.key === 'reply');
     const prep = a?.prepared && replyMounted
@@ -1104,30 +1139,25 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
           a.prepared === 'draft' ? 'I drafted a reply below' : `${a.prepared.split(' ')[0]} drafted a reply below`,
           seat?.name ?? null)
       : null;
-    const tail = prep ? ` — ${prep}` : '';
-    const line = who && askText
-      ? (machineFramed
-        // Their seat (sender) and our frame (the disposition), in that order, never fused.
-        ? `From ${who} — this needs you to ${askText}${tail}.`
-        : `${who} is asking you to ${askText}${tail}.`)
-      : askText ? `This needs you to ${askText}${tail}.`
-      : prep ? `${prep}.`
-      : null;
+    // W8.4 · THE ONE FALLBACK LADDER (lib/room/opening-fallback.ts): their seat and our frame never
+    // fused, the item's own ask in a colleague's words ("Still open: …", never "This needs you to
+    // <title>"), and NO membership claim at all — the header's connection line is membership's
+    // only voice, so the untied-work claim (made from absence) can never sit under a "connects to …" chip.
+    const line = fallbackOpeningLine({ who, ask: a?.ask ?? null, preparedClause: prep });
     // A person is introduced once per sentence; the second mention is "they"/"their".
     return line ? nameOncePerSentence(line, [who]) : null;
   })();
   // ══ THE FALLBACK IS ONE VOICE (W3.5 (a); registry precedence #1: "the stitched field-assembly
   // fallback is dead"). Found live: with no composed brief the pinned seat spoke as THREE authors
   // — the anchor line (the understanding's ask), a grey entity-summary line (the state synthesis in
-  // the team's voice), and "You owe:" / "They owe:" debt lines — one fact, three homes. The
-  // composed brief now reaches the first paint from the server path; when it genuinely cannot,
-  // the seat says ONE thing: the item's own ask (a project room: its summary or the welcome line).
+  // the team's voice), and "You owe:" / "They owe:" debt lines — one fact, three homes. When no
+  // composition speaks, the seat says ONE thing: the item's own ask (a project room: its summary or
+  // the welcome line) — or nothing (W8.4: the quiet seat, never a claim made from absence).
   const openingText = composed ?? (inRoom
     ? (ent?.summary ?? (turns.length === 0
       ? `This is the room for ${ent?.name ?? 'this work'} — ask anything, correct me, or hand work off. I hold everything on it.`
       : null))
-    : (anchorLine
-      ?? (!view.anchor?.ask && !pending ? "This isn't tied to a bigger body of work yet — I'll keep it standalone." : null)));
+    : anchorLine);
   // THE STRUCTURAL FRAME: the frame is up before the view — a quiet shimmer, never a claim.
   const showShimmer = !inRoom && pending && !ent && !view.anchor?.ask && !view.brief;
 
@@ -1137,7 +1167,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   // THE MOVE YIELDS TO ANY MOUNTED CARD (W3.5 (b); registry precedence #10): the rail states the
   // fact (a kit card for the move's target is in this stream), the ONE placement table decides.
   const plan = panelPlan({ hasDecision: decisionIsPrimary, moveCardMounted: !!cardForMove });
-  const resp = composed ? { move: plan.showMove ? respMove : null, offers: plan.showOffers ? ent?.offers ?? view.offers ?? [] : [] } : null;
+  const resp = composed ? { move: plan.showMove ? respMove : null, offers: plan.showOffers ? opening.offers : [] } : null;
   // ONE DEED, ONE OBJECT: when the MOVE's target IS a prepared artifact on this rail, the two
   // renderers MERGE — the object rides IN the pinned card (its label + byline), the move's label is
   // the CTA, and the artifact never renders a second time in the stream.
@@ -1271,7 +1301,8 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   // shape at all three seats, and a seat cannot accidentally widen what the test judges against.)
   const askContext = (t: Pick<Extract<Turn, { role: 'system' }>, 'refs'>): Array<string | null | undefined> => [
     ...((t.refs ?? []).map((r) => r.label)),
-    resp?.move?.label ?? ent?.nextMove ?? null,
+    // The entity's own next move is the ENTITY door's context, never an item door's (W7.2).
+    resp?.move?.label ?? (inRoom ? ent?.nextMove ?? null : null),
     view.anchor?.ask ?? null,
   ];
 
@@ -1303,13 +1334,21 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
   //    own bubble. Every one of those seats is within a screen of the others; three copies of one
   //    message would be the same noise this law exists to remove.
   // ══════════════════════════════════════════════════════════════════════════════════════════════
-  const objectItemId = kind === 'email' ? id : (sourceItemId || (moveIsMail ? respMoveTargetId : null));
+  // THE OBJECT IS THE DOOR'S OWN SOURCE (W7.2 — lib/room/door.ts objectIdForDoor): an item door
+  // never takes the MOVE's target as its source — that fallback is how another item's raw email
+  // mounted under a commitment's title. The entity door, with nothing focused, may still fall back
+  // to its mail move's target: a member it owns.
+  const objectItemId = objectIdForDoor(door, { sourceItemId, moveRef: respMove?.ref ?? null });
   const objectAlreadyMounted = !!objectItemId
     && mountedCards.some((a) => !!a.showsSource
       && ((a.anchorKey ?? '').includes(objectItemId) || a.key.includes(objectItemId)));
   const objectCard = objectItemId && !objectAlreadyMounted ? (
     <SourceObjectMount itemId={objectItemId}
-      onOpenThread={() => go(`/item/${objectItemId}?kind=email`)} />
+      // W8.4 · ONE CARD, ONE DOOR: the host's drawer (the deep-dive) — else the room's own focus.
+      onOpenThread={() => (onOpenThread ? onOpenThread(objectItemId) : go(`/item/${objectItemId}`))} />
+  ) : (!objectItemId && door.kind === 'item' && sourceMeeting) ? (
+    // THE ONE NOTE ADDRESS: /meetings/<calendarEventId ?? transcriptId> — served as `addressId`.
+    <MeetingSourceMount meeting={sourceMeeting} onOpen={() => go(`/meetings/${sourceMeeting.addressId}`)} />
   ) : null;
   // A decision that ALREADY shows a prepared object keeps it (that is the work being approved) —
   // the source then takes the next seat down, where it is the material, not the deliverable.
@@ -1458,7 +1497,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
             </div>
             <p className="mt-0.5 text-[12px] text-neutral-500">{t.standingSpec.deliverable}</p>
             <p className="mt-1 text-[11.5px] text-neutral-400">
-              {t.standingSpec.cadenceLabel} · {t.standingSpec.ownerName.split(' ')[0]} owns it{t.standingSpec.firstRun ? ` · first run ${String(t.standingSpec.firstRun).slice(0, 10)}` : ''}
+              {t.standingSpec.cadenceLabel} · {t.standingSpec.ownerName.split(' ')[0]} owns it{t.standingSpec.firstRun && fmtMonthDay(String(t.standingSpec.firstRun)) ? ` · first run ${fmtMonthDay(String(t.standingSpec.firstRun))}` : ''}
               {/* Studio DEMOTED to the method editor: a deep-dive behind the standing object. */}
               {t.standingSpec.status === 'confirmed' && t.standingSpec.workflowId && (
                 <> · <a href={`/studio?workflow=${t.standingSpec.workflowId}`} className="text-neutral-400 underline decoration-neutral-300 hover:text-indigo-600 transition-colors">method</a></>

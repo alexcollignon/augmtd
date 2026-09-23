@@ -492,6 +492,10 @@ async function syncOutlookCalendar(
         'isAllDay',
         'isCancelled',
         'onlineMeeting',
+        // W7.4 — THE IDENTITY an invitation email carries (its .ics UID / Graph eventMessage's event
+        // iCalUId). Lands in `metadata` with the rest of the event, so no column is needed; Google
+        // rows already keep the whole event (`metadata.iCalUID`). lib/calendar/invite-link.ts joins on it.
+        'iCalUId',
       ])
       .filter(`start/dateTime ge '${timeMin}' and start/dateTime le '${timeMax}'`)
       .orderby('start/dateTime')

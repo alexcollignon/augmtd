@@ -377,6 +377,15 @@
      "status": "planned",
      "wave": "W3.1",
      "note": "census: open you_owe / actionable rows with later cross-source evidence ≤ threshold"
+    },
+    {
+     "suite": "smoke-evidence-sources",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "N1-N9"
+     ],
+     "note": "W8.1: the REAL resolvers + pool + reverse door over an in-memory double — a calendar meeting held with the counterparty nominates a 'call X' commitment; a bare-name meeting counterparty resolves through the meeting's own attendees; a teammate's delivery nominates (forward and reverse) with role teammate; a commit-door deed nominates"
     }
    ],
    "version_key": "FULFILLMENT_LAW_VERSION",
@@ -503,7 +512,8 @@
     "app/api/work/threads/[id]/send-coworker-email/route.ts",
     "app/api/commitments/[id]/nudge/route.ts",
     "app/api/inbox/[id]/send-reply/route.ts",
-    "app/api/compose/send/route.ts"
+    "app/api/compose/send/route.ts",
+    "lib/deeds/bulk.ts"
    ],
    "gates": [
     {
@@ -530,6 +540,16 @@
      "status": "planned",
      "wave": "W0.4",
      "note": "concurrent resumes on a real parked run: exactly one 200, the rest 409"
+    },
+    {
+     "suite": "smoke-held-drain",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "B5-B8",
+      "B10"
+     ],
+     "note": "W8.6: the paged bulk commit — first claim on committedAt null, resume by lease + cursor compare-and-set, per-page lease-guarded persist, pending-only per member, a complete/undone deed never acts again, the batch undo claims undoneAt exactly once"
     }
    ],
    "version_key": null,
@@ -565,7 +585,8 @@
     "lib/work/sweep-users.ts",
     "lib/work/judgment-sweep.ts",
     "app/api/cron/draft-sweep/route.ts",
-    "app/api/cron/commitments-sweep/route.ts"
+    "app/api/cron/commitments-sweep/route.ts",
+    "lib/deeds/held-words-bulk.ts"
    ],
    "gates": [
     {
@@ -619,6 +640,26 @@
      "status": "planned",
      "wave": "W1.6",
      "note": "source gate: every full listing goes through fetchAllRows; census: judged reach ≥ threshold"
+    },
+    {
+     "suite": "smoke-waiting-truth",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "E1-E3",
+      "F1-F4",
+      "H1-H3"
+     ],
+     "note": "W8.3: the waiting/watched bands serve whole to a declared bound (HELD_BAND_ROWS_BOUND) and a short footer names it; a bulk label past its cap states the group; the brief's FYI pool is a declared window read whole through fetchAllRows under a reported bound (was .limit(200), saturated every load)"
+    },
+    {
+     "suite": "smoke-held-drain",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "H10-H13"
+     ],
+     "note": "W8.6: the not-judged lane's per-user caps are stated and every row they leave is counted in leftBehind (and the slice's remainder joins it); a skipped lane says so"
     }
    ],
    "version_key": null,
@@ -647,7 +688,10 @@
     "components/home/home-view.tsx",
     "components/home/home-ask.tsx",
     "components/home/ask-stream.ts",
-    "app/(main)/project/[id]/page.tsx"
+    "app/(main)/project/[id]/page.tsx",
+    "app/api/items/view/route.ts",
+    "lib/room/open-kicks.ts",
+    "lib/room/warm-client.ts"
    ],
    "gates": [
     {
@@ -699,6 +743,15 @@
      "status": "planned",
      "wave": "W4.1",
      "note": "browser walk: every chat keeps a real URL across refresh"
+    },
+    {
+     "suite": "smoke-room-voice",
+     "ids": [
+      "E1-E9"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W8.4 (supersedes W3.5 (a)'s wait-up-to-budget): the item view NEVER awaits a compose — it paints last-good (one select, older version flagged) and composes under after(); a landing where nothing was painted arrives on the one late re-check as an APPEND (unchanged); `?warm=1` (the hover warm) schedules no AI; an open joining a warm posts ONE kick to the budgeted warm door (lib/room/open-kicks.ts)"
     }
    ],
    "version_key": null,
@@ -708,7 +761,7 @@
    "collides_with": [
     {
      "law": "one-voice-brief",
-     "precedence": "compose BEFORE paint (server path + last-good); if it cannot, it arrives as an appended turn, never a swap"
+     "precedence": "W8.4: the first paint carries LAST-GOOD at once (the view never waits on a compose); a fresh composition where nothing was painted arrives as an appended turn, never a swap"
     },
     {
      "law": "fresh-floor",
@@ -868,7 +921,8 @@
     "lib/prepare/truth.ts",
     "lib/utils/user-time.ts",
     "lib/utils/weekday-floor.ts",
-    "lib/workflows/execute-step.ts"
+    "lib/workflows/execute-step.ts",
+    "lib/home/attention.ts"
    ],
    "gates": [
     {
@@ -927,6 +981,15 @@
      "kind": "pure",
      "cost": "zero-ai",
      "note": "stale-by-window at the one reader"
+    },
+    {
+     "suite": "smoke-waiting-truth",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "C1-C6"
+     ],
+     "note": "W8.3: a past-dated unjudged event leaves Waiting; 'urgent' counts judged rows only; served dates are plain words (plainDay), never a raw ISO string"
     }
    ],
    "version_key": "JUDGE_VERSION",
@@ -1016,6 +1079,83 @@
    ]
   },
   {
+   "id": "one-conversation-one-live-item",
+   "name": "ONE CONVERSATION, ONE LIVE ITEM",
+   "aliases": [
+    "THE CONVERSATION DELTA",
+    "conversationDelta",
+    "THE DUE-BEFORE-SOURCE FLOOR",
+    "THE COUNTERPARTY FOLD (foldCounterparty)"
+   ],
+   "tier": 2,
+   "domain": "judge-prepare-deck",
+   "statement": "When a new message or meeting lands on a conversation (an email thread; a meeting's calendar series) that already holds open commitments, extraction does not just append: ONE reasoned pass (classification tier, the message's OWN words, today injected by code, the cut declared) reads the open items against the message and returns per open item keep · update · superseded_by · delivered · moot and per candidate new · duplicate_of. Code decides what a judgment may do: every non-keep disposition quotes the message verbatim (code-checked) or it is keep; `delivered` only NOMINATES the message to the one fulfillment judge (only a judged delivery closes, and only when the debtor wrote it); superseded/moot settle through one conditional status flip with resolved_reason + a reversible activity row; an update writes only a description or a due the message states, never before the message; a duplicate is not written. Failure keeps everything; at most DELTA_MAX_OPEN items per pass, the rest reported. ONE call site: writeCommitments (mail + meeting). The writer also floors a due earlier than its own source to null (a title naming that past date is no commitment) and folds the counterparty through the person registry and the conversation's own forms (accents, short surnames, bare addresses) so one human never lands under two forms.",
+   "homes": [
+    "lib/work/conversation-delta.ts",
+    "lib/commitments/extract.ts",
+    "scripts/repair-conversation-hoard.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-conversation-delta",
+     "ids": [
+      "A1-A4",
+      "B1-B5",
+      "C1-C4",
+      "D1-D3",
+      "E1-E4",
+      "H1-H3",
+      "H5-H7"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "quoteInText · validateDelta · judgeConversationDelta · applyDeltaPlan · conversationDelta · dueFloorAgainstSource · foldCounterparty",
+     "note": "W8.2: stubbed judge + in-memory table client — the quote law, delivered never closes without a judged delivery (promised/unclear/outage keep the row; a second apply closes nothing), supersede/moot settle through one flip with a reversible activity row, failure keeps everything, no open work makes no call, duplicate folding within one direction, the due-before-source floor, the name-variant fold"
+    },
+    {
+     "suite": "smoke-conversation-delta",
+     "ids": [
+      "F1-F3",
+      "G1-G7",
+      "H4",
+      "H8",
+      "I1-I5",
+      "J1-J2"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "the factory + classification tier + the one clipper; ONE call site (writeCommitments, both paths; an empty extraction still reaches it); delivered only through fulfillment.ts; every write a conditional claim; the writer floors + folds; the repair is guarded (dry-run, --apply --yes, AI only with --judge) and runs the same functions"
+    }
+   ],
+   "fn": "quoteInText · validateDelta · dueFloorAgainstSource · foldCounterparty · nameFormsAgree",
+   "version_key": "CONVERSATION_DELTA_VERSION",
+   "status": "holding-uncommitted",
+   "fixed_by": "W8.2",
+   "collides_with": [
+    {
+     "law": "evidence-settles",
+     "precedence": "the delta only NOMINATES a delivery — the fulfillment judge DECIDES (unclear/failure change nothing); the nominator (W8.1) stays the cross-source door, the delta is the same-conversation door at extraction time"
+    },
+    {
+     "law": "one-fact-one-home",
+     "precedence": "a duplicate candidate is never written and a superseded row is dismissed, not mirrored — the conversation keeps one live row per obligation; the read-time fold (dedupe-deck) stays a reader, never an excuse"
+    },
+    {
+     "law": "human-in-the-loop",
+     "precedence": "supersede/moot/update are reversible state changes — conditional, logged (commitment_dismissed is undoable via /api/restore; an update keeps the previous values in its activity row); never a send, post or booking"
+    },
+    {
+     "law": "fulfillment-law",
+     "precedence": "`delivered` from the delta is a nomination into judgeFulfillmentFromEvidence + applyFulfillmentVerdict — a re-promise re-anchors there, never here"
+    },
+    {
+     "law": "time-truth",
+     "precedence": "a due earlier than its own source is no deadline (null); an update's due must be stated by the message and never before it"
+    }
+   ],
+   "note": "Sep 23 (owner account, read-only census): one client conversation held ~20 open commitments accumulated message by message (Aug 3 → Sep 16) — one counterparty alone 7 open; another person under two name forms (full vs short surname); a third partly filed under a bare address; one commitment due two days BEFORE its source email with a null counterparty. Dry-run of scripts/repair-conversation-hoard.ts (zero AI) on that account: 74 live commitments · 12 counterparty name variants to fold · 1 due before its source · 7 thread groups with ≥2 live rows (top three: 12/8/4 live rows, 55 delta passes). Platform census (read-only): 117 thread groups with ≥2 live rows (486 rows) across 4 users → 1,031 delta passes (245 later messages left behind by the 30/group cap, reported) → the --judge repair is ≈ €4–6 for --all (≈ €0.004/pass + a fulfillment judgment per delivered nomination)."
+  },
+  {
    "id": "pinning-law",
    "name": "THE PINNING LAW",
    "aliases": [
@@ -1079,7 +1219,9 @@
    "homes": [
     "lib/room/brief.ts",
     "lib/room/grounding.ts",
-    "components/home/item-rail.tsx"
+    "components/home/item-rail.tsx",
+    "lib/room/self-voice.ts",
+    "lib/room/opening-fallback.ts"
    ],
    "gates": [
     {
@@ -1089,6 +1231,18 @@
      ],
      "kind": "outcome",
      "cost": "live-ai"
+    },
+    {
+     "suite": "smoke-room-voice",
+     "ids": [
+      "A1-A4",
+      "B1-B5",
+      "C1-C4"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "narratesSpeakerInThirdPerson · sigGateStands · fallbackOpeningLine",
+     "note": "W8.4: the third-person refusal fires only when the name denotes the speaker (a known person's full name / a '<Capitalized> <Seat>' name token is someone else); a refused or fully-degraded composition is remembered for its sig (refusedSig — never re-bought per open, last-good served); an AI failure is not cached; the item door's fallback is ONE pure ladder — the item's own ask or nothing, never a membership claim or the title template"
     }
    ],
    "fn": "brief sig composition (board digest in the sig)",
@@ -1098,7 +1252,7 @@
    "collides_with": [
     {
      "law": "no-mutation-and-address",
-     "precedence": "compose before paint; else append, never swap"
+     "precedence": "W8.4: last-good at the paint (never a wait on the compose); else append, never swap"
     }
    ]
   },
@@ -2470,6 +2624,73 @@
    "collides_with": []
   },
   {
+   "id": "authorship-law",
+   "name": "AUTHORED, NOT FILED (THE AUTHORSHIP LAW)",
+   "aliases": [
+    "is_from_user = THE AUTHOR IS THE USER",
+    "isAuthoredByUser",
+    "authorshipStamp",
+    "filed_in_sent",
+    "ON-BEHALF-OF IS AUTHORED",
+    "A RELAYED CALENDAR ITEM IS NEVER AUTHORED",
+    "OUTLOOK_MESSAGE_SELECT"
+   ],
+   "tier": 2,
+   "domain": "sync",
+   "statement": "`emails.is_from_user` means the message's AUTHOR is the user — never the folder it sits in. Authored = the from address is owned (login + connected mailboxes + the send-as aliases the PROVIDER reports; nothing learned from mail — a delegate sending AS the user is still the user's mail, delegate recorded), OR the transmitting sender (Graph `sender` / RFC 5322 `Sender:`) is owned and the message is not a calendar item (sent ON BEHALF OF a principal: the user's deed, principal recorded). A relayed calendar item (a forwarded meeting request that keeps its organizer in `from`) is never authored, and neither is a foreign or missing from. Every sync path (initial · recovery · both push doors · fast path · thread backfill · the Sent pass) stamps through ONE pure helper; being filed in Sent survives only as the `metadata.filed_in_sent` fact, and no reader decides authorship from the folder.",
+   "homes": [
+    "lib/email-sync/authorship.ts",
+    "lib/email-sync/send-as.ts",
+    "lib/email-sync/sync-emails.ts",
+    "lib/google/gmail.ts",
+    "lib/microsoft/outlook.ts",
+    "app/api/webhooks/outlook/push/route.ts",
+    "lib/email-sync/authorship-repair.ts",
+    "lib/activity/reopen.ts",
+    "scripts/repair-authorship.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-authorship",
+     "ids": [
+      "A1-A11"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W7.6: no folder-based stamp left; every emails write reads the one stamp; the Sent pass stamps filed_in_sent; provider send-as in the owned set; no other writer; no reader tests the folder; one Outlook select carrying sender; the Gmail Sender header parsed; the repair is guarded dry-run and reopens only through the one restore flip"
+    },
+    {
+     "suite": "smoke-authorship",
+     "ids": [
+      "B1-B8",
+      "C1-C4"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "authorshipOf · authorshipStamp · ownAddressesOf · planAuthorshipRepair · closeCausedByMisattribution"
+    }
+   ],
+   "fn": "authorshipOf · authorshipStamp · planAuthorshipRepair · closeCausedByMisattribution",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "fixed_by": "W7.6",
+   "collides_with": [
+    {
+     "law": "thread-reply-state-is-structural",
+     "precedence": "reply resolution stays direction + time; W7.6 makes the DIRECTION true — a message filed in Sent but authored by someone else is inbound-shaped history, never the user's reply"
+    },
+    {
+     "law": "identity-hygiene",
+     "precedence": "the self derivation already reads only owned-address display names; with authorship true at the source, is_from_user is no longer a folder fact anywhere"
+    },
+    {
+     "law": "echo-floor",
+     "precedence": "the echo floor reads the user's own outbound; a relayed invite is not the user's outbound and is judged as the organizer's mail"
+    }
+   ],
+   "note": "Sep 23 (W7.5's finding): the Sent-folder sync stamped is_from_user=true on everything in Sent Items (and replaced the parser metadata with attachments alone, erasing the invite's Graph type). Census (dry-run, 20 users): 7,979 is_from_user rows across 5 users · 1 misattributed (a client-organized meeting request forwarded from the owner's Outlook, basis foreign_from — its eventMessage type had been erased by the old write) · 0 held back · 0 closes caused (its thread's needs-reply item is still pending; 125 inbox + 99 commitment closes by 'replied'/'evidence:email' checked). Repair: scripts/repair-authorship.ts (dry-run default)."
+  },
+  {
    "id": "thread-reply-state-is-structural",
    "name": "THREAD REPLY STATE IS STRUCTURAL",
    "aliases": [
@@ -2866,6 +3087,386 @@
      "precedence": "the grounding consumes the one reader; it never re-derives"
     }
    ]
+  },
+  {
+   "id": "one-object-one-door",
+   "name": "ONE OBJECT, ONE DOOR",
+   "aliases": [
+    "EVERY DOOR SPEAKS FOR THE OBJECT IN ITS TITLE",
+    "THE ROOM-KEY RULE (roomKeyForDoor)",
+    "ITEM-FIRST BRIEF",
+    "THE CONNECTION LINE",
+    "THE OWNERSHIP PREDICATE (targetOwnedByDoor)",
+    "A LINK IS NOT AN ADDRESS"
+   ],
+   "tier": 2,
+   "domain": "rooms",
+   "statement": "Every door speaks for the object in its title. The item door composes an ITEM-FIRST brief keyed under the item's own `<kind>:<id>` room whatever its links; its project appears as ONE connection line (tracked: the project door; untracked: the quiet 'connects to … Track' chip), never the voice. A tracked project's own door speaks the project agenda. The component note and the claims floor are computed from what THIS door mounts. A MOVE, an object card or a bound card must target an item this door owns (its anchor or its own artifacts) or it does not render; the object card is the door's own source, never the move target. Recognize-on-open may link, but never changes the door's voice or room key mid-visit. Turns already written under entity keys stay as the entity door's record; item doors read their own keys. One card, one door: the object card's 'Thread →' opens the thread where its host reads it (the item door's drawer; the project room's in-room focus) — never a separate page.",
+   "homes": [
+    "lib/room/door.ts",
+    "lib/room/turns.ts",
+    "lib/room/grounding.ts",
+    "lib/room/brief.ts",
+    "lib/room/warm-briefs.ts",
+    "app/api/items/view/route.ts",
+    "components/home/item-rail.tsx",
+    "components/home/item-detail.tsx",
+    "lib/entities/on-action.ts",
+    "lib/entities/membership.ts",
+    "lib/converse/index.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-one-door",
+     "ids": [
+      "A1-A6",
+      "B1-B7",
+      "C1-C8",
+      "D1-D3",
+      "E1-E4"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W7.2: the key rule at every writer and both doors; the item door composes loose-only and serves the entity voiceless; the grounding's item scope never widens; the rail's opening/move/object/binding are door-aware; the project door and the deck's room-door law unchanged"
+    },
+    {
+     "suite": "smoke-one-door",
+     "ids": [
+      "F1-F3",
+      "G1-G6",
+      "H1-H5",
+      "I1-I5"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "roomKeyForDoor · targetOwnedByDoor · objectIdForDoor · cardMayBindTarget · idsNamedByCard · connectionLineFor"
+    },
+    {
+     "suite": "smoke-room-first-paint",
+     "ids": [
+      "A4",
+      "A5"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "re-pointed W7.2: loose-only compose; no entity overlay"
+    },
+    {
+     "suite": "smoke-one-door",
+     "ids": [
+      "K1-K4"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W8.4 ONE CARD, ONE DOOR: the source card's 'Thread →' opens the thread where the host reads it — the deep-dive's drawer (email · commitment mounts pass openDrawerAt('thread'), the same door as the reply card); the project room keeps it in-room (focus), never a separate page"
+    }
+   ],
+   "fn": "roomKeyForDoor · targetOwnedByDoor · objectIdForDoor · cardMayBindTarget",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "fixed_by": "W7.2",
+   "collides_with": [
+    {
+     "law": "one-grounding",
+     "precedence": "the one grounding's SCOPE is the door's object — an item scope grounds on the item alone and never widens to a linked entity; the entity's page is the entity door's grounding"
+    },
+    {
+     "law": "a-claim-renders",
+     "precedence": "the floor's inputs are per door — the component note and enforceRenderedClaims are computed from what THIS door mounts, never from a wider board"
+    },
+    {
+     "law": "row-tag-and-room-door",
+     "precedence": "unchanged and complementary — a TRACKED member's deck row still opens the PROJECT room, which speaks the project; the item door, when opened, speaks the item"
+    },
+    {
+     "law": "no-mutation-and-address",
+     "precedence": "a link landing mid-visit (recognize-on-open) may add the connection line and related rows; it never re-keys the room or swaps the painted opening"
+    },
+    {
+     "law": "pinning-law",
+     "precedence": "a tracked project is a human decision and gets its own door; an untracked container is a suggestion and never re-homes an item's conversation or voice"
+    }
+   ],
+   "note": "Sep 23 (owner, production): a commitment's door served an UNTRACKED machine entity's brief under the commitment's title six minutes into a visit (recognize-on-open wrote the link; roomKeyForItem/grounding/items-view all keyed on ANY link); its MOVE targeted a sibling item, the rail mounted that sibling's raw email as this room's source, a bare proposal card rendered for a decision the door never mounts, and the claims floor passed because the component note was computed from the ENTITY board. 473/481 initiative entities untracked; 1,430 commitment + 946 inbox links point at them.",
+   "broken_by": null
+  },
+  {
+   "id": "one-stage",
+   "name": "ONE STAGE",
+   "aliases": [
+    "A COMMITMENT'S MESSAGE IS THE ONE EMAIL CARD",
+    "THE COMPOSE LANE",
+    "THE STAGE IS FOR A PARKED GATE",
+    "A MEETING-BORN COMMITMENT'S SOURCE IS ITS MEETING",
+    "source_id IS THE SOURCE ROW'S ID"
+   ],
+   "tier": 2,
+   "domain": "rooms",
+   "statement": "A commitment's prepared message renders as THE ONE EmailCard in the conversation (the kit email kind, the same host as the email door — its compose lane reads /api/compose/draft and commits through /api/compose/send), mounted by a live pooled draft or the person's own \"Draft an email\"; the commitment door raises a stage ONLY for a parked gate. Its SOURCE reads as the door's object card and in the drawer's Source section — for a meeting-born commitment, the meeting itself (the kit's existing `source` kind, \"Open meeting →\" to the one note address). `commitments.source_id` is the SOURCE ROW's id (emails.id / meeting_transcripts.id); every reader maps it through the one read (lib/commitments/source.ts), recognition included.",
+   "homes": [
+    "components/home/item-detail.tsx",
+    "components/home/email-card.tsx",
+    "components/home/item-rail.tsx",
+    "components/room/source-object.tsx",
+    "lib/commitments/source.ts",
+    "app/api/items/view/route.ts",
+    "lib/entities/sources.ts",
+    "lib/entities/recognize.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-one-stage",
+     "ids": [
+      "A1-A8",
+      "D1-D5",
+      "E2-E4"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W7.3: no split-stage composer on the commitment door; the compose lane; the stage for a gate only; the source in the drawer + the meeting object card in the same flight; recognition maps an email parent"
+    },
+    {
+     "suite": "smoke-one-stage",
+     "ids": [
+      "E1"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "itemFromCommitment"
+    },
+    {
+     "suite": "smoke-threads",
+     "ids": [
+      "T15.8b",
+      "T15.8c",
+      "T18.10",
+      "T18.13",
+      "T18.19",
+      "T32.9"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "re-pointed W7.3"
+    }
+   ],
+   "fn": "itemFromCommitment · meetingSourceCard",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "fixed_by": "W7.3",
+   "collides_with": [
+    {
+     "law": "one-object-one-door",
+     "precedence": "the meeting is this door's OWN source object — it takes the object card's one seat only when the door has no mail object, and never a move target"
+    },
+    {
+     "law": "one-navigation-law",
+     "precedence": "the stage stays summoned-only; on the commitment door the only summon left is a parked gate's"
+    }
+   ],
+   "note": "Sep 23 (owner, production): the header \"Source\" (and a nudge row) opened a split stage holding the OLD ComposePanel while the email door's reply was the kit EmailCard; the meeting-born commitment had no source object; an email commitment's source_id (an emails row — 40/40 sampled, 0 as an inbox_items id) was read by recognition as an inbox item id, so its structural parent never resolved."
+  },
+  {
+   "id": "true-addressees",
+   "name": "TRUE ADDRESSEES",
+   "aliases": [
+    "THE ONE ADDRESSEE LADDER",
+    "resolveAddressee",
+    "THE ADDRESSEE FLOOR (misaddressed)",
+    "A DRAFT IS STAMPED WITH WHO IT GREETS",
+    "NEVER A PLACEHOLDER ADDRESS"
+   ],
+   "tier": 2,
+   "domain": "rooms",
+   "statement": "Who a prepared message is FOR is decided once, by ONE ladder — the counterparty → the source email's other party → the meeting's attendees minus the user → the linked project's one external person — and STAMPED on the draft at production (every commitment drafter: the pass's nudge / doc-send / paste-pack lanes, the steer redraft, compose; inbox drafts stamp their sender / the party chased). Several project people are SUGGESTIONS, never an addressee; nothing resolving means no addressee and the card ASKS who it goes to — never a placeholder address. THE ONE READER withdraws (`misaddressed`, never live) a draft whose addressee denotes the user or is not the item's current counterparty, and the existing re-prepare trip replaces it; a legacy nudge's title (\"Nudge — X\") is its name-only addressee.",
+   "homes": [
+    "lib/prepare/addressee.ts",
+    "lib/prepare/read.ts",
+    "lib/prepare/pass.ts",
+    "lib/prepare/paste-pack.ts",
+    "lib/converse/index.ts",
+    "app/api/compose/draft/route.ts",
+    "components/home/email-card.tsx",
+    "components/home/people-chips.tsx"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-one-stage",
+     "ids": [
+      "C1-C6"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W7.3: the one ladder at every commitment drafter, the stamp, the reader's withdrawal in both readers, no placeholder address, the card asks with the ladder's candidates"
+    },
+    {
+     "suite": "smoke-one-stage",
+     "ids": [
+      "C7-C15"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "resolveAddressee · addresseeWithdrawn · stampAddressees · addresseeFromNudgeTitle"
+    }
+   ],
+   "fn": "resolveAddressee · addresseeWithdrawn · stampAddressees",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "fixed_by": "W7.3",
+   "collides_with": [
+    {
+     "law": "a-claim-renders",
+     "precedence": "a misaddressed draft is a claim that does not render — the addressee floor is one more live-predicate twin (stale · expired · outsideWindow · falseClaim · misaddressed); the brief, chip and card all read the ONE reader's live list"
+    },
+    {
+     "law": "human-in-the-loop",
+     "precedence": "the ladder only PRE-FILLS To; the send stays the user's click on the card, and a suggestion is never a recipient until the user taps it"
+    }
+   ],
+   "note": "Sep 23 (owner, production): a meeting-born commitment's pooled nudge was titled \"Nudge — <the user>\" and greeted the user by name with an empty To (the pass handed the drafter the spine's counterparty, which named the user before the self-party repair); compose resolved recipients only from the counterparty or an email source, so 140 open meeting-born commitments consulted no attendee. Census after W7.3: 40 pooled commitment drafts · 1 misaddressed (withdrawn) · meeting-born: 9 addressed by email · 41 a name to add an address to · 68 with the project's candidates offered · 22 ask. Finding left open: a self person entity had absorbed a client's alias + address (so the colleague-domain exclusion reads only authoritative addresses)."
+  },
+  {
+   "id": "identity-hygiene",
+   "name": "THE SELF IS CODE-OWNED",
+   "aliases": [
+    "IDENTITY HYGIENE",
+    "THE SELF ENTITY IS CODE-OWNED",
+    "THE MERGE GUARD (refusesSelfMerge)",
+    "THE ONE ACCENT FOLD (foldAccents)",
+    "planSelfRepair"
+   ],
+   "tier": 2,
+   "domain": "entities",
+   "statement": "The user's self person entity is CODE-OWNED: its forms are the login address + the connected mailbox addresses + the profile name, plus only the display name on mail whose FROM ADDRESS is one of those owned addresses — an address is never learned from mail, and `is_from_user` (a folder fact) never makes a sender the user. ensureSelfEntity REPLACES the alias set with the derivation through ONE pure plan (never accumulates), adopts only a PURE self row, and restores a foreign person that was adopted as self to themselves; no merge door (absorbEntity) and no person-brain write may fold another person into self. Every self-party floor (the addressee law, the commitment writer) reads the derivation, never the stored row. Diacritics are folded in the ONE shared identity normalizer, so \"Zoé\" is \"Zoe\" to every matcher.",
+   "homes": [
+    "lib/entities/self.ts",
+    "lib/projects/identity.ts",
+    "lib/entities/reflect.ts",
+    "lib/people/state-store.ts",
+    "lib/prepare/addressee.ts",
+    "lib/commitments/extract.ts",
+    "lib/home/attention.ts",
+    "lib/prepare/read.ts",
+    "scripts/repair-self-identity.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-identity",
+     "ids": [
+      "A1-A7",
+      "B1-B2",
+      "C1-C2",
+      "E1-E2"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W7.5: no address learned from mail; own-address display names only; replace-not-accumulate via the one plan; pure-row adoption; one self writer; the floors read the derivation; the merge + person-brain guards; the shared fold; the held ledger reads the one reader's live verdict"
+    },
+    {
+     "suite": "smoke-identity",
+     "ids": [
+      "B3",
+      "C3-C5",
+      "D1-D3",
+      "E3"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "deriveSelfIdentity · planSelfRepair · pickSelfRow · refusesSelfMerge · foldAccents · liveFromSourceData"
+    }
+   ],
+   "fn": "deriveSelfIdentity · planSelfRepair · refusesSelfMerge · foldAccents",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "fixed_by": "W7.5",
+   "collides_with": [
+    {
+     "law": "true-addressees",
+     "precedence": "the addressee floor's \"denotes the user\" reads THIS law's derivation — a polluted stored self row can no longer make a client the user"
+    },
+    {
+     "law": "one-reader-per-object",
+     "precedence": "the held ledger / triage deck reads the one reader's live verdict (liveFromSourceData) — no surface chips a draft the reader withdraws"
+    },
+    {
+     "law": "authorship-law",
+     "precedence": "W7.6 fixed is_from_user at the source (authored, not filed); the derivation's owned-address guard stays as defense in depth"
+    }
+   ],
+   "note": "Sep 23 (W7.3's open finding, owner account): the self row carried a client contact's name + address. Root cause, a chain: (1) the sent-folder sync stamps is_from_user on everything in Sent Items and a forwarded meeting request keeps its ORGANIZER in `from` — one such row put the client's name + address into the derived self forms; (2) adoption matched any person row on any derived form, so the client's OWN person row was adopted as self (state.self stamped, synthesis kept); (3) aliases accumulated forever and the old unpaged .limit(500) read minted 4 duplicate self rows that each copied the poisoned forms. Census (dry-run, 20 users): 14 users with a self row · 19 self rows · 2 users needing repair · 2 foreign forms on 5 self rows · 1 foreign person adopted as self (restored losslessly by the plan) · 4 duplicate self rows (0 links, archivable) · 1 first-name shortening (benign) · 0 orphan foreign forms."
+  },
+  {
+   "id": "no-internal-text",
+   "name": "NO INTERNAL TEXT ON SCREEN",
+   "aliases": [
+    "THE JUDGE'S REASON IS NEVER RENDERED",
+    "verdict.reason",
+    "THE MOTION CHECKLIST READS ONLY CLAUSES (motionClausesOf)",
+    "J5 MULTI-ASK MOTION"
+   ],
+   "tier": 2,
+   "domain": "surfaces",
+   "statement": "The brain's private reasoning never reaches the screen: no component renders the judge's `verdict.reason` (not as a line, not as a decision question — a decision's question is the decision brief's own title, else the item's own words), and the \"this message should cover\" checklist renders ONLY the extractor's flagged clauses of one multi-part obligation (`clause: true` / the legacy G1 `g1-*` ids, every step a clause, ≥2) — never the identified-tasks plan, which is the house's internal work plan.",
+   "homes": [
+    "components/home/item-detail.tsx",
+    "app/api/items/view/route.ts",
+    "lib/home/item-gaps.ts",
+    "lib/commitments/extract.ts",
+    "components/home/item-rail.tsx",
+    "components/room/filed-drawer.tsx",
+    "lib/room/opening-fallback.ts",
+    "components/triage/triage-deck.tsx",
+    "lib/triage/deck-context.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-one-stage",
+     "ids": [
+      "B1-B4"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W7.3: a sweep of every .tsx for verdict.reason; decision titles on both doors; the commitment door keeps no reason; the view serves clauses only"
+    },
+    {
+     "suite": "smoke-one-stage",
+     "ids": [
+      "B5"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "motionClausesOf"
+    },
+    {
+     "suite": "smoke-room-voice",
+     "ids": [
+      "D1-D4"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "fn": "prepareNoneLine",
+     "note": "W8.4: the prepare-now `reason` (it can carry the judge's own reasoning) is never printed — the rail speaks prepareNoneLine; no raw ISO date in the rail or the drawer's history (fmtMonthDay); no room surface renders a verdict reason"
+    },
+    {
+     "suite": "smoke-waiting-truth",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "G1-G3"
+     ],
+     "note": "W8.3: the triage card rendered the judge's reason through the deck context (`ctx.reason`) — the field is gone from the context and the read, and the card's why line is the served clause alone"
+    }
+   ],
+   "fn": "motionClausesOf",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "fixed_by": "W7.3",
+   "collides_with": [
+    {
+     "law": "one-voice-brief",
+     "precedence": "the judge's reason was a second author speaking inside the stage; the room's voice is the composed brief alone"
+    }
+   ],
+   "note": "Sep 23 (owner, production): \"Direction 'you_owe' with the item asking…\" rendered raw above the composer and as the DecisionCard's question on both doors; the identified-tasks plan rendered as \"THIS MESSAGE SHOULD COVER\" on any commitment with ≥2 plan tasks (423 open under the old rule → 242 whose steps are real extractor clauses)."
   },
   {
    "id": "ask-supersession",
@@ -5024,6 +5625,238 @@
     {
      "law": "human-in-the-loop",
      "precedence": "HITL outranks every autonomy ambition; re-entry needs the owner's word"
+    }
+   ]
+  },
+  {
+   "id": "the-list-says-only-what-was-judged",
+   "name": "THE LIST SAYS ONLY WHAT WAS JUDGED",
+   "aliases": [
+    "THE WAITING BAND IS JUDGED WORK",
+    "NOT YET JUDGED",
+    "THE KIND FLOOR",
+    "ONE COUNT ON THE LEDGER",
+    "THE GROUP TRUTH ON A BULK VERB"
+   ],
+   "tier": 2,
+   "domain": "judge · prepare · deck",
+   "statement": "The held ledger's WAITING band claims a judgment, so only a cached WORK verdict (or the person's own park) seats a row there: a deck-eligible row nobody judged files as `not_judged` and says so, a stale pre-mailKind understanding never qualifies work on its own, and a past-dated unjudged event never waits. The KIND FLOOR — an unsolicited kind (cold_outreach, newsletter) owes nothing until the user has written into the thread; a notice kind (notification, receipt) owes nothing without you_owe — runs in the judge before AI and again at serve time for verdicts cached under an older JUDGE_VERSION. One surface speaks ONE count (header, intro, deck counter, list footer — the band count plus the deck's non-mail rows); a footer that shows fewer names its bound; a bulk verb past its cap says the newest N OF the group; dates are plain words; the triage card carries no model reasoning and its evidence is the item's own source. THE LIST DRAINS (W8.6): the judgment sweep's NOT-JUDGED LANE judges those rows on the heartbeat — kind floor first at zero AI cost, then newest first, under stated per-user caps whose remainder is reported; and a bulk archive/trash acts on the WHOLE group (to a stated 5,000 safety bound), paged through the one commit door and undone as one.",
+   "homes": [
+    "lib/home/attention.ts",
+    "lib/deeds/held-members.ts",
+    "lib/work/kind-floor.ts",
+    "lib/work/judge.ts",
+    "lib/deeds/held-words-bulk.ts",
+    "lib/home/held-words.ts",
+    "lib/home/held-list.ts",
+    "lib/triage/queue.ts",
+    "lib/triage/deck-context.ts",
+    "lib/triage/deck-context-read.ts",
+    "components/home/held-quiet.tsx",
+    "components/home/bulk-deed-card.tsx",
+    "components/triage/triage-deck.tsx",
+    "app/api/home/brief/route.ts",
+    "lib/work/judgment-sweep.ts",
+    "lib/deeds/bulk.ts",
+    "lib/deeds/words.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-waiting-truth",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "A1-A13",
+      "B1-B12",
+      "C1-C6",
+      "D1-D3",
+      "E1-E3",
+      "E7-E9",
+      "F1-F4"
+     ],
+     "note": "W8.3: classifyHeld/bandOf/whyHeldOf/buildHeldLedger on fixtures (unjudged never claims, the kind floor at both seats, past-dated event leaves waiting, OTP notice leaves waiting, one bound, bulk label truth, settleQueue, plain dates); tests/unit/waiting-truth.test.ts"
+    },
+    {
+     "suite": "smoke-waiting-truth",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "A12",
+      "B7-B9",
+      "E4-E6",
+      "F5-F6",
+      "G1-G4",
+      "H1-H3"
+     ],
+     "note": "W8.3: the derivation supplies neverJudged/judgedCurrent from the one judgment read; the judge floors before AI + JUDGE_VERSION 21; one count on the lens; the deck settles its own stack; the bulk label law; no reason on the triage card and source-first evidence; the FYI pool is a declared window read whole"
+    },
+    {
+     "suite": "smoke-held-drain",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "H5-H11",
+      "H14",
+      "B1",
+      "B3",
+      "B11",
+      "B13-B14",
+      "U1-U3"
+     ],
+     "note": "W8.6: planNotJudgedLane on fixtures (kind floor first, newest first, past-due commitments left to LAW 2, caps + counted remainder, stable); the verb bound + whole-group label truth; paused-deed progress truth; the batch flip reopens every member across chunks and only this deed's (in-memory client)"
+    },
+    {
+     "suite": "smoke-held-drain",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "H1-H4",
+      "H12-H13",
+      "H15-H18",
+      "B2",
+      "B4-B10",
+      "B12",
+      "B15"
+     ],
+     "note": "W8.6: the lane rides the sweep under its own slice before the walk, existing judge + consequence door, reported tally, guarded backfill; the paged commit (stored list slices, lease + cursor compare-and-set, per-page persist, pending-only per member), one activity record per deed, /api/restore batch undo, the card's resume loop"
+    }
+   ],
+   "version_key": "JUDGE_VERSION",
+   "status": "holding-uncommitted",
+   "fixed_by": "W8.3 · W8.6",
+   "fn": "classifyHeld · bandOf · kindFloor · bulkVerbLabel · settleQueue · plainDay · planNotJudgedLane · deedBoundFor · progressAt",
+   "collides_with": [
+    {
+     "law": "a-claim-renders",
+     "precedence": "A CLAIM RENDERS governs prepared-work claims; this law governs the ledger's claim that a row is WORK. Both floors apply; neither shelters the other — a row may be judged work with nothing prepared (it waits, wearing no chip)"
+    },
+    {
+     "law": "notice-law",
+     "precedence": "the notice law decides first (ownership-keyed, header-aware); the kind floor is its class one kind wider and only ever ADDS a none — it never re-promotes what the notice law floored, and a current-law work verdict (the user engaged) outranks the serve-time re-read"
+    },
+    {
+     "law": "time-truth",
+     "precedence": "an unjudged row's passed stated date files it (never 'a deadline that has landed'); a JUDGED row's past date stays the judge's call (a debt survives its date) and is spoken as 'past due'"
+    },
+    {
+     "law": "no-silent-caps",
+     "precedence": "the band serves whole to a declared bound and a short footer names it; W8.6: a bulk archive/trash acts on the whole group to a stated 5,000 bound (unsubscribe/expire keep one page — external links / one judged pass each) and the not-judged lane's per-run caps report their remainder"
+    },
+    {
+     "law": "attention-quality-laws",
+     "precedence": "the BAND LAW still places a row by class + facts; this law is its judgment floor — no row reaches WAITING without a cached work verdict (or the person's park), and the budget, graduation and why-now laws are otherwise unchanged (not_judged never graduates on a timer)"
+    }
+   ],
+   "note": "Sep 23 (owner walk, read-only census on the reference account): 'When you're ready' said '84 real things … all alive' while most rows were never judged (a streaming sign-in code, a login alert, a SaaS payment-past-due, July golf days); a cold-outreach pitch was judged `schedule`; '13 have a deadline that has landed' counted July events; the surface spoke four counts (84 · 84 · '88 here' · 'showing 88 of 90'); 'Archive 200' sat beside 1,223 notices; 'the nearest is 2026-10-14'; the triage card printed the judge's raw reasoning and an unrelated email as evidence; the FYI pool evicted by recency at 200. After W8.3 (read-time, zero writes): reference account waiting 62 → 22, urgent 13 → 2, 36 filed as not-judged, 4 pitches to bulk; all accounts 362 → 137 (151 unvisited · 33 passed-date · 27 stale-understanding · 14 kind-floored). Ledger: scripts/repair-stale-waiting.ts (dry-run census; writes nothing)."
+  },
+  {
+   "id": "evidence-from-everywhere",
+   "name": "EVIDENCE FROM EVERYWHERE",
+   "aliases": [
+    "THE EVIDENCE SOURCE REGISTRY",
+    "THE ACTOR LADDER",
+    "IDENTITY, NOT ADDRESS",
+    "A TEAMMATE'S DELIVERY SETTLES"
+   ],
+   "tier": 2,
+   "domain": "truth",
+   "statement": "Evidence sources are ROWS (lib/evidence/sources.ts: mail · calendar · transcripts · the commit-door ledger), each emitting ONE normalized EvidenceEvent {source, deed, actor, participants, objects}; adding a tool is one row + one adapter, never a matcher, judge or UI edit, and a row is gated on its DATA existing — a workspace feature gates a row only when it means the source is not collected (email off), never a UI module (the user's synced calendar and stored recordings are evidence whatever modules are shown). The ONE matcher keys on person identity (every address alias + the person id of the resolved counterparty) and object links (same thread / calendar event / house ref / entity membership), never on keywords or name similarity against free text; a bare-name meeting counterparty resolves only through that meeting's own attendee list. WHO acted comes from ONE actor ladder (user > counterparty > teammate > unknown; a public mail domain is never a team domain). A teammate's delivery on work the user owes is nominated, judged by the same fulfillment judge with the actor stated, stamped evidence:teammate and narrated with who did it; cancelled events and declined attendees never count. Every door sees the same evidence: the sync fires the reverse door for mail the user authored AND mail a teammate sent (one helper, one call site); a deed recorded at the commit door settles its matching work at once (after()); the item judge and the room grounding match with SETTLE_MATCH and state a teammate's deed as theirs.",
+   "homes": [
+    "lib/evidence/sources.ts",
+    "lib/evidence/types.ts",
+    "lib/evidence/match.ts",
+    "lib/evidence/actor.ts",
+    "lib/evidence/identity.ts",
+    "lib/work/evidence-nominator.ts",
+    "lib/work/evidence-settle.ts",
+    "lib/work/evidence-sweep.ts",
+    "lib/commitments/fulfillment.ts",
+    "scripts/census-evidence-reach.ts",
+    "lib/email-sync/sync-emails.ts",
+    "lib/work/commit-door.ts",
+    "lib/work/judge.ts",
+    "lib/room/grounding.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-evidence-sources",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "R3-R6",
+      "N1-N9"
+     ],
+     "note": "W8.1: every row's REAL loadPool emits the one shape; feature gating reported; a TEST-ONLY row nominates with no matcher edit; identity/teammate/bare-name/reverse-door outcomes; tests/unit/evidence-sources.test.ts"
+    },
+    {
+     "suite": "smoke-evidence-sources",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "R1-R2",
+      "A1-A3"
+     ],
+     "note": "W8.1: registry shape (unique keys, distinct sig letters, TOOL_FEATURE keys, known deeds); the actor ladder incl. precedence and the public-domain rule"
+    },
+    {
+     "suite": "smoke-evidence-sources",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "S1-S8"
+     ],
+     "note": "W8.1: zero AI in the family; the matcher names no source; no fuzzy matching; the judge states the actor; only delivered closes; evidence:teammate + attribution; SETTLE_MATCH on every settle door; no source list outside the registry"
+    },
+    {
+     "suite": "smoke-evidence-sources",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "W3",
+      "W5",
+      "W7-W9"
+     ],
+     "note": "W8.7: a recent TEAMMATE inbound opens the sync door (counterparty/unknown/old do not); a recorded SEND fires the reverse door at once, a failed result does not; the judge + room render 'a teammate (<name>) sent …' and commit-door deeds; legacy judge sections byte-identical; R4 ⟲ RE-POINTED (meetings off gates nothing; email off gates mail)"
+    },
+    {
+     "suite": "smoke-evidence-sources",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "W1-W2",
+      "W4",
+      "W6",
+      "W10"
+     ],
+     "note": "W8.7: one sync helper + one call site, the ladder never re-derived in the sync; recordCommitResult → settleForEvent({type:'deed'}) in after(); judge + grounding pass SETTLE_MATCH; calendar + transcript rows data-gated (THE GATING RULE in the registry header)"
+    }
+   ],
+   "version_key": "FULFILLMENT_LAW_VERSION",
+   "status": "holding-uncommitted",
+   "fixed_by": "W8.1 · W8.7",
+   "broken_by": null,
+   "fn": "actorRole · matchEvents · matchOne · mailEventOf · calendarEventOf · transcriptEventOf · deedEventOf · registryPerson · meetingAttendeesOf · mailOpensReverseDoor · deedWords · laterEvidenceBlock · evidenceLinesOf",
+   "note": "Sep 23 (owner account, read-only census): a teammate's delivery on a client thread was ignored (evidence counted only user|counterparty); bare-name meeting counterparties could never be nominated (address-only matching, recordings carry no attendees); evidence types were a hard-coded three-way union with bespoke pool code per type. After W8.1 (scripts/census-evidence-reach.ts — zero AI, zero writes): commitments nominatable 521 → 567 of 786 open, inbox 276 → 302 of 693 (gained: teammate deed 35, person identity 11, entity membership 26; lost 0). W8.7 (Sep 23): the four remaining hooks wired — teammate inbound mail fires the sync reverse door; the commit door settles a recorded deed at once; the judge + room see SETTLE_MATCH evidence (ROOM_BRIEF_VERSION 18; JUDGE_VERSION unchanged — the evidence set rides the judgment sig as a dep); calendar + transcript evidence gated on data, not the meetings flag (owner decision).",
+   "collides_with": [
+    {
+     "law": "evidence-settles",
+     "precedence": "this law is HOW nomination reaches every source; evidence-settles stays the invariant (nominate within one cycle, only a judged delivery closes, stamped at the evidence's time, undoable)"
+    },
+    {
+     "law": "fulfillment-law",
+     "precedence": "a registered deed only NOMINATES; the fulfillment judge decides; a teammate's piece is judged by the same law from the teammate's own words (a promise or status update is not delivery)"
+    },
+    {
+     "law": "authorship-law",
+     "precedence": "the ladder's `user` rung is is_from_user / owned addresses exactly — a non-authored message is never the user's deed, and a teammate is never folded into the user"
+    },
+    {
+     "law": "identity-hygiene",
+     "precedence": "person identity is read from the registry as it stands (self is code-owned); the matcher never writes identity and never adds a name form to anyone"
+    },
+    {
+     "law": "tier-privacy",
+     "precedence": "a row is switched off by the workspace feature map ONLY when the feature means the source is not collected (email off → no mail row); a UI-module flag (meetings) never gates evidence — calendar + transcript rows are gated on their data; an unreadable map never switches a row off"
     }
    ]
   }

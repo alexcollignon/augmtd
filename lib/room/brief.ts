@@ -16,7 +16,7 @@ import { readPlan, upsertPlan, updatePlan } from '@/lib/store/item-plans';
 import { assembleRoomGrounding, type RoomGrounding, type RoomScope } from '@/lib/room/grounding';
 import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
 
-export const ROOM_BRIEF_VERSION = 17; // 17 — THE CARD'S OWN PROMISE (owner walk, Sep 23): the component note promised the decision card a "recommendation" it never marks without a prepared object, so the brief said "I've laid out the choice … and a recommendation" beside a card recommending nothing. Every cached opening is re-authored once. 16 — A HIDDEN ARTIFACT IS NOT SPOKEN (stabilization W5c, the owner's Sep 23 reload): after W5a hid an out-of-window invite and a false-claim paste pack, the room briefs still said "I've prepared a calendar invite" / "we have the allocation redistribution ready" — the composer read the prep narration of an artifact no card renders, and the judge's reason, as the present. The board now states each hidden artifact WITHDRAWN with THE ONE READER's reason, a prep narration with no live artifact behind it no longer reaches the page, and the sig carries each item's liveness (hashed whole — the 400-char head clip is gone). Every cached opening is re-authored once. 15 — THE ROOM BRIEF READS THE EVIDENCE (stabilization W5a, owner walk Sep 23): the grounding's board now carries each item's LATER EVIDENCE — the user's own record after the item, with its counterparty (a held/booked meeting, sent mail, a transcript), resolved by ADDRESS through the W3.1 nominator, the same facts the judge has read since W2.5 — so the composer can never assert "you missed the walkthrough on Sep 15–16" against a meeting the calendar holds on Sep 14. The page every composition reads has changed, so every cached opening is re-authored once. 14 — THE OPENING CONTRACT, clauses 2+3 (owner walk, Sep 19): the opening says each fact ONCE, points at nothing it cannot show ("NOTHING RENDERS BENEATH YOUR BRIEF" is now an explicit FACT in the prompt, not an absent note the model reads as permission), never leaves a pointer whose antecedent isn't in its own text ("before then"), names a person at most once per sentence, and carries ONE move or states the connection between two — the four rules stated in the prompt AND enforced in code after the call (lib/room/opening-discipline). Live finds: a debt said three times in three sentences, "…before then" with no then, "Sam is asking you to decide whether to engage with Sam's proposal", and a headline about a reply beside an offer to chase someone else. Every cached opening is re-authored once. 13 — Q6 · A CTA REVIEWS WORK DONE + Q4's word reaches the room (attention-plan PART III, Sep 18): a MOVE whose object is not staged may no longer render as a primary action — the prompt says a move reviews work done and never commands work to start (no to-do chains), and the CODE FLOOR (lib/room/cta-law) demotes an unstaged move to the CoS's offer at the same seam the board already validates the target. Live find: "Next: Confirm Sep 14 call status, send material, lock call time". Every cached opening is re-authored once. 12 — Q1 · THE VOICE COLLAPSES + CLAIM ONLY WHAT RENDERS (attention-plan PART III, the owner's Sep 17 walk): the composer knows WHO IT IS (the CoS seat), writes its own actor in the first person, and may point at "below" only when the page carries it — both laws stated in the prompt AND enforced in code after the call (lib/room/self-voice). Live finds: "Clara is asking you to approve…" in Clara's own voice, and "Clara drafted a reply below" with nothing below. Every cached opening is re-authored once. 11 — NOISE OWES NOTHING + A DISMISSAL IS A DECISION (census fix #3, Sep 13): the deterministic noise verdict rides THE PRESENT, the composer names noise ONCE and issues no obligation from it, the user's own dismissal is never reframed as a debt, and a MOVE whose target the deck floors demote dies rather than standing unlinked — every cached opening is re-authored once. 10 — MEMBERSHIP IS NOT ABOUTNESS + THE WATERMARK SURVIVES THE CLIP (Sep 8, second walk): the MOVE's target must share distinctive tokens with the move itself (a settled deed's CTA had bound to an unrelated notice), and the grounding's ledger lines no longer lose their "NOW (…)" watermark to a fixed head-clip — the page every composition reads has changed, so every cached opening is re-authored once. 9 — THE GROUND EVIDENCE REACHES THE MIND (Sep 8): the composer reads what a PERSON would check (who spoke last on each thread — the user's own sent mail included — and what actually sits on the calendar with this room's people) and settles a debt the world shows already done, instead of demanding it again. 8 — ONE AGENDA PER ROOM (Sep 7): every LIVE ask reaches the editor (a coworker's checklist included, read off its own durable query rather than the transcript window), so the COHERENCE rule can acknowledge the gap it was blind to; the composer also names WHO is asking. 7 — THE WATCH-OUT IS SPEECH (threads Phase 3): a live blocker reaches the composer through the grounding and is spoken as part of the position; the room's standalone amber block is gone. 6 — the move never restates a rendered decision (the card IS the CTA; code suppresses regardless — this bump keeps the prompt-version discipline). 5 — THE GROUND LAW: the editor sees the machine state + the newest inbound, and owns the ONE claim about what's owed
+export const ROOM_BRIEF_VERSION = 18; // 18 — THE ROOM SEES WHAT THE SETTLE SEES (stabilization W8.7, EVIDENCE FROM EVERYWHERE): the board's LATER EVIDENCE is now matched with SETTLE_MATCH — a TEAMMATE's mail to the counterparty is stated as theirs ("a teammate (Sam) SENT …") and a deed done THROUGH AUGMTD (the commit-door ledger) as a dated deed — and BOARD_EVIDENCE_RULE gained its teammate clause (say the teammate did it, never the user; never demand it again). The board digest counts lines, so a room already at the line cap would not have moved; the rule text changed, so every cached opening is re-authored once. 17 — THE CARD'S OWN PROMISE (owner walk, Sep 23): the component note promised the decision card a "recommendation" it never marks without a prepared object, so the brief said "I've laid out the choice … and a recommendation" beside a card recommending nothing. Every cached opening is re-authored once. 16 — A HIDDEN ARTIFACT IS NOT SPOKEN (stabilization W5c, the owner's Sep 23 reload): after W5a hid an out-of-window invite and a false-claim paste pack, the room briefs still said "I've prepared a calendar invite" / "we have the allocation redistribution ready" — the composer read the prep narration of an artifact no card renders, and the judge's reason, as the present. The board now states each hidden artifact WITHDRAWN with THE ONE READER's reason, a prep narration with no live artifact behind it no longer reaches the page, and the sig carries each item's liveness (hashed whole — the 400-char head clip is gone). Every cached opening is re-authored once. 15 — THE ROOM BRIEF READS THE EVIDENCE (stabilization W5a, owner walk Sep 23): the grounding's board now carries each item's LATER EVIDENCE — the user's own record after the item, with its counterparty (a held/booked meeting, sent mail, a transcript), resolved by ADDRESS through the W3.1 nominator, the same facts the judge has read since W2.5 — so the composer can never assert "you missed the walkthrough on Sep 15–16" against a meeting the calendar holds on Sep 14. The page every composition reads has changed, so every cached opening is re-authored once. 14 — THE OPENING CONTRACT, clauses 2+3 (owner walk, Sep 19): the opening says each fact ONCE, points at nothing it cannot show ("NOTHING RENDERS BENEATH YOUR BRIEF" is now an explicit FACT in the prompt, not an absent note the model reads as permission), never leaves a pointer whose antecedent isn't in its own text ("before then"), names a person at most once per sentence, and carries ONE move or states the connection between two — the four rules stated in the prompt AND enforced in code after the call (lib/room/opening-discipline). Live finds: a debt said three times in three sentences, "…before then" with no then, "Sam is asking you to decide whether to engage with Sam's proposal", and a headline about a reply beside an offer to chase someone else. Every cached opening is re-authored once. 13 — Q6 · A CTA REVIEWS WORK DONE + Q4's word reaches the room (attention-plan PART III, Sep 18): a MOVE whose object is not staged may no longer render as a primary action — the prompt says a move reviews work done and never commands work to start (no to-do chains), and the CODE FLOOR (lib/room/cta-law) demotes an unstaged move to the CoS's offer at the same seam the board already validates the target. Live find: "Next: Confirm Sep 14 call status, send material, lock call time". Every cached opening is re-authored once. 12 — Q1 · THE VOICE COLLAPSES + CLAIM ONLY WHAT RENDERS (attention-plan PART III, the owner's Sep 17 walk): the composer knows WHO IT IS (the CoS seat), writes its own actor in the first person, and may point at "below" only when the page carries it — both laws stated in the prompt AND enforced in code after the call (lib/room/self-voice). Live finds: "Clara is asking you to approve…" in Clara's own voice, and "Clara drafted a reply below" with nothing below. Every cached opening is re-authored once. 11 — NOISE OWES NOTHING + A DISMISSAL IS A DECISION (census fix #3, Sep 13): the deterministic noise verdict rides THE PRESENT, the composer names noise ONCE and issues no obligation from it, the user's own dismissal is never reframed as a debt, and a MOVE whose target the deck floors demote dies rather than standing unlinked — every cached opening is re-authored once. 10 — MEMBERSHIP IS NOT ABOUTNESS + THE WATERMARK SURVIVES THE CLIP (Sep 8, second walk): the MOVE's target must share distinctive tokens with the move itself (a settled deed's CTA had bound to an unrelated notice), and the grounding's ledger lines no longer lose their "NOW (…)" watermark to a fixed head-clip — the page every composition reads has changed, so every cached opening is re-authored once. 9 — THE GROUND EVIDENCE REACHES THE MIND (Sep 8): the composer reads what a PERSON would check (who spoke last on each thread — the user's own sent mail included — and what actually sits on the calendar with this room's people) and settles a debt the world shows already done, instead of demanding it again. 8 — ONE AGENDA PER ROOM (Sep 7): every LIVE ask reaches the editor (a coworker's checklist included, read off its own durable query rather than the transcript window), so the COHERENCE rule can acknowledge the gap it was blind to; the composer also names WHO is asking. 7 — THE WATCH-OUT IS SPEECH (threads Phase 3): a live blocker reaches the composer through the grounding and is spoken as part of the position; the room's standalone amber block is gone. 6 — the move never restates a rendered decision (the card IS the CTA; code suppresses regardless — this bump keeps the prompt-version discipline). 5 — THE GROUND LAW: the editor sees the machine state + the newest inbound, and owns the ONE claim about what's owed
 
 // ref = 'inbox:<id>'|'commit:<id>' (board-validated).
 // `offer` (Q6 · A CTA REVIEWS WORK DONE): the move's object is not staged, so this is the CoS's
@@ -490,9 +490,17 @@ async function composeAndStore(
   // Clara's own mouth. It cannot be rewritten safely; it must not be SERVED. A composition still
   // narrating the speaker by name is refused, and the room keeps its last-good words — the same
   // failure-honesty the blank-brief guard below already practises.
-  const selfFirst = String(speaker ?? '').trim().split(/\s+/)[0] ?? '';
-  if (selfFirst.length > 1 && new RegExp(`\\b${selfFirst.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+\\p{Ll}`, 'u').test(voiced)) {
+  // W8.4 · THE NAME TEST (lib/room/self-voice narratesSpeakerInThirdPerson): the refusal fires only
+  // when the name DENOTES THE SPEAKER — never inside a longer proper name ("<Given> <Seat>", a known
+  // person of this page whose surname is the seat's given name). The bare-regex belt refused a true
+  // paragraph on EVERY open (six times in one session) and re-bought the model each time.
+  // A REFUSAL IS REMEMBERED FOR ITS SIG (refuseForSig): the same page composes the same refusal, so
+  // the next open serves last-good at zero AI instead of re-buying it.
+  const { narratesSpeakerInThirdPerson } = await import('@/lib/room/self-voice');
+  const knownPeople = [...g.board.map((b) => b.who), ...g.asks.map((a) => a.who)];
+  if (narratesSpeakerInThirdPerson(voiced, speaker, knownPeople)) {
     console.warn('[room-respond] refused a composition that narrates the speaker in the third person:', voiced.slice(0, 120));
+    await refuseForSig(client, userId, roomKey, sig);
     return null;
   }
   const claimed = enforceRenderedClaims(voiced, {
@@ -516,7 +524,8 @@ async function composeAndStore(
   }
   // The people this page is actually about — the board's own counterparties, never guessed names.
   const text = nameOncePerSentence(refs.text, g.board.map((b) => b.who)).trim();
-  if (!text) return null;
+  // Fully degraded by the code nets — deterministic for this page, so remembered like a refusal.
+  if (!text) { await refuseForSig(client, userId, roomKey, sig); return null; }
   // THE DEED IS CODE-BUILT: the move's target must exist on the board (the model picks, the code
   // verifies — an invented ref renders nothing rather than a dead link).
   // ── MEMBERSHIP IS NOT ABOUTNESS (owner walk, Sep 8 — root cause C6). The check was "is this ref
@@ -631,9 +640,35 @@ async function speakerName(client: SupabaseClient, userId: string): Promise<stri
   } catch { return null; }
 }
 
-async function cachedSig(client: SupabaseClient, userId: string, roomKey: string): Promise<string | null> {
+/** The sig gate: a stored composition for this sig — OR a remembered REFUSAL of this sig (W8.4) —
+ *  means there is nothing to buy. Returns true when the compose may be skipped. */
+async function sigStands(client: SupabaseClient, userId: string, roomKey: string, sig: string): Promise<boolean> {
   const data = await readPlan(client, userId, 'room_brief', roomKey);
-  return ((data?.tasks ?? null) as { sig?: string } | null)?.sig ?? null;
+  const t = (data?.tasks ?? null) as { sig?: string; refusedSig?: string } | null;
+  return sigGateStands(t, sig);
+}
+
+/** Pure: does the stored row settle this sig (composed under it, or refused under it)? */
+export function sigGateStands(stored: { sig?: string | null; refusedSig?: string | null } | null | undefined, sig: string): boolean {
+  if (!stored) return false;
+  return stored.sig === sig || stored.refusedSig === sig;
+}
+
+/**
+ * A REFUSED COMPOSITION IS CACHED AS REFUSED FOR ITS SIG (stabilization W8.4). The last-good words
+ * stay exactly as they are (text · move · offers · at · sig untouched) — only `refusedSig` is
+ * stamped, so the sig gate skips this page until something the colleague must say actually moves.
+ * With no last-good at all, an empty row carries the mark (readRoomResponse serves nothing from it).
+ * Never throws — the worst case is one more composition on the next open.
+ */
+export async function refuseForSig(client: SupabaseClient, userId: string, roomKey: string, sig: string): Promise<void> {
+  try {
+    const data = await readPlan(client, userId, 'room_brief', roomKey);
+    const t = (data?.tasks ?? null) as Record<string, unknown> | null;
+    // The row's clock is the composition's — a refusal mark never re-dates the last-good words.
+    if (t) await updatePlan(client, userId, 'room_brief', roomKey, { ...t, refusedSig: sig } as never, { updatedAt: data?.updated_at ?? undefined });
+    else await upsertPlan(client, userId, 'room_brief', roomKey, { v: ROOM_BRIEF_VERSION, sig: '', text: '', at: '', refusedSig: sig } as never);
+  } catch { /* non-fatal */ }
 }
 
 /** ENTITY ROOM: recompose the opening when its inputs moved — on the room's server path BEFORE the
@@ -649,7 +684,7 @@ export async function ensureRoomBrief(client: SupabaseClient, userId: string, en
     if (!g.entity) return null;
     if (!g.text.trim() || (!g.entity.summary && !g.board.length && !g.transcript)) return null; // grounded-or-absent
     const sig = sigOf(g);
-    if ((await cachedSig(client, userId, entityId)) === sig) return null;
+    if (await sigStands(client, userId, entityId, sig)) return null;
     return await composeAndStore(client, userId, entityId, g, sig, g.entity.name, [], false, speaker);
   } catch (e) {
     console.error('[room-respond] compose error:', e instanceof Error ? e.message : e);
@@ -668,6 +703,11 @@ export async function ensureLooseRoomBrief(
     const scope: RoomScope = { kind: 'item', itemKind: (kind === 'inbox' ? 'inbox' : kind === 'commitment' ? 'commitment' : 'meeting'), itemId: id };
     const speaker = await speakerName(client, userId);
     const g = await assembleRoomGrounding(client, userId, scope, { speaker });
+    // ONE OBJECT, ONE DOOR (W7.2 — lib/room/door.ts): an item scope grounds on the item alone, so
+    // the board — and with it the component note, the claims floor and the MOVE's validated
+    // targets in composeAndStore — is exactly what THIS door mounts. The filter is the belt: a
+    // grounding that ever widened again could not put a sibling on this page.
+    g.board = g.board.filter((b) => b.id === id);
     // The anchor enriches a thin loose grounding (the item's own ask rides the page).
     if (anchor.ask || anchor.who) {
       g.text = `THE ITEM: ${anchor.title ?? 'this work'}${anchor.who ? ` — from ${anchor.who}` : ''}${anchor.ask ? `\nWHAT IT NEEDS: ${anchor.ask}` : ''}\n\n${g.text}`;
@@ -682,7 +722,7 @@ export async function ensureLooseRoomBrief(
     // The noise verdict rides the sig: a row the sweep later un-marks (or the user overrides)
     // re-composes instead of standing on a floor that no longer applies.
     const sig = sigOf(g, `${anchor.who ?? ''}|${(anchor.ask ?? '').slice(0, 100)}|${anchor.prepared ?? ''}|${present.groundAt ?? ''}|${present.noise ? 'noise' : ''}`);
-    if ((await cachedSig(client, userId, roomKey)) === sig) return null;
+    if (await sigStands(client, userId, roomKey, sig)) return null;
     return await composeAndStore(client, userId, roomKey, g, sig, String(anchor.title ?? 'this work'), present.lines, present.noise, speaker);
   } catch (e) {
     console.error('[room-respond] loose compose error:', e instanceof Error ? e.message : e);

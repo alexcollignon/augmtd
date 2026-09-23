@@ -13,13 +13,25 @@
 //
 // HARD RULE (P0): no AI call in this GET — the plan is read AS CACHED (generation stays on the
 // existing POST /api/items/plan, pre-generated in the background from the Home).
+//
+// W8.4 THE ROOM SPEAKS TRUE AND FAST: nothing here WAITS on AI either — the brief paints last-good
+// and composes under after() (never awaited); `?warm=1` (the hover warm) schedules no AI at all
+// (lib/room/open-kicks.ts carries the open's background work and why).
+//
+// ONE OBJECT, ONE DOOR (stabilization W7.2, Sep 23 — lib/room/door.ts): this door speaks for the
+// item in its title. Its brief is ITEM-FIRST, composed under the item's OWN key whatever the item is
+// linked to; the linked entity rides ONLY as `entity` (name · tracked — the one connection line)
+// with NO brief/move/offers of its own. Recognize-on-open may write a link in the background, but
+// the key this door composes under never changes with it, so a link landing mid-visit cannot
+// change the door's voice (the no-mutation law). The object this door mounts is its OWN source
+// (`sourceItemId`), never a move target.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { preparedState, isLiveArtifact, type PreparedState } from '@/lib/prepare/read';
 import { anchorOf, activityAtOf, linkKindOf, looseRoomKeyOf, looseTitleOf, ANCHOR_ROW_SELECT } from '@/lib/room/item-anchor';
-import { deriveGap, isOpenStep, isSendBlocked } from '@/lib/home/item-gaps';
+import { deriveGap, isOpenStep, isSendBlocked, motionClausesOf } from '@/lib/home/item-gaps';
 import type { ItemPlanKind, ItemPlanTask } from '@/lib/home/item-plan';
 
 // W0.5 TIME BUDGET: four after() blocks below do AI-bearing background work (recognizeItem,
@@ -84,83 +96,51 @@ export async function GET(request: NextRequest) {
     const anchor = anchorOf(linkKind, itemRow, preparedArts);
     const itemActivityAt: string | null = activityAtOf(linkKind, itemRow);
 
-    // ── THE BRIEF BEFORE THE PAINT (W3.5 (a) — invariant 11; registry precedence #1). The compose
-    // STARTS here, beside every other read this door makes, and the response waits for it up to
-    // the budget (lib/room/brief.ts briefBeforePaint states the measured cost). It used to run in
-    // after() — the first paint never carried it and the no-mutation law then froze the stitched
-    // fallback for the visit. Linked → the ENTITY room's brief; loose → the `<kind>:<id>` room's.
+    // ── THE BRIEF NEVER HOLDS THE PAINT (stabilization W8.4 — THE ROOM SPEAKS TRUE AND FAST; it
+    // supersedes W3.5 (a)'s wait-up-to-budget). Dev logs, Sep 23: every open spent ~1s marked
+    // "brief-pending" — the door waited on a compose that, once the deck's warm had run, was a
+    // sig-gate no-op costing only its grounding reads, and on a real sig move could never fit a
+    // click anyway. The paint now carries LAST-GOOD (an older version allowed, flagged) read in ONE
+    // select beside every other read; the compose runs under after() — never awaited here — and a
+    // composition landing where nothing was painted arrives on the client's one late re-check as an
+    // APPENDED message (registry precedence #1's append rule, unchanged).
+    // ONE OBJECT, ONE DOOR (W7.2): ALWAYS the item's own `<kind>:<id>` room, linked or not. The
+    // linked branch ("linked → the ENTITY room's brief") is dead: it served an untracked machine
+    // container's agenda under this item's title the moment recognition-on-open wrote a link.
     const looseKey = looseRoomKeyOf(linkKind, id);
-    const { briefBeforePaint, ensureRoomBrief, ensureLooseRoomBrief, joinCompose } = await import('@/lib/room/brief');
-    // joinCompose: THE WARM may be composing this very room right now (the deck warmed it; the
-    // reader clicked it) — the open joins that flight instead of paying the model twice.
-    const paintP = (() => {
+    const { readRoomResponse, ensureLooseRoomBrief, joinCompose } = await import('@/lib/room/brief');
+    const lastGoodP = readRoomResponse(supabase, user.id, looseKey, { allowStaleVersion: true }).catch(() => null);
+    // A HOVER WARM IS ZERO-AI (W8.4 — lib/room/open-kicks.ts): `?warm=1` is the deck's hover/intent
+    // prefetch, a pure read. Only a REAL open schedules the AI-bearing background work (the compose,
+    // recognize-on-open, the re-prepare trip); an open that joins a warm in flight kicks the same
+    // work through the budgeted warm door instead (lib/room/warm-client.ts).
+    const warm = request.nextUrl.searchParams.get('warm') === '1';
+    const onOpen = (work: () => Promise<unknown>) => { if (!warm) after(async () => { try { await work(); } catch { /* non-fatal */ } }); };
+    {
+      // joinCompose: THE WARM may be composing this very room right now (the deck warmed it; the
+      // reader clicked it) — the open joins that flight instead of paying the model twice.
       const uid = user.id;
-      if (linkRes.data?.entity_id) {
-        const eid = linkRes.data.entity_id as string;
-        return briefBeforePaint(supabase, uid, eid, () => joinCompose(uid, eid, () => ensureRoomBrief(supabase, uid, eid)));
-      }
       const anchorForBrief = { title: looseTitleOf(linkKind, itemRow), who: anchor.who, ask: anchor.ask, prepared: anchor.prepared };
-      return briefBeforePaint(supabase, uid, looseKey, () => joinCompose(uid, looseKey, () => ensureLooseRoomBrief(supabase, uid, looseKey, anchorForBrief)));
-    })();
-    // A compose that outruns the budget finishes under after() (the platform keeps the function
-    // alive) and reaches the reader as an APPENDED message on the client's one re-check.
-    after(async () => { try { await (await paintP).settled; } catch { /* non-fatal */ } });
+      onOpen(() => joinCompose(uid, looseKey, () => ensureLooseRoomBrief(supabase, uid, looseKey, anchorForBrief)));
+    }
 
-    // RECOGNIZE-ON-OPEN (the coverage tail): the live hooks gate on understanding labels, so an item
-    // can reach the deep-dive with NO membership verdict at all — and then the rail has no deal to
-    // narrate. Opening an item is the strongest "this matters" signal there is, so an unverdicted item
-    // gets recognized in the BACKGROUND (idempotent; a refusal is remembered too, so this fires at
-    // most once per item). No AI in the GET path — the client re-checks shortly after.
+    // RECOGNIZE-ON-OPEN (the coverage tail — lib/room/open-kicks.ts): an unverdicted item gets
+    // recognized in the BACKGROUND (idempotent; a refusal is remembered, so at most once per item).
+    // No AI in the GET path — the client re-checks shortly after.
     if (!anyVerdict.data) {
       const uid = user.id;
-      after(async () => {
-        try {
-          const { recognizeItem } = await import('@/lib/entities/recognize');
-          const src = await import('@/lib/entities/sources');
-          if (linkKind === 'inbox_item') {
-            const { data: it } = await supabase.from('inbox_items').select('id, work_title, source_data, created_at').eq('id', id).eq('user_id', uid).maybeSingle();
-            if (it) await recognizeItem(supabase, uid, src.itemFromInbox(it));
-          } else if (linkKind === 'commitment') {
-            const { data: c } = await supabase.from('commitments').select('id, description, counterparty, thread_id, source, source_id, created_at').eq('id', id).eq('user_id', uid).maybeSingle();
-            if (c) await recognizeItem(supabase, uid, src.itemFromCommitment(c));
-          } else {
-            const { data: m } = await supabase.from('meeting_transcripts').select('id, title, summary, attendees, start_time, created_at').eq('id', id).eq('user_id', uid).maybeSingle();
-            if (m) await recognizeItem(supabase, uid, src.itemFromMeeting(m));
-          }
-        } catch { /* non-fatal — the cron hooks are the backstop */ }
-      });
+      onOpen(async () => { const { recognizeOnOpen } = await import('@/lib/room/open-kicks'); await recognizeOnOpen(supabase, uid, linkKind, id); });
     }
 
     // ── THE GROUND LAW's on-open trip (Aug 13): the served view just derived that something
-    // prepared here is SUPERSEDED (a newer inbound moved the ground) — re-prepare in the
-    // background so the next poll serves work built from the present. Idempotent and cheap on
-    // repeat fires: every lane re-checks the ground itself and no-ops once re-prepared. ──
-    // W5a: an invite outside the item's stated window / words claiming an undone deed are derived
-    // false by THE ONE READER — the same trip re-prepares them (the pass now honors the window and
-    // the completion floor), so the next poll serves work that is true.
-    // W5c: an EXPIRED invite (its slot passed) is hidden the same way — the trip covers every
-    // non-live artifact, and the lanes' freshness guards no longer count a hidden one as fresh
-    // (lib/prepare/pass.ts nonLiveKindsOf), so the trip actually replaces it instead of no-op'ing.
+    // prepared here is not LIVE (superseded · outside the stated window · a false claim · expired —
+    // W5a/W5c) — re-prepare in the background so the next poll serves work built from the present.
+    // Idempotent; the lanes re-check the ground and no-op once re-prepared (lib/room/open-kicks.ts).
     if (preparedArts.some((a) => !isLiveArtifact(a)) && (linkKind === 'inbox_item' || linkKind === 'commitment')) {
       const uid = user.id;
       const staleRow = (itemRowRes.data ?? null) as { work_title?: string; description?: string; created_at?: string } | null;
-      const staleTitle = String(staleRow?.work_title ?? staleRow?.description ?? 'this item');
-      const startAt = String(staleRow?.created_at ?? new Date().toISOString());
-      after(async () => {
-        try {
-          const { prepareOneItem } = await import('@/lib/prepare/pass');
-          const r = await prepareOneItem(supabase, uid, {
-            id: `${linkKind === 'inbox_item' ? 'inbox' : 'commit'}:${id}`, entityId: id,
-            kind: linkKind === 'inbox_item' ? 'reply' : 'commitment', title: staleTitle,
-            state: 'todo', actor: 'you', automated: false, who: null, blockedOn: null,
-            startAt, when: { explicit: null, bucket: 'now' },
-            entity: linkRes.data?.entity_id ? { id: linkRes.data.entity_id as string, name: '' } : null,
-          } as never);
-          // One line per trip — a re-prepare that no-ops is never silent again (the W5c find was
-          // invisible in the log: the trip fired and the lane said "already on it" to no one).
-          console.log(`[items/view] re-prepare trip ${linkKind}:${id} → ${r.did}${r.reason ? ` (${r.reason})` : ''}`);
-        } catch { /* the pass cron is the backstop */ }
-      });
+      const eid = (linkRes.data?.entity_id as string | undefined) ?? null;
+      onOpen(async () => { const { reprepareTrip } = await import('@/lib/room/open-kicks'); await reprepareTrip(supabase, uid, linkKind, id, staleRow, eid); });
     }
 
     const tasks = (Array.isArray(planRes.data?.tasks) ? planRes.data!.tasks : []) as ItemPlanTask[];
@@ -190,7 +170,7 @@ export async function GET(request: NextRequest) {
     // THE MOOT ASK BY CODE (W3.5 (d)): the asks the machine ignored are served so the room hides
     // the same turns — header and room speak ONE claim.
     const { buildRoomView, emptySiblings } = await import('@/lib/entities/room-view');
-    const [room, machine] = await Promise.all([
+    const [room, machine, sourceItemId, sourceMeeting] = await Promise.all([
       linkRes.data?.entity_id
         ? buildRoomView(supabase, user.id, linkRes.data.entity_id as string, id)
         : Promise.resolve({ entity: null, siblings: emptySiblings() }),
@@ -205,30 +185,60 @@ export async function GET(request: NextRequest) {
             } catch { return null; /* non-fatal — the word is an enhancement */ }
           })()
         : Promise.resolve(null),
+      // THE DOOR'S OWN OBJECT (ONE OBJECT, ONE DOOR — lib/room/door.ts objectIdForDoor): a
+      // commitment's source object is the inbox item of the email it was born from — the exact
+      // email item when one exists, else the newest item on that email's own thread. Never a
+      // move target. A meeting-born commitment has no mail object (W7.4 hands the meeting source
+      // to the same mount; this door only ever CHOOSES the id). Zero AI; one small read.
+      // W7.3: `source_id` is the EMAILS row id — THE ONE READ (lib/commitments/source.ts) maps it.
+      (async (): Promise<string | null> => {
+        if (linkKind !== 'commitment' || !itemRow) return null;
+        if (String(itemRow.source ?? '') !== 'email') return null;
+        const { inboxItemForEmail } = await import('@/lib/commitments/source');
+        return inboxItemForEmail(supabase, user.id, {
+          emailId: itemRow.source_id ? String(itemRow.source_id) : null,
+          threadId: itemRow.thread_id ? String(itemRow.thread_id) : null,
+        });
+      })(),
+      // W7.3 · A MEETING-BORN COMMITMENT'S SOURCE IS ITS MEETING — served as the source object (title,
+      // date, attendees minus the user, the summary's clipped first words, the meeting page's address).
+      (async () => {
+        if (linkKind !== 'commitment' || !itemRow || String(itemRow.source ?? '') !== 'meeting' || !itemRow.source_id) return null;
+        const [{ meetingSourceOf }, { loadUserForms, isUserForm }] = await Promise.all([
+          import('@/lib/commitments/source'), import('@/lib/prepare/addressee'),
+        ]);
+        const forms = await loadUserForms(supabase, user.id);
+        return meetingSourceOf(supabase, user.id, String(itemRow.source_id), (who) => isUserForm(who, forms));
+      })(),
     ]);
     mark('wave2');
     const machineState: { state: string; word: string | null } | null = machine ? { state: machine.state, word: machine.word } : null;
     const mootAskKeys: string[] = machine?.moot ?? [];
-    // ── THE BRIEF, AS THE FIRST PAINT CARRIES IT (waited for last — every read above ran beside it).
-    const paint = await paintP;
-    mark(paint.pending ? 'brief-pending' : 'brief');
-    const r = paint.response;
-    // Linked → overlay the composition onto the entity (buildRoomView read the strict last-good
-    // before the compose landed); loose → the loose fields. ONE brief field set per door.
-    const entity = room.entity && linkRes.data?.entity_id && r
-      ? { ...room.entity, brief: r.text, move: r.move, offers: r.offers, briefAt: r.at }
+    // ── THE BRIEF, AS THE FIRST PAINT CARRIES IT: last-good (one select, read beside wave 1/2).
+    const r = await lastGoodP;
+    // PENDING = nothing current was painted — the compose (a real open's after()) may land one, and
+    // the client's one late re-check APPENDS it. A warm schedules no compose, but its payload is the
+    // open's first paint when joined, and the joined open's kick composes — so it says the same.
+    const briefPending = !r || !!r.staleVersion;
+    mark(briefPending ? 'brief-pending' : 'brief');
+    // ONE OBJECT, ONE DOOR: the composition rides the door's OWN fields (brief/move/offers/briefAt)
+    // and the linked entity is served VOICELESS — its name and tracked flag are the one connection
+    // line; its own composed brief (buildRoomView read the entity's last-good) is the ENTITY door's
+    // and is stripped here so no rail, warm cache or fallback can prefer it over this item's.
+    const entity = room.entity
+      ? { ...room.entity, brief: null, move: null, offers: [], briefAt: null }
       : room.entity;
     const siblings = room.siblings;
-    const looseBrief = !linkRes.data?.entity_id ? r?.text ?? null : null;
+    const looseBrief = r?.text ?? null;
     // Q6 · the move carries its own `offer` mark (an unstaged CTA is the CoS's offer, not a button).
-    const looseMove = !linkRes.data?.entity_id ? r?.move ?? null : null;
-    const looseOffers = !linkRes.data?.entity_id ? r?.offers ?? [] : [];
-    const looseBriefAt = !linkRes.data?.entity_id ? r?.at ?? null : null; // THE GROUND LAW: narration older than this folds
+    const looseMove = r?.move ?? null;
+    const looseOffers = r?.offers ?? [];
+    const looseBriefAt = r?.at ?? null; // THE GROUND LAW: narration older than this folds
     // J5 (multi-ask motion) — a commitment extracted as ONE motion carries its clauses as plan
-    // steps; the deep-dive renders them as the checklist INSIDE the one composer (never N surfaces).
-    const steps = kind === 'commitment' && tasks.length >= 2
-      ? tasks.map((t) => ({ id: t.id, text: t.text, done: !!t.done }))
-      : null;
+    // steps; the room renders them as the checklist beside the ONE email card (never N surfaces).
+    // W7.3 · NO INTERNAL TEXT ON SCREEN: ONLY the extractor's flagged CLAUSES qualify — the
+    // identified-tasks plan is the house's internal work plan, never "what this message should cover".
+    const steps = kind === 'commitment' ? motionClausesOf(tasks) : null;
 
     const totalMs = Date.now() - t0;
     if (totalMs > VIEW_SLOW_MS) console.log(`[items/view] slow ${totalMs}ms — ${marks.map(([l, m]) => `${l}:${m}ms`).join(' · ')}`);
@@ -262,9 +272,14 @@ export async function GET(request: NextRequest) {
       briefAt: looseBriefAt,
       // W3.5 (a): the compose outran the budget — the client re-checks ONCE and APPENDS what
       // arrived (never a swap). `briefStaleVersion`: last-good from a previous version is speaking.
-      briefPending: paint.pending,
+      briefPending,
       ...(r?.staleVersion ? { briefStaleVersion: true } : {}),
       mootAskKeys,
+      // ONE OBJECT, ONE DOOR: the object card's ONE id — this door's own source (a commitment's
+      // source email item), never a move target. Null = nothing mounts as the source here.
+      sourceItemId,
+      // W7.3: a meeting-born commitment's source object — the meeting itself (null otherwise).
+      sourceMeeting,
       // THE VERB-SCOPE LAW (Aug 4): the item's SOURCE decides its verb strip — a meeting-extracted
       // action item has no thread; Reply must be structurally impossible on it.
       itemSource: linkKind === 'inbox_item' ? (itemRow?.source as string | undefined) ?? 'email' : null,

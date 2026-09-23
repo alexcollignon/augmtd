@@ -41,10 +41,11 @@ export async function noteItemAction(
     if (entityId) {
       await refreshEntityState(supabase, userId, entityId, { force: true }).catch(() => {});
     }
-    // The room this item converses in — its entity's room when linked, else its own loose key.
+    // ONE OBJECT, ONE DOOR (W7.2 — lib/room/door.ts): the item's deed is recorded in the ITEM's
+    // own room, whatever it is linked to (the entity id used to win here, so a deed on a member
+    // narrated into a machine container's room and the item's own door never heard it).
     const { looseRoomKey } = await import('@/lib/room/turns');
-    const roomKey = entityId
-      ?? looseRoomKey(item.kind === 'commitment' ? 'commitment' : 'inbox', item.id);
+    const roomKey = looseRoomKey(item.kind === 'commitment' ? 'commitment' : 'inbox', item.id);
     if (opts?.said?.trim()) {
       const { writeRoomTurn } = await import('@/lib/room/turns');
       await writeRoomTurn(supabase, userId, roomKey, {
@@ -54,11 +55,16 @@ export async function noteItemAction(
         dedupeKey: `sent:${item.id}`,
       }).catch(() => {});
     }
-    // THE BRIEF IS RE-AUTHORED ON THE DEED, not one open later. The entity room composes for real
-    // (it has the whole grounding); the loose room has no single anchor here, so its stored sig is
-    // voided and its own door recomposes on the next open — last-good text is never destroyed.
+    // THE BRIEF IS RE-AUTHORED ON THE DEED, not one open later. The ITEM door's brief has no single
+    // anchor here, so its stored sig is voided and its own door recomposes on the next open —
+    // last-good text is never destroyed. A TRACKED project's own door composes for real (it has
+    // the whole grounding); an untracked container's door is the machine's, rarely opened, and
+    // never paid for on every deed of its ~1,400 members.
     const brief = await import('@/lib/room/brief');
-    if (entityId) await brief.ensureRoomBrief(supabase, userId, entityId).catch(() => {});
-    else await brief.invalidateRoomBriefSig(supabase, userId, roomKey).catch(() => {});
+    await brief.invalidateRoomBriefSig(supabase, userId, roomKey).catch(() => {});
+    if (entityId) {
+      const { data: ent } = await supabase.from('work_entities').select('tracked').eq('id', entityId).eq('user_id', userId).maybeSingle();
+      if (ent?.tracked === true) await brief.ensureRoomBrief(supabase, userId, entityId).catch(() => {});
+    }
   } catch { /* non-fatal */ }
 }

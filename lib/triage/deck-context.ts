@@ -20,8 +20,6 @@ import { decodeEntities } from '@/lib/core/text';
 
 /** One line of the founding message — the same excerpt law as every other card body. */
 export const FOUNDING_EXCERPT_CHARS = 220;
-/** The judge's reason is a CLAUSE on the card, not a paragraph. */
-export const REASON_CHARS = 140;
 
 /** What a commitment card knows about where it came from and why it is held. Every field is
  *  ABSENT (null) when the server does not hold the fact — a labelled empty space is worse than a
@@ -35,8 +33,9 @@ export type DeckContext = {
   founding: { who: string | null; line: string; at: string | null } | null;
   /** A meeting-sourced commitment: the meeting it was said in. */
   meeting: { title: string; date: string | null } | null;
-  /** The judge's own reason, short — the "why this is work" the card never had. */
-  reason: string | null;
+  // W8.3 · NO `reason`. The judge's reason is the brain talking to itself (THE NO-INTERNAL-TEXT LAW,
+  // W7.3) — the triage card printed it raw ("The stated deadline (2026-08-07) passed 47 days ago with
+  // zero movement, but …"). The context no longer carries it at all, so no card can render it.
 };
 
 /** The raw facts the reader hands in, per commitment. */
@@ -46,10 +45,7 @@ export type DeckContextFacts = {
   lastEmail: { from_name?: string | null; from_address?: string | null; body?: string | null; received_at?: string | null; is_from_user?: boolean | null } | null;
   inboxItemId: string | null;
   meeting: { title?: string | null; start_time?: string | null; created_at?: string | null } | null;
-  verdict: { reason?: string | null; failed?: boolean | null } | null;
 };
-
-const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
 /** THE SHAPER — pure. Grounded-or-absent per field; never a placeholder. */
 export function shapeDeckContext(f: DeckContextFacts): DeckContext {
@@ -74,18 +70,11 @@ export function shapeDeckContext(f: DeckContextFacts): DeckContext {
     meeting = { title: clipLabel(f.meeting.title.trim(), 90), date: iso ? String(iso).slice(0, 10) : null };
   }
 
-  // THE REASON — only a real judgment (a failed verdict is an outage, never a reason), and never a
-  // restatement of the title the card already prints (never say a fact twice).
-  let reason: string | null = null;
-  const r = (f.verdict && !f.verdict.failed) ? String(f.verdict.reason ?? '').trim() : '';
-  if (r && norm(r) !== norm(String(f.commitment.description ?? ''))) reason = clipLabel(r, REASON_CHARS);
-
   return {
     source,
     inboxItemId: source === 'email' ? f.inboxItemId : null,
     founding,
     meeting,
-    reason,
   };
 }
 

@@ -668,6 +668,11 @@ function ChatSessionRows({ roomKey, sessions, onResume }: {
 // grid's existing import address is unchanged.
 export { warmEntityRoom, cancelWarmEntityRoom } from '@/lib/room/warm-room';
 
+// W8.5: the project door's ONE late re-check. The room read no longer waits on the compose (it paints
+// last-good at once and composes under after()); a real compose (≈3–6s from the open) is re-checked
+// just past that — the same window as the item door (components/home/item-detail.tsx).
+const ROOM_LATE_BRIEF_RECHECK_MS = 6_500;
+
 export default function EntityRoom({ entityId, onBack, initialTab, initialDetail, initialRail }: {
   entityId: string; onBack: () => void; initialTab?: 'overview' | 'work' | 'timeline';
   // ── THE SERVER-PAINT SEAM (Sep 8, unused for now — deliberately). The room's first paint waits on
@@ -787,18 +792,20 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
       if (!alive || !data.entity) return;
       saveLS(roomRailKey(entityId), data);
       if (mayPaintRail) setRail(data);
-      // THE LATE BRIEF IS AN APPEND (W3.5 (a); registry precedence #1): the server's compose outran
-      // its paint budget — ONE re-check, and the arrival lands as `lateBrief` (a message appended
-      // beneath the painted opening), never a swap.
+      // THE LATE BRIEF IS AN APPEND (W3.5 (a); registry precedence #1): nothing current was painted
+      // (W8.5 — the door never waits on the compose; it runs under after()) — ONE re-check, and the
+      // arrival lands as `lateBrief` (a message appended beneath the painted opening), never a swap.
+      // W8.5: the re-check PICKS UP what the open already kicked — a pure read (`warm=1`), never a
+      // second buy (mirrors item-detail's LATE_BRIEF_RECHECK_MS re-check).
       if (data.briefPending && !data.entity.brief) {
         setTimeout(() => {
-          fetch(`/api/entities/${entityId}/room`).then((r) => r.json()).then((d2) => {
+          fetch(`/api/entities/${entityId}/room?warm=1`).then((r) => r.json()).then((d2) => {
             if (!alive || !d2.entity) return;
             saveLS(roomRailKey(entityId), d2);
             const text = d2.entity.brief as string | null;
             if (text) setRail((prev) => (prev ? { ...prev, lateBrief: { text, at: d2.entity.briefAt ?? null } } : prev));
           }).catch(() => {});
-        }, 7000);
+        }, ROOM_LATE_BRIEF_RECHECK_MS);
       }
     }).catch(() => {});
     return () => { alive = false; };

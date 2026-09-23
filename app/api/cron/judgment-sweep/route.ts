@@ -30,6 +30,11 @@ export const maxDuration = 300;
 // usersLeftBehind returned). THE OLD IN-PROCESS LOOP SURVIVES AS THE FALLBACK for every user whose
 // job did not land (no base URL, no secret, a refused or timed-out POST) — logged, claimed, and
 // guarded by the same wall clock it always had.
+//
+// W8.6 · THE NOT-JUDGED LANE rides every per-user pass (lib/work/judgment-sweep.ts
+// `runNotJudgedLane`): the rows the held list files as "Not yet judged" are judged here, kind floor
+// first (zero AI), newest first, under stated per-user caps; its tally — including what the caps
+// left behind — is reported beside the walk's, never folded into it.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 export async function GET(request: NextRequest) {
   if (!hasBearer(request, 'CRON_SECRET')) {
@@ -60,6 +65,8 @@ export async function GET(request: NextRequest) {
   let graduated = 0, graduationLeftBehind = 0;
   // Q7 · the proof-of-life lane's own tally — reported, never folded into the judgment counts.
   let proofChecked = 0, proofReaffirmed = 0, proofDemoted = 0, proofLeftBehind = 0;
+  // W8.6 · the not-judged lane's own tally (population, what it judged, what its caps left).
+  const notJudged = { population: 0, visited: 0, fresh: 0, cached: 0, failed: 0, resolved: 0, expiryOwned: 0, leftBehind: 0, skipped: 0 };
   for (const uid of fallbackUsers) {
     if (Date.now() + Math.min(budgetMs, 20_000) > routeDeadline) { usersLeftBehind++; continue; }
     try {
@@ -74,6 +81,10 @@ export async function GET(request: NextRequest) {
       graduated += r.graduated; graduationLeftBehind += r.graduationLeftBehind;
       proofChecked += r.proofOfLife.checked; proofReaffirmed += r.proofOfLife.reaffirmed;
       proofDemoted += r.proofOfLife.demoted; proofLeftBehind += r.proofOfLife.leftBehind;
+      notJudged.population += r.notJudged.population; notJudged.visited += r.notJudged.visited;
+      notJudged.fresh += r.notJudged.fresh; notJudged.cached += r.notJudged.cached; notJudged.failed += r.notJudged.failed;
+      notJudged.resolved += r.notJudged.resolved; notJudged.expiryOwned += r.notJudged.expiryOwned;
+      notJudged.leftBehind += r.notJudged.leftBehind; if (r.notJudged.skipped) notJudged.skipped++;
       if (r.visited > 0) usersTouched++;
     } catch { /* non-fatal per user — the rotation carries the account to the next run */ }
   }
@@ -84,6 +95,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     dispatched: sent.accepted.length, dispatchFailed: sent.failed.length, dispatchReason: sent.reason ?? null,
     fallback: { ran: fallbackRan, candidates, visited, fresh, cached, failed, resolved, anchorPassed, leftBehind, graduated, graduationLeftBehind,
-      proofOfLife: { checked: proofChecked, reaffirmed: proofReaffirmed, demoted: proofDemoted, leftBehind: proofLeftBehind } },
+      proofOfLife: { checked: proofChecked, reaffirmed: proofReaffirmed, demoted: proofDemoted, leftBehind: proofLeftBehind },
+      notJudged },
     usersTouched, usersLeftBehind, budgetMs, activeUsers: users.length });
 }

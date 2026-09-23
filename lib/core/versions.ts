@@ -69,3 +69,5 @@ export { ANTICIPATION_BRIEF_VERSION } from '@/lib/home/anticipation';
 export { SYNTH_BRIEF_VERSION } from '@/lib/home/synthesize-brief';
 /** The Home bundle-naming pass — the version slot of `home_brief.bundleNames.sig`. */
 export { BUNDLE_NAMES_VERSION } from '@/lib/home/name-bundles';
+/** The conversation delta (W8.2) — its prompt + validation floors; stamped on every settle's activity row. */
+export { CONVERSATION_DELTA_VERSION } from '@/lib/work/conversation-delta';

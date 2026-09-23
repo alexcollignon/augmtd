@@ -13,10 +13,12 @@ import { config } from 'dotenv'; config({ path: '.env.local' });
 import { readFileSync } from 'fs';
 import { createClient } from '@supabase/supabase-js';
 import {
-  matchEvidence, addressesOf, attendeeAddressByName, registryAddress, evidenceSig, loadEvidencePool,
-  resolveCommitmentAddresses, EVIDENCE_PER_TYPE, REVERSE_MAX_NOMINATIONS, type EvidencePool, type OpenWork,
+  matchEvidence, addressesOf, attendeeAddressByName, registryAddress, evidenceSig,
+  EVIDENCE_PER_TYPE, REVERSE_MAX_NOMINATIONS, type EvidencePool, type OpenWork,
 } from '../lib/work/evidence-nominator';
 import { FULFILLMENT_LAW_VERSION } from '../lib/commitments/fulfillment';
+import { mailEventOf, calendarEventOf, transcriptEventOf } from '../lib/evidence/sources';
+import type { ActorContext } from '../lib/evidence/types';
 import { REVERSIBLE_TYPE_ENTITY } from '../lib/activity/restore';
 
 let pass = 0, fail = 0;
@@ -30,7 +32,10 @@ const src = (p: string) => readFileSync(p, 'utf8');
 console.log('THE NOMINATOR (pure):');
 const NOW = '2026-09-22T12:00:00.000Z';
 const CP = 'sam@acme-example.com';
-const pool: EvidencePool = {
+// ⟲ RE-POINTED (W8.1 EVIDENCE FROM EVERYWHERE): the pool is ONE list of normalized events; the same
+// fixtures now enter through each registry row's own pure mapper (mail · calendar · transcript).
+const ME: ActorContext = { own: ['me@x.com'], teammates: [], teamDomains: [] };
+const legacy = {
   emails: [
     { id: 'e-before', at: '2026-08-01T10:00:00Z', subject: 'before', from: 'me@x.com', to: [CP], threadId: 'tA', attachmentCount: 0, fromUser: true },
     { id: 'e1', at: '2026-09-10T10:00:00Z', subject: 'one', from: 'me@x.com', to: ['SAM@Acme-Example.com'], threadId: 'tB', attachmentCount: 1, fromUser: true },
@@ -52,6 +57,11 @@ const pool: EvidencePool = {
     { id: 'tr-none', at: '2026-09-11T09:05:00Z', title: 'Other', attendees: ['x@y.com'] },
   ],
 };
+const pool: EvidencePool = { events: [
+  ...legacy.emails.map((m) => mailEventOf(m, ME)),
+  ...legacy.events.map((r) => calendarEventOf({ id: r.id, start_time: r.at, end_time: r.end, title: r.title, attendees: r.attendees.map((email) => ({ email })), status: r.cancelled ? 'cancelled' : 'confirmed' }, ME, NOW)).filter((e): e is NonNullable<typeof e> => !!e),
+  ...legacy.transcripts.map((r) => transcriptEventOf({ id: r.id, start_time: r.at, title: r.title }, r.attendees, null)),
+] };
 const work: OpenWork = { kind: 'commitment', id: 'k1', afterISO: '2026-09-01T00:00:00Z', counterpartyEmail: CP, threadId: 't1', fulfiller: 'user', description: 'send Sam the deck' };
 const ev = matchEvidence(pool, work, NOW);
 const emailIds = ev.filter((e) => e.type === 'email').map((e) => e.id);
@@ -92,15 +102,23 @@ const bot = src('lib/integrations/meeting-bot/bot-manager.ts');
 const applyV = src('lib/work/apply-verdict.ts');
 const state = src('lib/entities/state.ts');
 
-ok('the nominator is zero-AI (no aiCall / getAIClient / factory import)', !/aiCall|getAIClient|lib\/ai\//.test(nom));
-ok('the nominator matches by address only (no name-similarity over free text, no keyword list)',
-  nom.includes('sameAddress') && !/includes\(first\)|\.includes\(cp\)/.test(nom));
+// ⟲ RE-POINTED (W8.1): the nominator is the door onto lib/evidence/** (registry · matcher · ladder ·
+// identity); the zero-AI and no-guessing laws now read the whole family, never weaker.
+const evFam = ['lib/evidence/types.ts', 'lib/evidence/sources.ts', 'lib/evidence/match.ts', 'lib/evidence/actor.ts', 'lib/evidence/identity.ts'].map(src).join('\n');
+ok('the nominator (and the evidence family it delegates to) is zero-AI (no aiCall / getAIClient / factory import)', !/aiCall|getAIClient|lib\/ai\//.test(nom + evFam));
+ok('the nominator matches by identity only — address · person id · object (no name-similarity over free text, no keyword list)',
+  nom.includes('sameAddress') && evFam.includes('partyMatches') && !/includes\(first\)|\.includes\(cp\)/.test(nom + evFam));
+// ⟲ RE-POINTED (W7.1 HEARTBEAT THROUGHPUT): the commitments sweep is a DISPATCHER now; the
+// per-account body (evidence + expiry) lives in lib/work/evidence-sweep.ts and runs in each account's
+// own /api/internal/sweeps/user job. The laws are unchanged — ONE pool per account, bounded spend
+// with leftBehind counted, the inbox lane through the same door — only their home moved.
+const esw = src('lib/work/evidence-sweep.ts');
 ok('the sweep no longer reads ONE newest email per row',
-  !sweep.includes(".contains('to_addresses', [cpEmail])") && !sweep.includes("order('received_at', { ascending: false }).limit(1)") && sweep.includes('settleCommitmentByEvidence'));
-ok('the sweep loads ONE evidence pool per user and bounds its spend (cap + leftBehind counted)',
-  sweep.includes('userEvidenceContext') && sweep.includes('EVIDENCE_COMMITMENT_JUDGMENTS_PER_SWEEP') && sweep.includes('evidenceLeftBehind'));
-ok('the sweep carries the INBOX lane through the same door, capped',
-  sweep.includes('settleInboxItemByEvidence') && sweep.includes('EVIDENCE_INBOX_JUDGMENTS_PER_SWEEP'));
+  !(sweep + esw).includes(".contains('to_addresses', [cpEmail])") && !(sweep + esw).includes("order('received_at', { ascending: false }).limit(1)") && esw.includes('settleWorkByEvidence(admin, userId, e.work, e.evidence)'));
+ok('the per-account pass loads ONE evidence pool and bounds its spend (fresh caps + leftBehind/capLeftBehind counted)',
+  /const pool = await loadEvidencePool\(admin, userId, since, scopeOf\(/.test(esw) && esw.includes('EVIDENCE_FRESH_CAP') && esw.includes('lane.capLeftBehind++') && esw.includes('lane.leftBehind++'));
+ok('the per-account pass carries the INBOX lane through the same door, capped',
+  esw.includes("kind: 'inbox'") && /inbox: \d+/.test(esw) && esw.includes(".eq('source', 'email')"));
 ok('the fulfillment judge takes a candidate SET (emails + calendar + transcript facts) and names WHICH piece delivered',
   ful.includes('export async function judgeFulfillmentFromEvidence') && ful.includes('candidates: FulfillmentCandidate[]') &&
   ful.includes('CALENDAR FACT') && ful.includes('MEETING FACT') && ful.includes('"by":'));
@@ -118,14 +136,16 @@ ok('FULFILLMENT_LAW_VERSION bumped past the one-message law (≥5)', FULFILLMENT
 ok('the one-message door survives as a wrapper (both resolvers + the repair sweep keep their seam)',
   ful.includes('export async function judgeCommitmentFulfillment') && ful.includes('return judgeFulfillmentFromEvidence('));
 ok('only delivered closes — unclear/promised/failure change nothing on the inbox door',
-  settle.includes("if (verdict.verdict !== 'delivered') return { judged: true, closed: false") && ful.includes("return { verdict: 'unclear', reason: 'fulfillment judge unavailable' }"));
+  settle.includes("if (verdict.verdict !== 'delivered') return { judged: true, closed: false") && ful.includes("return { verdict: 'unclear', reason: 'fulfillment judge unavailable'"));
 ok('the settle stamps resolved_reason evidence:<type> at the EVIDENCE\'S OWN TIME',
   settle.includes('`evidence:${type}`') && settle.includes('resolved_at: stampAt') && settle.includes('by?.at'));
 ok('the settle logs a REVERSIBLE activity type for both kinds (/api/restore reopens it)',
   settle.includes("isCommitment ? 'commitment_done' : 'marked_done'") &&
   REVERSIBLE_TYPE_ENTITY['commitment_done'] === 'commitment' && REVERSIBLE_TYPE_ENTITY['marked_done'] === 'inbox_item');
 ok('/api/restore clears the evidence stamp on reopen (resolved_at + resolved_reason)',
-  src('app/api/restore/route.ts').includes('delete preSd.resolved_reason') && src('app/api/restore/route.ts').includes('resolved_reason: null'));
+  // ⟲ RE-POINTED (W7.6): the route calls THE ONE restore flip (lib/activity/reopen.ts), shared with the repairs.
+  src('app/api/restore/route.ts').includes('reopenInboxItem(supabase, user.id, entityId)') && src('app/api/restore/route.ts').includes('reopenCommitment(supabase, user.id, entityId)')
+  && src('lib/activity/reopen.ts').includes('delete preSd.resolved_reason') && src('lib/activity/reopen.ts').includes('resolved_reason: null'));
 // ⟲ RE-POINTED (W2.3 RETIRE THE MIRRORS): the settle used to carry its own mirror flip; the one
 // harmless archive-only writer now lives in lib/inbox/commitment-mirrors.ts and no new mirror is
 // ever written — the settle must reach it through that module, never a private `.eq('source', …)`.
@@ -145,60 +165,101 @@ ok('sync-calendar: the upserted batch fires the reverse door (void, .catch) on b
 ok('bot-manager: a processed transcript fires the reverse door (void, .catch)', hookRe(bot, 'transcript'));
 ok('no hook awaits the door', !/await import\('@\/lib\/work\/evidence-settle'\)[\s\S]{0,200}settleForEvent/.test(sync + cal + bot));
 
+// ── TIER 2b · W7.1 HEARTBEAT THROUGHPUT (the fan-out lane · the priority order · fresh-only caps ·
+// the scoped pool · the backfill) — found live Sep 23: a nominated commitment stayed open because the
+// one serial 95s sweep ran out of clock and its caps were spent by cache hits. ──────────────────────
+console.log('\nW7.1 HEARTBEAT THROUGHPUT:');
+{
+  const fan = src('lib/work/sweep-fanout.ts');
+  const userRoute = src('app/api/internal/sweeps/user/route.ts');
+  const judge = src('lib/work/judge.ts');
+  const bf = src('scripts/backfill-evidence-settles.ts');
+  // F · the fan-out lane
+  ok("F1 the fan-out has an 'evidence' lane (lane type · guard · marker · per-account budget)",
+    /export type SweepLane = 'judgment' \| 'draft' \| 'evidence'/.test(fan) && /x === 'evidence'/.test(fan)
+    && /evidence: 'evidence_sweep'/.test(fan) && /evidence: 240_000/.test(fan));
+  ok('F2 runUserSweep runs the evidence pass and stamps its rotation marker',
+    /lane === 'evidence'[\s\S]{0,400}runEvidenceSweep\(admin, userId, \{ budgetMs \}\)/.test(fan) && /stampServed\(admin, userId, SWEEP_MARKER\.evidence/.test(fan));
+  ok('F3 the commitments sweep is a DISPATCHER (the rotation · planDispatch · dispatchSweepJobs \'evidence\')',
+    /orderLeastRecentlyServed\(sb, await evidenceSweepUsers\(sb\), SWEEP_MARKER\.evidence\)/.test(sweep)
+    && /planDispatch\(users, \{ maxUsers: maxDispatchPerRun\(\) \}\)/.test(sweep) && /dispatchSweepJobs\(plan\.dispatch, 'evidence'/.test(sweep));
+  ok('F4 the fallback runs ONLY undispatched accounts, CLAIMED, logged, wall-clock guarded',
+    /const fallbackUsers = sent\.failed/.test(sweep) && /claimSweepJob\(sb, uid, 'evidence'\)/.test(sweep)
+    && sweep.indexOf('claimSweepJob(') < sweep.indexOf('runUserSweep(sb') && /fan-out fallback/.test(sweep) && /routeDeadline = Date\.now\(\) \+ 265_000/.test(sweep));
+  ok('F5 honest counts (dispatched / dispatchFailed / usersLeftBehind incl. the cap\'s remainder)',
+    /dispatched: sent\.accepted\.length/.test(sweep) && /dispatchFailed: sent\.failed\.length/.test(sweep) && /usersLeftBehind = plan\.leftBehind\.length/.test(sweep));
+  ok('F6 the dispatcher calls no lane directly and walks no rows itself (ONE per-account body)',
+    !/settleWorkByEvidence|settleCommitmentByEvidence|judgeCommitmentExpiry|from\('commitments'\)/.test(sweep.replace(/\/\/.*$/gm, '')) && /export const maxDuration = 300/.test(sweep));
+  ok('F7 the per-user route accepts the evidence lane', /'judgment', 'draft' or 'evidence'/.test(userRoute));
+  ok('F8 the dispatch set includes every account holding an open commitment (a quiet debtor is still owed its pass)',
+    /export async function evidenceSweepUsers[\s\S]{0,600}from\('commitments'\)\.select\('user_id'\)[\s\S]{0,80}\.eq\('status', 'open'\)/.test(esw));
+  // O · the priority order
+  ok('O1 the queue is ordered by orderEvidenceQueue (never updated_at desc)',
+    /const queue = orderEvidenceQueue\(/.test(esw) && !/updated_at/.test(esw.replace(/\/\/.*$/gm, '')));
+  ok('O2 the tier reads the fulfillment store through ONE sig definition (fulfillmentSigOf)',
+    /evidenceTier\(stored\.get\([\s\S]{0,60}fulfillmentSigOf\(n\.evidence\)\)/.test(esw) && ful.includes('const sig = fulfillmentSigOf(candidates);'));
+  // C · fresh-only caps
+  ok('C1 the fulfillment judge reports cached / fresh on every exit',
+    ful.includes('export type FulfillmentJudgment') && ful.includes('cached: true, fresh: false') && ful.includes('cached: false, fresh: true')
+    && ful.includes("reason: 'no evidence text to judge', cached: false, fresh: false"));
+  ok('C2 the settle propagates cached / fresh', settle.includes('const spend = { cached: verdict.cached, fresh: verdict.fresh }') && (settle.match(/\.\.\.spend/g) ?? []).length >= 4);
+  ok('C3 the caps count FRESH only (a slot reserved only for an expected-fresh row; a cache hit never takes one)',
+    /if \(expectsFresh\(e\.tier\)\) \{[\s\S]{0,200}freshStarted\[e\.kind\] >= caps\[e\.kind\]/.test(esw) && /if \(countsTowardCap\(r\)\) lane\.fresh\+\+/.test(esw));
+  ok('C4 a row the cap deferred is never expiry-judged in the same pass (evidence first)',
+    /deferredIds\.add\(e\.id\)/.test(esw) && /if \(deferredIds\.has\(id\)\) \{ out\.expiry\.deferred\+\+/.test(esw));
+  // P · the scoped pool
+  // ⟲ RE-POINTED (W8.1): the scoped mail lane lives in the mail registry row (lib/evidence/sources.ts);
+  // the loader signature stays on the nominator. Same lanes, same bound, same report.
+  const srcs = src('lib/evidence/sources.ts');
+  ok('P1 the pool loader takes a scope and adds a PAGED people-scoped lane (to/cc overlaps · from in · threads)',
+    /export async function loadEvidencePool\(client: SupabaseClient, userId: string, sinceISO: string, scope\?: EvidenceScope/.test(nom)
+    && srcs.includes(".overlaps('to_addresses', addrs)") && srcs.includes(".overlaps('cc_addresses', addrs)") && srcs.includes(".in('from_address', addrs)")
+    && srcs.includes(".in('thread_id', threads)") && /fetchAllRows<Record<string, unknown>>/.test(srcs));
+  ok('P2 the scoped lane is bounded and REPORTED (POOL_SCOPED_MAX · stats.capped)', srcs.includes('POOL_SCOPED_MAX') && srcs.includes('capped') && nom.includes('stats'));
+  ok('P3 the newest-first window stays as the safety net (a pool is a superset, never a subset)', /mergePoolEmails\(sc\.rows, newest\)/.test(srcs));
+  // ⟲ RE-POINTED (W8.1): the doors also hand the loader the registry they already hold (one
+  // registry read per pass) — the scope argument is unchanged, so the regex accepts a trailing option bag.
+  ok('P4 every scoped door passes its scope (the sweep · the reverse event door · the judge · the context helper)',
+    /loadEvidencePool\(client, userId, since, scopeOf\(touched\)[,)]/.test(nom) && /loadEvidencePool\(client, userId, since, scope\)/.test(judge)
+    && /loadEvidencePool\(client, userId, sinceISO, scope[,)]/.test(settle));
+  ok('P5 the counterparty resolver CHUNKS instead of slicing (no silent .slice(0, 300))', !/\.slice\(0, (200|300)\)/.test(nom));
+  // J · the judge half
+  ok('J1 the judge stamps the evidence set it judged against and relaxes the prior anchor on NEW evidence',
+    /await writeCache\(client, userId, input, sig, verdict, evSig\)/.test(judge) && /evidenceNewToPrior\(evSig, priorEv\)/.test(judge)
+    && /priorEv = typeof t!\.ev === 'string'/.test(judge));
+  // B · the backfill
+  ok('B1 the backfill is DRY-RUN by default and refuses an unscoped --apply',
+    /const APPLY = flag\('--apply'\)/.test(bf) && /if \(APPLY && !ALL && !USER\)[\s\S]{0,160}REFUSED/.test(bf) && /if \(!APPLY\) \{[\s\S]{0,400}planUserEvidence\(sb, uid\)/.test(bf));
+  ok('B2 the backfill settles through THE SAME per-account pass (runEvidenceSweep → settleWorkByEvidence), claimed, evidence-only',
+    /runEvidenceSweep\(sb, uid, \{[\s\S]{0,120}expiry: false/.test(bf) && /claimSweepJob\(sb, uid, 'evidence'\)/.test(bf) && !/\.update\(|\.insert\(|\.upsert\(|\.delete\(/.test(bf));
+  ok('B3 the dry run prints the cost estimate (fresh judgments × the classification-tier cost)', /EST_EUR_PER_JUDGMENT/.test(bf) && /estimated cost/.test(bf));
+}
+
 // ── TIER 3 · THE LIVE CENSUS (read-only) ────────────────────────────────────────────────────────
 async function census(): Promise<void> {
   if (process.argv.includes('--no-census')) return;
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) { console.log('\n(census skipped — no env)'); return; }
-  console.log('\nTHE CENSUS (read-only — what the nominator would hand to the judge today):');
+  console.log('\nTHE CENSUS (read-only — what the per-account evidence pass would hand the judge today):');
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-  const { getPersonEntities } = await import('../lib/entities/people');
-  const page = async (table: string, select: string, f: (q: any) => any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-    const out: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
-    for (let from = 0; from < 20000; from += 1000) {
-      const { data, error } = await f(sb.from(table).select(select)).range(from, from + 999);
-      if (error) throw new Error(`${table}: ${error.message}`);
-      out.push(...(data ?? [])); if (!data || data.length < 1000) break;
-    }
-    return out;
-  };
-  const commits = await page('commitments', 'id, user_id, description, counterparty, thread_id, source, source_id, created_at, direction',
-    (q) => q.eq('status', 'open').in('direction', ['you_owe', 'awaiting']).order('created_at', { ascending: false }));
-  const items = await page('inbox_items', 'id, user_id, work_title, source_data, created_at, last_activity_at, type_override',
-    (q) => q.eq('status', 'pending').eq('source', 'email').or('work_state.in.(work_prepared,decision_required,action_required),rule_type.eq.needs_reply').order('created_at', { ascending: false }));
-  const users = [...new Set([...commits.map((c) => c.user_id), ...items.map((i) => i.user_id)])];
-  const nowISO = new Date().toISOString();
-  const tot = { cOpen: 0, cResolved: 0, cNom: 0, cByType: { email: 0, calendar: 0, transcript: 0 }, cSched: 0, iOpen: 0, iNom: 0, iByType: { email: 0, calendar: 0, transcript: 0 } };
+  // ⟲ RE-POINTED (W7.1): the census reads THE SAME plan the live pass executes (planUserEvidence —
+  // the people-scoped pool, the priority tiers) instead of a private re-implementation of it.
+  const { planUserEvidence, evidenceSweepUsers } = await import('../lib/work/evidence-sweep');
+  const tot = { cOpen: 0, iOpen: 0, cNom: 0, iNom: 0, fresh: 0, cached: 0, byType: { email: 0, calendar: 0, transcript: 0 } as Record<string, number> };
   const rows: string[] = [];
-  for (const userId of users) {
-    const cs = commits.filter((c) => c.user_id === userId && !['workflow', 'handoff'].includes(String(c.source ?? '')));
-    const is = items.filter((i) => i.user_id === userId && i.type_override !== 'waiting_on' && i.type_override !== 'fyi');
-    if (!cs.length && !is.length) continue;
-    const registry = await getPersonEntities(sb, userId);
-    const since = [...cs.map((c) => String(c.created_at)), ...is.map((i) => String(i.last_activity_at ?? i.created_at))].sort()[0];
-    const pool = await loadEvidencePool(sb, userId, since);
-    const addr = await resolveCommitmentAddresses(sb, userId, cs, registry);
-    let cNom = 0, cRes = 0, iNom = 0;
-    const cT = { email: 0, calendar: 0, transcript: 0 }, iT = { email: 0, calendar: 0, transcript: 0 };
-    for (const c of cs) {
-      const cp = addr.get(c.id) ?? null; if (cp) cRes++;
-      const w: OpenWork = { kind: 'commitment', id: c.id, afterISO: String(c.created_at), counterpartyEmail: cp, threadId: c.thread_id, fulfiller: c.direction === 'awaiting' ? 'counterparty' : 'user', description: String(c.description ?? '') };
-      const e = matchEvidence(pool, w, nowISO);
-      if (e.length) { cNom++; for (const t of new Set(e.map((x) => x.type))) cT[t]++; }
-    }
-    for (const it of is) {
-      const sd = (it.source_data ?? {}) as Record<string, unknown>;
-      const w: OpenWork = { kind: 'inbox', id: it.id, afterISO: String(it.last_activity_at ?? it.created_at), counterpartyEmail: sd.from_address ? String(sd.from_address).toLowerCase() : null, threadId: (sd.thread_id as string) ?? null, fulfiller: 'user', description: String(it.work_title ?? '') };
-      const e = matchEvidence(pool, w, nowISO);
-      if (e.length) { iNom++; for (const t of new Set(e.map((x) => x.type))) iT[t]++; }
-    }
-    tot.cOpen += cs.length; tot.cResolved += cRes; tot.cNom += cNom; tot.iOpen += is.length; tot.iNom += iNom;
-    for (const t of ['email', 'calendar', 'transcript'] as const) { tot.cByType[t] += cT[t]; tot.iByType[t] += iT[t]; }
-    rows.push(`  ${userId.slice(0, 8)}  commitments ${cNom}/${cs.length} nominated (address resolved ${cRes}; e${cT.email} c${cT.calendar} t${cT.transcript})  ·  inbox ${iNom}/${is.length} nominated (e${iT.email} c${iT.calendar} t${iT.transcript})`);
+  for (const userId of await evidenceSweepUsers(sb)) {
+    const plan = await planUserEvidence(sb, userId);
+    if (!plan.openCommitments && !plan.openInbox) continue;
+    const cNom = plan.queue.filter((e) => e.kind === 'commitment').length;
+    const iNom = plan.queue.length - cNom;
+    const fresh = plan.queue.filter((e) => e.tier !== 2).length;
+    for (const e of plan.queue) for (const t of new Set(e.evidence.map((x) => x.type))) tot.byType[t] = (tot.byType[t] ?? 0) + 1;
+    tot.cOpen += plan.openCommitments; tot.iOpen += plan.openInbox; tot.cNom += cNom; tot.iNom += iNom;
+    tot.fresh += fresh; tot.cached += plan.queue.length - fresh;
+    rows.push(`  ${userId.slice(0, 8)}  commitments ${cNom}/${plan.openCommitments} · inbox ${iNom}/${plan.openInbox} nominated · fresh ${fresh} · cache ${plan.queue.length - fresh} · pool scoped ${plan.pool?.scopedEmails ?? 0} + newest ${plan.pool?.newestEmails ?? 0}`);
   }
   rows.sort().forEach((r) => console.log(r));
-  console.log(`  TOTAL  commitments ${tot.cNom}/${tot.cOpen} nominated (address resolved ${tot.cResolved}/${tot.cOpen}; by type e${tot.cByType.email} c${tot.cByType.calendar} t${tot.cByType.transcript})`);
-  console.log(`  TOTAL  inbox       ${tot.iNom}/${tot.iOpen} nominated (by type e${tot.iByType.email} c${tot.iByType.calendar} t${tot.iByType.transcript})`);
-  console.log(`  first-sweep judgments ≈ ${tot.cNom + tot.iNom} (classification tier, ~€0.002–0.004 each → ≈ €${((tot.cNom + tot.iNom) * 0.003).toFixed(2)})`);
+  console.log(`  TOTAL  commitments ${tot.cNom}/${tot.cOpen} · inbox ${tot.iNom}/${tot.iOpen} nominated (by type e${tot.byType.email} c${tot.byType.calendar} t${tot.byType.transcript})`);
+  console.log(`  next-pass judgments ≈ ${tot.fresh} fresh + ${tot.cached} cache hits (classification tier, ~€0.003 each → ≈ €${(tot.fresh * 0.003).toFixed(2)})`);
   ok('census ran (read-only)', true);
 }
 

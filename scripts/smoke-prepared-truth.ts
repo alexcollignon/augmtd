@@ -32,6 +32,7 @@ import { pickFreeSlots, proposeFreeSlots } from '../lib/prepare/free-slots';
 import { inviteCardOf } from '../lib/prepare/invite-card';
 import { evidenceLinesOf, BOARD_EVIDENCE_RULE } from '../lib/room/grounding';
 import { matchEvidence } from '../lib/work/evidence-nominator';
+import { calendarEventOf } from '../lib/evidence/sources';
 
 const ROOT = process.cwd();
 const src = (p: string) => readFileSync(join(ROOT, p), 'utf8');
@@ -132,11 +133,13 @@ console.log('\nB · prepared words never claim an undone deed');
     && /NEVER claim that work is finished/.test(COMPLETION_HONESTY_RULE));
   const rd = src('lib/prepare/read.ts');
   gate('B7 THE ONE READER derives falseClaim + outsideWindow and its live predicate honors both (single AND batched readers stamp)',
-    /export function isLiveArtifact\(a: PreparedArtifact\): boolean \{\s*return !a\.stale && !a\.expired && !a\.outsideWindow && !a\.falseClaim;/.test(rd)
+    // ⟲ RE-POINTED (W7.3): + `misaddressed` (TRUE ADDRESSEES) and the commitment selects gained
+    // `counterparty` — what an addressed draft must agree with.
+    /export function isLiveArtifact\(a: PreparedArtifact\): boolean \{\s*return !a\.stale && !a\.expired && !a\.outsideWindow && !a\.falseClaim && !a\.misaddressed;/.test(rd)
     && /export function stampTruth</.test(rd)
     && (rd.match(/stampTruth\(/g) ?? []).length >= 2
-    && /select\('description, created_at, status, direction'\)/.test(rd)
-    && /select\('id, description, created_at, status, direction'\)\.eq\('user_id', userId\)\.in\('id', commitIds\)/.test(rd));
+    && /select\('description, created_at, status, direction, counterparty'\)/.test(rd)
+    && /select\('id, description, created_at, status, direction, counterparty'\)\.eq\('user_id', userId\)\.in\('id', commitIds\)/.test(rd));
   const row = (over: Record<string, unknown>) => ({ id: 'r', task_id: null, type: 'draft', title: 'x', content: 'body', created_at: '2026-09-20T10:00:00Z', metadata: {}, ...over });
   const facts = commitmentTruthFacts({ description: 'Redistribute the group allocation', created_at: '2026-09-18T10:00:00Z', status: 'open', direction: 'you_owe' });
   const pack = stampTruth(poolRowsToArtifacts([row({ type: 'document', content: live, metadata: { pastePack: true, note: 'Words ready', agentName: 'Clara' } })], 'commitment'), facts);
@@ -182,9 +185,11 @@ console.log('\nD · the room grounding carries later evidence');
     { type: 'email', id: 'm1', at: '2026-09-15T10:00:00Z', title: 'Re: walkthrough', by: 'user' },
   ], 'UTC');
   gate('D3 pure: a held meeting is stated HELD with its date; sent mail as SENT', lines.length === 2 && /HELD 2026-09-14/.test(lines[1]) && /the user SENT/.test(lines[0]));
+  // ⟲ RE-POINTED (W8.1 EVIDENCE FROM EVERYWHERE): the pool is one list of normalized events; the
+  // meeting enters through the calendar registry row's own mapper. Same fixture, same assertion.
+  const held = calendarEventOf({ id: 'e1', start_time: '2026-09-14T09:00:00Z', end_time: '2026-09-14T09:30:00Z', title: 'Walkthrough', attendees: [{ email: 'sam@acme.example' }], status: 'confirmed' }, null, '2026-09-23T00:00:00Z');
   const ev = matchEvidence({
-    emails: [], transcripts: [],
-    events: [{ id: 'e1', at: '2026-09-14T09:00:00Z', end: '2026-09-14T09:30:00Z', title: 'Walkthrough', attendees: ['sam@acme.example'], cancelled: false }],
+    events: held ? [held] : [],
   }, { kind: 'commitment', id: 'c', afterISO: '2026-09-10T00:00:00Z', counterpartyEmail: 'Sam@Acme.example', fulfiller: 'user', description: 'Schedule a call' }, '2026-09-23T00:00:00Z');
   gate('D4 pure: the nominator finds the held meeting by ADDRESS (case-blind), after the item', ev.length === 1 && ev[0].status === 'held');
   const brief = src('lib/room/brief.ts');
@@ -221,7 +226,10 @@ console.log('\nF · W5c: hidden artifacts re-prepare, leave the brief, and never
   const view = src('app/api/items/view/route.ts');
   gate('F3 the on-open trip covers every non-live artifact and LOGS its outcome (a no-op is never silent)',
     /preparedArts\.some\(\(a\) => !isLiveArtifact\(a\)\) && \(linkKind === 'inbox_item' \|\| linkKind === 'commitment'\)/.test(view)
-    && /console\.log\(`\[items\/view\] re-prepare trip \$\{linkKind\}:\$\{id\} → \$\{r\.did\}/.test(view));
+    // ⟲ RE-POINTED (W8.4): the trip moved to ONE home shared with the joined-open kick
+    // (lib/room/open-kicks.ts reprepareTrip) — the door schedules it; the log line lives with it.
+    && /await reprepareTrip\(supabase, uid, linkKind, id, staleRow, eid\);/.test(view)
+    && /console\.log\(`\[items\/view\] re-prepare trip \$\{linkKind\}:\$\{id\} → \$\{r\.did\}/.test(src('lib/room/open-kicks.ts')));
   const out = { title: 'Sync', startISO: '2026-09-23T09:00:00.000Z', endISO: '2026-09-23T09:30:00.000Z', proposed: true, timezone: 'Europe/Lisbon',
     alternatives: [{ startISO: '2026-09-23T13:00:00.000Z', endISO: '2026-09-23T13:30:00.000Z' }, { startISO: '2026-10-01T09:00:00.000Z', endISO: '2026-10-01T09:30:00.000Z' }] } as Parameters<typeof confineInviteToStatedWindow>[0];
   const nowMs = Date.parse('2026-09-22T15:00:00Z');
@@ -267,7 +275,10 @@ console.log('\nF · W5c: hidden artifacts re-prepare, leave the brief, and never
     /const decisionBriefC = prepArts\.find\(\(p\) => p\.decision && p\.decision\.options\.length >= 2\)/.test(commitSeg)
     && /verdict\?\.work === 'decide'/.test(commitSeg) && /itemKind: 'commitment' as const,/.test(commitSeg)
     && /object: resolveDecisionObject\(view\?\.prepared \?\? null\)/.test(commitSeg)
-    && /<ItemRail kind="commitment"[^>]*artifacts=\{commitArtifacts\}\s*decision=\{commitDecision \?/.test(commitSeg)
+    // ⟲ RE-POINTED (W7.2 ONE OBJECT, ONE DOOR): the door's own source object (`sourceItemId`) now
+    // rides the mount between the artifacts and the decision — same mount, one more fact.
+    // ⟲ RE-POINTED (W7.3): + the meeting source object (`sourceMeeting`) rides the same mount.
+    && /<ItemRail kind="commitment"[^>]*artifacts=\{commitArtifacts\}[\s\S]{0,400}?sourceItemId=\{view\?\.sourceItemId \?\? null\}[\s\S]{0,200}?sourceMeeting=\{view\?\.sourceMeeting \?\? null\}\s*decision=\{commitDecision \?/.test(commitSeg)
     && /\(p\.kind === 'deliverable' \|\| p\.kind === 'paste_pack'\) && p\.content && !p\.decision/.test(commitSeg));
   const label = 'paste_pack (group allocation redistribution prepared by Clara)';
   gate('F9 MOOT BY CODE: a requires label naming OUR OWN artifact kind is never the user\'s input (rule 4) — at the render predicate AND the resolver',

@@ -169,7 +169,16 @@ export function parseGmailMessage(message: GmailMessage) {
   let htmlBody = '';
   const attachments: GmailAttachmentMeta[] = [];
 
+  // THE INVITE'S OWN PART (W7.4): an iTIP invitation carries a `text/calendar` alternative part —
+  // often WITHOUT a filename (Exchange-born invites), which the attachment branch below never saw.
+  // Kept as a pointer only (inline data or an attachment id); lib/calendar/invite-source.ts parses it.
+  let calendarPart: { data: string | null; attachmentId: string | null } | null = null;
+
   const extractBody = (part: any) => {
+    if (!calendarPart && typeof part.mimeType === 'string' && part.mimeType.toLowerCase().startsWith('text/calendar') && !part.filename
+      && (part.body?.data || part.body?.attachmentId)) {
+      calendarPart = { data: part.body?.data ?? null, attachmentId: part.body?.attachmentId ?? null };
+    }
     if (part.mimeType === 'text/plain' && part.body?.data) {
       body = Buffer.from(part.body.data, 'base64').toString('utf-8');
     } else if (part.mimeType === 'text/html' && part.body?.data) {
@@ -209,6 +218,8 @@ export function parseGmailMessage(message: GmailMessage) {
   const emailMatch = fromHeader.match(/<(.+?)>/);
   const from_address = emailMatch ? emailMatch[1] : fromHeader;
   const from_name = fromHeader.split('<')[0].trim().replace(/"/g, '') || from_address;
+  const senderHeader = getHeader('Sender');
+  const senderAddress = senderHeader ? ((senderHeader.match(/<(.+?)>/)?.[1] ?? senderHeader).trim() || null) : null;
 
   // Helper to parse comma-separated email addresses from header
   const parseEmailAddresses = (header: string): string[] => {
@@ -249,6 +260,11 @@ export function parseGmailMessage(message: GmailMessage) {
     metadata: {
       provider: 'gmail',
       gmail_id: message.id,
+      // W7.6 THE AUTHORSHIP LAW — the transmitting mailbox (RFC 5322 `Sender:`), read only by
+      // lib/email-sync/authorship.ts (on-behalf-of sends). Absent on ordinary mail.
+      ...(senderAddress ? { sender_address: senderAddress } : {}),
+      // W7.4 — the invite's calendar part, when the message has one (see calendarPart above).
+      ...(calendarPart ? { calendar_part: calendarPart } : {}),
     },
   };
 }

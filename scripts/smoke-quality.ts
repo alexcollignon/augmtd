@@ -291,7 +291,11 @@ function sq4() {
   // `Promise<RoomResponse | null>` (a caller-checkable degrade signal), so the empty-text guard
   // spells its refusal `return null;` rather than a bare `return;` — the law itself (a
   // fully-degraded brief never overwrites last-good) is unchanged; only the return shape moved.
-  ok('   …and a fully-degraded brief never overwrites last-good', /if \(!text\) return null;/.test(b2));
+  // ⟲ RE-POINTED (Sep 23, W8.4 THE ROOM SPEAKS TRUE): the degrade is now REMEMBERED for its sig
+  // (refuseForSig stamps only `refusedSig` — last-good text untouched) before the same `return null`.
+  ok('   …and a fully-degraded brief never overwrites last-good',
+    /if \(!text\) \{ await refuseForSig\(client, userId, roomKey, sig\); return null; \}/.test(b2)
+    && /\{ \.\.\.t, refusedSig: sig \}/.test(b2));
 }
 
 // ── SQ5 · THE SWEEP IS GUARDED ──────────────────────────────────────────────────────────────────
@@ -698,8 +702,12 @@ function sq13() {
     && !/useHeldLedger|useEffect\([^)]*fetch/.test(deck));
   ok('   …and re-ranks nothing: no sort, no rank read, no urgency key anywhere in it',
     !/\.sort\(|attentionRank|rankAttention|\.filter\(\(r\) =>/.test(deck));
+  // ⟲ RE-POINTED (W8.3 — ONE COUNT): the cursor walks the deck's OWN stack — the handed array,
+  // merged append-only while the account is read and settled to it once complete (rows at and
+  // behind the cursor never move). Same order, one cursor, one index.
   ok('   …it walks the array in the order it was handed (one cursor, one index)',
-    /const row = rows\[cursor\] \?\? null;/.test(deck) && /setCursor\(\(c\) => c \+ 1\)/.test(deck));
+    /const row = stack\[cursor\] \?\? null;/.test(deck) && /setCursor\(\(c\) => c \+ 1\)/.test(deck)
+    && /complete \? settleQueue\(stackRef\.current, rows, cursor\) : mergeQueue\(stackRef\.current, rows\)/.test(deck));
   ok('the lens hands the deck the SAME array it lists, built once',
     /rows=\{waitingRows\.map\(\(r\) => r\.triage\)\}/.test(lens)
     && (lens.match(/const waitingRows/g) ?? []).length === 1);
@@ -976,10 +984,11 @@ function sq18() {
   ok('the merge stays pure — no React, no fetch, no clock, so this law is testable at all',
     !/react|useState|fetch\(|new Date\(/i.test(queue)
     && /export function mergeQueue</.test(queue) && /export function queueCount\(/.test(queue));
-  ok('   …and the lens holds ONE queue, extended in place only while the deck is live',
-    // (W5b: out of deck mode the LIST reads `listRows` — the ledger alone once it has landed.)
-    /const waitingRows = deckMode \? mergeQueue\(queueRef\.current, incomingRows\) : listRows;/.test(lens)
-    && /queueRef\.current = deckMode \? waitingRows : \[\];/.test(lens)
+  // ⟲ RE-POINTED (W8.3 — ONE COUNT): the ONE queue moved into the deck (the cursor's owner); the
+  // lens hands it the warm opening while the account is read and the counted rows once it lands.
+  ok('   …and ONE queue exists, extended in place only while the deck is live (the deck owns it)',
+    /const waitingRows = deckMode \? \(deckComplete \? listRows : incomingRows\) : listRows;/.test(lens)
+    && !/queueRef/.test(lens) && /const stackRef = useRef<TriageRow\[\]>\(\[\]\);/.test(src('components/triage/triage-deck.tsx'))
     && (lens.match(/const waitingRows/g) ?? []).length === 1);
 
   // ── 3 · THE SERVER CACHE — the timeline_cache precedent, exactly ──────────────────────────────
@@ -1301,7 +1310,8 @@ function sq19() {
         && !/_tailCache|_tailFlight/.test(deck);
     })());
   ok('   …and the NEXT card is read while this one is, one ahead and no further',
-    /const next = rows\[cursor \+ 1\] \?\? null;/.test(deck)
+    // ⟲ RE-POINTED (W8.3): one ahead in the deck's own stack.
+    /const next = stack\[cursor \+ 1\] \?\? null;/.test(deck)
     && /if \(next && TRIAGE_THREADED\.includes\(next\.item\.source\)\) void loadTail\(next\.id\);/.test(deck)
     && !/rows\.slice\(cursor.*\)\.forEach|rows\.map\(\(r\) => loadTail/.test(deck));
   // THE EXCERPT-HONESTY LAW REACHES THE CARD: a clip ends at a boundary and SAYS it was ours.
@@ -1416,9 +1426,13 @@ function sq21() {
   // 6 · THE THIRD-PERSON REFUSAL — the belt behind the conservative collapse.
   // ⟲ RE-POINTED (Sep 23, W3.5 room first paint): same shape move as SQ4's "fully-degraded brief"
   // gate — the refusal now returns the explicit `null` of `Promise<RoomResponse | null>`.
+  // ⟲ RE-POINTED (Sep 23, W8.4 THE ROOM SPEAKS TRUE): the refusal's name test moved to the pure
+  // `narratesSpeakerInThirdPerson` (a name inside a longer proper name is someone else) and the
+  // refusal is remembered for its sig before the same `return null` (smoke-room-voice owns both).
   ok('a composition still narrating the speaker by name is REFUSED to last-good, never served',
     /refused a composition that narrates the speaker in the third person/.test(b)
-    && /return null;\n  \}\n  const claimed = enforceRenderedClaims/.test(b));
+    && /if \(narratesSpeakerInThirdPerson\(voiced, speaker, knownPeople\)\) \{/.test(b)
+    && /await refuseForSig\(client, userId, roomKey, sig\);\n    return null;\n  \}\n  const claimed = enforceRenderedClaims/.test(b));
 
   // 7 · THE VERSION IS A FLOOR, NOT A PIN (the pin trap: an exact match breaks on the next bump).
   ok('ROOM_BRIEF_VERSION carries the contract so every cached opening re-authors',

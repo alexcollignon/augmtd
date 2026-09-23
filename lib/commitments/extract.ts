@@ -7,6 +7,7 @@ import { isOwnCoworkerSender } from '@/lib/inbox/self-echo';
 import { resolveDeixisInDescriptions } from '@/lib/inbox/deixis';
 import { seatStripsObligation, type SeatFacts } from '@/lib/inbox/recipient-role';
 import { dueDateFromSource, repairSelfParty, denotesUser, isOpenDuplicate, type UserForms } from '@/lib/commitments/extraction-truth';
+import { directionFloor } from '@/lib/commitments/direction';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
@@ -20,6 +21,9 @@ export type ExtractedCommitment = {
   // G1 (work-surface): the obligation's SUB-PARTS ("attach the deck", "include pricing") — one
   // commitment per MOTION, its clauses as steps. Persisted as the commitment's item plan.
   steps?: string[];
+  /** W7.4 THE DIRECTION FLOOR: WHO performs the act, as the extraction named it ("user" or the other
+   *  party's name/email). Code-verified against the user's identity (lib/commitments/direction.ts). */
+  doer?: string | null;
 };
 
 // Clean an initiative label (drop the model's "null"/"none" filler; cap length).
@@ -35,16 +39,138 @@ const COMMITMENT_HINT = /\b(i'?ll|i will|we'?ll|we will|let me|i'?ll get|send yo
 // footer is a near-perfect signal that this is a broadcast, not a 1:1 message.
 const BULK_HINT = /unsubscribe|view (this )?(e?-?mail )?in (your )?browser|manage (your )?(e?mail )?preferences|update your preferences|you'?re receiving this|sent to you because|no longer wish to receive|email preferences|all rights reserved/i;
 
-// A first-person promise BY the sender — the only shape that keeps a from-user commitment as
-// "you_owe". Anything else the sender writes (an imperative/request aimed at the recipient) is the
-// OTHER party's obligation. Descriptions are short imperatives ("Send the Q3 proposal"), so we also
-// accept a bare leading verb of sending/sharing that the user is the natural subject of — but the
-// structural rule is: no first-person promise marker on a from-user email ⇒ treat as awaiting.
-const FIRST_PERSON_PROMISE = /\b(i'?ll|i will|i'?m going to|i am going to|i shall|let me|we'?ll|we will|we'?re going to|we are going to|on my end|i'?ve|i have|i can|i'?d|i would)\b/i;
+// (W7.4) The from-user FIRST_PERSON_PROMISE backstop is RETIRED: it tested the DESCRIPTION for
+// "I'll…", but THE TITLE LAW makes every description an imperative — so it flipped EVERY user-sent
+// commitment to `awaiting` ("Contact <counterparty> to schedule demo" stored as the counterparty's
+// debt). Direction is now WHO DOES IT — the extraction's `doer`, code-verified: lib/commitments/direction.ts.
 
 // Attendee alias helpers now live in the shared identity module (single source across the initiative
 // machine — commitments + calendar bridging). Same agnostic logic, one definition.
 import { norm, emailLocalpart, nameTokens, emailDenotesName, sameAttendee } from '@/lib/projects/identity';
+import { dateStatedInText } from '@/lib/utils/user-time';
+import { topMessageOf } from '@/lib/inbox/top-message';
+import { conversationDelta, type ConversationKey } from '@/lib/work/conversation-delta';
+
+// ── EXTRACTION TRUTH floors (W8.2 · ONE CONVERSATION, ONE LIVE ITEM) ─────────────────────────────
+// Pure, zero AI. The write door (writeCommitments) and the repair (scripts/repair-conversation-hoard.ts)
+// ask the SAME functions.
+
+/**
+ * THE DUE-BEFORE-SOURCE FLOOR. A due date earlier than the source's own day (one day of timezone
+ * tolerance) is not a deadline this source set — found live: "Share updated report" extracted from
+ * an Aug 10 email carried due Aug 8. Dropped to null. When the obligation's OWN TITLE names that past
+ * date ("Attend the Aug 8 review"), the obligation itself is already past at its source → no
+ * commitment at all (`drop`). Pure.
+ */
+export function dueFloorAgainstSource(
+  due: string | null | undefined, anchorIso: string | null | undefined, description: string,
+): { due: string | null; drop: boolean; floored: boolean } {
+  if (!due || !/^\d{4}-\d{2}-\d{2}$/.test(due) || !anchorIso || Number.isNaN(Date.parse(anchorIso))) return { due: due ?? null, drop: false, floored: false };
+  const floorDay = new Date(Date.parse(`${new Date(anchorIso).toISOString().slice(0, 10)}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+  if (due >= floorDay) return { due, drop: false, floored: false };
+  return { due: null, drop: dateStatedInText(description, due), floored: true };
+}
+
+/** Split "Name <addr>" / a bare address / a bare name. Pure. */
+function whoParts(raw: string): { name: string | null; email: string | null } {
+  const s = raw.trim();
+  const m = /^(.*?)<([^>]+@[^>]+)>\s*$/.exec(s);
+  if (m) return { name: m[1].replace(/^["']|["']$/g, '').trim() || null, email: m[2].trim() };
+  if (s.includes('@') && !/\s/.test(s)) return { name: null, email: s };
+  return { name: s || null, email: null };
+}
+
+/** Does this address STRICTLY spell this name (first.last@, firstlast@, flast@)? Never a contains-guess. Pure. */
+export function emailSpellsName(email: string, name: string): boolean {
+  const local = emailLocalpart(email);
+  const t = nameTokens(name);
+  if (!local || t.length < 2) return false;
+  const first = t[0], last = t[t.length - 1];
+  return [t.join(''), first + last, first[0] + last, last + first].includes(local);
+}
+
+/**
+ * Two NAME forms of one human? Accent-folded tokens (THE ONE ACCENT FOLD); the first names agree and
+ * every further token of the shorter form matches a later token of the longer one — equal, or an
+ * initial / a ≥3-letter prefix ("Sam R." · "Sam Rivera" · "Sam Rivera Costa"). A one-token form never
+ * folds on its own (a first name is not a person). Pure.
+ */
+export function nameFormsAgree(a: string, b: string): boolean {
+  const ta = nameTokens(a), tb = nameTokens(b);
+  if (!ta.length || !tb.length) return false;
+  if (ta.join(' ') === tb.join(' ')) return true;
+  const tryDir = (s: string[], l: string[]): boolean => {
+    if (s.length < 2 || s.length > l.length || s[0] !== l[0]) return false;
+    let j = 1;
+    for (let i = 1; i < s.length; i++) {
+      const tok = s[i];
+      let hit = false;
+      for (; j < l.length; j++) {
+        if (l[j] === tok || ((tok.length === 1 || tok.length >= 3) && l[j].startsWith(tok))) { hit = true; j++; break; }
+      }
+      if (!hit) return false;
+    }
+    return true;
+  };
+  return tryDir(ta, tb) || tryDir(tb, ta);
+}
+
+type RegistryPerson = { name: string; aliases?: string[] | null; state?: { self?: boolean } | null };
+
+/**
+ * THE COUNTERPARTY FOLD — one human, one form. Resolution order: (1) the person registry, exact on
+ * any folded alias/address/name; (2) the registry by name form (nameFormsAgree) or a strictly-spelled
+ * address — only when exactly ONE person answers; (3) the conversation's own forms (the other open
+ * items' counterparties on the same thread + the batch) — only when they all denote one human, and a
+ * one-token first name only when exactly one conversation human carries it. The fuller form wins (a
+ * name over a bare address, more tokens over fewer). Ambiguity or no evidence → the raw form, honest.
+ * Pure.
+ */
+export function foldCounterparty(
+  raw: string | null | undefined, registry: RegistryPerson[], conversation: Array<string | null | undefined> = [],
+): string | null {
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+  const { name, email } = whoParts(s);
+  const people = registry.filter((p) => p?.name && p.state?.self !== true);
+  const fe = email ? norm(email) : null;
+  const fn = name ? norm(name) : null;
+  const formsOf = (p: RegistryPerson) => [p.name, ...(p.aliases ?? [])].map((f) => norm(String(f ?? ''))).filter(Boolean);
+  const uniq = (ps: RegistryPerson[]) => [...new Map(ps.map((p) => [p.name, p])).values()];
+
+  const exact = uniq(people.filter((p) => formsOf(p).some((f) => (fe && f === fe) || (fn && f === fn))));
+  if (exact.length === 1) return exact[0].name;
+  if (exact.length > 1) return s;
+  const fuzzy = uniq(people.filter((p) => formsOf(p).some((f) =>
+    (fn && !f.includes('@') && nameFormsAgree(fn, f)) || (fe && !fn && !f.includes('@') && emailSpellsName(fe, f)))));
+  if (fuzzy.length === 1) return fuzzy[0].name;
+  if (fuzzy.length > 1) return s;
+
+  const forms = [...new Set(conversation.map((f) => String(f ?? '').trim()).filter((f) => f && norm(f) !== norm(s)))];
+  const denotes = (f: string): boolean => {
+    const w = whoParts(f);
+    if (fe && w.email && norm(w.email) === fe) return true;
+    if (fn && w.name && nameFormsAgree(fn, w.name)) return true;
+    if (fe && !fn && w.name && emailSpellsName(fe, w.name)) return true;
+    if (fn && !w.name && w.email && emailSpellsName(w.email, fn)) return true;
+    return false;
+  };
+  let hits = forms.filter(denotes);
+  if (!hits.length && fn && nameTokens(fn).length === 1) {
+    // A bare first name folds only onto the ONE conversation human who carries it.
+    hits = forms.filter((f) => { const w = whoParts(f); return !!w.name && nameTokens(w.name)[0] === nameTokens(fn)[0]; });
+  }
+  if (!hits.length) return s;
+  // All hits must be ONE human (pairwise agreement), else ambiguous.
+  const nameOf = (f: string) => whoParts(f).name;
+  const named = hits.filter((f) => nameOf(f));
+  for (let i = 0; i < named.length; i++) for (let j = i + 1; j < named.length; j++) {
+    if (!nameFormsAgree(nameOf(named[i])!, nameOf(named[j])!)) return s;
+  }
+  const score = (f: string) => { const n = nameOf(f); return n ? 10 + nameTokens(n).length : 0; };
+  const best = [...hits, s].sort((a, b) => score(b) - score(a))[0];
+  return score(best) > score(s) ? (nameOf(best) ?? best) : s;
+}
 
 export function validDate(d: unknown): string | null {
   if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
@@ -54,7 +180,7 @@ export function validDate(d: unknown): string | null {
 // ── Near-duplicate detection (general, language/text-agnostic) ────────────────────────────────
 // Two commitment descriptions are "the same obligation" when their content words overlap heavily —
 // used to collapse the near-identical fragments an over-eager extractor emits for one action
-// ("Send the deck to Rene", "Send Rene the deck", "Send over the deck"). NO string special-casing:
+// ("Send the deck to Sam", "Send Sam the deck", "Send over the deck"). NO string special-casing:
 // it works purely off token overlap, so it holds for any wording, any language's word boundaries.
 const DUP_STOPWORDS = new Set([
   'the', 'a', 'an', 'to', 'for', 'of', 'and', 'or', 'with', 'on', 'in', 'at', 'by', 'from', 'up',
@@ -114,24 +240,39 @@ export async function writeCommitments(
     otherParty?: string | null;
     /** The user's own name + addresses — who the user IS, beside the self person entity. */
     user?: { name?: string | null; addresses?: Array<string | null | undefined> | null } | null;
+    /** W8.2 THE CONVERSATION DELTA: the message's OWN words (topMessageOf) + who wrote it. Absent on
+     *  the meeting path — the delta reads the meeting's summary + action items itself. */
+    message?: { text?: string | null; authoredByUser?: boolean | null; subject?: string | null } | null;
   },
   client: DBClient,
 ): Promise<void> {
   const clean0 = (list ?? []).filter((c) => c?.description?.trim());
-  if (!clean0.length) return;
+  // (W8.2) An EMPTY batch still reaches the conversation delta below — a message that minted nothing
+  // new may still have delivered, replaced or cancelled the conversation's open work. Every candidate
+  // query is skipped for it; the delta itself makes no call when the conversation holds no open work.
+  const hasCandidates = clean0.length > 0;
 
   // IDENTITY first (orchestrated-loop O1b + THE SELF-PARTY LAW, W3.4): who the user is — the self
   // person entity's name + aliases, plus the caller's name/addresses — so no row is born naming the
   // user as their own counterparty, in the field OR in the title's "with X".
   const { getPersonEntities, resolveIdentity } = await import('@/lib/entities/people');
-  const persons = await getPersonEntities(client as never, userId).catch(() => []);
-  const selfP = persons.find((p) => p.state?.self === true) ?? null;
+  const persons = hasCandidates ? await getPersonEntities(client as never, userId).catch(() => []) : [];
+  // W7.5: the user's forms come from THE ONE CODE-OWNED DERIVATION (lib/entities/self), never from
+  // the stored self row's aliases — a polluted row once made a client "the user" here.
+  const { loadUserForms } = await import('@/lib/prepare/addressee');
+  const owned = hasCandidates ? await loadUserForms(client as never, userId).catch(() => ({ name: null, aliases: [] }) as UserForms) : ({ name: null, aliases: [] } as UserForms);
   const userForms: UserForms = {
-    name: meta.user?.name || selfP?.name || null,
-    aliases: [...(selfP?.aliases ?? []), ...(meta.user?.addresses ?? []), ...(selfP?.name ? [selfP.name] : [])],
+    name: meta.user?.name || owned.name || null,
+    aliases: [...(owned.aliases ?? []), ...(meta.user?.addresses ?? [])],
   };
   const other = meta.otherParty ?? meta.counterparty ?? null;
   const clean = clean0.map((c) => {
+    // THE DIRECTION FLOOR (W7.4) — who DOES it decides the direction, before anything else reads it.
+    const floor = directionFloor(
+      { direction: c.direction, description: c.description, counterparty: c.counterparty ?? meta.counterparty ?? null, doer: c.doer ?? null },
+      userForms, other && !denotesUser(other, userForms) ? other : null,
+    );
+    if (floor.direction !== c.direction) c = { ...c, direction: floor.direction };
     const fixed = repairSelfParty(
       { description: c.description.trim(), counterparty: c.counterparty ?? null, direction: c.direction }, userForms,
       other && !denotesUser(other, userForms) ? other : null,
@@ -141,16 +282,16 @@ export async function writeCommitments(
       : c;
   });
 
-  const { data: existing } = await client.from('commitments')
-    .select('description').eq('user_id', userId).eq('source_id', meta.sourceId);
+  const { data: existing } = hasCandidates ? await client.from('commitments')
+    .select('description').eq('user_id', userId).eq('source_id', meta.sourceId) : { data: [] };
   const existingDescs = (existing ?? []).map((e: { description: string }) => e.description || '');
   // The user's LIVE commitments from OTHER sources — the cross-source restatement pool. 'suggested'
   // meeting rows are live too: a second meeting re-stating one still pending review is the same
   // obligation (THE OPEN-DUPLICATE LAW — the census found 15 groups, 33 rows).
-  const { data: openOther } = await client.from('commitments')
+  const { data: openOther } = hasCandidates ? await client.from('commitments')
     .select('description, counterparty, initiative, direction, thread_id, source_id, created_at').eq('user_id', userId)
     .in('status', ['open', 'suggested'])
-    .neq('source_id', meta.sourceId).order('created_at', { ascending: false }).limit(400);
+    .neq('source_id', meta.sourceId).order('created_at', { ascending: false }).limit(400) : { data: [] };
   const openRows = (openOther ?? []) as Array<{ description: string; counterparty: string | null; initiative: string | null; direction: string | null; thread_id: string | null; source_id: string | null; created_at: string | null }>;
   const nowIso = new Date().toISOString();
 
@@ -223,50 +364,102 @@ export async function writeCommitments(
     } catch { /* consolidation is an enhancement — the batch stands */ }
   }
 
+  // THE STATED WINDOW (W3.4): the model's date, re-anchored forward from the SOURCE's own date,
+  // widened to the END of a window the description states (verified in the source's own words);
+  // no stated date → null. The expiry law only ever sees rows that carry a due_date.
+  // THE DUE-BEFORE-SOURCE FLOOR (W8.2): a due earlier than the source's own day is no deadline this
+  // source set → null; a title that itself names that past date is already past → no commitment.
+  const dated = consolidated.map((c) => {
+    const due = validDate(dueDateFromSource({ modelDate: c.due_date, description: c.description, sourceText: meta.sourceText ?? null, anchorIso: meta.anchorAt ?? null }));
+    const f = dueFloorAgainstSource(due, meta.anchorAt ?? null, c.description);
+    return { c, due: f.due, drop: f.drop };
+  }).filter((d) => !d.drop);
+
   // IDENTITY RESOLUTION at the write (orchestrated-loop O1b) — the counterparty RESOLVES through the
   // person registry instead of being transcribed: one human never lands under two labels (the
   // canonical name wins), and a counterparty that resolves to the USER'S OWN self entity is a
   // structural impossibility with structural consequences — an "awaiting" on yourself IS your own
   // task (direction flips to you_owe), and you can never be your own counterparty (null; the display
-  // layer derives a source label). Unresolved forms stay raw — honest, and future alias fodder.
-  const rows = consolidated.map((c) => {
+  // layer derives a source label). W8.2 THE COUNTERPARTY FOLD: a form the registry does not hold
+  // verbatim folds — accent/short-form/bare-address — onto the ONE human the registry or the
+  // conversation's own forms name (`foldCounterparty`); ambiguity stays raw — honest, and alias fodder.
+  const convForms = [
+    ...openRows.filter((r) => meta.threadId && r.thread_id === meta.threadId).map((r) => r.counterparty),
+    ...consolidated.map((c) => c.counterparty ?? null), meta.counterparty ?? null,
+  ];
+  const built = dated.map(({ c, due }) => {
     const rawCp = (c.counterparty || meta.counterparty || null)?.toString().slice(0, 200) ?? null;
     const id = resolveIdentity(persons, rawCp);
     const isSelf = id.isSelf || (!!rawCp && denotesUser(rawCp, userForms));
     const direction = isSelf ? 'you_owe' : (c.direction === 'awaiting' ? 'awaiting' : 'you_owe');
-    const counterparty = isSelf ? null : (id.canonical ?? rawCp);
+    const counterparty = isSelf ? null : (id.canonical ?? foldCounterparty(rawCp, persons, convForms) ?? rawCp);
     return {
-      user_id: userId,
-      direction,
-      description: c.description.trim().slice(0, 500),
-      counterparty,
-      // THE STATED WINDOW (W3.4): the model's date, re-anchored forward from the SOURCE's own date,
-      // widened to the END of a window the description states (verified in the source's own words);
-      // no stated date → null. The expiry law only ever sees rows that carry a due_date.
-      due_date: validDate(dueDateFromSource({ modelDate: c.due_date, description: c.description, sourceText: meta.sourceText ?? null, anchorIso: meta.anchorAt ?? null })),
-      initiative: cleanInitiative(c.initiative),
-      source: meta.source,
-      source_id: meta.sourceId,
-      thread_id: meta.threadId ?? null,
-      status: meta.status ?? 'open',
+      c,
+      row: {
+        user_id: userId,
+        direction,
+        description: c.description.trim().slice(0, 500),
+        counterparty,
+        due_date: due,
+        initiative: cleanInitiative(c.initiative),
+        source: meta.source,
+        source_id: meta.sourceId,
+        thread_id: meta.threadId ?? null,
+        status: meta.status ?? 'open',
+      },
     };
   });
+
+  // ── W8.2 ONE CONVERSATION, ONE LIVE ITEM — THE CONVERSATION DELTA. The ONE call site: the new
+  // message is read against the conversation's OPEN work (the thread's live commitments; a meeting's
+  // earlier series meetings) — each open item kept · updated · superseded · delivered (nominated to
+  // the fulfillment judge; only a judged delivery closes) · moot, each candidate new or a duplicate
+  // of an open item (not written). Failure keeps everything. lib/work/conversation-delta.ts ──
+  const key: ConversationKey | null = meta.source === 'email'
+    ? (meta.threadId ? { kind: 'thread', threadId: meta.threadId, excludeSourceId: meta.sourceId } : null)
+    : { kind: 'meeting', transcriptId: meta.sourceId };
+  const delta = await conversationDelta(client, userId, {
+    key,
+    candidates: built.map(({ row }) => ({ description: row.description, direction: row.direction, counterparty: row.counterparty, due_date: row.due_date })),
+    message: {
+      kind: meta.source, id: meta.sourceId, at: meta.anchorAt ?? null,
+      text: meta.message?.text ?? (meta.source === 'email' && meta.sourceText ? topMessageOf(meta.sourceText) : null),
+      authoredByUser: meta.message?.authoredByUser ?? null, subject: meta.message?.subject ?? null,
+    },
+  }).catch(() => null);
+  const writeIdx = delta ? delta.writeIndices : built.map((_, i) => i);
+  const toWrite = writeIdx.map((i) => built[i]);
+  const rows = toWrite.map((b) => b.row);
+  let inserted: Array<{ id: string; description: string }> | null = null;
+  if (rows.length) {
+    const { data, error } = await client.from('commitments').insert(rows).select('id, description');
+    if (error) console.error('[commitments] insert failed:', error.message);
+    inserted = (data ?? null) as Array<{ id: string; description: string }> | null;
+  }
+  if (delta) {
+    // Insert returns rows in insert order; a description match is the fallback alignment.
+    const ids = rows.map((r, k) => inserted?.[k]?.description === r.description ? inserted[k].id : (inserted ?? []).find((x) => x.description === r.description)?.id ?? null);
+    const report = await delta.settle(ids);
+    if (report.updated || report.superseded || report.moot || report.deliveredClosed || report.duplicates || report.leftBehind) {
+      console.log(`[conversation-delta] ${meta.source}:${meta.sourceId.slice(0, 8)} kept=${report.kept} updated=${report.updated} superseded=${report.superseded} moot=${report.moot} delivered=${report.deliveredClosed}/${report.deliveredNominated} duplicates=${report.duplicates} leftBehind=${report.leftBehind}`);
+    }
+  }
   if (!rows.length) return;
-  const { data: inserted } = await client.from('commitments').insert(rows).select('id, description');
+  const consolidatedWritten = toWrite.map((b) => b.c);
 
   // ── G1: the obligation's STEPS persist as its item plan (the deep-dive checklist), version-stamped
   // so the plan route serves them instead of regenerating. Non-fatal. ──
   try {
-    const withSteps = consolidated.filter((c) => Array.isArray(c.steps) && c.steps.length >= 2);
+    const withSteps = consolidatedWritten.filter((c) => Array.isArray(c.steps) && c.steps.length >= 2);
     if (withSteps.length && inserted?.length) {
       const { PLAN_VERSION } = await import('@/lib/home/capability-map');
-      const byDesc = new Map((inserted as Array<{ id: string; description: string }>).map((r) => [r.description, r.id]));
+      const byDesc = new Map(inserted.map((r) => [r.description, r.id]));
       for (const c of withSteps) {
         const cid = byDesc.get(c.description.trim().slice(0, 500));
         if (!cid) continue;
         await client.from('item_plans').upsert({
           user_id: userId, kind: 'commitment', entity_id: cid,
-          tasks: c.steps!.slice(0, 5).map((s, i) => ({ id: `g1-${i}`, text: String(s).slice(0, 120), actor: 'you', done: false })),
+          tasks: c.steps!.slice(0, 5).map((s, i) => ({ id: `g1-${i}`, text: String(s).slice(0, 120), actor: 'you', done: false, clause: true })),
           version: PLAN_VERSION, updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id,kind,entity_id' });
       }
@@ -357,6 +550,10 @@ export async function writeMeetingCommitments(
     const counterparty = isUser ? soleCounterpart : (a.assignee ?? soleCounterpart ?? null);
     list.push({
       direction: isUser ? 'you_owe' : 'awaiting',
+      // THE DIRECTION FLOOR (W7.4): the insights pass's own ACTOR field rides as the doer — the
+      // writer code-verifies it against the user's identity (an assignee who IS the user, in any of
+      // their forms, is the user's own deed).
+      doer: isUser ? 'user' : (a.assignee ?? null),
       description: a.action!.trim(),
       due_date: a.dueDate ?? a.due_date ?? null,
       counterparty,
@@ -444,6 +641,8 @@ due_date: set it ONLY when THIS email explicitly states a deadline — an absolu
 
 counterparty: the specific real person this obligation is with (who owes it, or is owed it), drawn from this email's actual participants — the sender or a named recipient. Use null only when genuinely unidentifiable; never invent a name.
 
+doer: WHO must PERFORM the action — "user" when ${who} does it, otherwise the other party's name or email exactly as in this email. direction MUST agree with it: doer "user" ⇒ "you_owe"; doer the other party ⇒ "awaiting". An action ${who} takes TOWARD the other party ("Contact X", "Send X the material", "Schedule the demo with X", "Follow up with X") is done BY ${who} — doer "user", direction "you_owe".
+
 initiative: the specific deal, client, project, internal initiative, or goal this commitment belongs to — including a hiring effort, product launch, migration, or other bounded internal effort. Use a short proper-noun label derived from THIS email's own content, or null for a one-off or an ongoing category such as invoices, receipts, or newsletters. Two DIFFERENT clients/companies/initiatives ALWAYS get DIFFERENT labels; the SAME ongoing effort gets a CONSISTENT label. Never invent a label.
 ${initiativeGrounding}${instructions?.trim() ? `\nThe user added this guidance — follow it: ${instructions.trim()}\n` : ''}
 Subject: ${subject || '(none)'}
@@ -456,22 +655,30 @@ description — THE TITLE LAW: a short IMPERATIVE, at most ~9 words, starting wi
 THE DEIXIS LAW: a stored title must stay TRUE as time passes — never write relative time words ("tomorrow", "today", "tonight", "next week", "this Friday") into the description. Resolve them against THIS EMAIL'S OWN DATE above and write the absolute instead: "Be at the meeting room at 12:30 tomorrow" (sent Jul 27) → "Be at the meeting room — Jul 28, 12:30". Clock times stay; day-words become dates.
 
 Return ONLY JSON. Empty array if there are no real commitments:
-{"commitments":[{"direction":"you_owe|awaiting","description":"short imperative, e.g. 'Send the Q3 proposal'","due_date":"YYYY-MM-DD or null","counterparty":"name/email or null","initiative":"short label or null","steps":["short sub-part", "..."]}]}`;
+{"commitments":[{"direction":"you_owe|awaiting","doer":"user | the other party's name/email","description":"short imperative, e.g. 'Send the Q3 proposal'","due_date":"YYYY-MM-DD or null","counterparty":"name/email or null","initiative":"short label or null","steps":["short sub-part", "..."]}]}`;
 
   try {
     const { client: ai, model } = await getAIClient(userId, 'summarization', client);
     const res = await aiCreate(ai, { model, messages: [{ role: 'user', content: prompt }], max_tokens: 500, temperature: 0.2 });
     const parsed = parseJson(res.choices?.[0]?.message?.content ?? '');
     let list = (parsed.commitments ?? []) as ExtractedCommitment[];
-    if (!list.length) return 0;
-    // Structural backstop — a hard directional signal the model's text-inference cannot override.
-    // When the email is FROM the user, an ask/imperative directed OUTWARD ("process the refund",
-    // "send me X") is something the counterparty owes → "awaiting", NOT "you_owe". Only a clear
-    // first-person promise ("I'll…", "we'll…", "let me…") stays "you_owe". This is general (no
-    // names/subjects) — it keys purely off who sent the email + the grammatical shape of the task,
-    // so a requested action can never land in the user's "on your plate" lane.
-    if (isFromUser) {
-      list = list.map((c) => (c.direction === 'you_owe' && !FIRST_PERSON_PROMISE.test(c.description) ? { ...c, direction: 'awaiting' } : c));
+    // (W8.2) An empty extraction still reaches writeCommitments: the conversation delta reads the
+    // message against the thread's OPEN work (a delivery or a cancellation mints nothing new).
+    // THE DIRECTION FLOOR (W7.4) — direction is WHO DOES IT, decided by ONE pure law
+    // (lib/commitments/direction.ts): the extraction's named `doer`, code-verified against the
+    // user's identity; else the object position ("Contact X…" is done TO X, so BY the user). The
+    // retired backstop keyed a from-user row on "I'll…" in the DESCRIPTION — which the title law
+    // makes imperative — and so flipped every user-sent deed to `awaiting`. One conservative residue
+    // survives, and ONLY where the model omitted the doer it was asked for: a from-user row with no
+    // doer and no object evidence reads as a request to the other party (the refund-ask class).
+    {
+      const forms = { name: userName || seat?.userName || null, aliases: seat?.userAddresses ?? null };
+      list = list.map((c) => {
+        const f = directionFloor({ direction: c.direction, description: c.description, counterparty: c.counterparty ?? counterparty, doer: c.doer ?? null }, forms, counterparty);
+        const direction = isFromUser && f.basis === 'model' && !String(c.doer ?? '').trim() && f.direction === 'you_owe'
+          ? 'awaiting' : f.direction;
+        return direction === c.direction ? c : { ...c, direction };
+      });
     }
     // THE SEAT LAW (threads-plan · THE OPENING CONTRACT clause 4) — the sibling of the backstop
     // above, keyed off WHO WAS ADDRESSED instead of who sent it. A request addressed To: a third
@@ -484,16 +691,16 @@ Return ONLY JSON. Empty array if there are no real commitments:
     // recipient for THAT person's CV and the user, in CC, was served "You owe <sender>".
     if (!isFromUser && seatStripsObligation(`${subject || ''}\n${text}`, seat)) {
       list = list.filter((c) => c.direction !== 'you_owe');
-      if (!list.length) return 0;
     }
     // THE DEIXIS LAW, structural belt (T-class): a title carrying a relative time word decays into
     // a lie ("tomorrow" is only true for a day) — detection is lexical, the REWRITE is reasoned
     // (one capped call, only for offenders), anchored to the email's own date.
-    list = await resolveDeixisInDescriptions(client, userId, list, receivedAt ?? null);
+    if (list.length) list = await resolveDeixisInDescriptions(client, userId, list, receivedAt ?? null);
     await writeCommitments(userId, list, {
       source: 'email', sourceId, threadId, counterparty,
       anchorAt: receivedAt ?? null, sourceText: `${subject || ''}\n${text}`, otherParty: counterparty,
       user: { name: userName || seat?.userName || null, addresses: seat?.userAddresses ?? null },
+      message: { text: topMessageOf(text), authoredByUser: isFromUser, subject: subject || null },
     }, client);
     return list.length;
   } catch {

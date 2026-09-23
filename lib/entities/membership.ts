@@ -49,14 +49,16 @@ export async function setItemMembership(
   }
   import('@/lib/home/bust-brief').then(({ softBustBrief }) => softBustBrief(supabase, userId)).catch(() => {});
 
-  // ── CORRECTION CASCADE (promise fix): the CONVERSATION follows the membership. Engine turns
-  // about THIS item (prep/delegate/verdict narrations, keyed by dedupe) re-home from the old room
-  // to the item's new one — a wrongly-grouped item's story never keeps haunting the wrong deal.
-  // User-authored turns stay where they were said (they carry no item provenance). Non-fatal.
+  // ── CORRECTION CASCADE (promise fix): engine turns about THIS item (prep/delegate/verdict
+  // narrations, keyed by dedupe) re-home to the item's OWN room — a wrongly-grouped item's story
+  // never keeps haunting the wrong deal. ONE OBJECT, ONE DOOR (W7.2 — lib/room/door.ts): the
+  // item's room IS its own key whatever it is filed under, so a filing never moves the story INTO
+  // a project room; it only brings legacy turns HOME. User-authored turns stay where they were
+  // said (they carry no item provenance). Non-fatal.
   try {
     const { looseRoomKey } = await import('@/lib/room/turns');
     const turnItemKind = args.kind === 'inbox_item' ? 'inbox' as const : args.kind === 'commitment' ? 'commitment' as const : 'meeting' as const;
-    const newRoomKey = args.entityId ?? looseRoomKey(turnItemKind, args.id);
+    const newRoomKey = looseRoomKey(turnItemKind, args.id);
     const keys = [`prep:inbox:${args.id}`, `prep:commit:${args.id}`, `verdict-resolve:inbox:${args.id}`, `verdict-resolve:commitment:${args.id}`];
     await supabase.from('room_turns').update({ room_key: newRoomKey }).eq('user_id', userId).in('dedupe_key', keys).then(() => {}, () => {});
     await supabase.from('room_turns').update({ room_key: newRoomKey }).eq('user_id', userId).like('dedupe_key', `delegate:${args.id}:%`).then(() => {}, () => {});

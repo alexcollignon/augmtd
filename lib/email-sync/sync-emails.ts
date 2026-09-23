@@ -13,6 +13,10 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import type { ActorContext } from '@/lib/evidence/types';
+import type { InviteFacts } from '@/lib/calendar/ics';
+import { readInviteForEmail, isCalendarAttachment } from '@/lib/calendar/invite-source';
+import { linkInviteToEvent, compactInvite } from '@/lib/calendar/invite-link';
 import { batchClassifyEmails, type EmailEnvelope } from '@/lib/ai/email-classifier-batch';
 import { batchAnalyzeRecipients, type EmailRoutingInput, type UserInSystem } from '@/lib/ai/recipient-classifier-batch';
 
@@ -66,6 +70,8 @@ import {
   fetchOutlookAttachmentContent,
   fetchOutlookConversation,
 } from '@/lib/microsoft/outlook';
+import { authorshipStamp, gmailFiledInSent } from '@/lib/email-sync/authorship';
+import { loadOwnAddresses, providerSendAsAddresses, cachedSendAsAddresses } from '@/lib/email-sync/send-as';
 import { extractTextFromAttachment } from '@/lib/attachments/text-extractor';
 import { processEmail } from '@/lib/ai/email-processor';
 import { analyzeRecipients, shouldCreateInboxItem, getSuggestionLevel, getSuggestionLabel } from '@/lib/ai/recipient-detector';
@@ -98,6 +104,37 @@ interface ProcessedAttachment {
   extractedText: string | null;
 }
 
+/**
+ * INVITES ARE EVENTS (W7.4): read the invite a message carries (its own calendar part — see
+ * lib/calendar/invite-source.ts for where each provider keeps it) and link it to the user's calendar
+ * row BY IDENTITY. Cheap on ordinary mail: with no calendar part, no .ics and no Graph eventMessage,
+ * nothing is fetched. Never throws.
+ */
+async function resolveInviteLink(p: {
+  connection: { id: string; user_id: string; provider: string };
+  encryptedTokens: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  parsed: any;
+  calendarAttachmentIds: string[];
+  adminSupabase: SupabaseClient;
+}): Promise<{ invite: InviteFacts | null; calendarEventId: string | null }> {
+  const meta = (p.parsed?.metadata ?? {}) as Record<string, unknown>;
+  const worthReading = p.calendarAttachmentIds.length > 0 || !!meta.calendar_part || !!meta.odata_type;
+  if (!worthReading) return { invite: null, calendarEventId: null };
+  try {
+    const invite = await readInviteForEmail({
+      provider: p.connection.provider as 'gmail' | 'outlook',
+      encryptedTokens: p.encryptedTokens, parsed: p.parsed, calendarAttachmentIds: p.calendarAttachmentIds,
+    });
+    if (!invite) return { invite: null, calendarEventId: null };
+    const calendarEventId = await linkInviteToEvent(p.adminSupabase, p.connection.user_id, invite, { connectionId: p.connection.id });
+    if (calendarEventId) console.log(`[CalendarInvite] Linked by identity (uid) to calendar_event ${calendarEventId}`);
+    return { invite, calendarEventId };
+  } catch {
+    return { invite: null, calendarEventId: null };
+  }
+}
+
 async function processAttachmentsForEmail(params: {
   emailId: string;
   userId: string;
@@ -106,7 +143,7 @@ async function processAttachmentsForEmail(params: {
   parsedEmail: ReturnType<typeof parseGmailMessage> | ReturnType<typeof parseOutlookMessage>;
   outlookInternalId?: string;
   adminSupabase: SupabaseClient;
-}): Promise<{ attachments: ProcessedAttachment[]; hasCalendarInvite: boolean }> {
+}): Promise<{ attachments: ProcessedAttachment[]; hasCalendarInvite: boolean; calendarAttachmentIds?: string[] }> {
   const { emailId, userId, provider, encryptedTokens, parsedEmail, outlookInternalId, adminSupabase } = params;
   const results: ProcessedAttachment[] = [];
 
@@ -135,9 +172,9 @@ async function processAttachmentsForEmail(params: {
     }
   }
 
-  const hasCalendarInvite = attachmentList.some(
-    (a) => a.mimeType?.includes('calendar') || a.mimeType === 'application/ics' || a.filename?.toLowerCase().endsWith('.ics')
-  );
+  const hasCalendarInvite = attachmentList.some(isCalendarAttachment);
+  // W7.4 — the .ics files' ids, so the invite reader parses THE MESSAGE'S OWN calendar part.
+  const calendarAttachmentIds = attachmentList.filter(isCalendarAttachment).map((a) => a.id).filter(Boolean);
 
   // Cap at 8 non-calendar attachments to avoid blocking sync on emails with many files
   const MAX_ATTACHMENTS = 8;
@@ -222,7 +259,7 @@ async function processAttachmentsForEmail(params: {
     }
   }
 
-  return { attachments: results, hasCalendarInvite };
+  return { attachments: results, hasCalendarInvite, calendarAttachmentIds };
 }
 
 export interface SyncResult {
@@ -393,19 +430,25 @@ async function backfillThreadHistory(params: {
     const knownMessageIds = new Set((existingRows || []).map((r: any) => r.message_id).filter(Boolean));
 
     // Filter to messages not yet in DB
-    const userEmail = connection.metadata?.email || connection.provider_account_id;
+    // W7.6 THE AUTHORSHIP LAW — is_from_user = the AUTHOR is the user (owned from / on-behalf-of),
+    // decided by the ONE stamp; Gmail's SENT label is kept only as the filed_in_sent fact.
+    const ownAddresses = await loadOwnAddresses(adminSupabase, connection);
     const rowsToInsert = fetchedMessages
       .filter(m => m.message_id && !knownMessageIds.has(m.message_id))
       .map(m => {
         // Strip parser-only fields before insert (not columns on emails)
         const { attachments: _a, hasAttachments: _ha, outlookInternalId: _oid, has_unsubscribe: _hu, ...dbFields } = m as any;
+        const authorship = authorshipStamp(m as any, ownAddresses, {
+          filedInSent: gmailFiledInSent((m as any).labels),
+          metadata: { ...m.metadata, thread_context_only: true },
+        });
         return stripNulls({
           user_id: connection.user_id,
           connection_id: connection.id,
           ...dbFields,
           html_body: (m as any).html_body?.slice(0, 15000) || null,
-          is_from_user: (m.from_address || '').toLowerCase() === (userEmail || '').toLowerCase(),
-          metadata: { ...m.metadata, thread_context_only: true },
+          is_from_user: authorship.is_from_user,
+          metadata: authorship.metadata,
         }) as Record<string, unknown>;
       });
 
@@ -431,6 +474,31 @@ async function backfillThreadHistory(params: {
   } catch (err) {
     console.warn(`[ThreadBackfill] Unexpected error:`, err);
   }
+}
+
+/**
+ * THE MAIL EVIDENCE DOOR (W3.1 EVIDENCE SETTLES · W8.7 EVIDENCE FROM EVERYWHERE) — the ONE helper every
+ * sync path calls once per stored message. A RECENT message the user authored, or one a TEAMMATE sent
+ * (the actor ladder, `mailOpensReverseDoor` → lib/evidence/actor.ts `actorRole`; never re-derived
+ * here), fires the reverse door: the nominator finds the open work it could settle and hands it to the
+ * reasoned judge. Fire-and-forget under the nominator's bound; never awaited, never blocks sync;
+ * at-least-once safe (every close is a conditional claim, every judgment is cached by its evidence set).
+ * RECENT only (7d, MAIL_DOOR_RECENT_MS): a backfill of old mail is history the budgeted sweep reads.
+ */
+function openMailEvidenceDoor(
+  client: SupabaseClient, userId: string, storedEmail: Record<string, unknown>, actors: () => Promise<ActorContext | null>,
+): void {
+  const at = Date.parse(String(storedEmail?.received_at ?? ''));
+  if (!storedEmail?.id || !Number.isFinite(at) || at <= Date.now() - 7 * 86_400_000) return; // cheap pre-check
+  void (storedEmail.is_from_user ? Promise.resolve(null) : actors())
+    .then(async (ctx) => {
+      const { mailOpensReverseDoor } = await import('@/lib/evidence/sources');
+      if (!mailOpensReverseDoor(storedEmail, ctx)) return;
+      void import('@/lib/work/evidence-settle')
+        .then(({ settleForEvent }) => settleForEvent(client, userId, { type: 'email', id: String(storedEmail.id) }))
+        .catch(() => {});
+    })
+    .catch(() => {});
 }
 
 /**
@@ -737,6 +805,18 @@ export async function syncEmailsForConnection(
         if (e) _userAddresses.add(e);
       }
     } catch { /* non-fatal — connection email alone is the primary signal */ }
+    // W7.6 THE AUTHORSHIP LAW — the provider-reported send-as aliases are owned too (never mail-learned).
+    // A full-window sync asks the provider (6h memo); a push reads the memo only (no extra round trip).
+    try {
+      const _sendAs = options.preloadedMessages ? cachedSendAsAddresses(connection.id) : await providerSendAsAddresses(connection);
+      for (const a of _sendAs) _userAddresses.add(a);
+    } catch { /* non-fatal — the login + connected addresses stay the floor */ }
+
+    // THE ACTOR CONTEXT for the mail evidence door (W8.7) — loaded at most ONCE per sync, and only
+    // when a recent inbound message needs the ladder asked (user-sent mail never waits on it).
+    let _actorsP: Promise<ActorContext | null> | null = null;
+    const actorsOnce = (): Promise<ActorContext | null> =>
+      (_actorsP ??= import('@/lib/evidence/actor').then(({ loadActorContext }) => loadActorContext(adminSupabase, connection.user_id)).catch(() => null));
 
     // Phase 1: sequential — store email rows, fire learning for sent, fast-path noise/fyi
     // Process-class emails are collected into processQueue for parallel AI in Phase 2
@@ -746,6 +826,8 @@ export async function syncEmailsForConnection(
       processedAttachments: ProcessedAttachment[];
       calendarEventId: string | null;
       hasCalendarInvite: boolean;
+      /** W7.4 — the invite this message carries, read from its own calendar part. */
+      invite?: InviteFacts | null;
       isForwarded: boolean;
       ruleLabel?: string | null;
     }
@@ -926,6 +1008,7 @@ export async function syncEmailsForConnection(
           // (the catalogue-PDF class). One-time cost: this branch only runs when no item exists yet.
           let recoveredAttachments: ProcessedAttachment[] = [];
           let recoveredCalendarInvite = false;
+          let recoveredCalendarIds: string[] = [];
           const recoverHasAtt = ((parsed as any).attachments?.length > 0) || ((parsed as any).hasAttachments === true);
           if (recoverHasAtt) {
             try {
@@ -940,25 +1023,33 @@ export async function syncEmailsForConnection(
               });
               recoveredAttachments = attResult.attachments;
               recoveredCalendarInvite = attResult.hasCalendarInvite ?? false;
+              recoveredCalendarIds = attResult.calendarAttachmentIds ?? [];
             } catch (attErr) {
               console.error(`[Attachments] Recovery-path processing failed for ${existingEmail.id}:`, attErr);
             }
           }
+          // W7.4 — the same identity link the main path makes (a push-stored invite lands HERE).
+          const recovered = await resolveInviteLink({
+            connection, encryptedTokens, parsed, calendarAttachmentIds: recoveredCalendarIds, adminSupabase,
+          });
           processQueue.push({
             parsed,
             storedEmail: existingEmail,
             processedAttachments: recoveredAttachments,
-            calendarEventId: null,
-            hasCalendarInvite: recoveredCalendarInvite,
+            calendarEventId: recovered.calendarEventId,
+            hasCalendarInvite: recoveredCalendarInvite || !!recovered.invite,
+            invite: recovered.invite,
             isForwarded,
             ruleLabel: ruleMap.get(String(_msgIdx)) ?? null,
           });
           continue;
         }
 
-        // Determine if email is from user (for learning)
+        // W7.6 THE AUTHORSHIP LAW — the AUTHOR is the user (owned from · on-behalf-of), never a folder or a
+        // single-address compare. ONE stamp for every sync path (initial, recovery, both push doors).
         const userEmail = connection.metadata?.email || connection.provider_account_id;
-        const isFromUser = parsed.from_address.toLowerCase() === userEmail?.toLowerCase();
+        const _authorship = authorshipStamp(parsed, _userAddresses, { filedInSent: gmailFiledInSent((parsed as any).labels) });
+        const isFromUser = _authorship.is_from_user;
 
         // Strip parser-only fields that don't exist as DB columns before inserting
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -979,8 +1070,8 @@ export async function syncEmailsForConnection(
             user_id: connection.user_id,
             connection_id: connection.id,
             ...emailDbFields,
-            metadata: { ...((emailDbFields as { metadata?: Record<string, unknown> }).metadata ?? {}), ...(attachMeta.length ? { attachments: attachMeta } : {}) },
-            is_from_user: isFromUser, // Flag for learning from sent emails
+            metadata: { ..._authorship.metadata, ...(attachMeta.length ? { attachments: attachMeta } : {}) },
+            is_from_user: isFromUser, // THE AUTHORSHIP LAW — the user wrote it (learning reads this)
           })
           .select()
           .single();
@@ -1140,19 +1231,14 @@ export async function syncEmailsForConnection(
               bustBriefCache: async () => {},
             }).catch(() => {});
           }
+        }
 
-          // EVIDENCE SETTLES (W3.1, invariant 7): a message the user SENT is a deed on ANY thread —
-          // the reverse nominator finds the open work owed to its recipients (a you_owe on another
-          // thread, a meeting commitment with the same person) and hands it to the reasoned judge.
-          // Fire-and-forget under the nominator's bound; never awaited, never blocks sync. RECENT
-          // deeds only (7d): a backfill of old sent mail is history the budgeted sweep already
-          // reads — firing a door per historical row would fan out for nothing.
-          if (storedEmail.received_at && Date.parse(storedEmail.received_at) > Date.now() - 7 * 86_400_000) {
-            void import('@/lib/work/evidence-settle')
-              .then(({ settleForEvent }) => settleForEvent(adminSupabase, connection.user_id, { type: 'email', id: storedEmail.id }))
-              .catch(() => {});
-          }
+        // EVIDENCE SETTLES (W3.1 · W8.7, invariant 7) — THE ONE CALL SITE on this sync path, for both
+        // authors: a message the user SENT, or one a TEAMMATE sent, is a deed on ANY thread. After the
+        // structural resolve-on-reply above (its order is kept), never awaited, non-fatal.
+        openMailEvidenceDoor(adminSupabase, connection.user_id, storedEmail, actorsOnce);
 
+        if (storedEmail.is_from_user) {
           console.log(`    ✓ Learning signals queued, skipping inbox item (sent email)\n`);
           continue; // Skip to next email (already stored for context)
         }
@@ -1313,7 +1399,24 @@ export async function syncEmailsForConnection(
             .limit(1)
             .maybeSingle();
 
+          // INVITES ARE EVENTS (W7.4) — an invite the fast path files as awareness is still a
+          // meeting: read + link it here too (only when the message carries a calendar signal —
+          // ordinary fyi/noise mail fetches nothing). A later non-invite message keeps the thread's.
+          const _fastIcsIds = connection.provider === 'gmail'
+            ? (((parsed as any).attachments ?? []) as Array<{ attachmentId?: string; mimeType?: string; filename?: string }>)
+              .filter((a) => isCalendarAttachment(a)).map((a) => String(a.attachmentId ?? '')).filter(Boolean)
+            : [];
+          const _fastInvite = await resolveInviteLink({
+            connection, encryptedTokens, parsed, calendarAttachmentIds: _fastIcsIds, adminSupabase,
+          });
+          const _fastPrevSd = (fastExisting?.source_data ?? null) as Record<string, unknown> | null;
+          const _fastInviteStored = compactInvite(_fastInvite.invite) ?? (_fastPrevSd?.invite as InviteFacts | undefined) ?? null;
+          const _fastEventId = _fastInvite.calendarEventId
+            ?? (_fastPrevSd?.invite ? (_fastPrevSd.calendar_event_id as string | undefined) ?? null : null);
+
           const fastSourceData = stripNulls({
+            ...(_fastInviteStored ? { invite: _fastInviteStored } : {}),
+            ...(_fastEventId ? { calendar_event_id: _fastEventId } : {}),
             email_id: storedEmail.id,
             message_id: storedEmail.message_id,
             thread_id: fastThreadId,
@@ -1467,6 +1570,8 @@ export async function syncEmailsForConnection(
         let processedAttachments: ProcessedAttachment[] = [];
         let calendarEventId: string | null = null;
         let hasCalendarInvite = false;
+        let invite: InviteFacts | null = null;
+        let calendarAttachmentIds: string[] = [];
 
         if (hasAttachments) {
           const attResult = await processAttachmentsForEmail({
@@ -1480,29 +1585,20 @@ export async function syncEmailsForConnection(
           });
           processedAttachments = attResult.attachments;
           hasCalendarInvite = attResult.hasCalendarInvite ?? false;
-
-          // If this is a calendar invite email, find the matching calendar event
-          // by organizer (= email sender) + future start time — language-independent
-          if (attResult.hasCalendarInvite && storedEmail.from_address) {
-            const { data: calEvent } = await adminSupabase
-              .from('calendar_events')
-              .select('id')
-              .eq('user_id', connection.user_id)
-              .ilike('organizer', storedEmail.from_address)
-              .gte('start_time', storedEmail.received_at ?? new Date().toISOString())
-              .eq('status', 'confirmed')
-              .order('start_time', { ascending: true })
-              .limit(1)
-              .maybeSingle();
-            calendarEventId = calEvent?.id ?? null;
-            if (calendarEventId) {
-              console.log(`[CalendarInvite] Linked email to calendar_event ${calendarEventId}`);
-            }
-          }
+          calendarAttachmentIds = attResult.calendarAttachmentIds ?? [];
         }
 
+        // INVITES ARE EVENTS (W7.4): the invite is read from the message's OWN calendar part and
+        // linked to the calendar row by IDENTITY (UID / Graph's event pointer) — the old "same
+        // organizer + next confirmed future start" heuristic linked an October invite to an August
+        // check-in and is gone. No UID match → no link; the invite's own facts still ride the item.
+        ({ invite, calendarEventId } = await resolveInviteLink({
+          connection, encryptedTokens, parsed, calendarAttachmentIds, adminSupabase,
+        }));
+        if (invite) hasCalendarInvite = true;
+
         // Queue for Phase 2 parallel AI processing
-        processQueue.push({ parsed, storedEmail, processedAttachments, calendarEventId, hasCalendarInvite, isForwarded, ruleLabel: ruleMap.get(String(_msgIdx)) ?? null });
+        processQueue.push({ parsed, storedEmail, processedAttachments, calendarEventId, hasCalendarInvite, invite, isForwarded, ruleLabel: ruleMap.get(String(_msgIdx)) ?? null });
 
       } catch (emailError) {
         console.error('Error processing email:', emailError);
@@ -1538,7 +1634,8 @@ export async function syncEmailsForConnection(
       const _batch = _dedupedQueue.slice(_bi, _bi + _PARALLEL_BATCH);
       const _batchResults = await Promise.allSettled(_batch.map(async (qItem) => {
         const _batchResult = { inboxItemsCreated: 0, errors: [] as string[] };
-        const { parsed, storedEmail, processedAttachments, calendarEventId, hasCalendarInvite, isForwarded } = qItem;
+        const { parsed, storedEmail, processedAttachments, calendarEventId: _linkedEventId, hasCalendarInvite, invite, isForwarded } = qItem;
+        const _inviteStored = compactInvite(invite ?? null);
 
         // orgUsers — use pre-hoisted values (avoids redundant DB queries per email)
         const orgUsers = _orgUsers;
@@ -1610,6 +1707,9 @@ export async function syncEmailsForConnection(
 
           // Check if this is the current user (connection owner)
           const isCurrentUser = recipient.userId === connection.user_id;
+          // W7.4 — the link names a row in the CONNECTION OWNER's calendar; another org recipient's
+          // item never carries a pointer into someone else's calendar (their invite facts still ride).
+          const calendarEventId = isCurrentUser ? _linkedEventId : null;
 
           // Skip if doesn't meet threshold (with user-centric logic)
           if (!shouldCreateInboxItem(recipient, isCurrentUser)) {
@@ -1796,7 +1896,13 @@ export async function syncEmailsForConnection(
                   ...(processed.understanding
                     ? understandingStamp(processed.understanding, emailForProcessing)
                     : carryUnderstandingStamp(existingInboxItem?.source_data as Record<string, unknown> | null)),
-                  calendar_event_id: calendarEventId || undefined,
+                  // W7.4 — an identity link from THIS message wins; a later non-invite reply on the thread
+                  // keeps the invite (and its UID-derived link) the thread already carried.
+                  calendar_event_id: calendarEventId
+                    || ((existingInboxItem?.source_data as Record<string, unknown> | null)?.invite
+                      ? ((existingInboxItem?.source_data as Record<string, unknown>).calendar_event_id as string | undefined) : undefined)
+                    || undefined,
+                  invite: _inviteStored ?? ((existingInboxItem?.source_data as Record<string, unknown> | null)?.invite as InviteFacts | undefined) ?? undefined,
                   isForwarded,
                   thread_history: threadEmails?.map(e => ({
                     message_id: e.message_id,
@@ -1939,6 +2045,7 @@ export async function syncEmailsForConnection(
                 // speaks for, so every later arrival can be compared against it.
                 ...understandingStamp(processed.understanding, storedEmail),
                 calendar_event_id: calendarEventId || undefined,
+                invite: _inviteStored ?? undefined,
                 isForwarded,
                 thread_history: threadEmailsForNew?.map(e => ({
                   message_id: e.message_id,
@@ -2028,7 +2135,6 @@ export async function syncEmailsForConnection(
       }
 
       if (sentMessages.length > 0) {
-        const userEmail = connection.metadata?.email || connection.provider_account_id;
         const sentRows = sentMessages.map(m => {
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
           const { attachments, hasAttachments: _ha, outlookInternalId: _oid, has_unsubscribe: _hu, ...dbFields } = m as any;
@@ -2036,14 +2142,22 @@ export async function syncEmailsForConnection(
           const attachmentMeta = Array.isArray(attachments) && attachments.length > 0
             ? attachments.map((a: any) => ({ filename: a.filename, mimeType: a.mimeType, size: a.size ?? null }))
             : undefined;
+          // W7.6 THE AUTHORSHIP LAW — being FILED in Sent is a folder fact, not authorship: a forwarded
+          // meeting request keeps its organizer in `from` and is NOT the user's mail. The ONE stamp decides
+          // is_from_user; the folder rides only as metadata.filed_in_sent. (Parser metadata — the invite's
+          // calendar part, the Graph type — is now kept; the old write replaced it with attachments alone.)
+          const authorship = authorshipStamp(m as any, _userAddresses, {
+            filedInSent: true,
+            metadata: { ...((dbFields as { metadata?: Record<string, unknown> }).metadata ?? {}), ...(attachmentMeta ? { attachments: attachmentMeta } : {}) },
+          });
           return stripNulls({
             user_id: connection.user_id,
             connection_id: connection.id,
             ...dbFields,
             html_body: (m as any).html_body?.slice(0, 15000) || null,
-            is_from_user: true,
+            is_from_user: authorship.is_from_user,
             is_read: true,
-            metadata: attachmentMeta ? { attachments: attachmentMeta } : undefined,
+            metadata: authorship.metadata,
           }) as Record<string, unknown>;
         }).filter(r => r.message_id); // must have a message_id for upsert
 

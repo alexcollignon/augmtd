@@ -84,7 +84,7 @@ import { loadDeckContext, peekDeckContext } from '@/lib/triage/deck-context-door
 import type { DeckContext } from '@/lib/triage/deck-context';
 import { SourceObjectMount } from '@/components/room/source-object';
 // THE HONEST COUNTER — a stack still being extended may not state a total (lib/triage/queue.ts).
-import { queueCount } from '@/lib/triage/queue';
+import { queueCount, mergeQueue, settleQueue } from '@/lib/triage/queue';
 
 // ── WHAT A CARD IS MADE OF — all of it SERVED (see HeldBandRow in lib/home/attention.ts). ────────
 export type TriageRow = {
@@ -217,9 +217,10 @@ function TriageCard({ row }: { row: TriageRow }) {
   const sourceWord = TRIAGE_SOURCE_WORD[row.item.source] ?? null;
   // THE PROJECT REFERENCE — served (tracked-only), already filtered so it never repeats the title.
   const project = (row.item.initiative ?? '').trim() || null;
-  // THE WHY-HELD CLAUSE + THE JUDGE'S REASON, one muted line (the reason is the "why this is work"
-  // the card never had; it is dropped when it restates the title).
-  const whyLine = [row.why, ctx?.reason].filter(Boolean).join(' · ');
+  // THE WHY-HELD CLAUSE — the ledger's own served sentence, and nothing else. W8.3: the judge's
+  // reason once rode here ("The stated deadline (2026-08-07) passed 47 days ago…") — the brain talking
+  // to itself on screen (THE NO-INTERNAL-TEXT LAW). The deck context no longer carries it at all.
+  const whyLine = row.why;
   // THE CONTEXTUAL CHIP — the prepared state where one was served, else the held class's own word.
   // It never invents a state: a row with neither wears nothing.
   const chip = row.preparedWord ?? (row.prepared === 'reply_draft' ? 'draft ready'
@@ -615,13 +616,21 @@ export function TriageDeck({ rows, today, complete = true, onExit, onRefresh, on
     return () => window.removeEventListener('keydown', onKey);
   }, [leave, undoLast]);
 
-  const row = rows[cursor] ?? null;
-  const left = Math.max(0, rows.length - cursor);
+  // ── W8.3 · ONE COUNT — THE STACK IS THE DECK'S OWN, AND IT SETTLES TO THE ACCOUNT ─────────────
+  // While the account is still being read the stack only GROWS (mergeQueue — the cursor law). Once
+  // it is complete, rows AHEAD of the cursor that the account no longer holds leave the stack
+  // (settleQueue): a warm row the ledger filed elsewhere was a card the header never counted
+  // ("88 here" under "Waiting · 84"). The rows at and behind the cursor never move.
+  const stackRef = useRef<TriageRow[]>([]);
+  const stack = complete ? settleQueue(stackRef.current, rows, cursor) : mergeQueue(stackRef.current, rows);
+  stackRef.current = stack;
+  const row = stack[cursor] ?? null;
+  const left = Math.max(0, stack.length - cursor);
 
   // ── THE NEXT CARD IS READ WHILE THIS ONE IS BEING READ. One card ahead, no further: a deck is a
   //    cursor, not a crawler, and a prefetch that ran down sixty threads would be the whole-pool
   //    read this surface exists to avoid. ──────────────────────────────────────────────────────────
-  const next = rows[cursor + 1] ?? null;
+  const next = stack[cursor + 1] ?? null;
   useEffect(() => {
     if (next && TRIAGE_THREADED.includes(next.item.source)) void loadTail(next.id);
   }, [next]);

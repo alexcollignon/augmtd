@@ -144,6 +144,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       if (!target) return NextResponse.json({ error: 'target not found' }, { status: 404 });
       const { absorbEntity } = await import('@/lib/entities/reflect');
       const r = await absorbEntity(supabase, user.id, targetId, id);
+      if (r.refused) return NextResponse.json({ error: r.refused === 'self' ? 'you can\'t be merged with someone else' : 'these are different kinds of things' }, { status: 409 });
       if (!r.ok) return NextResponse.json({ error: 'merge failed' }, { status: 500 });
       const { after } = await import('next/server');
       after(async () => {

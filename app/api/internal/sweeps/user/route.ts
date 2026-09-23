@@ -4,9 +4,9 @@ import { hasBearer } from '@/lib/utils/bearer-auth';
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE PER-USER SWEEP JOB (stabilization W3.3 REACH — lib/work/sweep-fanout.ts carries the design).
 //
-// The judgment and draft crons are DISPATCHERS now; this is where one account's pass actually runs,
-// in its OWN window with its OWN full budget. THE KICK'S PATTERN, followed exactly
-// (app/api/internal/runs/kick · app/api/internal/attention/catch-up):
+// The judgment, draft and commitments (lane 'evidence', W7.1) crons are DISPATCHERS now; this is
+// where one account's pass actually runs, in its OWN window with its OWN full budget. THE KICK'S
+// PATTERN, followed exactly (app/api/internal/runs/kick · app/api/internal/attention/catch-up):
 //   • bearer AGENTOS_SECRET — the secret every internal dispatcher already uses; no new env var.
 //   • maxDuration 300 — the work happens in THIS route's window, never the dispatcher's.
 //   • the work runs in `after()`; the dispatcher gets 202 as soon as the claim is taken.
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
 
   const { isSweepLane, claimSweepJob, runUserSweep, USER_BUDGET_MS } = await import('@/lib/work/sweep-fanout');
   const lane = body.lane;
-  if (!isSweepLane(lane)) return NextResponse.json({ error: "lane must be 'judgment' or 'draft'" }, { status: 400 });
+  if (!isSweepLane(lane)) return NextResponse.json({ error: "lane must be 'judgment', 'draft' or 'evidence'" }, { status: 400 });
 
   const { createClient } = await import('@supabase/supabase-js');
   const admin = createClient(

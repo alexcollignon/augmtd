@@ -52,6 +52,7 @@ import { ItemRail, pushDealTurn, type RailView } from '@/components/home/item-ra
 // retired into it. The people typeahead it shared with the forward now lives in ONE module.
 import { InviteCard } from '@/components/home/invite-card';
 import { EmailCard } from '@/components/home/email-card';
+import { MeetingSourceMount, type MeetingSourceFacts } from '@/components/room/source-object';
 // THE PREPARED FORWARD's kit card + its host (W3-C) — the local ForwardPreviewCard retired into it.
 import ForwardCard from '@/components/home/forward-card';
 import { panelPlan, applyPanelPlan } from '@/lib/room/render-plan';
@@ -401,7 +402,7 @@ function ComposePanel({ kind, entityId, onSent }: { kind: ComposeKind; entityId:
       {/* Recipient + subject header */}
       <div className="px-4 pt-3.5 pb-2 space-y-2 border-b border-neutral-100">
         <div className="flex items-center gap-2">
-          <RecipientField label="To" value={to} onChange={setTo} placeholder={recipientName ? `${recipientName} (add their email)` : 'recipient@email.com'} />
+          <RecipientField label="To" value={to} onChange={setTo} placeholder={recipientName ? `${recipientName} (add their email)` : 'Who should this go to?'} />
           {!showCc && <button onClick={() => setShowCc(true)} className="flex-shrink-0 text-[11px] font-medium text-neutral-400 hover:text-indigo-600">Cc</button>}
         </div>
         {showCc && <RecipientField label="Cc" value={cc} onChange={setCc} placeholder="cc@email.com" />}
@@ -771,6 +772,11 @@ type ItemViewData = {
   lateBrief?: { text: string; at: string | null } | null;
   /** W3.5 (d): asks the machine read as moot — the room hides the same turns the header ignored. */
   mootAskKeys?: string[];
+  /** ONE OBJECT, ONE DOOR (W7.2 — lib/room/door.ts): the door's OWN source object (a commitment's
+   *  source email item), served by the door; the rail mounts it and nothing else as the source. */
+  sourceItemId?: string | null;
+  /** W7.3: a meeting-born commitment's source object — the meeting (title · date · attendees). */
+  sourceMeeting?: MeetingSourceFacts | null;
 };
 
 // The word renders QUIET in the header's meta line — no chrome, no affordance (the stage already
@@ -976,10 +982,10 @@ function commonRoomTabs(
   return tabs;
 }
 
-// W3.5 (a) → W3.7: the ONE late re-check. The server's paint budget is now 1.2s (lib/room/brief
-// BRIEF_PAINT_BUDGET_MS); a compose that overran it finishes ≈3–6s after the request began, so the
-// re-check lands just past that — the appended brief arrives while the reader is still reading.
-const LATE_BRIEF_RECHECK_MS = 5_500;
+// W3.5 (a) → W3.7 → W8.4: the ONE late re-check. The view no longer waits on the compose at all
+// (it paints last-good at once and composes under after()); a real compose (≈3–6s from the open)
+// is re-checked just past that — the appended brief arrives while the reader is still reading.
+const LATE_BRIEF_RECHECK_MS = 6_500;
 
 function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'awareness', id: string): { view: ItemViewData | null; refresh: () => void } {
   // THE ONE KEY, THE ONE FLIGHT (W3.7 ROOM SPEED): the hover warm (lib/room/warm-client) fills this
@@ -1016,32 +1022,43 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
         const paint = mayReplaceInPlace(reason, paintedRef.current);
         if (paint) { paintedRef.current = true; setView(d); }
         // RECOGNIZE-ON-OPEN follow-up: no deal yet → the server just kicked a background recognition;
-        // re-check ONCE so the rail appears on this very open (not only the next one). This is a
-        // SKELETON FILL by construction — it only runs when nothing entity-shaped was ever painted.
+        // re-check ONCE so the CONNECTION LINE appears on this very open (not only the next one).
+        // ONE OBJECT, ONE DOOR (W7.2 — lib/room/door.ts): a link landing mid-visit changes the
+        // door's connection line and its related rows — NEVER its voice. Only `entity` and
+        // `siblings` merge in; the painted opening (brief · move · offers · cards) stays exactly as
+        // the reader met it (the no-mutation law). The whole-payload swap that used to live here is
+        // how a commitment's door turned into a machine container's agenda six minutes into a visit.
         if (paint && !d.entity && !recheckedRef.current) {
           recheckedRef.current = true;
           setTimeout(() => {
-            fetch(`/api/items/view?kind=${kind}&id=${id}`)
+            // W8.4: a re-check PICKS UP what the open already kicked — a pure read (`warm=1`), never a second buy.
+            fetch(`/api/items/view?kind=${kind}&id=${id}&warm=1`)
               .then((r) => (r.ok ? r.json() : null))
-              .then((d2) => { if (d2 && !d2.error && d2.entity) { setView(d2); saveLS(key, d2); } })
+              .then((d2: ItemViewData | null) => {
+                if (!d2 || (d2 as { error?: unknown }).error || !d2.entity) return;
+                saveLS(key, d2); // the next open's first paint carries the whole payload
+                setView((prev) => (prev ? { ...prev, entity: d2.entity, siblings: d2.siblings } : prev));
+              })
               .catch(() => {});
           }, 6000);
         }
         // THE LATE BRIEF IS AN APPEND (W3.5 (a); registry precedence #1): the compose outran the
         // server's paint budget. ONE re-check; whatever composed lands as `lateBrief` — a new
         // message beneath the opening the reader met — never a swap of the painted opening.
-        const paintedBrief = !!(d.brief || d.entity?.brief);
+        // The item door's brief is ITS OWN field (W7.2) — the entity's is never read here.
+        const paintedBrief = !!d.brief;
         if (d.briefPending && !paintedBrief && !lateCheckedRef.current) {
           lateCheckedRef.current = true;
           setTimeout(() => {
-            fetch(`/api/items/view?kind=${kind}&id=${id}`)
+            // W8.4: a re-check PICKS UP what the open already kicked — a pure read (`warm=1`), never a second buy.
+            fetch(`/api/items/view?kind=${kind}&id=${id}&warm=1`)
               .then((r) => (r.ok ? r.json() : null))
               .then((d2: ItemViewData | null) => {
                 if (!d2 || (d2 as { error?: unknown }).error) return;
                 saveLS(key, d2); // the next open's first paint
-                const text = d2.brief ?? d2.entity?.brief ?? null;
+                const text = d2.brief ?? null;
                 if (!text) return;
-                setView((prev) => (prev ? { ...prev, lateBrief: { text, at: d2.briefAt ?? d2.entity?.briefAt ?? null } } : prev));
+                setView((prev) => (prev ? { ...prev, lateBrief: { text, at: d2.briefAt ?? null } } : prev));
               })
               .catch(() => {});
           }, LATE_BRIEF_RECHECK_MS);
@@ -1665,7 +1682,8 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
   // VERBS SPEAK LEFT (Aug 4): a resolution is a conversation event — the room narrates it
   // (durable, keyed) so the story reads "dismissed — undo in Activity", never a silent vanish.
   const narrateResolve = (text: string) => {
-    try { pushDealTurn(railView?.entity?.id ?? `inbox:${id}`, text, { key: `resolve:${id}` }); } catch { /* non-fatal */ }
+    // ONE OBJECT, ONE DOOR (W7.2): the door's own key, never the linked entity's.
+    try { pushDealTurn(`inbox:${id}`, text, { key: `resolve:${id}` }); } catch { /* non-fatal */ }
   };
 
   // ── Item-level Dismiss (acknowledge) — the primary action for an awareness item. Reuses the Home's
@@ -1826,7 +1844,9 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
       ? {
         itemKind: 'email' as const,
         itemId: id,
-        title: verdict.reason || null,
+        // NO INTERNAL TEXT ON SCREEN (W7.3): the question is the DECISION BRIEF's own, else the
+        // item's own subject — never the judge's private reason.
+        title: decisionBrief?.title || subject || null,
         // THE ONE SURFACE for the decision (owner, Aug 12): when THE DECISION BRIEF exists, its
         // options (with trade-offs) SUPERSEDE the judge's bare labels, and its recommendation
         // marks the pick — the brief's depth renders HERE, never as a second document.
@@ -1920,6 +1940,9 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     // that later morphs into the room. Structure must not flip on data arrival.
     <DeepDiveShell embedded={embedded} room={room} rail={(
       <ItemRail kind="email" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }}
+        // W8.4 · ONE CARD, ONE DOOR: the source card's "Thread →" raises THIS drawer's thread section —
+        // the same door the reply card's "Thread →" opens (never a separate item page).
+        onOpenThread={() => openDrawerAt('thread')}
         decision={decisionPayload ? {
           ...decisionPayload,
           // Q5 · the object's ONE deed is REVIEW, and it reads where every prepared thing on this
@@ -1931,11 +1954,11 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
           // The word is the deed — AND THE DEED IS VISIBLE (promise fix #3): the choice lands as
           // a user turn, the steer's answer as the response turn. Silence after a click is a bug.
           onChosen: (label: string) => {
-            pushDealTurn(railView?.entity?.id ?? `inbox:${id}`, label, { role: 'user' });
+            pushDealTurn(`inbox:${id}`, label, { role: 'user' }); // W7.2: the door's own key
           },
           onResolved: (_label: string, outcome: { draft?: string | null; say: string }) => {
             if (outcome.draft) { setDraft(outcome.draft); setBodyHTML(''); setDraftV((v) => v + 1); setComposerOpen(true); }
-            pushDealTurn(railView?.entity?.id ?? `inbox:${id}`, outcome.say, { key: `decide:${id}` });
+            pushDealTurn(`inbox:${id}`, outcome.say, { key: `decide:${id}` });
           },
           onDismiss: () => setDecisionCleared(true),
         } : null}
@@ -2573,17 +2596,18 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   const [err, setErr] = useState(false);
   const [acting, setActing] = useState(false);
   const [done, setDone] = useState<'done' | 'dismissed' | null>(null);
-  const [composing, setComposing] = useState(false); // the "email X what you owe" compose panel
-  const [emailed, setEmailed] = useState(false);      // sent the message → offer to mark done
+  // W7.3 ONE STAGE: the commitment's message is the ONE EmailCard IN THE CONVERSATION — mounted by
+  // a live pooled draft, or summoned by the person's own "Draft an email" (the verb). There is no
+  // split-stage composer on this door any more, and the judge never raises one.
+  const [draftSummoned, setDraftSummoned] = useState(false);
   // The ONE outcome read — rail context + gap + prepared deliverables + a contextual invite.
   const { view } = useItemView('commitment', id);
   const [inviteOpen, setInviteOpen] = useState(false);
 
-  // J2 (judged room): THE ONE WORK JUDGMENT mounts the surface — a chase/reply verdict opens the
-  // composer directly (the message is the work; no "Draft email →" button gate). The user's own
-  // toggle always wins after first touch.
-  const composingTouchedRef = useRef(false);
-  const [verdict, setVerdict] = useState<{ work: string; reason: string; options?: Array<{ label: string }> } | null>(null);
+  // THE ONE WORK JUDGMENT — read for the decision card's options only. ⚠️ NO INTERNAL TEXT ON
+  // SCREEN (W7.3): the verdict's `reason` is the brain talking to itself ("Direction 'you_owe' with
+  // the item asking…") and is never rendered by any component — not as a line, not as a question.
+  const [verdict, setVerdict] = useState<{ work: string; options?: Array<{ label: string }> } | null>(null);
   const [decisionCleared, setDecisionCleared] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -2591,10 +2615,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!alive || !d?.verdict) return;
-        setVerdict(d.verdict);
-        if (!composingTouchedRef.current && (d.verdict.work === 'chase' || d.verdict.work === 'reply')) {
-          setComposing(true);
-        }
+        setVerdict({ work: String(d.verdict.work ?? ''), options: d.verdict.options });
       })
       .catch(() => {});
     return () => { alive = false; };
@@ -2649,23 +2670,22 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
     ? applyPanelPlan(view as RailView, panelPlan({ hasDecision: false, hasGatedDecision: isHandoff && handoffOpen }))
     : null;
 
-  // THE STAGE IS SUMMONED (threads Phase 3) — the commitment's source context and its writing
-  // surface are the stage, down at rest.
+  // THE STAGE IS SUMMONED (threads Phase 3) — ONLY for a PARKED GATE now (W7.3 ONE STAGE).
   //
-  // THE ONE EXCEPTION, AND IT IS THE LAW'S OWN: a PARKED GATE (a handoff / an input station) is
-  // this room's whole move, and the placement table has already stripped the rail's CTA precisely
-  // because this card IS the decision. Leaving it behind a handle would be a room with nothing in
-  // it to do. So a live gate raises the stage the way a focused artifact raises the project room's
-  // — never a docked pane, always the room's one piece of work.
+  // A PARKED GATE (a handoff / an input station) is this room's whole move, and the placement table
+  // has already stripped the rail's CTA precisely because this card IS the decision. Leaving it
+  // behind a handle would be a room with nothing in it to do. So a live gate raises the stage the
+  // way a focused artifact raises the project room's — never a docked pane.
+  //
+  // Every OTHER commitment has no stage: its message is the ONE EmailCard in the conversation (the
+  // same host the email door mounts), its invite the InviteCard there, and its SOURCE — the meeting
+  // or the email it was made in — is the object card at the head of the conversation plus the
+  // drawer's Source section. The header's "Source" handle opened a split pane with a composer in it
+  // (found live, Sep 23): that door is gone for non-gate commitments.
   const [sourceOpen, setSourceOpen] = useState(false);
   const gateStanding = isHandoff && handoffOpen;
-  // THE JUDGE SEEDS THE COMPOSER, IT NEVER RAISES THE STAGE (found on the Sep 7 walk): the verdict
-  // opens `composing` so the writing surface is READY the moment the reader reaches for it — but a
-  // stage that raises itself on a verdict is the docked pane again under another name. Only a
-  // person's own door (or a standing gate) summons.
-  const [composeRaised, setComposeRaised] = useState(false);
-  const stageOpen = sourceOpen || composeRaised || inviteOpen || gateStanding;
-  const lowerStage = () => { setSourceOpen(false); setComposeRaised(false); setInviteOpen(false); };
+  const stageOpen = sourceOpen || (isHandoff && inviteOpen) || gateStanding;
+  const lowerStage = () => { setSourceOpen(false); setInviteOpen(false); };
 
   // ── A CLAIM RENDERS (stabilization W2.1): the commitment room MOUNTS its prepared artifacts —
   // the rail took none here while the deck chip said "ready to send" (70 pooled commitment
@@ -2691,7 +2711,9 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
       ? {
         itemKind: 'commitment' as const,
         itemId: id,
-        title: verdict.reason || null,
+        // NO INTERNAL TEXT ON SCREEN (W7.3): the question is the DECISION BRIEF's own, else the
+        // commitment's own words — never the judge's private reason.
+        title: decisionBriefC?.title || data?.description || null,
         options: (decisionBriefC?.decision?.options.length ?? 0) >= 2 ? decisionBriefC!.decision!.options : verdict.options!,
         recommendation: decisionBriefC?.decision?.recommendation
           ? { label: decisionBriefC.decision.recommendation, why: decisionBriefC.decision.why }
@@ -2699,6 +2721,20 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
         object: resolveDecisionObject(view?.prepared ?? null),
       }
       : null;
+  // THE ONE EMAIL CARD for this commitment (W7.3) — mounted by a LIVE pooled draft (THE ONE READER
+  // already withdrew a stale / false-claim / MISADDRESSED one) or by the person's own verb.
+  const markDoneAfterSend = () => {
+    toast('Sent.', { action: { label: 'Mark this done', onClick: () => { void act('done'); } } });
+  };
+  const emailCardNode = (!isHandoff && !done && (nudgeArt || draftSummoned)) ? (
+    <div className="flex w-full flex-col gap-2">
+      {(view?.steps?.length ?? 0) >= 2 && <MotionChecklist steps={view!.steps!} commitmentId={id} />}
+      <EmailCard compose={{ kind: 'commitment', id }} onSent={markDoneAfterSend} />
+    </div>
+  ) : null;
+  // The drawer door (the card's Prepared/Source sections) — the stageSignal idiom.
+  const [drawerReq, setDrawerReq] = useState<{ tab: string; v: number } | null>(null);
+  const openDrawerAt = (tab: string) => setDrawerReq((r) => ({ tab, v: (r?.v ?? 0) + 1 }));
   const commitArtifacts = (isHandoff || done) ? [] : [
     // W5c: mounts from the LIVE invite ONLY (see EmailDetail's twin) — never hollow. A plan step
     // ("Send calendar invite to X") is a PLAN, not prepared work: it mounted an empty card under a
@@ -2709,21 +2745,27 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
       // TRUTH BEFORE PRESENTATION: a timeless invite never claims "prepared".
       label: inviteArt?.sendReady === false ? 'Invite drafted — needs a time from you' : 'Calendar invite prepared — review & approve',
       by: inviteArt?.by ?? null,
-      onOpen: () => { setInviteOpen(true); setComposeRaised(false); setSourceOpen(false); },
+      onOpen: () => { setInviteOpen(true); setSourceOpen(false); },
       anchorKey: commitAnchor,
       node: <InviteCard kind="commitment" entityId={id} taskId={view?.inviteTaskId ?? undefined}
         verdictLevel={!view?.inviteTaskId} onSent={() => { setInviteOpen(false); setReload((n) => n + 1); }} />,
     }] : []),
-    ...(nudgeArt ? [{
-      key: 'nudge', label: nudgeArt.kind === 'nudge_draft' ? 'Follow-up drafted — ready to review' : 'Email drafted — ready to review',
-      by: nudgeArt.by ?? null,
-      onOpen: () => { composingTouchedRef.current = true; setComposing(true); setComposeRaised(true); setInviteOpen(false); },
+    // W7.3 ONE STAGE: the message arrives AS THE ONE EMAIL CARD, in the conversation — the same
+    // kit card the email door's reply wears, filled from the pooled draft and addressed by THE ONE
+    // ADDRESSEE LADDER (an unresolvable recipient is ASKED for on the card, never guessed). J5's
+    // clauses ride above it only when the extraction flagged a multi-part motion.
+    ...(emailCardNode ? [{
+      key: 'nudge',
+      label: nudgeArt ? (nudgeArt.kind === 'nudge_draft' ? 'Follow-up drafted — ready to review' : 'Email drafted — ready to review') : 'Email — ready to write',
+      by: nudgeArt?.by ?? null,
+      onOpen: () => setDraftSummoned(true),
       anchorKey: commitAnchor,
+      node: emailCardNode,
     }] : []),
     ...(leadArts.length ? [{
       key: 'lead', label: leadArts[0].kind === 'paste_pack' ? 'Words ready — copy them where this lives' : `Prepared — "${(leadArts[0].title ?? 'document').slice(0, 52)}"`,
       by: leadArts[0].by ?? null,
-      onOpen: () => setSourceOpen(true),
+      onOpen: () => openDrawerAt('prepared'),
       anchorKey: commitAnchor,
       node: <PreparedLead prepared={leadArts} />,
     }] : []),
@@ -2749,27 +2791,44 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
     // THE VERB-SCOPE LAW: a handoff gate's only verbs are Approve / Hold back, and they live on
     // its card — the generic commitment verbs are structurally absent (approving IS done).
     verbs: isHandoff || done ? [] : [
-      { key: 'draft', label: data?.counterparty ? `Draft email → ${data.counterparty.replace(/<[^>]*>/g, '').trim()}` : 'Draft an email', onClick: () => { composingTouchedRef.current = true; setComposing(true); setComposeRaised(true); setInviteOpen(false); } },
+      // W7.3: the verb SUMMONS THE ONE EMAIL CARD into the conversation — never a split stage.
+      { key: 'draft', label: data?.counterparty ? `Draft email → ${data.counterparty.replace(/<[^>]*>/g, '').trim()}` : 'Draft an email', onClick: () => { setDraftSummoned(true); setInviteOpen(false); } },
       { key: 'done', label: 'Mark done', onClick: () => act('done') },
       { key: 'dismiss', label: 'Dismiss', onClick: () => act('dismissed'), danger: true },
     ],
-    tabs: commonRoomTabs('commitment', id, view, railView, { history: historyLines }),
+    // W7.3: the commitment's SOURCE reads in the drawer (the email door's Thread idiom) — its
+    // meeting or email context, the one place filed truth lives. No header handle opens a pane.
+    tabs: commonRoomTabs('commitment', id, view, railView, {
+      history: historyLines,
+      threadLabel: 'Source',
+      thread: !isHandoff && (src || view?.sourceMeeting) ? <CommitmentSourceSection src={src ?? null} meeting={view?.sourceMeeting ?? null} /> : null,
+    }),
     stageOpen,
     onLowerStage: lowerStage,
-    onSummonStage: () => setSourceOpen(true),
-    sourceLabel: isHandoff ? 'The ask' : 'Source',
+    drawerSignal: drawerReq,
+    // THE GATE ALONE SUMMONS (W7.3): a handoff / input station keeps "The ask" — its card IS the
+    // room's move. Every other commitment hands the frame NO handle (the drawer + the object card).
+    ...(isHandoff ? { onSummonStage: () => setSourceOpen(true), sourceLabel: 'The ask' } : {}),
     stageLabel: isHandoff ? 'what needs your call' : 'this commitment',
   };
 
   return (
     <DeepDiveShell embedded={embedded} room={room} rail={<ItemRail kind="commitment" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} artifacts={commitArtifacts}
+      // W8.4 · ONE CARD, ONE DOOR: the source card opens THIS drawer's Source section (the thread's seat).
+      onOpenThread={() => openDrawerAt('thread')}
+      // ONE OBJECT, ONE DOOR: the source object is the commitment's OWN (served by the door) — the
+      // rail never derives it from the move (lib/room/door.ts objectIdForDoor).
+      sourceItemId={view?.sourceItemId ?? null}
+      // W7.3: a meeting-born commitment's source object is its MEETING (the kit's `source` card).
+      sourceMeeting={view?.sourceMeeting ?? null}
       decision={commitDecision ? {
         ...commitDecision,
         // The word is the deed, and the deed is visible: the choice lands as the user's turn, the
         // steer's answer as the response (the decision host owns the steer door itself).
-        onChosen: (label: string) => { pushDealTurn(railView?.entity?.id ?? `commitment:${id}`, label, { role: 'user' }); },
+        // W7.2 ONE OBJECT, ONE DOOR: the door's own key, never the linked entity's.
+        onChosen: (label: string) => { pushDealTurn(`commitment:${id}`, label, { role: 'user' }); },
         onResolved: (_label: string, outcome: { draft?: string | null; say: string }) => {
-          pushDealTurn(railView?.entity?.id ?? `commitment:${id}`, outcome.say, { key: `decide:${id}` });
+          pushDealTurn(`commitment:${id}`, outcome.say, { key: `decide:${id}` });
         },
         onDismiss: () => setDecisionCleared(true),
       } : null} />}>
@@ -2834,33 +2893,14 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
                 for one verb is exactly what the Sep 7 walk called out). */}
             {embedded && (
             <ActionBar
-              primaryLabel={composing ? 'Hide draft' : (data.counterparty ? `Draft email → ${data.counterparty.replace(/<[^>]*>/g, '').trim()}` : 'Draft email →')}
-              primaryActive={!composing}
-              onPrimary={() => { composingTouchedRef.current = true; setComposing((v) => !v); setComposeRaised(true); }}
+              primaryLabel={emailCardNode ? 'Hide draft' : (data.counterparty ? `Draft email → ${data.counterparty.replace(/<[^>]*>/g, '').trim()}` : 'Draft email →')}
+              primaryActive={!emailCardNode}
+              onPrimary={() => setDraftSummoned((v) => !v)}
             />
             )}
-            {composing && (
-              <div>
-                {/* The judge's one-line reason — why this is the move (grounded, never generic). */}
-                {verdict?.reason && (verdict.work === 'chase' || verdict.work === 'reply') && (
-                  <p className="mb-2 text-[12.5px] text-neutral-500 leading-relaxed">{verdict.reason}</p>
-                )}
-                {/* J5 — the multi-ask motion's checklist INSIDE the one composer: the clauses of
-                    this single obligation, ticked as the message covers them. */}
-                {(view?.steps?.length ?? 0) >= 2 && (
-                  <MotionChecklist steps={view!.steps!} commitmentId={id} />
-                )}
-                <ComposePanel kind="commitment" entityId={id} onSent={() => setEmailed(true)} />
-                {emailed && !done && (
-                  <button
-                    onClick={() => act('done')}
-                    className="mt-2 inline-flex items-center gap-1.5 text-[12.5px] font-medium text-emerald-600 hover:text-emerald-700"
-                  >
-                    <CheckIcon className="w-3.5 h-3.5" />Mark this commitment done
-                  </button>
-                )}
-              </div>
-            )}
+            {/* EMBEDDED (inside a project room, no own rail): the SAME one email card, in place —
+                the loose door seats it in the conversation above. */}
+            {embedded && emailCardNode}
             </>
             )}
 
@@ -2888,7 +2928,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
             {/* R3 — the context strip moved into THE DRAWER (Sep 7): what this connects to is
                 filed truth, and the drawer is where filed truth lives in every room. */}
 
-            {src ? (
+            {embedded && src ? (
               <section>
                 <h2 className={SECTION_LABEL}>
                   {src.kind === 'meeting' ? 'From this meeting' : 'From this email'}
@@ -2906,7 +2946,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
                   {!src.subject && !src.snippet && <p className="text-[13px] text-neutral-400">No further context available.</p>}
                 </div>
               </section>
-            ) : isHandoff && handoff ? null : (
+            ) : (isHandoff && handoff) || !embedded ? null : (
               // THE FALSE LINE (owner, Aug 20): a handoff gate HAS a linked source — the parked
               // run — and the sourceContext read above structurally can't find it. Saying "no
               // linked source" beside a card that shows the run's own output was the room
@@ -3445,6 +3485,29 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
 // J5 (multi-ask motion) — ONE commitment extracted as one motion renders its clauses as a small
 // checklist above the ONE composer. Ticking persists on the plan (PATCH /api/items/plan) so the
 // room's board and this surface read the same state. Never N surfaces for one motion.
+// ── W7.3 · THE COMMITMENT'S SOURCE, IN THE DRAWER (the email door's Thread idiom): the meeting it
+// was made in as the kit's `source` card (one tap to the meeting page), else the email it came from.
+// Read-only filed truth — never a composer, never a stage.
+function CommitmentSourceSection({ src, meeting }: { src: CommitmentData['sourceContext']; meeting: MeetingSourceFacts | null }) {
+  const router = useRouter();
+  if (meeting) return <MeetingSourceMount meeting={meeting} onOpen={() => router.push(`/meetings/${meeting.addressId}`)} />;
+  if (!src) return null;
+  return (
+    <div className={`${CARD} px-4 py-3.5`}>
+      <div className="flex items-center gap-1.5 text-[10px] font-medium text-neutral-400 mb-1.5">
+        {src.kind === 'meeting'
+          ? <CalendarDaysIcon className="w-3 h-3 text-violet-400" />
+          : <EnvelopeIcon className="w-3 h-3 text-indigo-400" />}
+        {src.from && <span className="text-neutral-500">{src.from}</span>}
+        {src.when && <span className="ml-auto tabular-nums text-neutral-300">{fmtDateTime(src.when)}</span>}
+      </div>
+      {src.subject && <p className="text-[13.5px] font-semibold text-neutral-800 leading-snug">{src.subject}</p>}
+      {src.snippet && <p className="text-[13px] text-neutral-600 mt-1.5 leading-relaxed">{src.snippet}</p>}
+      {!src.subject && !src.snippet && <p className="text-[13px] text-neutral-400">No further context available.</p>}
+    </div>
+  );
+}
+
 function MotionChecklist({ steps, commitmentId }: { steps: Array<{ id: string; text: string; done: boolean }>; commitmentId: string }) {
   const [local, setLocal] = useState(steps);
   useEffect(() => { setLocal(steps); }, [steps]);

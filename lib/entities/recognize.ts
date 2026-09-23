@@ -35,7 +35,9 @@ export type RecogItem = {
   // PROVENANCE — a DERIVED item (a commitment/task extracted from a parent email or meeting) has no
   // independent identity; it IS a fragment of its parent. It inherits the parent's entity structurally,
   // never re-guessed on topic. This is the fix for same-topic cross-deal over-merge.
-  parent?: { kind: 'meeting' | 'inbox_item'; id: string } | null;
+  // W7.3: `email` = an EMAILS row id (what `commitments.source_id` holds for an email-born commitment);
+  // it is mapped to its inbox item by THE ONE READ (lib/commitments/source.ts) before the lookup.
+  parent?: { kind: 'meeting' | 'inbox_item' | 'email'; id: string } | null;
   /** Promise fix #5 — KIND-AWARE FOUNDING: noise mail (receipt/newsletter/notification kind, or an
    *  automated sender) may JOIN an existing real body of work, but can never FOUND a new entity —
    *  a Binance alert is not an initiative. Set by the source mappers from the ONE kind resolver. */
@@ -330,14 +332,22 @@ export async function recognizeItem(
   // would scatter into a same-topic-but-wrong deal; its parent's identity is certain. If the parent isn't
   // recognized yet, recognize it inline (one level; a parent never has a parent → no loop). If the parent
   // is 'none' (not work), the fragment falls through to its own recognition.
-  if (item.parent) {
-    let parentEntity = await lookupLink(supabase, userId, item.parent.kind, item.parent.id);
+  // W7.3 · PROVENANCE MISMATCH: an email-born commitment's parent id is the EMAILS row — never an
+  // inbox_items id — so the lookup below never matched and the fragment re-guessed on topic.
+  let parent: { kind: 'meeting' | 'inbox_item'; id: string } | null = null;
+  if (item.parent?.kind === 'email') {
+    const { inboxItemForEmail } = await import('@/lib/commitments/source');
+    const inboxId = await inboxItemForEmail(supabase, userId, { emailId: item.parent.id, threadId: item.threadId ?? null });
+    parent = inboxId ? { kind: 'inbox_item', id: inboxId } : null;
+  } else if (item.parent) parent = { kind: item.parent.kind, id: item.parent.id };
+  if (parent) {
+    let parentEntity = await lookupLink(supabase, userId, parent.kind, parent.id);
     if (parentEntity === undefined) {
-      const parentItem = await fetchParent(supabase, userId, item.parent);
-      if (parentItem) { await recognizeItem(supabase, userId, parentItem, depth + 1); parentEntity = await lookupLink(supabase, userId, item.parent.kind, item.parent.id); }
+      const parentItem = await fetchParent(supabase, userId, parent);
+      if (parentItem) { await recognizeItem(supabase, userId, parentItem, depth + 1); parentEntity = await lookupLink(supabase, userId, parent.kind, parent.id); }
     }
     if (parentEntity) {
-      await writeLink(supabase, userId, parentEntity, item, 'structural', `from ${item.parent.kind === 'meeting' ? 'meeting' : 'email'}`);
+      await writeLink(supabase, userId, parentEntity, item, 'structural', `from ${parent.kind === 'meeting' ? 'meeting' : 'email'}`);
       await supabase.from('work_entities').update({ last_event_at: item.at ?? new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', parentEntity).eq('user_id', userId).then(() => {}, () => {});
       return { entityId: parentEntity, via: 'structural', founded: false, reason: 'provenance' };
     }

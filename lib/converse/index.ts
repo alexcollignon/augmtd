@@ -1742,7 +1742,12 @@ async function redraftItemDraft(
     if (!c) return null;
     const { generateNudgeDraft } = await import('@/lib/inbox/draft-reply');
     const instr = `THE USER'S STEERING NOTE (fold this in — it overrides anything conflicting): ${text}` + facts;
-    const body = await generateNudgeDraft(userId, { counterparty: (c.counterparty as string) ?? null, description: String(c.description), ageDays: 0, instructions: instr }, client);
+    // TRUE ADDRESSEES (W7.3): the redraft greets whom THE ONE LADDER resolves — never a raw
+    // counterparty that may name the user — and the stored row carries the stamp.
+    const { resolveCommitmentAddressee, recipientsLabel, addresseeStamp } = await import('@/lib/prepare/addressee');
+    const addr = await resolveCommitmentAddressee(client, userId, String(c.id));
+    const greet = recipientsLabel(addr.recipients);
+    const body = await generateNudgeDraft(userId, { counterparty: greet, description: String(c.description), ageDays: 0, instructions: instr }, client);
     if (!body) return null;
     if (!persist) return body; // ← THE PREVIEW RETURNS HERE: nothing below runs.
     // J3 — the evaluator reviews reworks like ambient work; the pool append IS the version
@@ -1750,13 +1755,13 @@ async function redraftItemDraft(
     const { evaluateDeliverable } = await import('@/lib/prepare/evaluate');
     const review = await evaluateDeliverable(client, userId, {
       content: body, task: `Nudge about: ${String(c.description)}`,
-      recipient: (c.counterparty as string) ?? null,
+      recipient: greet,
       entityId: await entityOfScope(client, userId, scope), kind: 'nudge',
     }).catch(() => ({ verdict: 'pass' as const, objection: null }));
     await client.from('item_deliverables').insert({
       user_id: userId, kind: 'commitment', entity_id: scope.itemId, type: 'draft',
-      title: clipLabel(`Nudge — ${String(c.counterparty ?? '').split('<')[0].trim() || 'follow-up'}`, 100),
-      content: body, ref: null, metadata: { steered: true, ...(review.verdict !== 'pass' ? { review } : {}) },
+      title: clipLabel(`Nudge — ${(greet ?? '').split('<')[0].trim() || 'recipient to confirm'}`, 100),
+      content: body, ref: null, metadata: { steered: true, ...addresseeStamp(addr), ...(review.verdict !== 'pass' ? { review } : {}) },
     }).then(() => {}, () => {});
     return body;
   }
@@ -2132,12 +2137,15 @@ async function converseInner(
   // arc): the same assembled page the responder and the question path read — the loop can never
   // reason from a thinner slice of the truth than the panel it sits beside.
   let grounding = '';
-  const entityId = await entityOfScope(client, userId, scope);
-  if (entityId || scope.kind === 'item') {
+  // ONE OBJECT, ONE DOOR (W7.2 — lib/room/door.ts): the loop grounds on the SCOPE's own page — an
+  // item door on its item, the entity door on its entity. It used to widen an item scope to the
+  // linked entity, so the chat beside an item-first brief could answer from a container's agenda
+  // the panel never showed (the one-grounding law cuts the other way: same page as the panel).
+  if (scope.kind === 'entity' || scope.kind === 'item') {
     try {
       const { assembleRoomGrounding } = await import('@/lib/room/grounding');
       const g = await assembleRoomGrounding(client, userId,
-        entityId ? { kind: 'entity', entityId } : { kind: 'item', itemKind: linkKindOf(scope as Extract<ConverseScope, { kind: 'item' }>) === 'inbox_item' ? 'inbox' : linkKindOf(scope as Extract<ConverseScope, { kind: 'item' }>) === 'commitment' ? 'commitment' : 'meeting', itemId: (scope as Extract<ConverseScope, { kind: 'item' }>).itemId });
+        scope.kind === 'entity' ? { kind: 'entity', entityId: scope.entityId } : { kind: 'item', itemKind: linkKindOf(scope) === 'inbox_item' ? 'inbox' : linkKindOf(scope) === 'commitment' ? 'commitment' : 'meeting', itemId: scope.itemId });
       grounding = g.text;
     } catch { /* fall through to the item/global fallbacks below */ }
   }

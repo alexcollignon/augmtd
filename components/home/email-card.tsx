@@ -65,7 +65,7 @@ const PREGEN_MAX = 3;
 /** …and only once the card has been sitting still this long (never during the first paint). */
 const PREGEN_IDLE_MS = 1000;
 
-export function EmailCard({ item, coworker, standalone, sourceFiles, onOpenThread, onSent }: {
+export function EmailCard({ item, coworker, standalone, compose, sourceFiles, onOpenThread, onSent }: {
   /** THE ITEM LANE — the prepared reply on a judged inbox item. `to`/`subject` come from the room
    *  when the host already serves them; otherwise the card reads the thread itself. */
   item?: { id: string; to?: string[]; subject?: string };
@@ -77,6 +77,14 @@ export function EmailCard({ item, coworker, standalone, sourceFiles, onOpenThrea
    *  the card fetches nothing; Send commits through /api/emails/send, which re-reads THAT row.
    *  Its one extra fact is the FROM: resolved by the pure ladder, chosen here where several. */
   standalone?: { emailId: string; draft: StandaloneEmailDraft };
+  /** THE COMPOSE LANE (W7.3 ONE STAGE — Sep 23). A commitment's prepared message: the SAME card the
+   *  inbox reply wears, in the conversation — never the retired split-stage ComposePanel. Filled by
+   *  /api/compose/draft (the pooled nudge through THE ONE READER, addressed by THE ONE ADDRESSEE
+   *  LADDER); Send commits through /api/compose/send (the commit door, as the user's mailbox or the
+   *  assistant's address), carrying what we prepared for the outcome ledger. When nothing resolves
+   *  a recipient the card is `needs_recipient`: it ASKS who the message goes to and offers the
+   *  candidates the ladder saw — it never ships a placeholder address. */
+  compose?: { kind: 'commitment'; id: string };
   /** WHAT CAME WITH THE MESSAGE BEING ANSWERED (owner walk, Sep 10: "wasn't considered in the
    *  email context… nor to open/see the document"). The source thread's own attachments, which the
    *  host already holds — read in the email context, not only in the drawer's Files tab. They are
@@ -110,7 +118,12 @@ export function EmailCard({ item, coworker, standalone, sourceFiles, onOpenThrea
   // a typed steer, attachments and Bcc all belong to it, and a lane whose door cannot carry a field
   // must never render that field (the card never wears a control its send would drop).
   const itemLane = !!item && !coworker && !standalone;
+  const composeLane = !!compose && !item && !coworker && !standalone;
   const [loading, setLoading] = useState(!coworker && !standalone);
+  // THE COMPOSE LANE's honest ask: who the ladder could not choose between (offered, never sent),
+  // and the name it resolved without an address.
+  const [suggestions, setSuggestions] = useState<Array<{ name: string | null; email: string | null }>>([]);
+  const [recipientName, setRecipientName] = useState<string | null>(null);
   // FILLED OR LOADING, NEVER HOLLOW (owner walk round 2, Sep 14). The card was mounted with an id
   // its doors could not resolve (the spine key instead of the row id), so all three fetches came
   // back empty and it rendered an EDITABLE SHELL: placeholder recipients, an empty body under a
@@ -227,6 +240,39 @@ export function EmailCard({ item, coworker, standalone, sourceFiles, onOpenThrea
   // below), the thread fills the to-row as soon as it can, and the draft fills the body when it
   // arrives. `unfilled` — THE HONEST DEAD END — still needs both answers, so it is decided only
   // when the last leg settles; until then the card is loading, never "couldn't load".
+  // ── THE COMPOSE LANE's fill: ONE read — recipients (THE ONE ADDRESSEE LADDER), subject, and the
+  // prepared words (the pooled nudge; a fresh draft only when nothing is pooled). A late answer
+  // never clobbers words the user already typed.
+  useEffect(() => {
+    if (!composeLane || !compose) return;
+    let alive = true;
+    setLoading(true);
+    fetch('/api/compose/draft', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: compose.kind, entityId: compose.id }),
+    })
+      .then((r) => (r.ok ? r.json() : null)).catch(() => null)
+      .then((d: { to?: string[]; cc?: string[]; subject?: string; bodyText?: string; recipientName?: string | null; suggestions?: Array<{ name: string | null; email: string | null }> } | null) => {
+        if (!alive) return;
+        const words = String(d?.bodyText ?? '').trim();
+        if (d) {
+          if (d.to?.length) setTo(d.to);
+          if (d.cc?.length) setCc(d.cc);
+          if (d.subject) setSubject(d.subject);
+          setRecipientName(d.recipientName ?? null);
+          setSuggestions((d.suggestions ?? []).filter((x) => !!x.email));
+        }
+        if (words && !typedRef.current) {
+          setBody(words); setVariantBodies({ [EMAIL_BASE_VARIANT]: words });
+          servedRef.current = words; setBodyRev((n) => n + 1);
+        }
+        setUnfilled(!words && !(d?.to?.length));
+        setLoading(false);
+      });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compose?.id, composeLane]);
+
   useEffect(() => {
     if (coworker || !item) return;
     let alive = true;
@@ -448,6 +494,7 @@ export function EmailCard({ item, coworker, standalone, sourceFiles, onOpenThrea
     // The words themselves decide whether there is anything to mail — an empty rich editor still
     // carries markup, and markup is not a message.
     if (!emailBodyText(body).trim()) { setErr('The message is empty.'); return; }
+    if (composeLane && !subject.trim()) { setErr('Add a subject before it can send.'); return; }
     // ONE SERIALIZATION: a mailbox door takes the editor's own HTML (what the deep stage sends);
     // a Resend door escapes its body and lays out paragraphs itself, so it takes the words. The
     // standalone lane is one or the other depending on where it resolved a sender.
@@ -459,7 +506,19 @@ export function EmailCard({ item, coworker, standalone, sourceFiles, onOpenThrea
       // mailbox the From row names (or the coworker channel when they have none). All three are
       // approve-before-commit, all three are idempotent at the route, and none is reachable
       // without this click.
-      const res = standalone
+      const res = composeLane
+        // THE COMPOSE DOOR (W7.3): a fresh message as the user (their mailbox, else the assistant's
+        // address), behind the commit door; `prepared` carries what WE wrote for the outcome ledger.
+        ? await fetch('/api/compose/send', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to, cc, subject: subject.trim(), bodyHTML: emailBodyHTML(text),
+              prepared: servedRef.current.trim()
+                ? { itemKind: compose!.kind, itemId: compose!.id, bodyHTML: emailBodyHTML(servedRef.current) }
+                : null,
+            }),
+          })
+        : standalone
         // THE STANDALONE DOOR: the card's fields are handed over as EDITS; the route writes them to
         // the stored row and mails what the ROW says, behind the one commit door (exactly-once).
         ? await fetch('/api/emails/send', {
@@ -563,7 +622,8 @@ export function EmailCard({ item, coworker, standalone, sourceFiles, onOpenThrea
 
   // The standalone lane is live wherever its own door can carry it: a connected mailbox, or the
   // feature-null coworker channel on a workspace with none.
-  const live = !sent && (coworker || standalone || mailboxLane);
+  // The compose door falls back to the assistant's address where no mailbox exists — live everywhere.
+  const live = !sent && (coworker || standalone || composeLane || mailboxLane);
   const busy = !!redrafting || sending;
   const chips = (list: string[], set: (v: string[]) => void) => (
     <span className="w-full rounded-lg border border-neutral-200 px-2.5 py-1.5">
@@ -572,7 +632,7 @@ export function EmailCard({ item, coworker, standalone, sourceFiles, onOpenThrea
   );
   const card: ThreadCard = {
     kind: 'email',
-    id: `email-${coworker?.draft.id ?? standalone?.emailId ?? item?.id ?? 'card'}`,
+    id: `email-${coworker?.draft.id ?? standalone?.emailId ?? item?.id ?? (compose ? `${compose.kind}-${compose.id}` : 'card')}`,
     ...props,
     variants: props.variants.map((v) => ({ ...v, loading: redrafting === v.id })),
     bodyRev: `v${bodyRev}`,
@@ -631,7 +691,13 @@ export function EmailCard({ item, coworker, standalone, sourceFiles, onOpenThrea
       ...(editingRecipients || props.state === 'needs_recipient' ? {
         recipientsEditor: (
           <span className="w-full rounded-lg border border-neutral-200 px-2.5 py-1.5">
-            <AttendeeChips attendees={to} onChange={(next) => { setTo(next); setErr(null); }} />
+            <AttendeeChips attendees={to} onChange={(next) => { setTo(next); setErr(null); }}
+              // TRUE ADDRESSEES (W7.3): with nobody resolved the field ASKS — and offers the people
+              // the ladder saw (a project's contacts), one tap each. Never a placeholder address.
+              {...(composeLane && !to.length ? {
+                placeholder: recipientName ? `Add ${recipientName}'s email` : 'Who should this go to?',
+                suggestions: suggestions.map((x) => ({ email: x.email!, label: x.name ?? x.email! })),
+              } : {})} />
           </span>
         ),
       } : {}),

@@ -185,6 +185,20 @@ function relDue(iso?: string | null): { label: string; overdue: boolean } | null
 // propagating (or the instant-load brief cache still lists it). We persist the acted item ids (with a
 // timestamp so they self-expire) and hydrate them on mount, so the reconcile in load() keeps hiding them
 // until the server's fresh brief confirms they're gone. Reversal (Undo) shrinks the set → they reappear.
+// ── PLAN PRE-GEN, ONCE PER ITEM PER SESSION (W8.5) ──────────────────────────────────────────────
+// The Home warms the top items' "What this takes" plans (POST /api/items/plan). The dedup used to be a
+// per-mount ref, so EVERY Home remount (each navigation back) re-fired 3–6 plan POSTs. It lives here,
+// at module scope: keyed by `kind:id`, valued by the row's staleness stamp (the served time fact the
+// row carries — receivedAt / dueDate). Same key + same stamp → never again this session; a moved stamp
+// (the item changed under us) is the one reason to warm again. A hard reload starts a new session.
+const PLAN_PREGEN_MEMO = new Map<string, string>();
+function needsPlanPreGen(key: string, stamp: string): boolean {
+  return PLAN_PREGEN_MEMO.get(key) !== stamp;
+}
+function claimPlanPreGen(key: string, stamp: string): void {
+  PLAN_PREGEN_MEMO.set(key, stamp);
+}
+
 const ACTED_KEY = 'aug-home-acted-v1';
 const ACTED_TTL = 2 * 24 * 60 * 60 * 1000; // 2 days — long enough to cover any write lag, short enough to self-clean
 function loadActedIds(): Set<string> {
@@ -1588,21 +1602,20 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
   // THE OPEN IS AN OPEN: true until this mount's FIRST brief lands. The no-mutation freeze governs
   // arrivals DURING an open — never the open's own first truth (see the merge call below).
   const firstLandingRef = useRef(true);
-  // Entity keys we've already fired a pre-gen POST for (dedup across the focus/interval polls, so we
-  // warm each item's plan at most once per session — pre-gen must stay cheap + silent).
-  const preGennedRef = useRef<Set<string>>(new Set());
+  // (W8.5) The pre-gen dedup lives at MODULE scope (PLAN_PREGEN_MEMO, above) — a per-mount ref reset
+  // on every Home remount and re-fired 3–6 plan POSTs per navigation.
   // Background pre-generation: warm the "What this takes" plan for the TOP few actionable items so the
   // deep-dive opens with a cached plan (no 20–40s reasoning wait). Fire-and-forget, throttled, capped,
   // errors ignored. get-or-generate on the route means a warmed plan just returns cached on open.
   const preGenPlans = useCallback((brief: Brief) => {
-    const targets: { kind: string; entityId: string }[] = [];
+    const targets: { kind: string; entityId: string; stamp?: string }[] = [];
     // Warm plans for ALL actionable kinds — the "What this takes" breakdown is now INTENT-driven
     // (renders on ANY kind whose plan is genuinely multi-step, ≥2 tasks), so a meeting-request EMAIL
     // may show a breakdown too. Pre-gen so the deep-dive opens with a cached plan (no 1s load) even
     // for emails. For a single-task (trivial) plan the pre-gen is "wasted" but it's background/cached
     // and never blocks — the get-or-generate route returns cached on open.
     for (const m of brief.mustRespond?.items ?? []) {
-      if (m.itemId) targets.push({ kind: 'email', entityId: m.itemId });
+      if (m.itemId) targets.push({ kind: 'email', entityId: m.itemId, stamp: m.receivedAt ?? '' });
     }
     for (const p of brief.priorities ?? []) {
       if (p.source === 'meeting') {
@@ -1610,17 +1623,19 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
         if (tid) targets.push({ kind: 'meeting', entityId: tid });
       } else if (p.itemId) {
         // A non-meeting priority card is an inbox email item (email/awareness deep-dive → kind email).
-        targets.push({ kind: 'email', entityId: p.itemId });
+        targets.push({ kind: 'email', entityId: p.itemId, stamp: p.dueDate ?? '' });
       }
     }
     for (const c of brief.commitments ?? []) {
-      if (c.id) targets.push({ kind: 'commitment', entityId: c.id });
+      if (c.id) targets.push({ kind: 'commitment', entityId: c.id, stamp: c.dueDate ?? '' });
     }
-    // De-dupe within this batch + against what we've already warmed, then cap at 6 (cost guard).
+    // De-dupe within this batch + against what THIS SESSION already warmed (module memo — survives
+    // remounts), then cap at 6 (cost guard). Only the capped queue claims the memo, so an item past
+    // the cap stays eligible for a later poll.
     const seen = new Set<string>();
     const queue = targets.filter((t) => {
       const key = `${t.kind}:${t.entityId}`;
-      if (seen.has(key) || preGennedRef.current.has(key)) return false;
+      if (seen.has(key) || !needsPlanPreGen(key, t.stamp ?? '')) return false;
       seen.add(key);
       return true;
     }).slice(0, 6);
@@ -1629,8 +1644,7 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
     for (const t of queue) prefetchItem(`/item/${t.entityId}?kind=${t.kind}`);
     // Fire sequentially with a small stagger so we don't hammer the reasoning tier all at once.
     queue.forEach((t, i) => {
-      const key = `${t.kind}:${t.entityId}`;
-      preGennedRef.current.add(key);
+      claimPlanPreGen(`${t.kind}:${t.entityId}`, t.stamp ?? '');
       setTimeout(() => {
         if (!aliveRef.current) return;
         fetch('/api/items/plan', {
