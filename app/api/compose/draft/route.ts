@@ -81,6 +81,9 @@ export async function POST(request: NextRequest) {
     let skipDraft = false;
     let pooledBody = '';            // W2.1 — a pooled nudge served in place of a fresh draft
     let pooledBy: string | null = null;
+    // W9.1 THE USER'S HAND: the pooled message is the user's own saved edit (and whether the thread
+    // moved since) — the card says so rather than presenting their words as ours.
+    let pooledHand: { edited: true; staleUnderEdit?: true } | null = null;
     // W7.3 TRUE ADDRESSEES — candidates the ladder saw but may not claim (offered on the card, never sent).
     let pooledAddressee: import('@/lib/prepare/addressee').Addressee | null = null;
     let suggestions: Array<{ name: string | null; email: string | null }> = [];
@@ -133,7 +136,10 @@ export async function POST(request: NextRequest) {
         const { preparedState } = await import('@/lib/prepare/read');
         const st = await preparedState(supabase, user.id, { kind: 'commitment', id: entityId });
         const pooled = st.live.find((a) => (a.kind === 'nudge_draft' || a.kind === 'reply_draft') && a.content.trim());
-        if (pooled && !intent?.trim()) { pooledBody = pooled.content; pooledBy = pooled.by; pooledAddressee = pooled.addressee ?? null; }
+        if (pooled && !intent?.trim()) {
+          pooledBody = pooled.content; pooledBy = pooled.by; pooledAddressee = pooled.addressee ?? null;
+          if (pooled.hand) pooledHand = { edited: true, ...(pooled.staleUnderEdit ? { staleUnderEdit: true as const } : {}) };
+        }
       } catch { /* the reader is an enhancement — fall through to drafting */ }
       // entityId = the commitment id.
       const { data: c } = await supabase
@@ -261,6 +267,7 @@ export async function POST(request: NextRequest) {
       recipientName: recipientName ?? null,
       ...(suggestions.length ? { suggestions } : {}),
       ...(pooledBody ? { prepared: true, preparedBy: pooledBy } : {}),
+      ...(pooledBody && pooledHand ? pooledHand : {}),
     });
   } catch (error) {
     console.error('[compose/draft] error:', error);

@@ -61,8 +61,13 @@ export async function settleMirrorRows(
       .eq('user_id', userId).eq('source', MIRROR_SOURCE).eq('source_id', commitmentId).eq('status', 'pending');
     let n = 0;
     for (const r of (rows ?? []) as Array<{ id: string; source_data: Record<string, unknown> | null }>) {
-      const sd = { ...(r.source_data ?? {}) };
-      delete sd.draft; delete sd.nudge_draft; delete sd.prepared_invite; delete sd.prepared_forward; delete sd.prepared_by;
+      // THE ONE ENGINE STRIP (W9.1b): machine words strip; the user's hand is FILED, never deleted.
+      const { stripSourceArtifacts } = await import('@/lib/prepare/hand-store');
+      const strip = await stripSourceArtifacts(client, userId, {
+        itemId: r.id, sd: r.source_data ?? {}, fields: ['draft', 'nudge_draft', 'prepared_invite', 'prepared_forward'], why: 'resolved',
+      });
+      const sd = strip.sd;
+      if (!strip.kept.length) delete sd.prepared_by;
       const { error } = await client.from('inbox_items')
         .update({
           status: 'dismissed',

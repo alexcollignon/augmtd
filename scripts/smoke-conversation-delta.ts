@@ -9,6 +9,10 @@
  * on a conversation that holds open work is read AGAINST that work (lib/work/conversation-delta.ts),
  * and the extraction writer floors the due date and folds the counterparty.
  *
+ * W9.4 EXTRACTION IS REASONED, NOT KEYWORD-GATED (section K): the delta always runs when the
+ * conversation holds open work; NEW extraction is gated by understanding / authorship / a meeting
+ * source, the kind floor skips noise — an English keyword list is never the sole gate.
+ *
  * ZERO AI, ZERO NETWORK: a stubbed judge + an in-memory table client. Exit 1 on any failure.
  *   npx tsx scripts/smoke-conversation-delta.ts
  * ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -19,7 +23,7 @@ import {
   quoteInText, validateDelta, judgeConversationDelta, applyDeltaPlan, conversationDelta, buildDeltaPrompt,
   type DeltaInput, type DeltaOpenItem, type ApplyDeps,
 } from '../lib/work/conversation-delta';
-import { dueFloorAgainstSource, foldCounterparty, nameFormsAgree } from '../lib/commitments/extract';
+import { dueFloorAgainstSource, foldCounterparty, nameFormsAgree, extractionGate, extractEmailCommitments, NOISE_MAIL_KINDS } from '../lib/commitments/extract';
 import type { FulfillmentJudgment } from '../lib/commitments/fulfillment';
 
 const ROOT = process.cwd();
@@ -218,7 +222,7 @@ const deps = (verdict: FulfillmentJudgment['verdict'] | 'throw'): ApplyDeps & { 
   ok('H2 a title naming that past date → no commitment', dueFloorAgainstSource('2026-08-08', '2026-08-10T09:00:00Z', 'Attend the August 8 review').drop);
   ok('H3 a due on/after its source stands', dueFloorAgainstSource('2026-08-12', '2026-08-10T09:00:00Z', 'x').due === '2026-08-12');
   ok('H4 the writer floors every row it writes', /dueFloorAgainstSource\(due, meta\.anchorAt/.test(ex) && /filter\(\(d\) => !d\.drop\)/.test(ex));
-  ok('H5 accent + short-surname forms fold to one human', nameFormsAgree('Lea Costa', 'Léa Maria Costa') && foldCounterparty('Lea Costa', [{ name: 'Léa Maria Costa', aliases: [] }]) === 'Léa Maria Costa');
+  ok('H5 accent + short-surname forms fold to one human', nameFormsAgree('Zoe Costa', 'Zoé Maria Costa') && foldCounterparty('Zoe Costa', [{ name: 'Zoé Maria Costa', aliases: [] }]) === 'Zoé Maria Costa');
   ok('H6 a bare address resolves to its person\'s name', foldCounterparty('sam.rivera@acme.test', [], ['Sam Rivera']) === 'Sam Rivera');
   ok('H7 ambiguity stays raw (two people share the short form)', foldCounterparty('Dana', [], ['Dana Lee', 'Dana Park']) === 'Dana');
   ok('H8 the writer folds through the registry + the conversation', /foldCounterparty\(rawCp, persons, convForms\)/.test(ex));
@@ -231,6 +235,101 @@ const deps = (verdict: FulfillmentJudgment['verdict'] | 'throw'): ApplyDeps & { 
   ok('I3 the SAME law: foldCounterparty · dueFloorAgainstSource · judgeConversationDelta · applyDeltaPlan', ['foldCounterparty(', 'dueFloorAgainstSource(', 'judgeConversationDelta(', 'applyDeltaPlan('].every((s) => rp.includes(s)));
   ok('I4 every repair write is conditional on a live status and the value as read', (rp.match(/\.in\('status', \['open', 'suggested'\]\)/g) ?? []).length >= 3 && /\.eq\('counterparty', r\.counterparty\)/.test(rp) && /\.eq\('due_date', r\.due_date\)/.test(rp));
   ok('I5 the repair pages the listing (no silent cap)', /fetchAllRows/.test(rp));
+
+  // ── K · W9.4 EXTRACTION IS REASONED, NOT KEYWORD-GATED ────────────────────────────────────────
+  console.log('K · the gate is reasoned, not a keyword list');
+  {
+    const G = extractionGate;
+    const done = G({ source: 'email', text: 'Done, attached.', isFromUser: true });
+    ok('K1 "Done, attached." (no keyword, 15 chars) reaches the delta; too short to mint', done.delta && !done.extract && done.basis === 'too-short');
+    const de = G({ source: 'email', text: 'Erledigt — anbei der unterschriebene Vertrag, wie besprochen.', isFromUser: false });
+    ok('K2 a German delivery with no keyword, understanding not yet landed, user addressed → delta + extraction', de.delta && de.extract && de.basis === 'addressed-unjudged');
+    const pt = G({ source: 'email', text: 'Cancelámos a reunião de quinta — já não é preciso preparar a proposta.', isFromUser: false, understanding: { role: 'addressed', relevance: 'awareness', ownership: 'none' } });
+    ok('K3 a Portuguese cancellation the understanding calls no-obligation → delta runs, no new extraction', pt.delta && !pt.extract && pt.basis === 'understanding-no-obligation');
+    const long = 'Following our conversation earlier, here is where things stand on the pilot.';
+    const obligations: Array<[string, Record<string, unknown>]> = [
+      ['ownership you_owe', { role: 'addressed', relevance: 'awareness', ownership: 'you_owe' }],
+      ['ownership awaiting', { role: 'addressed', relevance: 'awareness', ownership: 'awaiting' }],
+      ['relevance action', { role: 'addressed', relevance: 'action', ownership: 'none' }],
+      ['relevance reply', { role: 'addressed', relevance: 'reply' }],
+      ['an ask', { role: 'addressed', relevance: 'awareness', ask: 'Confirm the slot' }],
+      ['a deadline', { role: 'addressed', relevance: 'awareness', deadline: '2026-10-01' }],
+    ];
+    ok('K4 the understanding (ownership · relevance · ask · deadline) opens extraction', obligations.every(([, u]) => { const g = G({ source: 'email', text: long, isFromUser: false, understanding: u as never }); return g.extract && g.basis === 'understanding'; }));
+    const noise = [...NOISE_MAIL_KINDS].map((k) => G({ source: 'email', text: long, isFromUser: false, understanding: { role: 'addressed', relevance: 'action', ownership: 'you_owe', mailKind: k as never } }));
+    const bulk = G({ source: 'email', text: long, isFromUser: false, understanding: { role: 'addressed', relevance: 'action', bulk: true } });
+    const footer = G({ source: 'email', text: long, isFromUser: false, bulkFooter: true });
+    ok('K5 the kind floor: newsletter · receipt · notification · cold outreach · bulk · a broadcast footer never mint (the delta still reads them)', [...noise, bulk, footer].every((g) => !g.extract && g.delta && g.basis === 'noise-kind'));
+    ok('K6 a meeting always extracts; a user-authored message extracts with no keyword', G({ source: 'meeting', text: 'Kickoff summary', isFromUser: false }).extract && G({ source: 'email', text: 'Merci Sam, c’est noté de mon côté pour la suite.', isFromUser: true }).basis === 'user-authored');
+    ok('K7 our own coworker\'s mail neither mints nor settles', (() => { const g = G({ source: 'email', text: long, isFromUser: false, coworkerSender: true }); return !g.delta && !g.extract; })());
+    ok('K8 a campaign echo never mints, but still reaches the delta', (() => { const g = G({ source: 'email', text: long, isFromUser: false, campaignEcho: true }); return g.delta && !g.extract; })());
+    const ccNo = G({ source: 'email', text: long, isFromUser: false, ccOnly: true });
+    const ccHint = G({ source: 'email', text: 'I will send you the deck by Friday, as agreed.', isFromUser: false, ccOnly: true });
+    ok('K9 the keyword list survives only as a SECONDARY hint (CC-only, no understanding) — and even then the delta runs', ccNo.delta && !ccNo.extract && ccHint.extract && ccHint.basis === 'cc-hint');
+    const off = [G({ source: 'email', text: long, isFromUser: true, mintNew: false }), G({ source: 'email', text: long, isFromUser: false, understanding: { role: 'addressed', relevance: 'action', ownership: 'you_owe' }, mintNew: false })];
+    ok('K18 to-do capture off (mintNew=false) never mints — the delta still runs', off.every((g) => g.delta && !g.extract && g.basis === 'mint-off'));
+    const tri = (['noise', 'fyi_only'] as const).map((c) => G({ source: 'email', text: long, isFromUser: false, triage: c }));
+    ok('K19 the sync triage class noise / fyi_only never mints (no understanding lands for them) — delta only; process falls through', tri.every((g) => g.delta && !g.extract && g.basis === 'triage-noise') && G({ source: 'email', text: long, isFromUser: false, triage: 'process' }).basis === 'addressed-unjudged');
+    const sy = code('lib/email-sync/sync-emails.ts');
+    const site = sy.slice(sy.indexOf("_tail.add('extract-inbound'"), sy.indexOf("_tail.add('extract-inbound'") + 1600);
+    ok('K20 the sync inbound call site always calls the entry, handing todo_auto as mintNew and the triage class', !/if \(emailSettings\.todo_auto\) \{\s*for \(const \{ storedEmail: _em/.test(sy) && /mintNew: !!emailSettings\.todo_auto/.test(site) && /triage: _cls/.test(site) && /_inboundExtract\.push\(\{ storedEmail, recipientRole: _recipientRole, emailClass \}\)/.test(sy));
+    ok('K10 an empty message reaches nothing', (() => { const g = G({ source: 'email', text: '   ', isFromUser: true }); return !g.delta && !g.extract; })());
+
+    // structure: no keyword-only gate remains anywhere on the entry
+    const ex2 = code('lib/commitments/extract.ts');
+    const entry = ex2.slice(ex2.indexOf('export async function extractEmailCommitments'));
+    const gateFn = ex2.slice(ex2.indexOf('export function extractionGate'), ex2.indexOf('export async function understandingForEmail'));
+    ok('K11 COMMITMENT_HINT is read ONLY inside extractionGate (declaration + one secondary test)', (ex2.match(/COMMITMENT_HINT/g) ?? []).length === 2 && (gateFn.match(/COMMITMENT_HINT\.test\(/g) ?? []).length === 1);
+    ok('K12 the entry asks the gate BEFORE any AI call, and never returns on a keyword', entry.indexOf('extractionGate(') > 0 && entry.indexOf('extractionGate(') < entry.indexOf('getAIClient(') && !/COMMITMENT_HINT/.test(entry));
+    ok('K13 writeCommitments is reached for every gated message (not inside the extract branch)', /const list = gate\.extract \? await extractCandidates\(\) : \[\];/.test(entry) && entry.indexOf('await writeCommitments(') < entry.indexOf('async function extractCandidates'));
+    ok('K14 the understanding lookup is a JSON-path select (never the body), fresh only for THIS email id', /select\('understanding:source_data->understanding, email_id:source_data->>email_id'\)/.test(ex2) && /r\.email_id === emailId/.test(ex2));
+
+    // end to end through the ONE entry — zero AI: the delta judge is stubbed, extraction is gated off
+    const thread = (dir: 'you_owe' | 'awaiting', desc: string) => [{ id: 'k1', user_id: 'u', description: desc, direction: dir, counterparty: 'Sam Rivera', due_date: null, created_at: '2026-09-01T10:00:00Z', status: 'open', thread_id: 'tk', source_id: 'ek0' }];
+    {
+      const t = fakeClient({ commitments: thread('you_owe', 'Send the interim report'), inbox_items: [] });
+      let judged = 0;
+      const d = deps('delivered');
+      const n = await extractEmailCommitments({
+        userId: 'u', subject: 'Re: interim report', body: 'Done, attached.', isFromUser: true, userName: null, counterparty: 'sam@acme.test',
+        sourceId: 'ek1', threadId: 'tk', receivedAt: '2026-09-15T09:00:00Z', client: t.client,
+        delta: { judge: async () => { judged++; return JSON.stringify({ open: [{ id: 'C1', verdict: 'delivered', quote: 'Done, attached' }] }); }, deps: d },
+      });
+      ok('K15 "Done, attached." from the user → the delta reads it, the judged delivery closes the open item, nothing new minted', n === 0 && judged === 1 && d.judged === 1 && t.tables.commitments[0].status === 'done' && t.tables.commitments.length === 1);
+    }
+    {
+      const t = fakeClient({ commitments: thread('awaiting', 'Share the signed contract'), inbox_items: [] });
+      let judged = 0;
+      const d = deps('delivered');
+      const n = await extractEmailCommitments({
+        userId: 'u', subject: 'Vertrag', body: 'Erledigt — anbei der unterschriebene Vertrag, wie besprochen.', isFromUser: false, userName: null, counterparty: 'sam@acme.test',
+        sourceId: 'ek2', threadId: 'tk', receivedAt: '2026-09-15T09:00:00Z', client: t.client,
+        understanding: { role: 'addressed', relevance: 'awareness', ownership: 'none' },
+        delta: { judge: async () => { judged++; return JSON.stringify({ open: [{ id: 'C1', verdict: 'delivered', quote: 'anbei der unterschriebene Vertrag' }] }); }, deps: d },
+      });
+      ok('K16 a non-English, keyword-free delivery by the counterparty reaches the delta and settles the awaiting item', n === 0 && judged === 1 && t.tables.commitments[0].status === 'done');
+    }
+    {
+      const t = fakeClient({ commitments: thread('awaiting', 'Share the signed contract'), inbox_items: [] });
+      let judged = 0;
+      const d = deps('delivered');
+      const n = await extractEmailCommitments({
+        userId: 'u', subject: 'Vertrag', body: 'Erledigt — anbei der unterschriebene Vertrag, wie besprochen.', isFromUser: false, userName: null, counterparty: 'sam@acme.test',
+        sourceId: 'ek4', threadId: 'tk', receivedAt: '2026-09-15T09:00:00Z', client: t.client, triage: 'fyi_only', mintNew: false,
+        delta: { judge: async () => { judged++; return JSON.stringify({ open: [{ id: 'C1', verdict: 'delivered', quote: 'anbei der unterschriebene Vertrag' }] }); }, deps: d },
+      });
+      ok('K21 an FYI-triaged delivery with to-do capture OFF still reaches the delta and settles (no understanding lookup, no AI mint)', n === 0 && judged === 1 && t.tables.commitments[0].status === 'done');
+    }
+    {
+      const t = fakeClient({ commitments: [], inbox_items: [] });
+      let judged = 0;
+      await extractEmailCommitments({
+        userId: 'u', subject: 'Re: x', body: 'Done, attached.', isFromUser: true, userName: null, counterparty: 'sam@acme.test',
+        sourceId: 'ek3', threadId: 'tk', client: t.client, delta: { judge: async () => { judged++; return '{}'; } },
+      });
+      ok('K17 no open work on the conversation → the always-on delta makes no call', judged === 0);
+    }
+  }
 
   // ── J · THE LAW IS REGISTERED ─────────────────────────────────────────────────────────────────
   console.log('J · the registry');

@@ -13,6 +13,12 @@
 //      verdict, a nudge draft on a non-chase verdict. One current artifact per intent, always
 //      agreeing with the ONE judgment.
 //
+//   THE USER'S HAND WINS (W9.1b): neither consequence ever DELETES an artifact the user edited.
+//   Every strip here goes through THE ONE ENGINE STRIP (lib/prepare/hand-store.ts
+//   `stripSourceArtifacts`): machine words strip as before; a hand-held artifact is FILED into the
+//   version chain and narrated once into the room WITH the user's words (it has no live card under
+//   the new verdict — the room turn is where they still find it). A failed filing keeps it in place.
+//
 // Non-fatal by design: a failed consequence never breaks the caller; the verdict itself is
 // already cached and honest.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -22,8 +28,12 @@ import type { WorkVerdict, JudgeInput } from './judge';
 import { clip } from '@/lib/room/turns';
 // ONE OPEN-STATUS CONSTANT (W2.2) — never a local list.
 import { isOpenCommitmentStatus } from '@/lib/core/statuses';
+import type { HandField } from '@/lib/prepare/hand';
 
-export type VerdictConsequence = { resolved: boolean; stripped: string[] };
+/** The consequence's public names for the stripped source_data fields (unchanged vocabulary). */
+const STRIP_NAME: Record<HandField, string> = { draft: 'reply_draft', nudge_draft: 'nudge_draft', prepared_invite: 'prepared_invite', prepared_forward: 'prepared_forward' };
+
+export type VerdictConsequence = { resolved: boolean; stripped: string[]; /** W9.1b: hand-held artifacts filed (never deleted) */ filed: string[] };
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE EVENT LINE CARRIES THE OUTCOME, NOT THE ARGUMENT (owner walk, Sep 8 — root cause C5).
@@ -85,7 +95,7 @@ export function composeRevisitLine(title: string, after: string, who?: string | 
 export async function applyVerdictConsequences(
   client: SupabaseClient, userId: string, input: JudgeInput, verdict: WorkVerdict,
 ): Promise<VerdictConsequence> {
-  const out: VerdictConsequence = { resolved: false, stripped: [] };
+  const out: VerdictConsequence = { resolved: false, stripped: [], filed: [] };
   try {
     // ── 0. FAILURE HONESTY (W2): a FAILED judgment moves nothing. It is not a verdict — resolving
     // an item or stripping a prepared draft on the back of an AI outage would destroy real work.
@@ -118,8 +128,14 @@ export async function applyVerdictConsequences(
           // already answered (done elsewhere — it was real) or out of date (expired).
           const { capturePending, logPendingOutcomes } = await import('@/lib/prepare/outcome');
           const pendingPrep = await capturePending(client, userId, { kind: 'inbox', id: input.id });
-          const sd = { ...((it.source_data ?? {}) as Record<string, unknown>) };
-          delete sd.draft; delete sd.nudge_draft; delete sd.prepared_by; // resolved work carries no prepared drafts
+          // Resolved work carries no prepared drafts — machine words strip; the user's hand is FILED.
+          const { stripSourceArtifacts } = await import('@/lib/prepare/hand-store');
+          const strip = await stripSourceArtifacts(client, userId, {
+            itemId: input.id, sd: (it.source_data ?? {}) as Record<string, unknown>, fields: ['draft', 'nudge_draft'], why: 'resolved',
+          });
+          const sd = strip.sd;
+          if (!strip.kept.length) delete sd.prepared_by;
+          out.filed.push(...strip.filed);
           await client.from('inbox_items').update({
             status: expired ? 'dismissed' : 'completed',
             source_data: { ...sd, resolved_at: now, resolution_reason: expired ? 'no_longer_relevant' : 'already_handled' },
@@ -222,15 +238,27 @@ export async function applyVerdictConsequences(
     if (input.kind === 'inbox') {
       const { data: it } = await client.from('inbox_items').select('id, source_data')
         .eq('id', input.id).eq('user_id', userId).maybeSingle();
-      const sd = { ...((it?.source_data ?? {}) as Record<string, unknown>) };
-      let changed = false;
+      const sd0 = (it?.source_data ?? {}) as Record<string, unknown>;
       const draftOk = verdict.work === 'reply' || verdict.work === 'send_file';
-      if (!draftOk && (sd.draft as Record<string, unknown>)?.body) { delete sd.draft; out.stripped.push('reply_draft'); changed = true; }
-      if (verdict.work !== 'chase' && (sd.nudge_draft as Record<string, unknown>)?.body) { delete sd.nudge_draft; out.stripped.push('nudge_draft'); changed = true; }
+      const contradicting: HandField[] = [];
+      if (!draftOk && (sd0.draft as Record<string, unknown>)?.body) contradicting.push('draft');
+      if (verdict.work !== 'chase' && (sd0.nudge_draft as Record<string, unknown>)?.body) contradicting.push('nudge_draft');
       // The W1 verbs' artifacts obey the same law: a prepared invite/forward that no longer matches
       // the verdict strips (the judged pass regenerates the right kind).
-      if (verdict.work !== 'schedule' && sd.prepared_invite) { delete sd.prepared_invite; out.stripped.push('prepared_invite'); changed = true; }
-      if (verdict.work !== 'forward' && sd.prepared_forward) { delete sd.prepared_forward; out.stripped.push('prepared_forward'); changed = true; }
+      if (verdict.work !== 'schedule' && sd0.prepared_invite) contradicting.push('prepared_invite');
+      if (verdict.work !== 'forward' && sd0.prepared_forward) contradicting.push('prepared_forward');
+      // THE ONE ENGINE STRIP — a hand-held artifact is FILED (version chain + one narration with the
+      // user's words), never deleted; a failed filing keeps it where it is.
+      let sd = { ...sd0 };
+      let changed = false;
+      if (it && contradicting.length) {
+        const { stripSourceArtifacts } = await import('@/lib/prepare/hand-store');
+        const strip = await stripSourceArtifacts(client, userId, { itemId: input.id, sd: sd0, fields: contradicting, why: 'plan_changed' });
+        sd = strip.sd;
+        out.stripped.push(...strip.stripped.map((f) => STRIP_NAME[f]));
+        out.filed.push(...strip.filed.map((f) => STRIP_NAME[f]));
+        changed = strip.stripped.length > 0;
+      }
       if (changed) {
         if (!(sd.draft as Record<string, unknown>)?.body && !(sd.nudge_draft as Record<string, unknown>)?.body
           && !sd.prepared_invite && !sd.prepared_forward) delete sd.prepared_by;

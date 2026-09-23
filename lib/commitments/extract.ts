@@ -1,5 +1,7 @@
 // Commitment extraction — "what I owe / what I'm owed", from emails and meetings.
-// Email path uses a cheap keyword pre-filter to gate the AI call (most mail has no commitment).
+// W9.4 EXTRACTION IS REASONED, NOT KEYWORD-GATED: the email path is gated STRUCTURALLY
+// (`extractionGate` below) — the conversation delta always runs (it is a no-op without open work),
+// and NEW extraction runs on the per-item understanding / authorship / source, never a keyword list.
 
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { subjectIsCampaignEcho } from '@/lib/inbox/campaign-echo';
@@ -8,6 +10,7 @@ import { resolveDeixisInDescriptions } from '@/lib/inbox/deixis';
 import { seatStripsObligation, type SeatFacts } from '@/lib/inbox/recipient-role';
 import { dueDateFromSource, repairSelfParty, denotesUser, isOpenDuplicate, type UserForms } from '@/lib/commitments/extraction-truth';
 import { directionFloor } from '@/lib/commitments/direction';
+import { coerceUnderstanding, type ItemUnderstanding } from '@/lib/inbox/item-understanding';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
@@ -32,7 +35,9 @@ function cleanInitiative(v: unknown): string | null {
   return s && !/^(null|none|n\/a|na|unknown|one-off|one off)$/i.test(s) ? s.slice(0, 60) : null;
 }
 
-// Only worth an AI call if the text plausibly contains a promise/deadline.
+// W9.4: a SECONDARY hint only — consulted by `extractionGate` in the one case no reasoned signal
+// exists (no understanding yet AND the user is CC-only). Never the sole gate: English-only keywords
+// cannot see "done, attached", "erledigt, anbei" or "cancelamos a reunião".
 const COMMITMENT_HINT = /\b(i'?ll|i will|we'?ll|we will|let me|i'?ll get|send you|get you|send over|follow up|circle back|will send|will get|will have|will share|by (mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|tomorrow|eod|cob|end of|next week|this week|end of day|end of week)|deadline|by the end|due |get back to you|revert|by then)\b/i;
 
 // Bulk / newsletter / automated mail — never a source of personal commitments. An "unsubscribe"
@@ -49,7 +54,7 @@ const BULK_HINT = /unsubscribe|view (this )?(e?-?mail )?in (your )?browser|manag
 import { norm, emailLocalpart, nameTokens, emailDenotesName, sameAttendee } from '@/lib/projects/identity';
 import { dateStatedInText } from '@/lib/utils/user-time';
 import { topMessageOf } from '@/lib/inbox/top-message';
-import { conversationDelta, type ConversationKey } from '@/lib/work/conversation-delta';
+import { conversationDelta, type ConversationKey, type DeltaJudge, type ApplyDeps } from '@/lib/work/conversation-delta';
 
 // ── EXTRACTION TRUTH floors (W8.2 · ONE CONVERSATION, ONE LIVE ITEM) ─────────────────────────────
 // Pure, zero AI. The write door (writeCommitments) and the repair (scripts/repair-conversation-hoard.ts)
@@ -243,6 +248,8 @@ export async function writeCommitments(
     /** W8.2 THE CONVERSATION DELTA: the message's OWN words (topMessageOf) + who wrote it. Absent on
      *  the meeting path — the delta reads the meeting's summary + action items itself. */
     message?: { text?: string | null; authoredByUser?: boolean | null; subject?: string | null } | null;
+    /** The delta's injectable judge/appliers (the zero-AI gates stub them; production omits it). */
+    delta?: { judge?: DeltaJudge; deps?: ApplyDeps } | null;
   },
   client: DBClient,
 ): Promise<void> {
@@ -426,6 +433,7 @@ export async function writeCommitments(
       text: meta.message?.text ?? (meta.source === 'email' && meta.sourceText ? topMessageOf(meta.sourceText) : null),
       authoredByUser: meta.message?.authoredByUser ?? null, subject: meta.message?.subject ?? null,
     },
+    judge: meta.delta?.judge, deps: meta.delta?.deps,
   }).catch(() => null);
   const writeIdx = delta ? delta.writeIndices : built.map((_, i) => i);
   const toWrite = writeIdx.map((i) => built[i]);
@@ -576,6 +584,102 @@ export async function writeMeetingCommitments(
 // the historical callers (and the gates that pin them) keep pointing at the one law. ──
 export { DEICTIC_RE, resolveDeixisInDescriptions } from '@/lib/inbox/deixis';
 
+// ── W9.4 EXTRACTION IS REASONED, NOT KEYWORD-GATED ─────────────────────────────────────────────
+// THE FINDING (read-only audit, Sep 23): extraction AND the W8.2 conversation delta ran only when the
+// message passed an English keyword regex. "Done, attached", a cancellation in any other language —
+// anything that missed the list — never reached the delta and waited for the 6h evidence sweep.
+// THE LAW: two questions, two answers, neither lexical.
+//   • THE DELTA always runs when the message has words: it is bounded (DELTA_MAX_OPEN), it makes NO
+//     call when the conversation holds no open work (loadConversation answers first), and reading a
+//     new message against open work is the point of W8.2.
+//   • NEW EXTRACTION runs on a REASONED or STRUCTURAL signal: a meeting source; a user-authored
+//     message (you-owe promises); or the per-item understanding (lib/inbox/item-understanding.ts —
+//     ownership you_owe/awaiting · relevance action/reply · an ask · a stated deadline). The kind floor
+//     skips bulk/newsletter/receipt/notification/cold-outreach. With NO understanding yet (sync runs
+//     extraction before the classification pass lands), mail the user is ADDRESSED on extracts — the
+//     caller's own triage already called it actionable, and the prompt returns [] for no obligation;
+//     only a CC-only message with no understanding consults the keyword hint, as a secondary signal.
+/** Mail kinds that never mint a personal commitment (the reasoned taxonomy, not a keyword list). */
+export const NOISE_MAIL_KINDS: ReadonlySet<string> = new Set(['receipt', 'newsletter', 'notification', 'cold_outreach']);
+/** Below this, a message is too short to CARRY a new obligation — it can still settle one (delta). */
+export const EXTRACT_MIN_CHARS = 20;
+
+export type GateUnderstanding = Pick<ItemUnderstanding, 'ownership' | 'relevance' | 'ask' | 'deadline' | 'mailKind' | 'bulk' | 'role'>;
+export type ExtractionFacts = {
+  source: 'email' | 'meeting';
+  /** The message's text (email body). */
+  text: string;
+  isFromUser: boolean;
+  /** The reasoned per-item understanding for THIS message, when it has landed. */
+  understanding?: Partial<GateUnderstanding> | null;
+  /** The user is only CC'd (structural seat). Unknown = null. */
+  ccOnly?: boolean | null;
+  /** Structural broadcast footer (unsubscribe / view-in-browser) on received mail. */
+  bulkFooter?: boolean;
+  /** A reply into the user's own outbound sequence (THE ECHO FLOOR). */
+  campaignEcho?: boolean;
+  /** The sender is one of the user's own coworkers (THE SELF-RECOGNITION FLOOR). */
+  coworkerSender?: boolean;
+  /** The sync's own triage class for received mail. noise / fyi_only never mint (they get no
+   *  understanding, so the unjudged-addressed branch must not fire for them) — the delta still reads them. */
+  triage?: 'noise' | 'fyi_only' | 'process' | null;
+  /** The user's to-do capture switch (todo_auto). false = never mint NEW commitments; the conversation
+   *  delta still runs (settling open work is not capture). Absent = on. */
+  mintNew?: boolean;
+};
+export type ExtractionGate = { delta: boolean; extract: boolean; basis: string };
+
+/** Does the reasoned understanding say this message carries an obligation? Pure. */
+export function understandingIndicatesObligation(u: Partial<GateUnderstanding> | null | undefined): boolean {
+  if (!u) return false;
+  if (u.ownership === 'you_owe' || u.ownership === 'awaiting') return true;
+  if (u.relevance === 'action' || u.relevance === 'reply') return true;
+  return !!(u.ask && String(u.ask).trim()) || !!(u.deadline && String(u.deadline).trim());
+}
+
+/** THE GATE (pure, zero AI): does this message reach the conversation delta, and does it get a NEW
+ *  extraction call? Order = precedence; the first floor that answers wins. */
+export function extractionGate(f: ExtractionFacts): ExtractionGate {
+  const text = String(f.text ?? '').trim();
+  // Our own coworker's words are a pointer to work that stands — not evidence, not a new debt.
+  if (f.coworkerSender && !f.isFromUser) return { delta: false, extract: false, basis: 'coworker-sender' };
+  const delta = text.length > 0;
+  if (f.mintNew === false) return { delta, extract: false, basis: 'mint-off' };
+  if (f.source === 'meeting') return { delta, extract: true, basis: 'meeting' };
+  if (text.length < EXTRACT_MIN_CHARS) return { delta, extract: false, basis: 'too-short' };
+  if (!f.isFromUser && (f.triage === 'noise' || f.triage === 'fyi_only')) return { delta, extract: false, basis: 'triage-noise' };
+  const u = f.understanding ?? null;
+  if (!f.isFromUser && (f.bulkFooter || u?.bulk === true || (u?.mailKind && NOISE_MAIL_KINDS.has(u.mailKind)))) {
+    return { delta, extract: false, basis: 'noise-kind' };
+  }
+  if (!f.isFromUser && f.campaignEcho) return { delta, extract: false, basis: 'campaign-echo' };
+  if (f.isFromUser) return { delta, extract: true, basis: 'user-authored' };
+  if (u) {
+    return understandingIndicatesObligation(u)
+      ? { delta, extract: true, basis: 'understanding' }
+      : { delta, extract: false, basis: 'understanding-no-obligation' };
+  }
+  if (f.ccOnly !== true) return { delta, extract: true, basis: 'addressed-unjudged' };
+  return COMMITMENT_HINT.test(text)
+    ? { delta, extract: true, basis: 'cc-hint' }
+    : { delta, extract: false, basis: 'cc-unjudged' };
+}
+
+/** The understanding the classification pass stamped for THIS message (the thread's item carries
+ *  the understanding of its LATEST message — only a match on this email id is fresh). Bounded,
+ *  explicit select, JSON path only (never the body). Any error → null (unjudged). */
+export async function understandingForEmail(client: DBClient, userId: string, emailId: string, threadId?: string | null): Promise<GateUnderstanding | null> {
+  try {
+    let q = client.from('inbox_items').select('understanding:source_data->understanding, email_id:source_data->>email_id')
+      .eq('user_id', userId).eq('source', 'email');
+    q = threadId ? q.eq('source_data->>thread_id', threadId) : q.eq('source_data->>email_id', emailId);
+    const { data, error } = await q.limit(5);
+    if (error || !Array.isArray(data)) return null;
+    const row = (data as Array<{ understanding?: unknown; email_id?: string | null }>).find((r) => r.email_id === emailId);
+    return row ? coerceUnderstanding(row.understanding) : null;
+  } catch { return null; }
+}
+
 // Extract commitments from one email and persist them. Returns the count written.
 export async function extractEmailCommitments(opts: {
   userId: string;
@@ -593,39 +697,76 @@ export async function extractEmailCommitments(opts: {
   /** THE SEAT LAW (threads-plan · THE OPENING CONTRACT clause 4): the user's To/CC position on this
    *  email. Absent = unknown, and an unknown seat never demotes anything. */
   seat?: SeatFacts | null;
+  /** W9.4: the reasoned understanding for THIS message, when the caller holds it. Absent → looked up
+   *  (inbox_items.source_data.understanding, only when stamped for this email id); null → unjudged. */
+  understanding?: Partial<GateUnderstanding> | null;
+  /** W9.4: the user's to-do capture switch (todo_auto). false → no NEW commitments; the delta still runs. */
+  mintNew?: boolean;
+  /** W9.4: the sync's triage class for received mail — noise / fyi_only never mint (delta only). */
+  triage?: 'noise' | 'fyi_only' | 'process' | null;
+  /** The conversation delta's injectable judge/appliers — zero-AI gates only; production omits it. */
+  delta?: { judge?: DeltaJudge; deps?: ApplyDeps } | null;
   client: DBClient;
 }): Promise<number> {
   const { userId, subject, body, isFromUser, userName, counterparty, sourceId, threadId, instructions, receivedAt, seat, client } = opts;
   const text = (body || '').trim();
-  if (text.length < 20 || !COMMITMENT_HINT.test(text)) return 0;
-  // Received bulk/newsletter mail never carries a real commitment — skip before the AI call.
-  if (!isFromUser && BULK_HINT.test(text)) return 0;
-  // THE ECHO FLOOR (LAW 5 — proactive-reach): a reply into the user's OWN outbound sequence never
-  // mints a commitment. The census found a lunch commitment minted for a meeting that never
-  // existed, off one sequencer reply. Derived per user from their own sent corpus at runtime — no
-  // vendor, token or language is named; an empty signature leaves this inert. Skipped before the
-  // AI call (cheap, and the refusal costs nothing).
-  if (!isFromUser && await subjectIsCampaignEcho(client, userId, subject)) return 0;
   // THE SELF-RECOGNITION FLOOR (Q1 — attention-plan PART III): a coworker's own mail never mints a
   // commitment. Their reminder ("approve the shortlist") is a POINTER to work that already stands —
   // minting from it is how ONE ask came to stand four times on the reference account (three
   // re-sent reminders plus the commitment one of them minted). The user does not owe their own
   // assistant a debt. `counterparty` IS the sender on the received path, so no new parameter: the
-  // registry predicate reads the address the caller already hands us. Structural, zero AI, before
-  // the call.
-  if (!isFromUser && isOwnCoworkerSender(counterparty)) return 0;
+  // registry predicate reads the address the caller already hands us. Structural, zero AI.
+  const coworkerSender = !isFromUser && isOwnCoworkerSender(counterparty);
+  // THE ECHO FLOOR (LAW 5 — proactive-reach): a reply into the user's OWN outbound sequence never
+  // mints a commitment. The census found a lunch commitment minted for a meeting that never
+  // existed, off one sequencer reply. Derived per user from their own sent corpus at runtime — no
+  // vendor, token or language is named; an empty signature leaves this inert. (W9.4: the reply can
+  // still SETTLE open work on its conversation — the delta reads it; it only never mints.)
+  // The lookups below only matter when minting is still possible — skipped otherwise (no wasted IO).
+  const triage = opts.triage ?? null;
+  const mayMint = opts.mintNew !== false && !coworkerSender && text.length >= EXTRACT_MIN_CHARS
+    && (isFromUser || (triage !== 'noise' && triage !== 'fyi_only'));
+  const campaignEcho = !isFromUser && mayMint
+    ? await subjectIsCampaignEcho(client, userId, subject).catch(() => false) : false;
+  // W9.4 THE GATE — reasoned/structural, never a keyword list (see `extractionGate`).
+  const understanding = isFromUser || !mayMint ? null
+    : opts.understanding !== undefined ? opts.understanding : await understandingForEmail(client, userId, sourceId, threadId);
+  const gate = extractionGate({
+    source: 'email', text, isFromUser, understanding, triage, mintNew: opts.mintNew,
+    ccOnly: seat?.isCcOnly ?? null,
+    // Received bulk/newsletter mail never carries a real commitment (structural footer backstop).
+    bulkFooter: !isFromUser && BULK_HINT.test(text),
+    campaignEcho, coworkerSender,
+  });
+  if (!gate.delta && !gate.extract) return 0;
+  const list = gate.extract ? await extractCandidates() : [];
+  // (W8.2 + W9.4) EVERY gated message reaches writeCommitments — an empty list included: the
+  // conversation delta reads it against the conversation's OPEN work (a delivery or a cancellation
+  // mints nothing new), and makes no call when the conversation holds none.
+  try {
+    await writeCommitments(userId, list, {
+      source: 'email', sourceId, threadId, counterparty,
+      anchorAt: receivedAt ?? null, sourceText: `${subject || ''}\n${text}`, otherParty: counterparty,
+      user: { name: userName || seat?.userName || null, addresses: seat?.userAddresses ?? null },
+      message: { text: topMessageOf(text), authoredByUser: isFromUser, subject: subject || null },
+      delta: opts.delta ?? null,
+    }, client);
+  } catch { return 0; }
+  return list.length;
 
-  const who = userName || 'the user';
-  // Context-grounded initiative: the labels this counterparty/thread already carries, so a commitment
-  // reuses the existing deal label instead of inventing a synonym (converges with the email understanding).
-  const { getInitiativeCandidates, initiativeGroundingClause } = await import('@/lib/inbox/initiative-candidates');
-  const initCand = await getInitiativeCandidates(client, userId, { threadId, personNames: [counterparty], personEmails: [counterparty] }).catch(() => ({ canonical: null, candidates: [] as string[] }));
-  const initiativeGrounding = initiativeGroundingClause(initCand.canonical, initCand.candidates);
-  const perspective = isFromUser
-    ? `This email was SENT BY ${who}. Things ${who} promises to do = direction "you_owe". Things ${who} asks or requests the other party to do (and is now waiting on) = direction "awaiting". CRITICAL: because ${who} is the SENDER, an imperative or request aimed at the other party ("process the refund", "please send X", "can you review Y") is something the OTHER party owes — direction "awaiting" — NOT something ${who} owes. Only a first-person promise by ${who} ("I'll…", "I will…", "let me…", "we'll…") is "you_owe".`
-    : `This email was RECEIVED BY ${who} from ${counterparty || 'someone'}. Things the other party asks ${who} to do = direction "you_owe". Things the other party promises to do for ${who} = direction "awaiting".`;
+  // ── the NEW-extraction call (only when the gate says so); any failure → no candidates ──
+  async function extractCandidates(): Promise<ExtractedCommitment[]> {
+    const who = userName || 'the user';
+    // Context-grounded initiative: the labels this counterparty/thread already carries, so a commitment
+    // reuses the existing deal label instead of inventing a synonym (converges with the email understanding).
+    const { getInitiativeCandidates, initiativeGroundingClause } = await import('@/lib/inbox/initiative-candidates');
+    const initCand = await getInitiativeCandidates(client, userId, { threadId, personNames: [counterparty], personEmails: [counterparty] }).catch(() => ({ canonical: null, candidates: [] as string[] }));
+    const initiativeGrounding = initiativeGroundingClause(initCand.canonical, initCand.candidates);
+    const perspective = isFromUser
+      ? `This email was SENT BY ${who}. Things ${who} promises to do = direction "you_owe". Things ${who} asks or requests the other party to do (and is now waiting on) = direction "awaiting". CRITICAL: because ${who} is the SENDER, an imperative or request aimed at the other party ("process the refund", "please send X", "can you review Y") is something the OTHER party owes — direction "awaiting" — NOT something ${who} owes. Only a first-person promise by ${who} ("I'll…", "I will…", "let me…", "we'll…") is "you_owe".`
+      : `This email was RECEIVED BY ${who} from ${counterparty || 'someone'}. Things the other party asks ${who} to do = direction "you_owe". Things the other party promises to do for ${who} = direction "awaiting".`;
 
-  const prompt = `Extract concrete COMMITMENTS from this email — a SPECIFIC obligation a party EXPLICITLY took on, or is explicitly owed, between ${who} and a REAL person (e.g. "Send the Q3 proposal", "Review the contract by Friday").
+    const prompt = `Extract concrete COMMITMENTS from this email — a SPECIFIC obligation a party EXPLICITLY took on, or is explicitly owed, between ${who} and a REAL person (e.g. "Send the Q3 proposal", "Review the contract by Friday").
 
 What counts as ONE commitment — be selective, prefer FEWER and higher-confidence:
 - ONE commitment per MOTION/DELIVERABLE — the thing you'd mark done ONCE. A reply that must include pricing, a deck, and answers to two questions is ONE commitment ("Reply to X with the pilot proposal") whose parts go into "steps" — NEVER four sibling commitments.
@@ -657,53 +798,46 @@ THE DEIXIS LAW: a stored title must stay TRUE as time passes — never write rel
 Return ONLY JSON. Empty array if there are no real commitments:
 {"commitments":[{"direction":"you_owe|awaiting","doer":"user | the other party's name/email","description":"short imperative, e.g. 'Send the Q3 proposal'","due_date":"YYYY-MM-DD or null","counterparty":"name/email or null","initiative":"short label or null","steps":["short sub-part", "..."]}]}`;
 
-  try {
-    const { client: ai, model } = await getAIClient(userId, 'summarization', client);
-    const res = await aiCreate(ai, { model, messages: [{ role: 'user', content: prompt }], max_tokens: 500, temperature: 0.2 });
-    const parsed = parseJson(res.choices?.[0]?.message?.content ?? '');
-    let list = (parsed.commitments ?? []) as ExtractedCommitment[];
-    // (W8.2) An empty extraction still reaches writeCommitments: the conversation delta reads the
-    // message against the thread's OPEN work (a delivery or a cancellation mints nothing new).
-    // THE DIRECTION FLOOR (W7.4) — direction is WHO DOES IT, decided by ONE pure law
-    // (lib/commitments/direction.ts): the extraction's named `doer`, code-verified against the
-    // user's identity; else the object position ("Contact X…" is done TO X, so BY the user). The
-    // retired backstop keyed a from-user row on "I'll…" in the DESCRIPTION — which the title law
-    // makes imperative — and so flipped every user-sent deed to `awaiting`. One conservative residue
-    // survives, and ONLY where the model omitted the doer it was asked for: a from-user row with no
-    // doer and no object evidence reads as a request to the other party (the refund-ask class).
-    {
-      const forms = { name: userName || seat?.userName || null, aliases: seat?.userAddresses ?? null };
-      list = list.map((c) => {
-        const f = directionFloor({ direction: c.direction, description: c.description, counterparty: c.counterparty ?? counterparty, doer: c.doer ?? null }, forms, counterparty);
-        const direction = isFromUser && f.basis === 'model' && !String(c.doer ?? '').trim() && f.direction === 'you_owe'
-          ? 'awaiting' : f.direction;
-        return direction === c.direction ? c : { ...c, direction };
-      });
+    try {
+      const { client: ai, model } = await getAIClient(userId, 'summarization', client);
+      const res = await aiCreate(ai, { model, messages: [{ role: 'user', content: prompt }], max_tokens: 500, temperature: 0.2 });
+      const parsed = parseJson(res.choices?.[0]?.message?.content ?? '');
+      let list = (parsed.commitments ?? []) as ExtractedCommitment[];
+      // THE DIRECTION FLOOR (W7.4) — direction is WHO DOES IT, decided by ONE pure law
+      // (lib/commitments/direction.ts): the extraction's named `doer`, code-verified against the
+      // user's identity; else the object position ("Contact X…" is done TO X, so BY the user). The
+      // retired backstop keyed a from-user row on "I'll…" in the DESCRIPTION — which the title law
+      // makes imperative — and so flipped every user-sent deed to `awaiting`. One conservative residue
+      // survives, and ONLY where the model omitted the doer it was asked for: a from-user row with no
+      // doer and no object evidence reads as a request to the other party (the refund-ask class).
+      {
+        const forms = { name: userName || seat?.userName || null, aliases: seat?.userAddresses ?? null };
+        list = list.map((c) => {
+          const f = directionFloor({ direction: c.direction, description: c.description, counterparty: c.counterparty ?? counterparty, doer: c.doer ?? null }, forms, counterparty);
+          const direction = isFromUser && f.basis === 'model' && !String(c.doer ?? '').trim() && f.direction === 'you_owe'
+            ? 'awaiting' : f.direction;
+          return direction === c.direction ? c : { ...c, direction };
+        });
+      }
+      // THE SEAT LAW (threads-plan · THE OPENING CONTRACT clause 4) — the sibling of the backstop
+      // above, keyed off WHO WAS ADDRESSED instead of who sent it. A request addressed To: a third
+      // party with the user merely in CC is that party's obligation: it is not the user's `you_owe`,
+      // and re-directioning it to `awaiting` would be a second lie (the user is not owed a stranger's
+      // deliverable either), so the honest outcome is NO ROW — the mail stays visible as awareness,
+      // which is the seat it actually holds. Deterministic, zero AI, positive evidence only (an
+      // unstamped/unknown seat demotes nothing). EXCEPTION: the mail names the user directly — a CC'd
+      // person asked for something by name genuinely owes it. Found live: the sender asked the To:
+      // recipient for THAT person's CV and the user, in CC, was served "You owe <sender>".
+      if (!isFromUser && seatStripsObligation(`${subject || ''}\n${text}`, seat)) {
+        list = list.filter((c) => c.direction !== 'you_owe');
+      }
+      // THE DEIXIS LAW, structural belt (T-class): a title carrying a relative time word decays into
+      // a lie ("tomorrow" is only true for a day) — detection is lexical, the REWRITE is reasoned
+      // (one capped call, only for offenders), anchored to the email's own date.
+      if (list.length) list = await resolveDeixisInDescriptions(client, userId, list, receivedAt ?? null);
+      return list;
+    } catch {
+      return [];
     }
-    // THE SEAT LAW (threads-plan · THE OPENING CONTRACT clause 4) — the sibling of the backstop
-    // above, keyed off WHO WAS ADDRESSED instead of who sent it. A request addressed To: a third
-    // party with the user merely in CC is that party's obligation: it is not the user's `you_owe`,
-    // and re-directioning it to `awaiting` would be a second lie (the user is not owed a stranger's
-    // deliverable either), so the honest outcome is NO ROW — the mail stays visible as awareness,
-    // which is the seat it actually holds. Deterministic, zero AI, positive evidence only (an
-    // unstamped/unknown seat demotes nothing). EXCEPTION: the mail names the user directly — a CC'd
-    // person asked for something by name genuinely owes it. Found live: the sender asked the To:
-    // recipient for THAT person's CV and the user, in CC, was served "You owe <sender>".
-    if (!isFromUser && seatStripsObligation(`${subject || ''}\n${text}`, seat)) {
-      list = list.filter((c) => c.direction !== 'you_owe');
-    }
-    // THE DEIXIS LAW, structural belt (T-class): a title carrying a relative time word decays into
-    // a lie ("tomorrow" is only true for a day) — detection is lexical, the REWRITE is reasoned
-    // (one capped call, only for offenders), anchored to the email's own date.
-    if (list.length) list = await resolveDeixisInDescriptions(client, userId, list, receivedAt ?? null);
-    await writeCommitments(userId, list, {
-      source: 'email', sourceId, threadId, counterparty,
-      anchorAt: receivedAt ?? null, sourceText: `${subject || ''}\n${text}`, otherParty: counterparty,
-      user: { name: userName || seat?.userName || null, addresses: seat?.userAddresses ?? null },
-      message: { text: topMessageOf(text), authoredByUser: isFromUser, subject: subject || null },
-    }, client);
-    return list.length;
-  } catch {
-    return 0;
   }
 }

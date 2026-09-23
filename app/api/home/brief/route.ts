@@ -1093,9 +1093,12 @@ export async function GET() {
         // backfill (chunked, idempotent, self-completing → the onboarding path that lets the label-era
         // fallbacks die). Cheap once complete; now behind the single-flight gate so it can't stack.
         // NOTE (P0): the blanket `refreshEntityStates` sweep was REMOVED from this tail — per-entity
-        // refresh already happens where ledgers actually change (noteItemAction on user actions,
-        // reconcileEntities on moves, the sync/insights hooks); the catch-all sweep lives in the
-        // 2-hourly draft-sweep cron. Running it here made every sig change a potential multi-minute
+        // refresh happens where ledgers actually change: noteItemAction on user actions,
+        // reconcileEntities on moves, and (W9.3) the recognition hooks in lib/entities/hooks.ts, which
+        // SCHEDULE a coalesced refresh (lib/entities/refresh-schedule.ts) for every entity that gains a
+        // member from the email-sync tail, the calendar sync or the meeting-insights tail — the email
+        // tail also bootstraps memory, so this Home call is no longer the only door. The catch-all
+        // sweep lives in the 2-hourly draft-sweep cron. Running it here made every sig change a potential multi-minute
         // token burn (dozens of entity syntheses), saturating the AI channel for all other requests.
         try {
           const { bootstrapMemory } = await import('@/lib/entities/hooks');

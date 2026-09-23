@@ -91,13 +91,14 @@ async function main() {
   {
     const s = src('lib/work/evidence-settle.ts');
     ok('an evidence settle logs done_elsewhere (commitment + inbox)', (s.match(/door: 'evidence_settle'/g) ?? []).length >= 2);
-    ok('   …the inbox capture precedes the write that strips the drafts', before(s, "capturePending(client, userId, { kind: 'inbox'", 'delete sd.draft'));
+    // ⟲ re-pointed W9.1b: the strip is THE ONE ENGINE STRIP (stripSourceArtifacts — the hand is filed, never deleted).
+    ok('   …the inbox capture precedes the write that strips the drafts', before(s, "capturePending(client, userId, { kind: 'inbox'", 'stripSourceArtifacts('));
   }
   {
     const s = src('lib/work/apply-verdict.ts');
     ok('the judge resolution logs answered→done_elsewhere, expired→expired',
       /base: expired \? 'expired' : 'done_elsewhere'/.test(s) && (s.match(/door: 'judge_resolution'/g) ?? []).length >= 2);
-    ok('   …capture precedes the draft strip', before(s, "capturePending(client, userId, { kind: 'inbox'", 'delete sd.draft'));
+    ok('   …capture precedes the draft strip', before(s, "capturePending(client, userId, { kind: 'inbox'", 'stripSourceArtifacts(')); // ⟲ W9.1b
   }
   {
     const s = src('lib/commitments/expiry.ts');
@@ -106,7 +107,7 @@ async function main() {
   {
     const s = src('lib/inbox/conversation-identity.ts');
     ok('the conversation cascade logs done_elsewhere, captured before its strip',
-      /door: 'conversation_cascade'/.test(s) && before(s, 'capturePending(client, userId', 'delete sd.draft; delete sd.nudge_draft; delete sd.prepared_by;\n          const { error }'));
+      /door: 'conversation_cascade'/.test(s) && before(s, 'capturePending(client, userId', 'stripSourceArtifacts(client, userId') /* ⟲ W9.1b */);
   }
   {
     const s = src('lib/prepare/pass.ts');

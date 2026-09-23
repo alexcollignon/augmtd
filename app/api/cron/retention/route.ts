@@ -5,12 +5,23 @@ import { ITEM_PLANS_RETENTION } from '@/lib/store/item-plans';
 
 export const maxDuration = 300;
 
+// SCHEDULE (vercel.json): `30 3 * * *`
+
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE RETENTION SWEEP (stabilization W4.3) — prunes tables that grow unbounded but whose readers
 // only ever look back a bounded window. Two floors, both belt-and-braces (either alone can misfire
 // on a bad deploy or a stray query param):
 //   (1) DRY-RUN BY DEFAULT — every call reports counts; nothing is deleted unless BOTH `?apply=1`
 //       on the request AND `RETENTION_APPLY=true` in the environment are true.
+//       ⚠ THE SCHEDULED RUN NEVER DELETES (W9.5 THE CLOCKS, stated so nobody reads the cron entry as
+//       "retention is on"): vercel.json calls this path with NO query string, so `?apply=1` is never
+//       present on the scheduled call — it is a nightly DRY-RUN REPORT, by design, until the owner
+//       decides the retention policy (docs/stabilization-plan.md PART VI, owner step 6). The report
+//       is honest: per table, `matching` (rows past the cutoff), `wouldDelete` (what an applied run
+//       would remove THIS run, under the batch cap) and `wouldLeaveBehind`; a failed count says so
+//       (matching -1 + the error) instead of reading as "0 to prune".
+//       THE SWITCH (owner-only): set RETENTION_APPLY=true in the environment AND invoke with
+//       `?apply=1` (by hand, or by changing the vercel.json path to `/api/cron/retention?apply=1`).
 //   (2) BOUNDED BATCHES + A WALL-CLOCK GUARD — deletes run in capped batches and the route stops
 //       cleanly before Vercel's 300s kill, reporting what it left for the next run (the same
 //       coverage-repair discipline as draft-sweep/label-sweep/sync-calendar).
@@ -72,6 +83,8 @@ export const maxDuration = 300;
 const AI_USAGE_RETENTION_DAYS = 200;
 const LEARNING_SIGNALS_RETENTION_DAYS = 180;
 
+const RETENTION_SWITCH = 'owner decision — set RETENTION_APPLY=true AND call with ?apply=1 (the vercel.json schedule passes no query, so the scheduled run is always a dry-run report)';
+
 const BATCH_SIZE = 500;
 const MAX_BATCHES_PER_TABLE = 20; // 10k rows/table/run cap — bounded, never a runaway delete loop
 
@@ -82,7 +95,9 @@ function daysAgoIso(days: number): string {
 interface PruneResult {
   table: string;
   cutoffDays: number;
-  matching: number;   // count of rows older than cutoff, at the START of this run
+  matching: number;   // count of rows older than cutoff, at the START of this run (-1 = count failed)
+  wouldDelete: number; // rows an APPLIED run would remove this run (the batch cap bounds it)
+  wouldLeaveBehind: number; // rows past the cutoff an applied run would still leave (next run's)
   deleted: number;     // rows actually removed this run (0 in dry-run)
   batchesLeftBehind: number; // matching-but-not-yet-deleted because the wall clock or batch cap hit
   note?: string;
@@ -105,8 +120,17 @@ async function pruneTable(
     if (extraFilter) q = extraFilter(q);
     return q;
   };
-  const { count } = await countQuery();
+  const { count, error: countError } = await countQuery();
+  if (countError) {
+    // HONEST DRY-RUN: a failed count is reported as unknown, never as "nothing to prune" — and an
+    // applied run does not delete from a table it could not even count.
+    return { table, cutoffDays, matching: -1, wouldDelete: -1, wouldLeaveBehind: -1, deleted: 0, batchesLeftBehind: -1,
+      note: `count failed: ${countError.message ?? String(countError)}${note ? ` — ${note}` : ''}` };
+  }
   const matching = count ?? 0;
+  const runCap = BATCH_SIZE * MAX_BATCHES_PER_TABLE;
+  const wouldDelete = Math.min(matching, runCap);
+  const wouldLeaveBehind = Math.max(0, matching - runCap);
 
   let deleted = 0;
   let batches = 0;
@@ -128,7 +152,7 @@ async function pruneTable(
   }
 
   const batchesLeftBehind = apply ? Math.max(0, matching - deleted) : matching;
-  return { table, cutoffDays, matching, deleted, batchesLeftBehind, note };
+  return { table, cutoffDays, matching, wouldDelete, wouldLeaveBehind, deleted, batchesLeftBehind, note };
 }
 
 export async function GET(request: NextRequest) {
@@ -171,7 +195,7 @@ export async function GET(request: NextRequest) {
 
   if (!skip.has('item_plans')) {
     for (const [kind, days] of Object.entries(ITEM_PLANS_RETENTION) as Array<[string, number]>) {
-      if (Date.now() > deadline) { results.push({ table: `item_plans:${kind}`, cutoffDays: days, matching: -1, deleted: 0, batchesLeftBehind: -1, note: 'left for next run — route deadline reached before this kind was checked' }); continue; }
+      if (Date.now() > deadline) { results.push({ table: `item_plans:${kind}`, cutoffDays: days, matching: -1, wouldDelete: -1, wouldLeaveBehind: -1, deleted: 0, batchesLeftBehind: -1, note: 'left for next run — route deadline reached before this kind was checked' }); continue; }
       results.push(await pruneTable(
         sb, 'item_plans', 'created_at', daysAgoIso(days), days,
         apply, deadline,
@@ -189,7 +213,8 @@ export async function GET(request: NextRequest) {
   };
 
   if (!apply) {
-    console.log(`[retention] DRY-RUN (apply=${wantsApply}, envAllows=${envAllows}): ${results.map((r) => `${r.table}=${r.matching}`).join(', ')}`);
+    const wouldTotal = results.reduce((n, r) => n + Math.max(0, r.wouldDelete), 0);
+    console.log(`[retention] DRY-RUN — nothing deleted (apply=${wantsApply}, envAllows=${envAllows}). WOULD DELETE ${wouldTotal} row(s) this run: ${results.map((r) => `${r.table} ${r.matching < 0 ? 'count-failed' : `${r.wouldDelete}/${r.matching}`}`).join(', ')}. Switch: ${RETENTION_SWITCH}`);
   } else {
     console.log(`[retention] APPLIED: ${results.map((r) => `${r.table} deleted=${r.deleted}/${r.matching}`).join(', ')}`);
   }
@@ -197,6 +222,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     mode: apply ? 'applied' : 'dry-run',
     appliedGateSatisfied: { queryParamApply: wantsApply, envRetentionApply: envAllows },
+    howToApply: apply ? undefined : RETENTION_SWITCH,
     results,
     roomTurnsFinding,
   });

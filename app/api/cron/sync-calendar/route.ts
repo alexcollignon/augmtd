@@ -8,6 +8,8 @@ import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 export const maxDuration = 300; // 5 minutes
 
+// SCHEDULE (vercel.json): `5 * * * *`
+
 const CALENDAR_SYNCED_AT_KEY = 'calendar_synced_at'; // mirrors lib/calendar/sync-calendar.ts SYNCED_AT_KEY
 
 export async function GET(request: NextRequest) {

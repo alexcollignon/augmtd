@@ -6,6 +6,8 @@ import { hasBearer } from '@/lib/utils/bearer-auth';
 
 export const maxDuration = 300;
 
+// SCHEDULE (vercel.json): `50 */2 * * *`
+
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE JUDGMENT SWEEP (proactive-reach LAW 1 — THE REACH LAW).
 //

@@ -70,7 +70,7 @@ describe('THE WITHDRAWAL PREDICATE — a draft greeting the wrong person is not 
     expect(addresseeWithdrawn({ name: 'Jordan', email: null }, { counterparty: 'Jordan Blake', user: USER })).toBe(false);
     expect(addresseeWithdrawn({ name: 'J. Blake', email: 'jordan@globex.test' }, { counterparty: 'Jordan Blake <jordan@globex.test>', user: USER })).toBe(false);
     // diacritics fold (found by the census): an accent is not a different person
-    expect(addresseeWithdrawn({ name: 'Lea Costa', email: null }, { counterparty: 'Léa Costa', user: USER })).toBe(false);
+    expect(addresseeWithdrawn({ name: 'Zoe Costa', email: null }, { counterparty: 'Zoé Costa', user: USER })).toBe(false);
   });
   it('never withdraws an UNADDRESSED draft, nor judges against a counterparty that is the user', () => {
     expect(addresseeWithdrawn(null, { counterparty: 'Jordan Blake', user: USER })).toBe(false);

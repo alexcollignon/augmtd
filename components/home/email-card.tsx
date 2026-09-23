@@ -174,6 +174,13 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
   // What the machine last handed the editor — the ONE thing "did they really edit it?" compares to.
   const servedRef = useRef(coworker?.draft.body ?? standalone?.draft.body ?? '');
   const dirty = userEdit !== null;
+  // ── W9.1 · THE USER'S HAND WINS (docs/laws-registry.md `the-users-hand-wins`). The served words
+  // may BE the user's own saved edit (`edited`), and the thread may have moved since they wrote it
+  // (`staleUnderEdit`) — the engine never overwrites them, so the card says which it is showing.
+  const [handNote, setHandNote] = useState<'edited' | 'stale' | null>(null);
+  const readHand = (d: { edited?: boolean; staleUnderEdit?: boolean } | null | undefined) => {
+    if (d?.edited) setHandNote(d.staleUnderEdit ? 'stale' : 'edited');
+  };
 
   // ── THE ATTACH SURFACE — the inbox reply's own model: `{filename, content(base64), mimeType}`
   // rides the send body (the door already accepts it), the KB half through the shared picker and
@@ -265,6 +272,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
         if (words && !typedRef.current) {
           setBody(words); setVariantBodies({ [EMAIL_BASE_VARIANT]: words });
           servedRef.current = words; setBodyRev((n) => n + 1);
+          readHand(d as { edited?: boolean; staleUnderEdit?: boolean } | null);
         }
         setUnfilled(!words && !(d?.to?.length));
         setLoading(false);
@@ -296,6 +304,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
         if (prepared && !typedRef.current) {
           setBody(prepared); setVariantBodies({ [EMAIL_BASE_VARIANT]: prepared });
           servedRef.current = prepared; setBodyRev((n) => n + 1);
+          readHand(d);
         }
         setLoading(false);
         settle();
@@ -487,6 +496,26 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
     setUserEdit(value);
     setVariant(EMAIL_USER_VARIANT);
   };
+
+  // ── THE EDIT DOOR (W9.1): a real edit on a PREPARED artifact (the item lane's reply draft, the
+  // compose lane's pooled message) is SAVED — stamped as the user's hand, so no sweep, clock or
+  // ground move ever replaces it. Debounced; content-compared at the door (a click is not an edit);
+  // the coworker and standalone lanes own their own stores and are not engine-prepared.
+  useEffect(() => {
+    if (userEdit === null || sent || (!itemLane && !composeLane)) return;
+    const words = emailBodyText(userEdit).trim();
+    if (!words) return;
+    const t = setTimeout(() => {
+      void fetch('/api/items/prepared', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(itemLane
+          ? { itemKind: 'inbox', itemId: item!.id, kind: 'reply_draft', body: words }
+          : { itemKind: 'commitment', itemId: compose!.id, kind: 'nudge_draft', body: words }),
+      }).then((r) => (r.ok ? r.json() : null)).then((d) => { if (d?.saved) setHandNote('edited'); }).catch(() => { /* the words stay in the card; the next edit retries */ });
+    }, 1200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userEdit, sent]);
 
   const send = async () => {
     if (sending || sent) return;
@@ -731,6 +760,9 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
     bodyHint: sent ? undefined
       : redrafting ? 'redrafting…'
       : dirty ? 'your words — kept in “Your edit”, whichever tab you try'
+      // THE USER'S HAND: their saved words, marked when the thread moved under them — never replaced.
+      : handNote === 'stale' ? 'the thread moved since you edited this — your words are kept; try a tab for a fresh version'
+      : handNote === 'edited' ? 'your saved edit — the team never overwrites it'
       : live ? "click anywhere to edit · mirrors the thread's language"
       : undefined,
     error: err ?? undefined,

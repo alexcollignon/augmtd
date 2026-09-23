@@ -2369,8 +2369,12 @@ console.log('\nT16 · THE INVITE CARD — filled, selectable in-card, committed 
       const doors = [...(host ?? '').matchAll(/fetch\(\s*'(\/api\/[^']+)'/g)].map((m) => m[1]);
       const chatDoors = [...(host ?? '').matchAll(/fetch\('(\/api\/[^']+)', \{/g)].map((m) => m[1]);
       const all = [...new Set([...doors, ...chatDoors])].sort();
-      return all.length === 3
-        && all.includes('/api/items/prepare') && all.includes('/api/items/execute') && all.includes('/api/invites/send');
+      // ⟲ RE-POINTED (W9.1 THE USER'S HAND WINS): + THE EDIT DOOR `/api/items/prepared` — it saves
+      // the user's own edits onto the prepared invite (stamped, never a send, no side effect beyond
+      // their words); the send doors are still exactly the two approve-before-commit ones.
+      return all.length === 4
+        && all.includes('/api/items/prepare') && all.includes('/api/items/execute') && all.includes('/api/invites/send')
+        && all.includes('/api/items/prepared');
     })());
   gate('T16.14 ONE RENDERING PER KIND — the invite’s own chrome (date tile · attendee chips · agenda quote · the time field) exists in exactly ONE file, the kit',
     (() => {
@@ -2692,6 +2696,10 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
         // door at /api/compose/send, exactly-once). Reachable only from the card's one `send`.
         '/api/compose/draft',
         '/api/compose/send',
+        // ⟲ RE-POINTED (W9.1 THE USER'S HAND WINS): THE EDIT DOOR — a real edit on a PREPARED
+        // artifact (item lane reply draft / compose lane message) is saved as the user's hand so no
+        // sweep ever overwrites it. A write of the user's own words, never a send.
+        '/api/items/prepared',
       ];
       return doors.length === expected.length && expected.every((d) => doors.includes(d));
     })()
@@ -3430,7 +3438,7 @@ console.log('\nT23 · THE ROOM THAT KEPT ASKING — the world is read, the settl
     const { isSettledLedgerLine, restatesSettledWork } = require('../lib/entities/state') as typeof import('../lib/entities/state');
     const L = (text: string) => ({ at: '2026-09-07', kind: 'email', who: null, text, ref: 'inbox:x' });
     const ledger = [
-      L('Send meeting link for Thursday 11h with Léa and Emma — NOW (2026-09-08, the user spoke last): "sending it now"'),
+      L('Send meeting link for Thursday 11h with Zoé and Emma — NOW (2026-09-08, the user spoke last): "sending it now"'),
       L('Meeting accepted: Acme x Us - AI Implementation'),
       L('you owe: Identify repetitive task for automation pilot'),
     ];
@@ -3438,7 +3446,7 @@ console.log('\nT23 · THE ROOM THAT KEPT ASKING — the world is read, the settl
       isSettledLedgerLine('Confirm the time (handled)') && isSettledLedgerLine('DONE — delivered/handled: the deck')
       && isSettledLedgerLine(ledger[0].text) && !isSettledLedgerLine(ledger[1].text));
     gate('T23.3e A SETTLED LINE CANNOT FOUND A DEMAND — a claim owned by a settled line is disposed…',
-      restatesSettledWork('send meeting link to Léa for Thursday 11h', ledger, new Set(['project'])));
+      restatesSettledWork('send meeting link to Zoé for Thursday 11h', ledger, new Set(['project'])));
     gate('T23.3f …and OPEN work is never silenced (the arbiter drops nothing an open line owns as well)',
       !restatesSettledWork('identify one repetitive task for the automation pilot', ledger, new Set(['project']))
       && !restatesSettledWork('meeting', ledger, new Set(['project'])));
@@ -4102,7 +4110,9 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     !!ctx && /export const DRAFT_LAW_VERSION = /.test(ctx) && /export function draftLawStale\(/.test(ctx)
     // both serve gates consult it
     && !!draftRoute && /draftLawStale\(sd\.draft \?\? null\)/.test(draftRoute)
-    && !!pass_ && /\|\| draftLawStale\(existing\)/.test(pass_)
+    // ⟲ RE-POINTED (W9.1): the pass's reply lane hands the law to THE ONE DECISION (a machine draft
+    // under the old law regenerates; the user's own edit is never replaced by a law bump).
+    && !!pass_ && /lawStale: !!existing\?\.body && draftLawStale\(existing\)/.test(pass_)
     // and every fresh writer stamps it
     && /law_version: DRAFT_LAW_VERSION\b/.test(draftRoute)
     && (pass_.match(/law_version: DRAFT_LAW_VERSION_C/g) ?? []).length >= 2
@@ -6372,7 +6382,10 @@ console.log('\nT36 · THE DECISION AND THE FORWARD — the last two room objects
     // the host holds exactly two doors: the grounded read and the one commit
     /fetch\('\/api\/items\/prepare'/.test(fwdHost)
     && /fetch\('\/api\/items\/execute'/.test(fwdHost)
-    && (fwdHost.match(/fetch\(/g) ?? []).length === 2
+    // ⟲ RE-POINTED (W9.1 THE USER'S HAND WINS): + THE EDIT DOOR (saves the user's edited
+    // recipients/note onto the prepared forward — never a send); still ONE send door.
+    && (fwdHost.match(/fetch\(/g) ?? []).length === 3
+    && /fetch\('\/api\/items\/prepared'/.test(fwdHost)
     && !/googleapis|graph\.microsoft|\/api\/emails\/send|\/api\/invites\//.test(fwdHost)
     && /action: \{ type: 'forward', to, note \}/.test(fwdHost)
     // the kit: resting arms, armed fires, and the deed is reached from exactly one place

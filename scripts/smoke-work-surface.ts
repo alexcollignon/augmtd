@@ -22,7 +22,8 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('lib/inbox/resolve-on-reply.ts').includes('messagesForResolution(messages, threadCp)'));
   check('T1: both callers supply sender + recipients',
     src('lib/inbox/reconcile-replied.ts').includes('to_addresses, cc_addresses') &&
-    src('lib/email-sync/sync-emails.ts').includes('from_address, to_addresses, cc_addresses'));
+    // ⟲ RE-POINTED (W9.2): the sync's resolve-on-reply call moved into THE ONE authored-landed handler.
+    src('lib/email-sync/authored-landed.ts').includes('from_address, to_addresses, cc_addresses'));
   // The Spartak shape, as pure logic: inbound from the counterparty, then a user FORWARD to a colleague.
   const msgs: ThreadMessage[] = [
     { is_from_user: false, received_at: '2026-07-20T15:43:00Z', from: 'counterparty@example.com', to: ['me@example.com'] },

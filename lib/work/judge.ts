@@ -11,7 +11,8 @@
 // Doctrine: structural floors BEFORE AI (an answered thread, an automated sender, the ownership-
 // keyed notice law — imported, never re-implemented); `none` is always legal; conservative
 // (a wrong mount costs trust, message_only costs nothing); one reasoned call, schema-validated;
-// cached on the item (sig = sigOf(JUDGE_VERSION, day, activity, pool, evidence, entity sig, …)).
+// cached on the item (sig = sigOf(JUDGE_VERSION, day, activity, pool, evidence, THE DEAL BLOCK AS
+// RENDERED, …) — W9.3: the entity fields the prompt actually reads, never the entity's own sig).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
@@ -109,6 +110,67 @@ function clipWords(text: string, max: number): string {
   return (w > max * 0.5 ? cut.slice(0, w) : cut).trim();
 }
 import { COMPONENT_KEYS, gateOf, renderComponentOptions, componentForWork, JUDGE_VERSION, WORK_VERBS, type WorkComponentKey, type WorkGate, type WorkVerb } from '@/lib/work/surface-registry';
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// JUDGMENTS FOLLOW WHAT MATTERS (stabilization W9.3).
+//
+// (a) THE DEAL BLOCK IS THE ENTITY DEP. The judge reads an entity through exactly ONE rendering — the
+// deal block below (name · state summary · next move · goals · rules). W2.5 keyed the sig on the
+// entity's own `sig`, which moves on EVERY re-synthesis (any ledger line, any member verdict flip) —
+// so each state refresh re-judged every member item that day, even when nothing the judge reads had
+// changed (the cost cascade, found by the Sep 23 audit). The sig now carries the RENDERED block: a
+// re-synthesis that changes nothing the judge reads costs nothing; one that does re-judges today.
+// One-time cost of the format change: an entity-linked item already judged today misses once on its
+// next read (the day slot re-keys every verdict tomorrow anyway); JUDGE_VERSION is NOT bumped (the
+// block's text is unchanged — THE RULE in lib/core/versions.ts: a fact rides the sig as a dep), so
+// same-version priors keep anchoring and there is no corpus-wide re-judge.
+//
+// (b) MATERIAL CHANGE IS NAMED. "BE CONSISTENT with your prior" is right for a re-read; it is wrong
+// when the present moved. Beside new LATER EVIDENCE (W7.1), three facts are stamped on every cached
+// verdict and compared on the re-judgment: a NEWER INBOUND message on the thread, the item's own
+// deadline PASSING, and the deal's NEXT MOVE changing. When one moved, the prompt says so; otherwise
+// the consistency clause stands byte-identical. A prior with no stamp (cached before W9.3) is never
+// guessed material.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** The entity fields the judge prompt reads, as rendered into it. '' when the item has no entity. */
+export function dealBlockOf(ent: { name?: unknown; state?: unknown; next_move?: unknown; goals?: unknown; rules?: unknown } | null | undefined): string {
+  if (!ent) return '';
+  const st = (ent.state ?? {}) as { summary?: string };
+  const nm = (ent.next_move ?? null) as { title?: string } | null;
+  const goals = Array.isArray(ent.goals) ? (ent.goals as string[]).filter(Boolean) : [];
+  const rules = Array.isArray(ent.rules) ? (ent.rules as string[]).filter(Boolean) : [];
+  return `THE DEAL (${String(ent.name ?? '')}): ${st.summary ?? ''}${nm?.title ? ` · next move: ${nm.title}` : ''}` +
+    `${goals.length ? ` · goals: ${goals.join('; ')}` : ''}${rules.length ? ` · rules: ${rules.join('; ')}` : ''}\n`;
+}
+
+/** The facts stamped on a cached verdict so the re-judgment can tell a re-read from a moved present. */
+export type MaterialStamp = {
+  /** newest INBOUND (not-from-user) message time on the item's thread; '' when none. */
+  tn: string;
+  /** the item's own stated deadline has passed (a past due date, or today's stated time behind now). */
+  dp: boolean;
+  /** the deal's next-move title as the prompt renders it; '' when none. */
+  nm: string;
+};
+
+/** PURE — what MATERIALLY changed since the prior verdict's stamp. [] for an unstamped prior. */
+export function materialChangesSince(prior: unknown, now: MaterialStamp): string[] {
+  if (!prior || typeof prior !== 'object') return [];
+  const p = prior as Partial<MaterialStamp>;
+  const out: string[] = [];
+  if (typeof p.tn === 'string' && now.tn && now.tn > p.tn) out.push('a NEWER message from them arrived on the thread (see WHERE THE THREAD STANDS NOW)');
+  if (p.dp === false && now.dp) out.push("the item's own stated deadline has PASSED");
+  if (typeof p.nm === 'string' && p.nm !== now.nm) out.push(now.nm ? "the deal's next move CHANGED (see THE DEAL above)" : "the deal's next move was CLEARED");
+  return out;
+}
+
+/** The prompt sentence for the named changes — '' when nothing moved (the consistency clause stands). */
+export function materialChangeClause(changes: string[]): string {
+  return changes.length
+    ? ` MATERIAL CHANGE SINCE THAT CALL: ${changes.join('; ')} — judge from the present facts; consistency with the prior call does not hold where these moved.`
+    : '';
+}
 
 export type WorkVerdict = {
   work: WorkVerb;
@@ -258,23 +320,25 @@ async function coerceVerdict(raw: unknown, roster: RosterEntry[], ctx: TimeCtx, 
  *  zero-migration, owner-RLS). tasks jsonb holds { verdict, sig }. */
 async function readCache(
   client: SupabaseClient, userId: string, input: JudgeInput, sig: string,
-): Promise<{ hit: WorkVerdict | null; prior: WorkVerdict | null; priorSig: string | null; priorEv: string | null }> {
+): Promise<{ hit: WorkVerdict | null; prior: WorkVerdict | null; priorSig: string | null; priorEv: string | null; priorMat: unknown }> {
   const data = await readPlan(client, userId, 'judgment', `${input.kind}:${input.id}`);
-  const t = (data?.tasks ?? null) as { verdict?: unknown; sig?: string; ev?: string } | null;
+  const t = (data?.tasks ?? null) as { verdict?: unknown; sig?: string; ev?: string; mat?: unknown } | null;
   const v = (t?.verdict ?? null) as WorkVerdict | null;
   const valid = !!v && WORKS.has(v.work) && COMPONENT_KEYS.has(v.component);
-  if (!valid) return { hit: null, prior: null, priorSig: null, priorEv: null };
+  if (!valid) return { hit: null, prior: null, priorSig: null, priorEv: null, priorMat: null };
   // W7.1: the evidence set the prior was made AGAINST (absent on verdicts cached before the stamp
   // existed — read as "none seen", so a pre-deploy prior never anchors against evidence it never saw).
   const priorEv = typeof t!.ev === 'string' ? t!.ev : null;
+  // W9.3: the material stamp the prior was made against (absent before W9.3 — never guessed material).
+  const priorMat = t!.mat ?? null;
   // A stale-sig verdict is still the judge's OWN PRIOR JUDGMENT — fed back into the re-judgment
   // as self-consistency context (stickiness through reasoning, never a lock): an ambiguous item
   // must not flip verdicts on a daily re-check unless something material actually changed.
   // SAME-VERSION ONLY: a prior made under an older JUDGE_VERSION was judged under different laws —
   // anchoring on it would entrench exactly the calls a version bump exists to correct.
   const sameVersion = String(t!.sig ?? '').split(':')[0] === String(JUDGE_VERSION);
-  if (t!.sig === sig) return { hit: v, prior: v, priorSig: String(t!.sig), priorEv };
-  return { hit: null, prior: sameVersion ? v : null, priorSig: sameVersion ? String(t!.sig ?? '') : null, priorEv };
+  if (t!.sig === sig) return { hit: v, prior: v, priorSig: String(t!.sig), priorEv, priorMat };
+  return { hit: null, prior: sameVersion ? v : null, priorSig: sameVersion ? String(t!.sig ?? '') : null, priorEv, priorMat: sameVersion ? priorMat : null };
 }
 
 /** The sig with its DAY component blanked — the parked-serve comparison: same item facts (version,
@@ -283,8 +347,11 @@ const nonDaySig = (s: string): string => { const p = s.split(':'); return [p[0],
 
 /** `ev` (W7.1) = the evidenceSig the verdict was judged against — the re-judgment reads it to know
  *  whether LATER EVIDENCE is new to the prior (never part of the sig itself; the sig already moves). */
-async function writeCache(client: SupabaseClient, userId: string, input: JudgeInput, sig: string, verdict: WorkVerdict, ev?: string | null): Promise<void> {
-  await upsertPlan(client, userId, 'judgment', `${input.kind}:${input.id}`, ev != null ? { verdict, sig, ev } : { verdict, sig });
+async function writeCache(client: SupabaseClient, userId: string, input: JudgeInput, sig: string, verdict: WorkVerdict, ev?: string | null, mat?: unknown): Promise<void> {
+  // `mat` (W9.3) = the MaterialStamp the verdict was judged against — the re-judgment's moved-present read.
+  await upsertPlan(client, userId, 'judgment', `${input.kind}:${input.id}`, {
+    verdict, sig, ...(ev != null ? { ev } : {}), ...(mat != null ? { mat } : {}),
+  });
 }
 
 
@@ -505,16 +572,23 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     const outcomeFacts = await readOutcomeFacts(client, userId, todayStr).catch(() => null);
     const outcomeKlass: CounterpartyClass = input.kind !== 'inbox' ? 'unknown'
       : (isAutomatedSenderStrong(whoEmail, who, title) ? 'automated' : 'human');
-    // THE ENTITY THE JUDGE READS rides the sig (W2.5, R4: "judge sig omits entity.sig") — the deal's
-    // state/next-move below is part of the verdict's input, so a re-synthesized state re-judges today
-    // instead of serving a verdict made against the old one until the day rolls.
+    // THE ENTITY THE JUDGE READS rides the sig (W2.5, R4) — as the RENDERED deal block (W9.3), not the
+    // entity's own sig: a re-synthesized state re-judges today only when something the prompt reads
+    // (summary · next move · goals · rules · name) actually changed. See JUDGMENTS FOLLOW WHAT MATTERS.
     const { data: link } = await client.from('entity_links').select('entity_id')
       .eq('user_id', userId).eq('item_kind', input.kind === 'inbox' ? 'inbox_item' : 'commitment')
       .eq('item_id', input.id).not('entity_id', 'is', null).maybeSingle();
     const ent = link?.entity_id
-      ? (await client.from('work_entities').select('name, state, next_move, goals, rules, sig')
+      ? (await client.from('work_entities').select('name, state, next_move, goals, rules')
         .eq('id', link.entity_id).eq('user_id', userId).maybeSingle()).data
       : null;
+    const dealBlock = dealBlockOf(ent);
+    // W9.3 THE MATERIAL STAMP — computed before the sig/cache read, stored with the verdict.
+    const matNow: MaterialStamp = {
+      tn: threadMsgs.filter((m) => !m.is_from_user && m.received_at).map((m) => String(m.received_at)).sort().pop() ?? '',
+      dp: (!!dueDate && dueDate < todayStr) || eventPassed,
+      nm: String(((ent?.next_move ?? null) as { title?: string } | null)?.title ?? ''),
+    };
     // LATER EVIDENCE (W3.1) — matched from the per-user batch pool; its identity rides the sig so a
     // NEW deed re-judges, the same set never re-spends.
     let evidence: Evidence[] = [];
@@ -536,9 +610,9 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       activityAt, poolN: pool.length, poolAt: pool[0]?.at ?? '', past: eventPassed,
       sib: siblingNom ? `:sib${siblingNom.at}` : '', proof: proofOfLifeSigPart(proofAsk),
       outcome: outcomeSigPart(outcomeFacts), evidence: evidenceSig(evidence),
-      entity: ent ? String((ent as { sig?: string | null }).sig ?? '') : null,
+      entity: ent ? dealBlock : null,
     } })}`;
-    const { hit: cached, prior, priorSig, priorEv } = await readCache(client, userId, input, sig);
+    const { hit: cached, prior, priorSig, priorEv, priorMat } = await readCache(client, userId, input, sig);
     const evSig = evidenceSig(evidence);
     if (cached) return cached;
     // W4 PARKED SERVE — a revisit verdict holds WITHOUT AI until its date: same item facts (only
@@ -553,7 +627,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     // judged fresh, exactly as they always were: the park expires, it never self-renews.
     if (prior?.revisit?.after && prior.revisit.after > todayStr
       && (prior.revisit.by === 'user' || (priorSig && nonDaySig(priorSig) === nonDaySig(sig)))) {
-      await writeCache(client, userId, input, sig, prior, priorEv);
+      await writeCache(client, userId, input, sig, prior, priorEv, priorMat);
       return prior;
     }
 
@@ -562,7 +636,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       const st = computeThreadReplyState(threadMsgs, null);
       if (st.lastMessageFromUser) {
         const v = fallbackVerdict('you have the last word on this thread — nothing owed until they reply', 'answered');
-        await writeCache(client, userId, input, sig, v);
+        await writeCache(client, userId, input, sig, v, null, matNow);
         return v;
       }
     }
@@ -578,12 +652,12 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     if (input.kind === 'inbox' && isOwnCoworkerSender(whoEmail)
       && isOwnCoworkerSender(whoEmail, await ownCoworkerLocals(client, userId))) {
       const v = fallbackVerdict(SELF_ECHO_REASON);
-      await writeCache(client, userId, input, sig, v);
+      await writeCache(client, userId, input, sig, v, null, matNow);
       return v;
     }
     if (input.kind === 'inbox' && isNoMoveNotice({ u, rawKind, fromEmail: whoEmail, fromName: who, subject: title, workState, listMail })) {
       const v = fallbackVerdict('an automated notice nobody owes a move on');
-      await writeCache(client, userId, input, sig, v);
+      await writeCache(client, userId, input, sig, v, null, matNow);
       return v;
     }
     // THE KIND FLOOR (W8.3, JUDGE_VERSION 21) — the notice law's class, one kind wider: an
@@ -595,22 +669,13 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       const kf = kindFloor({ kind: reasonedKind, ownership: u?.ownership ?? null, userEngaged: threadMsgs.some((m) => m.is_from_user) });
       if (kf.refuses) {
         const v = fallbackVerdict(kindFloorReason(kf.why));
-        await writeCache(client, userId, input, sig, v);
+        await writeCache(client, userId, input, sig, v, null, matNow);
         return v;
       }
     }
 
     // ── The brain neighborhood: entity + person (assembled, not re-derived). ──
-    // (the entity row was read above, before the sig — it rides it.)
-    let dealBlock = '';
-    if (ent) {
-      const st = (ent.state ?? {}) as { summary?: string };
-      const nm = (ent.next_move ?? null) as { title?: string } | null;
-      const goals = Array.isArray(ent.goals) ? (ent.goals as string[]).filter(Boolean) : [];
-      const rules = Array.isArray(ent.rules) ? (ent.rules as string[]).filter(Boolean) : [];
-      dealBlock = `THE DEAL (${ent.name}): ${st.summary ?? ''}${nm?.title ? ` · next move: ${nm.title}` : ''}` +
-        `${goals.length ? ` · goals: ${goals.join('; ')}` : ''}${rules.length ? ` · rules: ${rules.join('; ')}` : ''}\n`;
-    }
+    // (the entity row was read above, before the sig — its rendered deal block rides it: dealBlockOf.)
     let personBlock = '';
     if (who) {
       try {
@@ -682,7 +747,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         `${EXCERPT_RULE}\n\n` +
         `THE TEAM (for executor "coworker"):\n${roster.map((w) => `- ${w.name} — ${w.role.replace(/_/g, ' ')}: ${w.description}`).join('\n') || '(none)'}\n\n` +
         `COMPONENTS (pick exactly one — what the work surface should mount):\n${renderComponentOptions()}\n\n` +
-        (prior ? `YOUR PRIOR JUDGMENT on this item: work=${prior.work}${prior.resolution ? ` resolution=${prior.resolution}` : ''}${prior.revisit ? ` revisit=${prior.revisit.after}` : ''} — "${clipForPrompt(prior.reason, 120)}". BE CONSISTENT with it unless something in the item MATERIALLY changed since; do not flip an ambiguous call on a re-read.${evidenceNewToPrior(evSig, priorEv) ? ' NEW SINCE THAT CALL: the LATER EVIDENCE above was NOT in front of you when you made it — it IS a material change; where it shows the thing done, held or booked, judge from the evidence and never repeat a prior reason it contradicts.' : ''}${prior.revisit && prior.revisit.after <= todayStr ? ' YOU SET THIS ASIDE until that date and THE DATE HAS ARRIVED — judge it fresh NOW as live work (the wait is over; do not re-park it without a NEW stated basis).' : ''}\n\n` : '') +
+        (prior ? `YOUR PRIOR JUDGMENT on this item: work=${prior.work}${prior.resolution ? ` resolution=${prior.resolution}` : ''}${prior.revisit ? ` revisit=${prior.revisit.after}` : ''} — "${clipForPrompt(prior.reason, 120)}". BE CONSISTENT with it unless something in the item MATERIALLY changed since; do not flip an ambiguous call on a re-read.${evidenceNewToPrior(evSig, priorEv) ? ' NEW SINCE THAT CALL: the LATER EVIDENCE above was NOT in front of you when you made it — it IS a material change; where it shows the thing done, held or booked, judge from the evidence and never repeat a prior reason it contradicts.' : ''}${materialChangeClause(materialChangesSince(priorMat, matNow))}${prior.revisit && prior.revisit.after <= todayStr ? ' YOU SET THIS ASIDE until that date and THE DATE HAS ARRIVED — judge it fresh NOW as live work (the wait is over; do not re-park it without a NEW stated basis).' : ''}\n\n` : '') +
         `Rules:\n` +
         `- work: reply|decide|produce|send_file|schedule|forward|chase|none. CONSERVATIVE: unsure → "none"/"message_only" — a wrong mount costs trust, none costs nothing.\n` +
         `- "forward" ONLY when the item explicitly asks the user to PASS this thread/document on to a NAMED third party ("please forward this to…", "can you share this with finance/legal/<person>") — the passing-on IS the work. A reply that merely mentions someone else is still "reply".\n` +
@@ -751,7 +816,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       }
       verdict = rv;
     }
-    await writeCache(client, userId, input, sig, verdict, evSig);
+    await writeCache(client, userId, input, sig, verdict, evSig, matNow);
     return verdict;
   } catch { return { ...fallbackVerdict('could not judge this yet — it will retry'), failed: true }; }
 }

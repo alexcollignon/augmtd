@@ -30,6 +30,7 @@ import { AttendeeChips } from '@/components/home/people-chips';
 import { SourceObjectMount } from '@/components/room/source-object';
 import { announceDeed } from '@/lib/room/deed-echo';
 import type { ItemKind } from '@/components/home/item-detail';
+import { handItemKindOf } from '@/lib/prepare/hand';
 
 /** What the prepare door hands back for a forward (lib/home/prepare-action.ts). */
 type PreparedForward = { type: 'forward'; to: string[]; subject: string; note: string };
@@ -66,6 +67,8 @@ export default function ForwardCard({ kind, entityId, taskId, itemLevel, onSent,
   const [sending, setSending] = React.useState(false);
   const [sent, setSent] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // W9.1 · THE USER'S HAND WINS: only a USER change arms the save (the pre-fill never does).
+  const touchedRef = React.useRef(false);
 
   // THE READ — grounded, no side effects. The recipient stays empty unless a literal address was
   // evidenced in the item's own text: the card asks for it rather than inventing one.
@@ -90,6 +93,20 @@ export default function ForwardCard({ kind, entityId, taskId, itemLevel, onSent,
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, [kind, entityId, taskId, itemLevel]);
+
+  // ── THE EDIT DOOR (W9.1): edited recipients / note SAVE onto the prepared forward, stamped as
+  // the user's hand — the pass never re-prepares over them; a moved thread only marks them.
+  const handKind = handItemKindOf(kind);
+  React.useEffect(() => {
+    if (!touchedRef.current || sent || handKind !== 'inbox') return;
+    const t = setTimeout(() => {
+      void fetch('/api/items/prepared', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemKind: handKind, itemId: entityId, kind: 'forward', forward: { to, note } }),
+      }).catch(() => { /* the fields stay in the card; the next edit retries */ });
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [to, note, sent, handKind, entityId]);
 
   // THE DEED — the ONE door, and only ever from the armed second click the kit hands back.
   const send = React.useCallback(async () => {
@@ -124,10 +141,10 @@ export default function ForwardCard({ kind, entityId, taskId, itemLevel, onSent,
     ...(sent ? {} : {
       recipientsEditor: (
         <span className="w-full rounded-lg border border-neutral-200 px-2.5 py-1.5">
-          <AttendeeChips attendees={to} onChange={(next) => { setTo(next); setError(null); }} />
+          <AttendeeChips attendees={to} onChange={(next) => { touchedRef.current = true; setTo(next); setError(null); }} />
         </span>
       ),
-      onEditNote: setNote,
+      onEditNote: (v: string) => { touchedRef.current = true; setNote(v); },
     }),
     ...(subject ? { subject } : {}),
     ...(note ? { note } : {}),

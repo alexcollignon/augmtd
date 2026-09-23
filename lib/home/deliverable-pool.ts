@@ -113,14 +113,34 @@ export async function writeDeliverable(
 ): Promise<Deliverable | null> {
   try {
     // Dedup: a re-run of the SAME step replaces its own prior deliverable (task_id + item scope).
+    // THE USER'S HAND WINS (W9.1b): a prior row the user EDITED is never deleted by the re-run — it
+    // is FILED into the version chain (`version_of`, the reader skips it) and narrated once with the
+    // user's words; only machine rows delete. An unreadable prior set deletes nothing (fail closed —
+    // a duplicate row is recoverable, lost words are not).
     if (input.taskId) {
-      await client
+      const { data: priors, error: priorErr } = await client
         .from('item_deliverables')
-        .delete()
+        .select('id, content, metadata')
         .eq('user_id', userId)
         .eq('kind', input.kind)
         .eq('entity_id', input.entityId)
         .eq('task_id', input.taskId);
+      if (!priorErr) {
+        const { isPoolRowHeldAnyKind, handItemKindOf } = await import('@/lib/prepare/hand');
+        const machine: string[] = [];
+        for (const r of (priors ?? []) as Array<{ id: string; content: unknown; metadata: unknown }>) {
+          const held = isPoolRowHeldAnyKind(r);
+          if (!held) { machine.push(r.id); continue; }
+          const { fileHeldPoolRow } = await import('@/lib/prepare/hand-store');
+          await fileHeldPoolRow(client, userId, {
+            itemKind: input.kind === 'entity' ? null : handItemKindOf(input.kind), itemId: input.entityId, row: r, kind: held, why: 'replaced',
+          });
+          // Filed or not, a held row is never in the delete set.
+        }
+        if (machine.length) {
+          await client.from('item_deliverables').delete().eq('user_id', userId).in('id', machine);
+        }
+      }
     }
 
     const metadata: Record<string, unknown> = { ...(input.metadata ?? {}) };

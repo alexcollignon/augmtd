@@ -287,7 +287,11 @@ export async function recognizeItem(
   userId: string,
   item: RecogItem,
   depth = 0,
-): Promise<{ entityId: string | null; via: 'structural' | 'recognized' | 'none' | null; founded: boolean; reason?: string }> {
+): Promise<{ entityId: string | null; via: 'structural' | 'recognized' | 'none' | null; founded: boolean; reason?: string;
+  /** W9.3 PROJECTS FOLLOW THE MAIL — true only when THIS call wrote a NEW member link to an entity
+   *  (never on the already-seen short-circuit, never on a refusal). The hooks schedule the entity's
+   *  coalesced state refresh from it. */
+  linked?: boolean }> {
   if (depth > 2) return { entityId: null, via: null, founded: false }; // provenance-recursion backstop
   // Already seen? (idempotent — INCLUDING refusals: a via='none' row means "judged not-work", never re-judge.
   // Without this the verdict could flip as the candidate set grows — the duplicate-founding bug.)
@@ -321,7 +325,7 @@ export async function recognizeItem(
       } catch { /* the guard is a refinement — inheritance stands on failure */ }
       if (!drifted) {
         await writeLink(supabase, userId, threadLink.entity_id as string, item, 'structural', 'same thread');
-        return { entityId: threadLink.entity_id as string, via: 'structural', founded: false };
+        return { entityId: threadLink.entity_id as string, via: 'structural', founded: false, linked: true };
       }
       // drifted → no inheritance; the item is judged on its own below.
     }
@@ -349,7 +353,7 @@ export async function recognizeItem(
     if (parentEntity) {
       await writeLink(supabase, userId, parentEntity, item, 'structural', `from ${parent.kind === 'meeting' ? 'meeting' : 'email'}`);
       await supabase.from('work_entities').update({ last_event_at: item.at ?? new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', parentEntity).eq('user_id', userId).then(() => {}, () => {});
-      return { entityId: parentEntity, via: 'structural', founded: false, reason: 'provenance' };
+      return { entityId: parentEntity, via: 'structural', founded: false, reason: 'provenance', linked: true };
     }
     // parentEntity === null means the parent was judged 'none' → let the fragment try on its own.
   }
@@ -378,7 +382,7 @@ export async function recognizeItem(
   if (verdict.decision === 'existing') {
     await writeLink(supabase, userId, verdict.entityId, item, 'recognized', verdict.reason);
     await supabase.from('work_entities').update({ last_event_at: item.at ?? new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', verdict.entityId).eq('user_id', userId);
-    return { entityId: verdict.entityId, via: 'recognized', founded: false, reason: verdict.reason };
+    return { entityId: verdict.entityId, via: 'recognized', founded: false, reason: verdict.reason, linked: true };
   }
   if (verdict.decision === 'new') {
     // Promise fix #5 — noise never founds: a receipt/newsletter/notification (or automated sender)
@@ -417,7 +421,7 @@ export async function recognizeItem(
       .select('id').single();
     const entityId = (created?.id as string) ?? null;
     if (entityId) await writeLink(supabase, userId, entityId, item, 'recognized', verdict.reason);
-    return { entityId, via: 'recognized', founded: true, reason: verdict.reason };
+    return { entityId, via: 'recognized', founded: true, reason: verdict.reason, linked: !!entityId };
   }
   // 'none' — record the REFUSAL (entity_id NULL) so the item is never re-judged. Non-fatal pre-ALTER
   // (20260721b): if the column is still NOT NULL the write fails silently and behavior degrades to re-judging.

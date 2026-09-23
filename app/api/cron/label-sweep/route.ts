@@ -6,6 +6,8 @@ import { activeUserIds, orderLeastRecentlyServed, stampServed } from '@/lib/work
 
 export const maxDuration = 300;
 
+// SCHEDULE (vercel.json): `40 */2 * * *`
+
 // Label-sweep. The sync's AUGMTD write-back is fire-and-forget and Gmail rate-limits during a batch,
 // so some emails silently miss their label. This makes labeling eventually-consistent: for recent
 // pending items not yet marked labeled, apply the label (SEQUENTIALLY — no rate-limit burst) and mark
@@ -19,6 +21,23 @@ export const maxDuration = 300;
 // lib/work/sweep-users — a separate marker kind, `label_sweep`, since this route's own work leaves
 // no other item_plans trace to read a "last touched" signal off), a wall-clock guard that stops
 // cleanly before the 300s kill, and an honest `usersLeftBehind` count.
+//
+// ── W9.5 THE CLOCKS — WHY THIS STAYS A BUDGETED SERIAL WALK, NOT A FAN-OUT LANE (the decision) ──
+// The judgment/draft/evidence sweeps moved onto lib/work/sweep-fanout because each account's pass
+// is minutes of AI work and reach was a function of how many OTHER accounts exist. This route is a
+// BACKSTOP to the sync's own label write-back: most rows arrive labeled, the per-account work is
+// seconds, and its writes are deliberately SERIAL (Gmail rate-limits bursts — the 60ms throttle).
+// A fourth fan-out lane would add a claim kind, a per-user route lane and N concurrent Gmail
+// writers for a job that already carries the rotation, the wall clock and `usersLeftBehind`. The
+// smaller correct change is to close the two silent caps it still had INSIDE each account:
+//   (1) the item read was an UNORDERED `.limit(150)` that included already-labeled rows and
+//       filtered them in memory — an account with >150 recent rows could see the same labeled 150
+//       every run while the rest never got a pass. It now excludes `labeled = true` in the query and
+//       reads newest first, with an exact count;
+//   (2) rows the cap or the per-user clock left are COUNTED (`itemsLeftBehind`) and reported.
+// If label work ever grows into minutes per account, promote it to a fan-out lane then.
+const ITEMS_PER_USER = 150;
+
 export async function GET(request: NextRequest) {
   if (!hasBearer(request, 'CRON_SECRET')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -34,7 +53,7 @@ export async function GET(request: NextRequest) {
   const budgetMs = Math.min(60_000, Math.max(10_000, Math.floor(180_000 / Math.max(1, users.length))));
   const routeDeadline = Date.now() + 265_000; // stop cleanly before the 300s kill
 
-  let labeled = 0, kindsCompleted = 0, usersTouched = 0, usersLeftBehind = 0;
+  let labeled = 0, kindsCompleted = 0, usersTouched = 0, usersLeftBehind = 0, itemsLeftBehind = 0;
   const KIND_COMPUTE_CAP = 40; // per user per sweep — the ambient kind-completer stays cheap
 
   for (const uid of users) {
@@ -52,15 +71,24 @@ export async function GET(request: NextRequest) {
       const gmailTokens = tokensByProvider.get('gmail');
       const gmailCache = gmailTokens ? new GmailLabelCache(gmailTokens) : undefined;
 
-      const { data: items } = await sb.from('inbox_items')
-        .select('id, source_data, work_state, rule_type')
+      // Not-yet-final rows only (`labeled` absent or 'fallback'), newest first, counted exactly — the
+      // cap is a stated per-run slice, and what it leaves is reported, never silently dropped.
+      const { data: items, count: windowCount, error: itemsError } = await sb.from('inbox_items')
+        .select('id, source_data, work_state, rule_type', { count: 'exact' })
         .eq('user_id', uid).eq('status', 'pending').eq('source', 'email')
-        .gte('created_at', since).limit(150);
+        .gte('created_at', since)
+        .or('source_data->>labeled.is.null,source_data->>labeled.neq.true')
+        .order('created_at', { ascending: false })
+        .limit(ITEMS_PER_USER);
+      if (itemsError) console.warn(`[label-sweep] ${uid.slice(0, 8)} item read failed: ${itemsError.message}`);
+      const rows = items ?? [];
+      itemsLeftBehind += Math.max(0, (windowCount ?? rows.length) - rows.length);
 
       let kindBudget = KIND_COMPUTE_CAP;
       let addrs: string[] | null = null; // lazily resolved once per user
-      for (const it of items ?? []) {
-        if (Date.now() > userDeadline) break; // per-user budget — never let one account burn the route
+      for (let idx = 0; idx < rows.length; idx++) {
+        const it = rows[idx];
+        if (Date.now() > userDeadline) { itemsLeftBehind += rows.length - idx; break; } // per-user budget — never let one account burn the route
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const sd = (it.source_data ?? {}) as any;
         if (sd.labeled === true) continue;                 // already handled (final)
@@ -118,5 +146,6 @@ export async function GET(request: NextRequest) {
   }
 
   if (usersLeftBehind > 0) console.log(`[label-sweep] route budget spent: ${usersLeftBehind} user(s) lead the next run (least-recently-served)`);
-  return NextResponse.json({ labeled, kindsCompleted, usersTouched, usersLeftBehind, budgetMs, activeUsers: users.length });
+  if (itemsLeftBehind > 0) console.log(`[label-sweep] ${itemsLeftBehind} unlabeled row(s) beyond the per-user slice or clock — the next run reaches them`);
+  return NextResponse.json({ labeled, kindsCompleted, usersTouched, usersLeftBehind, itemsLeftBehind, itemsPerUser: ITEMS_PER_USER, budgetMs, activeUsers: users.length });
 }

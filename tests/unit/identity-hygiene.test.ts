@@ -21,12 +21,12 @@ const ID = deriveSelfIdentity(FACTS);
 describe('THE ONE ACCENT FOLD — the shared tokenizer', () => {
   it('folds diacritics in the one normalizer', () => {
     expect(foldAccents('Zoé Müller')).toBe('Zoe Muller');
-    expect(norm('Léa  Côté')).toBe('lea cote');
-    expect(nameTokens('Léa Côté-Roy')).toEqual(['lea', 'cote', 'roy']);
+    expect(norm('Zoé  Côté')).toBe('zoe cote');
+    expect(nameTokens('Zoé Côté-Roy')).toEqual(['zoe', 'cote', 'roy']);
   });
   it('an accent never splits one person in two', () => {
     expect(sameAttendee('Zoé Martin', 'Zoe Martin')).toBe(true);
-    expect(sameAttendee('Léa', 'Lea Costa')).toBe(true);
+    expect(sameAttendee('Zoé', 'Zoe Costa')).toBe(true);
     expect(emailDenotesName('zoemartin', 'Zoé Martin')).toBe(true);
     expect(sameAttendee('zoe.martin@globex.test', 'Zoé Martin')).toBe(true);
   });

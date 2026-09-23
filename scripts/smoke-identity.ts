@@ -89,8 +89,8 @@ function walk(dir: string, out: string[] = []): string[] {
     /export const norm = \(s: string\) => foldAccents\(s\)/.test(code('lib/projects/identity.ts')));
   gate('C2 the addressee law carries no local duplicate fold (retired into the shared one)',
     !/normalize\('NFD'\)/.test(code('lib/prepare/addressee.ts')));
-  gate('C3 pure: "Zoé Martin" is "Zoe Martin"; "Léa" tokenizes whole',
-    sameAttendee('Zoé Martin', 'Zoe Martin') && nameTokens('Léa Costa').join(' ') === 'lea costa' && foldAccents('Zoë') === 'Zoe');
+  gate('C3 pure: "Zoé Martin" is "Zoe Martin"; "Zoé" tokenizes whole',
+    sameAttendee('Zoé Martin', 'Zoe Martin') && nameTokens('Zoé Costa').join(' ') === 'zoe costa' && foldAccents('Zoë') === 'Zoe');
   gate('C4 pure: the fold reaches denotesUser', denotesUser('Zoé Rivera', { name: 'Zoe Rivera', aliases: [] }));
   gate('C5 pure: different people stay different', !sameAttendee('Zoé Martin', 'Leo Martin'));
 

@@ -49,7 +49,14 @@ import { logActivity } from '@/lib/activity/log';
 import { orderForPreparation, type NominatorItem, type JudgmentAge } from '@/lib/work/judgment-nominator';
 import { readPlans, upsertPlan } from '@/lib/store/item-plans';
 
-const FRESH_HOURS = 24;   // a draft older than this (or older than new thread activity) re-prepares
+// ── W9.1 · DRAFTS CHANGE ONLY WHEN THE GROUND MOVES. The 24h freshness clock is GONE: every lane
+// asks lib/prepare/hand.ts `decideRegeneration` — a pure, clock-free decision over the ground's own
+// signals (a newer inbound than prepared_from, thread activity past it, supply that landed after
+// it, an older drafting law, a reader withdrawal). An unchanged ground keeps the prepared version
+// however old it is — a re-draft at the conversation tier + the evaluator on a quiet thread bought
+// nothing. And THE USER'S HAND WINS: an artifact the user edited (stamped by the edit door) is never
+// overwritten; its moved ground MARKS it (`staleUnderEdit` at THE ONE READER) and is narrated once. ──
+import { decideRegeneration, isHandHeld, isPoolRowHandHeld, activityMovedPast, STALE_UNDER_EDIT_LINE, type HandKind } from '@/lib/prepare/hand';
 
 // ── W2: THE BUDGETED WALK — fixed caps (TOP_N 8 / 5 nudges / DELEGATE_CAP 2) are gone. The pass
 // works the judged backlog in ENTITY-PRIORITY order until the time budget is spent, and whatever is
@@ -192,7 +199,7 @@ export async function prepareOneItem(
     // choice: the question, the real options with trade-offs, and a grounded recommendation. ──
     if (verdict.work === 'decide') return await done(await prepareDecisionBrief(admin, userId, w, verdict));
     // A chase whose counterparty the spine could not name still has TWO honest deterministic
-    // sources (T1: "Resolve demo timeout" + the "Waiting on Jean-Marie" pair sat silent because
+    // sources (T1: "Resolve demo timeout" + the "Waiting on Sam" pair sat silent because
     // who/blockedOn were both empty): the item's own sender, and the counterparty our OWN
     // extraction wrote into the title ("Waiting on <Name>: …"). Both dead → the nudge still
     // drafts from the item's words (the user addresses it) — a chase is never a silent none.
@@ -277,16 +284,19 @@ async function prepareDecisionBrief(
   admin: SupabaseClient, userId: string, w: WorkItem, verdict: { reason: string },
 ): Promise<PrepareOneResult> {
   const poolKind = w.id.startsWith('commit:') ? 'commitment' : 'email';
-  const { data: prior } = await admin.from('item_deliverables').select('id, created_at, metadata')
+  const { data: prior } = await admin.from('item_deliverables').select('id, created_at, content, metadata')
     .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', w.entityId)
-    .eq('task_id', 'decision-brief').limit(1).maybeSingle();
+    .eq('task_id', 'decision-brief').filter('metadata->>version_of', 'is', null)
+    .order('created_at', { ascending: false }).limit(1).maybeSingle();
   // THE GROUND LAW: the options laid out for a decision are only the options the newest message
   // left standing — a ground move re-lays the decision, however settled the prior brief looks.
   const { groundOf, groundMoved } = await import('@/lib/prepare/ground');
   const currentGround = await groundOf(admin, userId, { kind: poolKind === 'commitment' ? 'commitment' : 'inbox', id: w.entityId });
   const priorMeta = (prior?.metadata ?? {}) as { prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null };
   const movedPast = !!prior && groundMoved(priorMeta.prepared_from ?? null, currentGround);
-  if (prior && !movedPast) return { did: 'none', reason: 'the decision brief is already prepared' };
+  const briefDecision = decideRegeneration({ exists: !!prior, handHeld: isPoolRowHandHeld('deliverable', prior), groundMoved: movedPast });
+  if (briefDecision.action === 'mark_stale_under_edit') return await markStaleUnderEdit(admin, userId, w, currentGround, 'deliverable', briefDecision.reason);
+  if (briefDecision.action === 'keep') return { did: 'none', reason: prior && !isPoolRowHandHeld('deliverable', prior) ? 'the decision brief is already prepared' : briefDecision.reason };
 
   // Ground: the item's own body + the judge's read + the deal's state. Clipped honestly.
   let body = '';
@@ -429,7 +439,7 @@ async function prepareReplyDraft(admin: SupabaseClient, userId: string, w: WorkI
   if (kindNow && ['receipt', 'newsletter', 'notification', 'cold_outreach', 'calendar'].includes(kindNow) && it.rule_type !== 'needs_reply') {
     return { did: 'none', reason: `${kindNow.replace('_', ' ')} — no reply expected` };
   }
-  const existing = (sd.draft ?? null) as { body?: string; generated_at?: string; law_version?: number; prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null } | null;
+  const existing = (sd.draft ?? null) as { body?: string; generated_at?: string; law_version?: number; sent_at?: string; prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null } | null;
   // THE GROUND LAW: the newest inbound RIGHT NOW — compared against what the draft was prepared
   // FROM. A ground move supersedes regardless of clock freshness (the counterparty's new message
   // is their supply; found live: a Monday reply offered as current after the plan moved to Thursday).
@@ -440,13 +450,18 @@ async function prepareReplyDraft(admin: SupabaseClient, userId: string, w: WorkI
   // attachment-blind drafts that told counterparties their document never arrived must be rewritten,
   // not aged out.
   const { draftLawStale, DRAFT_LAW_VERSION } = await import('@/lib/inbox/attachment-context');
-  const stale = !existing?.body
-    || movedPast
-    || !!nonLive?.has('reply_draft')   // W5c: a hidden (untrue) draft is never fresh
-    || draftLawStale(existing)
-    || (Date.now() - Date.parse(existing.generated_at || '0')) > FRESH_HOURS * 3_600_000
-    || (!!it.last_activity_at && Date.parse(it.last_activity_at as string) > Date.parse(existing.generated_at || '0'));
-  if (!stale) return { did: 'none', reason: 'a fresh draft is already on it' };
+  // W9.1: THE ONE DECISION — no clock. Supply that landed after the draft drops its generated_at
+  // (lib/prepare/supply.ts reopenAfterSupply) — that is the supply signal, read as one.
+  const decision = decideRegeneration({
+    exists: !!existing?.body, sent: !!existing?.sent_at, handHeld: isHandHeld('reply_draft', existing),
+    groundMoved: movedPast,
+    activityMoved: !!existing?.body && activityMovedPast(it.last_activity_at as string | null, existing.prepared_from ?? null, existing.generated_at ?? null),
+    supplyMoved: !!existing?.body && !existing.generated_at,
+    lawStale: !!existing?.body && draftLawStale(existing),
+    nonLive: !!nonLive?.has('reply_draft'),   // W5c: a hidden (untrue) draft is never fresh
+  });
+  if (decision.action === 'mark_stale_under_edit') return await markStaleUnderEdit(admin, userId, w, currentGround, 'reply_draft', decision.reason);
+  if (decision.action === 'keep') return { did: 'none', reason: decision.reason };
   // ── THE DELIVERABLE RESOLUTION (what's available / what's needed): the judge's inventory is
   // resolved BEFORE drafting — found artifacts stage into the pool (+ the first sendable one rides
   // the draft as its attachment), missing ones become the room's input-checklist ask, and the
@@ -495,14 +510,19 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem, 
     const { data: it } = await admin.from('inbox_items').select('id, source_data, status').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
     if (!it || it.status !== 'pending') return { did: 'none', reason: 'no longer open' };
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
-    const existing = (sd.nudge_draft ?? null) as { body?: string; generated_at?: string; prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null } | null;
+    const existing = (sd.nudge_draft ?? null) as { body?: string; generated_at?: string; sent_at?: string; prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null } | null;
     // THE GROUND LAW: a newer inbound than the one this nudge was prepared FROM supersedes it —
     // regardless of clock freshness (chasing someone about a thing they already answered is the
     // exact failure the law ends). Unstamped/unresolvable ground is exempt.
     const { groundOf, groundMoved } = await import('@/lib/prepare/ground');
     const currentGround = await groundOf(admin, userId, { kind: 'inbox', id: String(it.id) });
     const movedPast = !!existing?.body && groundMoved(existing.prepared_from ?? null, currentGround);
-    if (existing && !movedPast && !untrueNudge && (Date.now() - Date.parse(existing.generated_at || '0')) < FRESH_HOURS * 3_600_000) return { did: 'none', reason: 'a fresh nudge is already on it' };
+    const decision = decideRegeneration({
+      exists: !!existing?.body, sent: !!existing?.sent_at, handHeld: isHandHeld('nudge_draft', existing),
+      groundMoved: movedPast, nonLive: untrueNudge,
+    });
+    if (decision.action === 'mark_stale_under_edit') return await markStaleUnderEdit(admin, userId, w, currentGround, 'nudge_draft', decision.reason);
+    if (decision.action === 'keep') return { did: 'none', reason: decision.reason };
     // THE LANGUAGE MIRROR: the counterparty's own words are the concrete signal.
     const mirrorText = String(sd.body || '').slice(0, 1200) || null;
     // TRUE ADDRESSEES (W7.3): the nudge is stamped with who it greets — the one the chase is on.
@@ -524,8 +544,10 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem, 
   if (w.id.startsWith('commit:')) {
     // Commitments have no source_data — the nudge lands in the item_deliverables pool (type 'draft'),
     // which the deep-dive + downstream steps already read.
-    const { data: existing } = await admin.from('item_deliverables').select('id, created_at, metadata')
+    // W9.1: the ledger's `version_of` rows (a kept edit, a superseded nudge) are never "the" draft.
+    const { data: existing } = await admin.from('item_deliverables').select('id, created_at, content, metadata')
       .eq('user_id', userId).eq('kind', 'commitment').eq('entity_id', w.entityId).eq('type', 'draft')
+      .filter('metadata->>version_of', 'is', null)
       .order('created_at', { ascending: false }).limit(1).maybeSingle();
     // THE GROUND LAW: the counterparty's newer message supersedes the prepared nudge — fresh by
     // clock is not fresh by ground.
@@ -533,7 +555,12 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem, 
     const currentGround = await groundOf(admin, userId, { kind: 'commitment', id: w.entityId });
     const priorMeta = (existing?.metadata ?? {}) as { prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null };
     const movedPast = !!existing && groundMoved(priorMeta.prepared_from ?? null, currentGround);
-    if (existing && !movedPast && !untrueNudge && (Date.now() - Date.parse(existing.created_at as string)) < FRESH_HOURS * 3_600_000) return { did: 'none', reason: 'a fresh nudge is already on it' };
+    const decision = decideRegeneration({
+      exists: !!existing, sent: !!(existing?.metadata as { sent_at?: string } | null)?.sent_at,
+      handHeld: isPoolRowHandHeld('nudge_draft', existing), groundMoved: movedPast, nonLive: untrueNudge,
+    });
+    if (decision.action === 'mark_stale_under_edit') return await markStaleUnderEdit(admin, userId, w, currentGround, 'nudge_draft', decision.reason);
+    if (decision.action === 'keep') return { did: 'none', reason: decision.reason };
     // THE LANGUAGE MIRROR: the counterparty's last inbound message on the commitment's thread.
     let mirrorText: string | null = null;
     try {
@@ -597,14 +624,18 @@ async function prepareInviteDraft(admin: SupabaseClient, userId: string, w: Work
   let movedPast = false;
   if (isCommit) {
     // A commitment's invite lands in the pool (commitments have no source_data), same as its nudges.
-    const { data: prior } = await admin.from('item_deliverables').select('id, created_at, metadata')
+    const { data: prior } = await admin.from('item_deliverables').select('id, created_at, content, metadata')
       .eq('user_id', userId).eq('kind', 'commitment').eq('entity_id', w.entityId).eq('task_id', 'prepare-pass-invite')
-      .limit(1).maybeSingle();
-    const priorMeta = (prior?.metadata ?? {}) as { prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null };
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    const priorMeta = (prior?.metadata ?? {}) as { prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null; sent_at?: string };
     movedPast = !!prior && groundMoved(priorMeta.prepared_from ?? null, currentGround);
-    if (prior && !movedPast && !untrueInvite && (Date.now() - Date.parse(prior.created_at as string)) < FRESH_HOURS * 3_600_000) {
-      return { did: 'none', reason: 'a fresh prepared invite is already on it' };
-    }
+    // W9.1: no clock. writeDeliverable REPLACES the task's row — a hand-held invite never reaches it.
+    const decision = decideRegeneration({
+      exists: !!prior, sent: !!priorMeta.sent_at, handHeld: isPoolRowHandHeld('invite', prior),
+      groundMoved: movedPast, nonLive: untrueInvite,
+    });
+    if (decision.action === 'mark_stale_under_edit') return await markStaleUnderEdit(admin, userId, w, currentGround, 'invite', decision.reason);
+    if (decision.action === 'keep') return { did: 'none', reason: decision.reason === 'nothing moved under it — the prepared version stands' ? 'a prepared invite is already on it — nothing moved under it' : decision.reason };
   }
   const { buildItemContext } = await import('@/lib/home/item-context');
   const { prepareCalendarInvite } = await import('@/lib/home/prepare-action');
@@ -679,8 +710,11 @@ async function prepareInviteDraft(admin: SupabaseClient, userId: string, w: Work
               const sdStrip = (itStrip?.source_data ?? {}) as Record<string, unknown>;
               const pi = sdStrip.prepared_invite as { sent_at?: string } | undefined;
               if (itStrip && pi && !pi.sent_at) {
-                const { prepared_invite: _drop, ...rest } = sdStrip;
-                await admin.from('inbox_items').update({ source_data: rest }).eq('id', itStrip.id);
+                // THE ONE ENGINE STRIP (W9.1b): an invite the user edited is FILED (version chain +
+                // one narration with their words), never deleted; a failed filing keeps it.
+                const { stripSourceArtifacts } = await import('@/lib/prepare/hand-store');
+                const strip = await stripSourceArtifacts(admin, userId, { itemId: String(itStrip.id), sd: sdStrip, fields: ['prepared_invite'], why: 'booked' });
+                await admin.from('inbox_items').update({ source_data: strip.sd }).eq('id', itStrip.id);
                 // THE OUTCOME LEDGER (W3.2): the meeting is already on the calendar — the user booked
                 // it outside our door while our invite waited. done_elsewhere: the work was real.
                 const { logPreparedOutcome } = await import('@/lib/prepare/outcome');
@@ -714,13 +748,13 @@ async function prepareInviteDraft(admin: SupabaseClient, userId: string, w: Work
   const sd = (it.source_data ?? {}) as Record<string, unknown>;
   const existing = (sd.prepared_invite ?? null) as { generated_at?: string; sent_at?: string; prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null } | null;
   movedPast = !!existing && !existing.sent_at && groundMoved(existing.prepared_from ?? null, currentGround);
-  const stale = !existing
-    || movedPast
-    || untrueInvite
-    || (Date.now() - Date.parse(existing.generated_at || '0')) > FRESH_HOURS * 3_600_000
-    || (!!it.last_activity_at && Date.parse(it.last_activity_at as string) > Date.parse(existing.generated_at || '0'));
   if (existing?.sent_at) return { did: 'none', reason: 'the invite already went out' };
-  if (!stale) return { did: 'none', reason: 'a fresh prepared invite is already on it' };
+  const decision = decideRegeneration({
+    exists: !!existing, handHeld: isHandHeld('invite', existing), groundMoved: movedPast, nonLive: untrueInvite,
+    activityMoved: !!existing && activityMovedPast(it.last_activity_at as string | null, existing.prepared_from ?? null, existing.generated_at ?? null),
+  });
+  if (decision.action === 'mark_stale_under_edit') return await markStaleUnderEdit(admin, userId, w, currentGround, 'invite', decision.reason);
+  if (decision.action === 'keep') return { did: 'none', reason: decision.reason };
   await admin.from('inbox_items').update({
     source_data: { ...sd, prepared_invite: { ...invite, generated_at: new Date().toISOString(), prepared: 'pass', prepared_from: currentGround }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) },
   }).eq('id', it.id);
@@ -746,11 +780,12 @@ async function prepareForwardDraft(
   const { groundOf, groundMoved } = await import('@/lib/prepare/ground');
   const currentGround = await groundOf(admin, userId, { kind: 'inbox', id: String(it.id) });
   const movedPast = !!existing && groundMoved(existing.prepared_from ?? null, currentGround);
-  const stale = !existing
-    || movedPast
-    || (Date.now() - Date.parse(existing.generated_at || '0')) > FRESH_HOURS * 3_600_000
-    || (!!it.last_activity_at && Date.parse(it.last_activity_at as string) > Date.parse(existing.generated_at || '0'));
-  if (!stale) return { did: 'none', reason: 'a fresh prepared forward is already on it' };
+  const decision = decideRegeneration({
+    exists: !!existing, handHeld: isHandHeld('forward', existing), groundMoved: movedPast,
+    activityMoved: !!existing && activityMovedPast(it.last_activity_at as string | null, existing.prepared_from ?? null, existing.generated_at ?? null),
+  });
+  if (decision.action === 'mark_stale_under_edit') return await markStaleUnderEdit(admin, userId, w, currentGround, 'forward', decision.reason);
+  if (decision.action === 'keep') return { did: 'none', reason: decision.reason };
   const { prepareForward } = await import('@/lib/home/prepare-action');
   // Recipient inference is literal-email-only; the item's body + the judge's reason are the only
   // words scanned (an address the counterparty actually wrote — never a guess).
@@ -772,8 +807,9 @@ async function prepareForwardDraft(
 // sends — prompt-level prepare-and-hand-back guardrail lives in buildDelegationPrompt. ──
 async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkItem, worker: WorkerRow, artifactTruth?: string, computedStamp?: string, untrueDeliverable?: boolean): Promise<PrepareOneResult> {
   const poolKind = w.id.startsWith('commit:') ? 'commitment' : 'email';
-  const { data: prior } = await admin.from('item_deliverables').select('id, created_at, metadata')
+  const { data: prior } = await admin.from('item_deliverables').select('id, created_at, content, metadata')
     .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', w.entityId).eq('task_id', 'prepare-pass')
+    .filter('metadata->>version_of', 'is', null)
     .order('created_at', { ascending: false }).limit(1).maybeSingle();
   // THE GROUND LAW: the same re-open mechanic as supply — an inbound message IS the counterparty's
   // supply, so a deliverable prepared from an older ground is superseded, not idempotent.
@@ -792,7 +828,18 @@ async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkIte
     const { data: fresherSupply } = await admin.from('item_deliverables').select('id, created_at')
       .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', w.entityId).like('task_id', 'require:%')
       .gt('created_at', prior.created_at as string).limit(1).maybeSingle();
-    if (!fresherSupply && !movedPast && !untrueDeliverable) return { did: 'none', reason: `${worker.name.split(' ')[0]} already prepared this`, worker: worker.name };
+    // W9.1: THE ONE DECISION (clock-free; this lane never had a clock) — and a deliverable the user
+    // edited is never re-delegated over: a moved ground or fresher supply MARKS it.
+    const delDecision = decideRegeneration({
+      exists: true, handHeld: isPoolRowHandHeld('deliverable', prior),
+      groundMoved: movedPast, supplyMoved: !!fresherSupply, nonLive: !!untrueDeliverable,
+    });
+    if (delDecision.action === 'mark_stale_under_edit') return await markStaleUnderEdit(admin, userId, w, currentGround, 'deliverable', delDecision.reason);
+    if (delDecision.action === 'keep') {
+      return isPoolRowHandHeld('deliverable', prior)
+        ? { did: 'none', reason: delDecision.reason }
+        : { did: 'none', reason: `${worker.name.split(' ')[0]} already prepared this`, worker: worker.name };
+    }
     await admin.from('item_deliverables')
       .update({ metadata: { ...((prior.metadata ?? {}) as Record<string, unknown>), version_of: fresherSupply ? 'superseded:require-supply' : movedPast ? 'superseded:ground-move' : 'superseded:truth' } })
       .eq('id', prior.id).then(() => {}, () => {});
@@ -960,6 +1007,29 @@ async function narrateGroundMove(
   } catch { /* the delta line is narration — never blocks the re-preparation itself */ }
 }
 
+// ── W9.1 · THE USER'S HAND WINS — the ground moved under an artifact the user EDITED. The engine
+// does not replace it (nothing is written to the artifact; `staleUnderEdit` is DERIVED at THE ONE
+// READER from the same ground stamp), it says so ONCE in the room — deduped per (item, inbound) — and
+// the user picks a fresh version from the card (redraft tabs / steer / ?fresh=1), which files their
+// words into the version chain first. Zero AI. The outcome ledger records nothing: the artifact
+// was neither superseded nor discarded — it stands. ──
+async function markStaleUnderEdit(
+  admin: SupabaseClient, userId: string, w: WorkItem, current: { emailId: string | null; receivedAt: string | null },
+  artifact: HandKind, reason: string,
+): Promise<PrepareOneResult> {
+  try {
+    const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
+    const itemKind = w.id.startsWith('commit:') ? 'commitment' as const : 'inbox' as const;
+    const roomKey = await roomKeyForItem(admin, userId, itemKind, w.entityId);
+    await writeRoomTurn(admin, userId, roomKey, {
+      role: 'system', text: STALE_UNDER_EDIT_LINE,
+      refs: [{ label: w.title.slice(0, 60), href: itemKind === 'commitment' ? `/item/${w.entityId}?kind=commitment` : `/item/${w.entityId}` }],
+      dedupeKey: `hand-stale:${w.entityId}:${artifact}:${current.emailId ?? current.receivedAt ?? 'moved'}`,
+    });
+  } catch { /* the mark is derived at the reader regardless — narration is an enhancement */ }
+  return { did: 'none', reason };
+}
+
 async function askForFile(admin: SupabaseClient, userId: string, w: WorkItem, label: string): Promise<void> {
   try {
     const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
@@ -986,10 +1056,14 @@ async function askForFile(admin: SupabaseClient, userId: string, w: WorkItem, la
 
 async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem, verdict?: import('@/lib/work/judge').WorkVerdict): Promise<PrepareOneResult> {
   if (w.id.startsWith('commit:')) {
-    const { data: prior } = await admin.from('item_deliverables').select('id, metadata, created_at')
+    const { data: prior } = await admin.from('item_deliverables').select('id, content, metadata, created_at')
       .eq('user_id', userId).eq('kind', 'commitment').eq('entity_id', w.entityId).eq('type', 'draft')
+      .filter('metadata->>version_of', 'is', null)
       .order('created_at', { ascending: false }).limit(1).maybeSingle();
     if ((prior?.metadata as { attachment?: unknown } | null)?.attachment) return { did: 'none', reason: 'already prepared with the file' };
+    // W9.1 THE USER'S HAND WINS: a send drafted beside the user's own message would SHADOW it (the
+    // reader serves the newest commitment draft) — their words stand; the file is theirs to attach.
+    if (isPoolRowHandHeld('reply_draft', prior)) return { did: 'none', reason: 'your edit stands — the engine never overwrites your words' };
     const cCands = await resolveFileUniversal(admin, { userId, entityId: w.entity?.id ?? null }, w.title, 4).catch(() => []);
     const cTop = cCands.find((c) => c.source === 'kb');
     if (!cTop || cTop.score < 0.7) { await askForFile(admin, userId, w, `the document itself`); return { did: 'none', reason: 'could not find the document — asked in the room' }; }
@@ -1018,6 +1092,8 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
   const sd = (it.source_data ?? {}) as Record<string, unknown>;
   const existingDraft = (sd.draft ?? null) as { body?: string; attachment?: unknown } | null;
   if (existingDraft?.attachment) return { did: 'none', reason: 'already prepared with the file' };
+  // W9.1 THE USER'S HAND WINS: both writes below replace `source_data.draft` — never over their words.
+  if (isHandHeld('reply_draft', existingDraft)) return { did: 'none', reason: 'your edit stands — the engine never overwrites your words' };
   // ── THE DELIVERABLE RESOLUTION (multi-artifact sends — "share these three reports"): when the
   // judge's inventory names the artifacts, resolve THEM (not the item title): staged haves ride the
   // pool + the draft's attachment; missing ones become the room's input-checklist ask; the reply is

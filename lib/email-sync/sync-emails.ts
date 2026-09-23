@@ -72,6 +72,9 @@ import {
 } from '@/lib/microsoft/outlook';
 import { authorshipStamp, gmailFiledInSent } from '@/lib/email-sync/authorship';
 import { loadOwnAddresses, providerSendAsAddresses, cachedSendAsAddresses } from '@/lib/email-sync/send-as';
+import {
+  openMailEvidenceDoor, landUserAuthoredMessages, createSyncTail, carryDeedMarkers, LANDED_ROW_COLUMNS, type LandedRow,
+} from '@/lib/email-sync/authored-landed';
 import { extractTextFromAttachment } from '@/lib/attachments/text-extractor';
 import { processEmail } from '@/lib/ai/email-processor';
 import { analyzeRecipients, shouldCreateInboxItem, getSuggestionLevel, getSuggestionLabel } from '@/lib/ai/recipient-detector';
@@ -364,12 +367,16 @@ async function backfillThreadHistory(params: {
   adminSupabase: SupabaseClient;
   onGmailTokenRefresh?: (newTokens: string) => Promise<void>;
   onOutlookTokenRefresh?: (newTokens: { accessToken: string; refreshToken: string; expiresOn: string }) => Promise<void>;
-}): Promise<void> {
+}): Promise<LandedRow[]> {
   const { connection, storedEmail, encryptedTokens, adminSupabase, onGmailTokenRefresh, onOutlookTokenRefresh } = params;
+  // W9.2 — the rows this backfill INSERTED, returned so the caller routes the user-authored ones
+  // through THE ONE authored-landed handler (a reply sent from the provider directly is often first
+  // stored HERE, as thread history).
+  let inserted: LandedRow[] = [];
 
   try {
     const threadId = storedEmail.thread_id;
-    if (!threadId) return; // Single-message thread — nothing to backfill
+    if (!threadId) return inserted; // Single-message thread — nothing to backfill
 
     // Check if this thread was already fully backfilled by looking at the oldest stored email
     const { data: oldestRow } = await adminSupabase
@@ -382,7 +389,7 @@ async function backfillThreadHistory(params: {
       .maybeSingle();
 
     const backfilledAt = (oldestRow?.metadata as any)?.thread_backfilled_at;
-    if (backfilledAt && Date.now() - new Date(backfilledAt).getTime() < 2 * 60 * 60 * 1000) return;
+    if (backfilledAt && Date.now() - new Date(backfilledAt).getTime() < 2 * 60 * 60 * 1000) return inserted;
 
     // Fetch all messages in the thread from the provider
     let fetchedMessages: any[] = [];
@@ -397,7 +404,7 @@ async function backfillThreadHistory(params: {
               .update({ metadata: { ...(oldestRow.metadata as any), thread_backfilled_at: new Date().toISOString() } })
               .eq('id', oldestRow.id);
           }
-          return;
+          return inserted;
         }
         fetchedMessages = raw.map(m => parseGmailMessage(m));
       } else if (connection.provider === 'outlook') {
@@ -409,15 +416,15 @@ async function backfillThreadHistory(params: {
               .update({ metadata: { ...(oldestRow.metadata as any), thread_backfilled_at: new Date().toISOString() } })
               .eq('id', oldestRow.id);
           }
-          return;
+          return inserted;
         }
         fetchedMessages = raw.map(m => parseOutlookMessage(m));
       } else {
-        return;
+        return inserted;
       }
     } catch (err) {
       console.warn(`[ThreadBackfill] Provider API call failed for thread ${threadId}:`, err);
-      return;
+      return inserted;
     }
 
     // Get message_ids already stored in DB for this thread
@@ -453,12 +460,14 @@ async function backfillThreadHistory(params: {
       });
 
     if (rowsToInsert.length > 0) {
-      const { error } = await adminSupabase
+      const { data: insertedRows, error } = await adminSupabase
         .from('emails')
-        .upsert(rowsToInsert, { onConflict: 'user_id,message_id', ignoreDuplicates: true });
+        .upsert(rowsToInsert, { onConflict: 'user_id,message_id', ignoreDuplicates: true })
+        .select(LANDED_ROW_COLUMNS);
       if (error) {
         console.warn(`[ThreadBackfill] Insert error for thread ${threadId}:`, error.message);
       } else {
+        inserted = (insertedRows ?? []) as unknown as LandedRow[];
         console.log(`[ThreadBackfill] Inserted ${rowsToInsert.length} historical messages for thread ${threadId}`);
       }
     }
@@ -474,32 +483,12 @@ async function backfillThreadHistory(params: {
   } catch (err) {
     console.warn(`[ThreadBackfill] Unexpected error:`, err);
   }
+  return inserted;
 }
 
-/**
- * THE MAIL EVIDENCE DOOR (W3.1 EVIDENCE SETTLES · W8.7 EVIDENCE FROM EVERYWHERE) — the ONE helper every
- * sync path calls once per stored message. A RECENT message the user authored, or one a TEAMMATE sent
- * (the actor ladder, `mailOpensReverseDoor` → lib/evidence/actor.ts `actorRole`; never re-derived
- * here), fires the reverse door: the nominator finds the open work it could settle and hands it to the
- * reasoned judge. Fire-and-forget under the nominator's bound; never awaited, never blocks sync;
- * at-least-once safe (every close is a conditional claim, every judgment is cached by its evidence set).
- * RECENT only (7d, MAIL_DOOR_RECENT_MS): a backfill of old mail is history the budgeted sweep reads.
- */
-function openMailEvidenceDoor(
-  client: SupabaseClient, userId: string, storedEmail: Record<string, unknown>, actors: () => Promise<ActorContext | null>,
-): void {
-  const at = Date.parse(String(storedEmail?.received_at ?? ''));
-  if (!storedEmail?.id || !Number.isFinite(at) || at <= Date.now() - 7 * 86_400_000) return; // cheap pre-check
-  void (storedEmail.is_from_user ? Promise.resolve(null) : actors())
-    .then(async (ctx) => {
-      const { mailOpensReverseDoor } = await import('@/lib/evidence/sources');
-      if (!mailOpensReverseDoor(storedEmail, ctx)) return;
-      void import('@/lib/work/evidence-settle')
-        .then(({ settleForEvent }) => settleForEvent(client, userId, { type: 'email', id: String(storedEmail.id) }))
-        .catch(() => {});
-    })
-    .catch(() => {});
-}
+// THE MAIL EVIDENCE DOOR lives in lib/email-sync/authored-landed.ts (W9.2: awaited, never a bare void) —
+// the sync calls it for INBOUND mail (the teammate ladder) through the drained tail; the user's own mail
+// reaches it through THE ONE authored-landed handler.
 
 /**
  * Sync emails for a single connection (Gmail or Outlook)
@@ -514,6 +503,9 @@ export async function syncEmailsForConnection(
     inboxItemsCreated: 0,
     errors: [],
   };
+  // W9.2 THE SYNC TAIL — every post-store side effect that must not block the message loop is ADDED
+  // here and DRAINED in the finally below (never a bare `void` a response can cut off).
+  const _tail = createSyncTail('Sync');
 
   try {
     // ── SINGLE-FLIGHT (per connection): the callback's server-side initial sync, the client's
@@ -818,6 +810,18 @@ export async function syncEmailsForConnection(
     const actorsOnce = (): Promise<ActorContext | null> =>
       (_actorsP ??= import('@/lib/evidence/actor').then(({ loadActorContext }) => loadActorContext(adminSupabase, connection.user_id)).catch(() => null));
 
+    // W9.2 A USER-AUTHORED MESSAGE LANDED — every row this sync stored or saw whose AUTHOR is the user
+    // (the W7.6 stamp, never a folder), from EVERY storing path: the Phase-1 insert, the recovery and
+    // raced branches, the thread backfill, the Sent-folder pass. Handed to THE ONE handler after
+    // Phase 4 (lib/email-sync/authored-landed.ts), which runs resolve-on-reply · the evidence door ·
+    // you-owe extraction EXACTLY ONCE per message (conditional claim on emails.metadata).
+    const _authored = new Map<string, LandedRow>();
+    // W9.2 × W9.4 — inbound messages queued for the extraction entry (launched after Phase 2).
+    const _inboundExtract: Array<{ storedEmail: any; recipientRole: ReturnType<typeof computeRecipientRole>; emailClass: string }> = [];
+    const noteAuthored = (rows: Iterable<LandedRow | null | undefined>) => {
+      for (const r of rows) if (r?.id && r.is_from_user === true) _authored.set(r.id, r);
+    };
+
     // Phase 1: sequential — store email rows, fire learning for sent, fast-path noise/fyi
     // Process-class emails are collected into processQueue for parallel AI in Phase 2
     interface _ProcessQueueItem {
@@ -856,6 +860,9 @@ export async function syncEmailsForConnection(
           .maybeSingle();
 
         if (existingEmail) {
+          // W9.2 — a user-authored row stored FIRST by another path (the Sent pass, a backfill, an
+          // earlier push) still owes its deed: route it to THE ONE handler (exactly-once by its marker).
+          noteAuthored([existingEmail]);
           // Email row exists — but check if an inbox_item was ever created for this thread.
           // This can happen when a previous sync stored the email rows but crashed or timed out
           // before creating inbox_items (e.g. first Outlook sync attempt partially succeeded).
@@ -1088,6 +1095,7 @@ export async function syncEmailsForConnection(
               .eq('message_id', parsed.message_id)
               .maybeSingle();
             if (racedEmail) {
+              noteAuthored([racedEmail]); // W9.2 — the raced row routes through THE ONE handler too
               console.log(`    ⚡ Race condition — row inserted by parallel sync, recovering`);
               // Reuse the existing-email recovery path by falling through with racedEmail
               const threadIdForCheck2 = parsed.thread_id || parsed.message_id;
@@ -1167,8 +1175,8 @@ export async function syncEmailsForConnection(
         if (storedEmail.is_from_user) {
           console.log(`    ✓ Stored for context, extracting learning signals...`);
 
-          // Extract learning signals from sent email (async, non-blocking)
-          analyzeSentEmail({
+          // Extract learning signals from sent email (non-blocking — in the drained tail, W9.2)
+          _tail.add('learning', analyzeSentEmail({
             userId: connection.user_id,
             emailId: storedEmail.id,
             from: storedEmail.from_address,
@@ -1179,97 +1187,32 @@ export async function syncEmailsForConnection(
             sentAt: storedEmail.received_at || new Date().toISOString(),
             threadId: storedEmail.thread_id,
             inReplyTo: storedEmail.in_reply_to,
-          }).catch(err => {
-            console.error('    ✗ Error analyzing sent email:', err);
-            // Don't break sync if learning fails
-          });
+          }));
 
-          // Capture commitments the user made in this sent email (keyword-gated AI; you-owe).
-          if (emailSettings.todo_auto) void import('@/lib/commitments/extract').then(({ extractEmailCommitments }) =>
-            extractEmailCommitments({
-              userId: connection.user_id,
-              subject: storedEmail.subject || '',
-              body: storedEmail.body || '',
-              isFromUser: true,
-              userName: null,
-              counterparty: (storedEmail.to_addresses || [])[0] || null,
-              sourceId: storedEmail.id,
-              threadId: storedEmail.thread_id || null,
-              instructions: emailSettings.todo_instructions,
-              receivedAt: storedEmail.received_at || null, // the deixis anchor — the email's own date
-              client: adminSupabase,
-            }),
-          ).catch(() => {});
-
-          // Resolution-on-reply (STRUCTURAL, agnostic): a message went OUT on this thread — possibly
-          // sent from Gmail/Outlook directly, ingested via the Sent folder or thread backfill. Resolve
-          // the open needs-reply item AND the user's own you-owe commitment on this thread, but ONLY
-          // when computeThreadReplyState confirms a user reply AFTER the item/commitment was created
-          // (direction + time only — no text inspection). Logged (auditable + undoable via /api/restore)
-          // and it busts the Home brief cache. Fully non-fatal; never blocks sync.
-          if (storedEmail.thread_id) {
-            // Assemble the thread's messages (direction + time) for the structural check. Includes the
-            // user's SENT messages — backfill/Sent-folder sync store them with is_from_user computed
-            // from from_address, so the reply state is grounded in real thread history.
-            // Sender + recipients ride along for the T1 resolution floor (a forward to a third
-            // party is NOT fulfillment — only a message TO the counterparty settles the thread).
-            const { data: threadMsgs } = await adminSupabase
-              .from('emails')
-              .select('is_from_user, received_at, from_address, to_addresses, cc_addresses')
-              .eq('user_id', connection.user_id)
-              .eq('thread_id', storedEmail.thread_id);
-            const { resolveThreadOnReply } = await import('@/lib/inbox/resolve-on-reply');
-            await resolveThreadOnReply({
-              userId: connection.user_id,
-              threadId: storedEmail.thread_id,
-              threadEmails: ((threadMsgs ?? []) as Array<{ is_from_user: boolean; received_at: string | null; from_address?: string | null; to_addresses?: string[] | null; cc_addresses?: string[] | null }>)
-                .map((m) => ({ is_from_user: m.is_from_user, received_at: m.received_at, from: m.from_address ?? null, to: [...(m.to_addresses ?? []), ...(m.cc_addresses ?? [])] })),
-              repliedAt: storedEmail.received_at || null,
-              client: adminSupabase,
-              // P0 perf: no null-bust — a resolution changes the pending counts, which changes the
-              // brief's sig naturally; nulling the blob destroyed last-good serving (cold every load).
-              bustBriefCache: async () => {},
-            }).catch(() => {});
-          }
+          // W9.2 — resolve-on-reply · the evidence door · you-owe extraction run in THE ONE handler,
+          // exactly once per message, whichever path stored it first (after Phase 4, below).
+          noteAuthored([storedEmail]);
         }
 
-        // EVIDENCE SETTLES (W3.1 · W8.7, invariant 7) — THE ONE CALL SITE on this sync path, for both
-        // authors: a message the user SENT, or one a TEAMMATE sent, is a deed on ANY thread. After the
-        // structural resolve-on-reply above (its order is kept), never awaited, non-fatal.
-        openMailEvidenceDoor(adminSupabase, connection.user_id, storedEmail, actorsOnce);
+        // EVIDENCE SETTLES (W3.1 · W8.7, invariant 7) — THE ONE CALL SITE on this sync path for INBOUND
+        // mail: a message a TEAMMATE sent is a deed on ANY thread (the ladder decides). The user's own
+        // mail reaches the same door through the authored-landed handler. Drained tail, non-fatal.
+        if (!storedEmail.is_from_user) {
+          _tail.add('evidence-door', openMailEvidenceDoor(adminSupabase, connection.user_id, storedEmail, actorsOnce));
+        }
 
         if (storedEmail.is_from_user) {
           console.log(`    ✓ Learning signals queued, skipping inbox item (sent email)\n`);
           continue; // Skip to next email (already stored for context)
         }
 
-        // Capture commitments asked of / promised to the user in this received email
-        // (others' asks → you_owe, others' promises → awaiting). Only actionable mail.
-        if (emailClass === 'process' && emailSettings.todo_auto) {
-          void import('@/lib/commitments/extract').then(({ extractEmailCommitments }) =>
-            extractEmailCommitments({
-              userId: connection.user_id,
-              subject: storedEmail.subject || '',
-              body: storedEmail.body || '',
-              isFromUser: false,
-              userName: null,
-              counterparty: storedEmail.from_address || null,
-              sourceId: storedEmail.id,
-              threadId: storedEmail.thread_id || null,
-              instructions: emailSettings.todo_instructions,
-              receivedAt: storedEmail.received_at || null, // the deixis anchor — the email's own date
-              // THE SEAT LAW (threads-plan clause 4): the user's To/CC position rides with the
-              // email, so a request addressed to a third party never mints the user a debt.
-              seat: {
-                isCcOnly: _recipientRole.is_cc_only,
-                to: _recipientRole.to, cc: _recipientRole.cc,
-                userAddresses: Array.from(_userAddresses),
-                userName: _ownerProfile?.full_name ?? null,
-              },
-              client: adminSupabase,
-            }),
-          ).catch(() => {});
-        }
+        // Commitments asked of / promised to the user in this received email (others' asks → you_owe,
+        // others' promises → awaiting) AND the conversation delta (a delivery or a cancellation settles
+        // open work). W9.2 × W9.4: EVERY triage class reaches the entry — lib/commitments/extract.ts
+        // `extractionGate` decides delta vs new extraction (noise kinds, coworker senders, campaign
+        // echoes live there), never this call site. Queued, and launched AFTER Phase 2 so the gate reads
+        // the understanding Phase 2 stamps for this message (looked up by email id inside the entry).
+        _inboundExtract.push({ storedEmail, recipientRole: _recipientRole, emailClass });
 
         // ── SAFETY NET ──────────────────────────────────────────────────────────────
         // Create a basic inbox item BEFORE any AI processing so the email is always
@@ -1361,8 +1304,9 @@ export async function syncEmailsForConnection(
         }
         // ── END SAFETY NET ───────────────────────────────────────────────────────────
 
-        // Backfill full thread history so AI sees complete context (non-fatal)
-        await backfillThreadHistory({
+        // Backfill full thread history so AI sees complete context (non-fatal). W9.2: the rows it
+        // inserted are returned — the user-authored ones route through THE ONE handler.
+        noteAuthored(await backfillThreadHistory({
           connection,
           storedEmail,
           encryptedTokens,
@@ -1384,7 +1328,7 @@ export async function syncEmailsForConnection(
                   .eq('id', connection.id);
               }
             : undefined,
-        }).catch(err => console.warn(`[ThreadBackfill] Non-fatal error for thread ${storedEmail.thread_id}:`, err));
+        }).catch((err): LandedRow[] => { console.warn(`[ThreadBackfill] Non-fatal error for thread ${storedEmail.thread_id}:`, err); return []; }));
 
         // ==== BATCH AI FAST-PATH (before attachments — noise/fyi skip attachment fetching entirely) ====
         if (emailClass === 'noise' || emailClass === 'fyi_only') {
@@ -1526,7 +1470,7 @@ export async function syncEmailsForConnection(
             // THE LABEL FLIP: the pair (kind + posture) via the ONE resolver — the reasoned kind
             // when the understanding carries it, the bulk/noise header signals as the fallback.
             // Fast-pathed mail has no live posture, so this lands the KIND identity label.
-            void import('@/lib/inbox/rules/write-back').then(async ({ writeBackLabels, kindTier }) => {
+            _tail.add('label-fast', import('@/lib/inbox/rules/write-back').then(async ({ writeBackLabels, kindTier }) => {
               const hints = { bulk: _bulk, noise: emailClass === 'noise' };
               const ok = await writeBackLabels({
                 provider: connection.provider,
@@ -1556,7 +1500,7 @@ export async function syncEmailsForConnection(
                   .update({ source_data: withPreservedUnderstanding({ ...(fastSourceData as Record<string, unknown>), ..._keptStamp, labeled: tier === 'fallback' ? 'fallback' : true }, fastExisting) })
                   .eq('source_id', storedEmail.id).eq('user_id', connection.user_id);
               }
-            }).catch(() => {});
+            }));
           }
           continue;
         }
@@ -1934,7 +1878,7 @@ export async function syncEmailsForConnection(
               if (emailSettings.auto_label) {
                 // THE LABEL FLIP: kind + posture via the ONE resolver (rule posture authoritative;
                 // bulk header as the kind fallback — the sweep tops up once the understanding lands).
-                void import('@/lib/inbox/rules/write-back').then(({ writeBackLabels }) =>
+                _tail.add('label-process', import('@/lib/inbox/rules/write-back').then(({ writeBackLabels }) =>
                   writeBackLabels({
                     provider: connection.provider,
                     encryptedTokens: connection.metadata?.tokens,
@@ -1945,7 +1889,7 @@ export async function syncEmailsForConnection(
                     gmailCache: gmailLabelCache,
                     outlookMessageId: qItem.storedEmail.metadata?.outlook_id ?? qItem.storedEmail.message_id,
                   }),
-                ).catch(() => {});
+                ));
               }
             }
 
@@ -2093,6 +2037,40 @@ export async function syncEmailsForConnection(
       }
     } // End Phase 2 batch loop
 
+    // === W9.2 × W9.4 — the inbound extraction entry, AFTER Phase 2 (the understanding has landed) ===
+    // Every class, in the drained tail (awaited before the sync returns — never a bare void).
+    // W9.4: ALWAYS called — todo_auto rides as `mintNew` (off = no NEW commitments; the conversation
+    // delta still settles open work) and the triage class as `triage` (noise / fyi_only never mint).
+    {
+      for (const { storedEmail: _em, recipientRole: _rr, emailClass: _cls } of _inboundExtract) {
+        _tail.add('extract-inbound', import('@/lib/commitments/extract').then(({ extractEmailCommitments }) =>
+          extractEmailCommitments({
+            userId: connection.user_id,
+            subject: _em.subject || '',
+            body: _em.body || '',
+            isFromUser: false,
+            userName: null,
+            counterparty: _em.from_address || null,
+            sourceId: _em.id,
+            threadId: _em.thread_id || null,
+            instructions: emailSettings.todo_instructions,
+            receivedAt: _em.received_at || null, // the deixis anchor — the email's own date
+            // THE SEAT LAW (threads-plan clause 4): the user's To/CC position rides with the
+            // email, so a request addressed to a third party never mints the user a debt.
+            seat: {
+              isCcOnly: _rr.is_cc_only,
+              to: _rr.to, cc: _rr.cc,
+              userAddresses: Array.from(_userAddresses),
+              userName: _ownerProfile?.full_name ?? null,
+            },
+            mintNew: !!emailSettings.todo_auto,
+            triage: _cls === 'noise' || _cls === 'fyi_only' ? _cls : 'process',
+            client: adminSupabase,
+          }),
+        ));
+      }
+    }
+
     // === Phase 3: Contact graph population (non-fatal) ===
     try {
       const { upsertContacts } = await import('@/lib/contacts/extract-contacts')
@@ -2135,6 +2113,16 @@ export async function syncEmailsForConnection(
       }
 
       if (sentMessages.length > 0) {
+        // W9.2 — this upsert REPLACES metadata on existing rows (it backfills attachment meta), so the
+        // deed marker is read first and carried forward: a processed deed is never re-run by a re-sync.
+        const _sentIds = sentMessages.map((m) => m.message_id).filter(Boolean) as string[];
+        const _existingMeta = new Map<string, Record<string, unknown>>();
+        if (_sentIds.length) {
+          const { data: _ex, error: _exErr } = await adminSupabase.from('emails')
+            .select('message_id, metadata').eq('user_id', connection.user_id).in('message_id', _sentIds);
+          if (_exErr) console.warn(`[SentSync] existing-marker read failed:`, _exErr.message);
+          for (const r of (_ex ?? []) as Array<{ message_id: string; metadata: Record<string, unknown> | null }>) _existingMeta.set(r.message_id, r.metadata ?? {});
+        }
         const sentRows = sentMessages.map(m => {
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
           const { attachments, hasAttachments: _ha, outlookInternalId: _oid, has_unsubscribe: _hu, ...dbFields } = m as any;
@@ -2157,21 +2145,34 @@ export async function syncEmailsForConnection(
             html_body: (m as any).html_body?.slice(0, 15000) || null,
             is_from_user: authorship.is_from_user,
             is_read: true,
-            metadata: authorship.metadata,
+            metadata: { ...authorship.metadata, ...carryDeedMarkers(_existingMeta.get(m.message_id)) },
           }) as Record<string, unknown>;
         }).filter(r => r.message_id); // must have a message_id for upsert
 
-        const { error: sentErr } = await adminSupabase
+        const { data: sentStored, error: sentErr } = await adminSupabase
           .from('emails')
-          .upsert(sentRows, { onConflict: 'user_id,message_id', ignoreDuplicates: false });
+          .upsert(sentRows, { onConflict: 'user_id,message_id', ignoreDuplicates: false })
+          .select(LANDED_ROW_COLUMNS);
         if (sentErr) {
           console.warn(`[SentSync] Upsert error:`, sentErr.message);
         } else {
+          // W9.2 — the Sent pass is a storing path: its user-authored rows route through THE ONE handler.
+          noteAuthored((sentStored ?? []) as unknown as LandedRow[]);
           console.log(`[SentSync] Upserted ${sentRows.length} sent email(s) for thread context`);
         }
       }
     } catch (sentErr) {
       console.warn(`[SentSync] Non-fatal: failed to sync sent emails`, sentErr);
+    }
+
+    // === W9.2 A USER-AUTHORED MESSAGE LANDED — THE ONE HANDLER, after every storing path above ===
+    // resolve-on-reply · the evidence reverse door · you-owe extraction, EXACTLY ONCE per message
+    // (conditional claim on emails.metadata.deed_claimed_at → deed_processed_at). AWAITED.
+    if (_authored.size) {
+      const _landed = await landUserAuthoredMessages(adminSupabase, connection.user_id, _authored.values(), {
+        todoAuto: !!emailSettings.todo_auto, instructions: emailSettings.todo_instructions,
+      });
+      console.log(`[AuthoredLanded] processed=${_landed.processed} claimedElsewhere=${_landed.claimedElsewhere} skipped=${_landed.skipped} failed=${_landed.failed}`);
     }
 
     // Update sync status. CRUCIAL: only advance last_sync on a FULL-WINDOW sync. A push
@@ -2204,7 +2205,7 @@ export async function syncEmailsForConnection(
       try {
         const { after } = await import('next/server');
         after(fire);
-      } catch { void fire(); }
+      } catch { _tail.add('first-look', fire()); } // no after() scope → the drained tail (never a bare void)
     }
 
     // LIVE Initiative Brain (S5) — an email arriving/sent is an event on its initiative, so refresh the
@@ -2251,6 +2252,11 @@ export async function syncEmailsForConnection(
       .from('connections')
       .update({ sync_status: 'failed' })
       .eq('id', connection.id);
+  } finally {
+    // W9.2 — drain every post-store side effect before the sync returns (the push route's waitUntil and
+    // the cron request await this function, so nothing is cut off). Bounded; the remainder is REPORTED.
+    const _drain = await _tail.drain();
+    if (!_drain.drained) result.errors.push(`tail: ${_drain.leftRunning} side effect(s) left running at the drain budget`);
   }
 
   return result;

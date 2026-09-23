@@ -6,6 +6,8 @@ import { hasBearer } from '@/lib/utils/bearer-auth';
 
 export const maxDuration = 300;
 
+// SCHEDULE (vercel.json): `20 */2 * * *`
+
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE AMBIENT SWEEP (proactive-team W2). One quality bar: every prepared artifact flows through the
 // PREPARATION PASS (judge-gated, deliverable-resolved, evaluator-reviewed, attributed, narrated).

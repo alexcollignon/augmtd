@@ -5,6 +5,7 @@ import { getGraphClient, OUTLOOK_MESSAGE_SELECT } from '@/lib/microsoft/outlook'
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
 import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
 import { featureEnabledForUser } from '@/lib/workspace/check-by-userid';
+import { PUSH_CALENDAR_WINDOW } from '@/lib/email-sync/push-shape';
 
 export const maxDuration = 300;
 
@@ -29,7 +30,9 @@ export async function GET(request: NextRequest) {
 /**
  * POST /api/webhooks/outlook/push
  *
- * Receives change notifications from Microsoft Graph when new emails arrive.
+ * Receives change notifications from Microsoft Graph when new emails arrive in the inbox OR land in
+ * Sent Items (two subscriptions — W9.2 THE PUSH SHAPE, lib/email-sync/push-shape.ts). The sync this
+ * runs drains its own post-store tail and is awaited inside waitUntil — nothing floats past it.
  * Returns 200 immediately, processes async via waitUntil.
  */
 export async function POST(request: NextRequest) {
@@ -80,13 +83,25 @@ async function processOutlookNotifications(notifications: any[]) {
       if (!messageId) continue;
 
       const subscriptionId = notification.subscriptionId;
-      const { data: connection } = await adminSupabase
+      if (!subscriptionId) continue;
+      // The inbox subscription's id is the historical column; the Sent Items subscription's id rides in
+      // metadata (W9.2). Either one identifies the connection.
+      let { data: connection } = await adminSupabase
         .from('connections')
         .select('*')
         .eq('provider', 'outlook')
         .eq('push_subscription_id', subscriptionId)
         .eq('status', 'active')
         .maybeSingle();
+      if (!connection) {
+        ({ data: connection } = await adminSupabase
+          .from('connections')
+          .select('*')
+          .eq('provider', 'outlook')
+          .eq('metadata->>push_sent_subscription_id', subscriptionId)
+          .eq('status', 'active')
+          .maybeSingle());
+      }
 
       if (!connection) {
         console.warn(`[OutlookPush] No connection found for subscriptionId ${subscriptionId}`);
@@ -122,7 +137,8 @@ async function processOutlookNotifications(notifications: any[]) {
         preloadedMessages: [message],
       });
 
-      await syncCalendarForConnection(connection, adminSupabase, { daysAhead: 14, daysBehind: 0 })
+      // W9.2 — the window covers today: a meeting that just ended is seen at this push.
+      await syncCalendarForConnection(connection, adminSupabase, { ...PUSH_CALENDAR_WINDOW })
         .catch((err) => console.warn('[OutlookPush] Calendar sync failed (non-fatal):', err));
 
       console.log(`[OutlookPush] ✓ Processed notification for message ${messageId}`);

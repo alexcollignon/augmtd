@@ -153,8 +153,15 @@ export async function settleWorkByEvidence(
     // THE OUTCOME LEDGER (W3.2): captured BEFORE this write strips the drafts (below).
     const { capturePending, logPendingOutcomes } = await import('@/lib/prepare/outcome');
     const pendingPrep = await capturePending(client, userId, { kind: 'inbox', id: work.id });
-    const sd = { ...(((row as { source_data?: Record<string, unknown> }).source_data ?? {}) as Record<string, unknown>) };
-    delete sd.draft; delete sd.nudge_draft; delete sd.prepared_by; // resolved work carries no prepared drafts
+    // Resolved work carries no prepared drafts — THE ONE ENGINE STRIP (W9.1b): machine words strip,
+    // an artifact the user's hand holds is FILED (version chain + one narration), never deleted.
+    const { stripSourceArtifacts } = await import('@/lib/prepare/hand-store');
+    const strip = await stripSourceArtifacts(client, userId, {
+      itemId: work.id, sd: ((row as { source_data?: Record<string, unknown> }).source_data ?? {}) as Record<string, unknown>,
+      fields: ['draft', 'nudge_draft'], why: 'resolved',
+    });
+    const sd = strip.sd;
+    if (!strip.kept.length) delete sd.prepared_by;
     const nowIso = new Date().toISOString();
     const { error } = await client.from('inbox_items')
       .update({ status: 'completed', source_data: { ...sd, resolved_reason: reason, resolved_at: stampAt }, updated_at: nowIso })

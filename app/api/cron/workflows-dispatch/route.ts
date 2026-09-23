@@ -1,4 +1,6 @@
-// ─── Workflow dispatcher — runs every minute via Vercel Cron ──────────────────
+// ─── Workflow dispatcher — runs hourly (on the hour) via Vercel Cron ──────────
+// (W9.5: this header used to claim a once-a-minute cadence; vercel.json has run it hourly — a workflow's
+// next_run_at is honoured to within the hour, and event-fired runs go through the run kick.)
 // Finds active scheduled workflows whose next_run_at has passed, enqueues a
 // workflow_runs row, and triggers the executor. The executor is invoked via
 // fetch-and-forget so this endpoint returns fast and doesn't block the cron.
@@ -11,6 +13,8 @@ import { runWorkflow } from '@/lib/workflows/run-workflow';
 import { hasBearer } from '@/lib/utils/bearer-auth';
 
 export const maxDuration = 800; // Vercel Pro + Fluid Compute (was 300; heavy briefing tasks ran ~150-300s, too close to the cap)
+
+// SCHEDULE (vercel.json): `0 * * * *`
 
 export async function GET(request: NextRequest) {
   // Auth: Vercel Cron sends Bearer CRON_SECRET

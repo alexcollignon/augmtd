@@ -126,7 +126,7 @@ describe('extraction truth floors', () => {
     expect(dueFloorAgainstSource(null, '2026-08-10T09:00:00Z', 'x').due).toBeNull();
   });
   it('name forms: accents, short surnames, initials — never a bare first name', () => {
-    expect(nameFormsAgree('Léa Costa', 'Lea Maria Costa')).toBe(true);
+    expect(nameFormsAgree('Zoé Costa', 'Zoe Maria Costa')).toBe(true);
     expect(nameFormsAgree('Sam R.', 'Sam Rivera')).toBe(true);
     expect(nameFormsAgree('Sam Rivera', 'Sam Costa')).toBe(false);
     expect(nameFormsAgree('Sam', 'Sam Rivera')).toBe(false);
@@ -134,9 +134,9 @@ describe('extraction truth floors', () => {
     expect(emailSpellsName('sales@acme.test', 'Sam Rivera')).toBe(false);
   });
   it('the counterparty fold: registry first, then the conversation, ambiguity stays raw', () => {
-    const reg = [{ name: 'Léa Maria Costa', aliases: ['lea@acme.test'] }, { name: 'Sam Rivera', aliases: [] }, { name: 'Me Myself', aliases: [], state: { self: true } }];
-    expect(foldCounterparty('Lea Costa', reg)).toBe('Léa Maria Costa');
-    expect(foldCounterparty('lea@acme.test', reg)).toBe('Léa Maria Costa');
+    const reg = [{ name: 'Zoé Maria Costa', aliases: ['zoe@acme.test'] }, { name: 'Sam Rivera', aliases: [] }, { name: 'Me Myself', aliases: [], state: { self: true } }];
+    expect(foldCounterparty('Zoe Costa', reg)).toBe('Zoé Maria Costa');
+    expect(foldCounterparty('zoe@acme.test', reg)).toBe('Zoé Maria Costa');
     expect(foldCounterparty('sam.rivera@acme.test', reg)).toBe('Sam Rivera');
     expect(foldCounterparty('dana.lee@acme.test', [], ['Dana Lee'])).toBe('Dana Lee');
     expect(foldCounterparty('Dana', [], ['Dana Lee'])).toBe('Dana Lee');

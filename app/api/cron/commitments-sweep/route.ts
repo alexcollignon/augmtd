@@ -7,6 +7,8 @@ import { evidenceSweepUsers } from '@/lib/work/evidence-sweep';
 
 export const maxDuration = 300;
 
+// SCHEDULE (vercel.json): `0 */6 * * *`
+
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE COMMITMENTS SWEEP — A DISPATCHER (stabilization W7.1 HEARTBEAT THROUGHPUT; the W3.3 fan-out's
 // third lane, 'evidence'). The per-account body lives in lib/work/evidence-sweep.ts:

@@ -132,6 +132,10 @@ export const ITEM_PLAN_REGISTRY = {
   draft_sweep:    spec('marker', '`user`', 'lib/work/sweep-users.ts', obj({ at: str })),
   label_sweep:    spec('marker', '`user`', 'lib/work/sweep-users.ts', obj({ at: str })),
   evidence_sweep: spec('marker', '`user`', 'lib/work/sweep-users.ts', obj({ at: str })),
+  // W9.5: the read-time reply reconcile's cross-instance throttle (one run per user per TTL, any instance).
+  reconcile_claim: spec('marker', '`replied`', 'lib/inbox/reconcile-replied.ts', obj({ at: str })),
+  // W9.3 PROJECTS FOLLOW THE MAIL — one row per entity: the coalesced state-refresh claim + dirty flag.
+  entity_refresh: spec('marker', 'work_entities id', 'lib/entities/refresh-schedule.ts', obj({ at: str, dirty: bool })),
 
   // ── staging between a card and its commit door ──
   chat_email:     spec('staging', 'draft id', 'lib/prepare/chat-email-store.ts', anyObj, 180),
