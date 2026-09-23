@@ -67,33 +67,28 @@ function claimWarm(userId: string, roomKey: string, now: number = Date.now()): b
 export async function warmRoomBriefs(
   client: SupabaseClient, userId: string, items: WarmItem[],
 ): Promise<{ warmed: number; skipped: number; composed: number }> {
-  const { ensureRoomBrief, ensureLooseRoomBrief, joinCompose } = await import('@/lib/room/brief');
+  const { ensureLooseRoomBrief, joinCompose } = await import('@/lib/room/brief');
   let warmed = 0; let skipped = 0; let composed = 0;
   const doneRooms = new Set<string>();
   for (const it of items.slice(0, WARM_MAX_ITEMS)) {
     try {
       const linkKind = linkKindOf(it.kind);
-      const { data: link } = await client.from('entity_links').select('entity_id')
-        .eq('user_id', userId).eq('item_kind', linkKind).eq('item_id', it.id).not('entity_id', 'is', null).maybeSingle();
-      const eid = (link?.entity_id as string | undefined) ?? null;
-      const roomKey = eid ?? looseRoomKeyOf(linkKind, it.id);
+      // ONE OBJECT, ONE DOOR (W7.2 — lib/room/door.ts): the item door's brief is ITEM-FIRST under
+      // the item's own key whatever it is linked to, so the warm composes exactly that — the link
+      // read it used to make (linked → the entity's brief) warmed a page the door no longer serves.
+      const roomKey = looseRoomKeyOf(linkKind, it.id);
       if (doneRooms.has(roomKey) || !claimWarm(userId, roomKey)) { skipped++; continue; }
       doneRooms.add(roomKey);
-      let r;
-      if (eid) {
-        r = await joinCompose(userId, eid, () => ensureRoomBrief(client, userId, eid));
-      } else {
-        // The loose anchor, derived EXACTLY as the door derives it — or the sig never matches.
-        const table = linkKind === 'inbox_item' ? 'inbox_items' : linkKind === 'commitment' ? 'commitments' : 'meeting_transcripts';
-        const [{ data: row }, st] = await Promise.all([
-          client.from(table).select(ANCHOR_ROW_SELECT[linkKind]).eq('id', it.id).eq('user_id', userId).maybeSingle(),
-          linkKind === 'meeting' ? Promise.resolve(null) : preparedState(client, userId, { kind: linkKind, id: it.id }).catch(() => null),
-        ]);
-        if (!row) { skipped++; continue; }
-        const a = anchorOf(linkKind, row as unknown as Record<string, unknown>, st?.all ?? []);
-        const anchorForBrief = { title: looseTitleOf(linkKind, row as unknown as Record<string, unknown>), who: a.who, ask: a.ask, prepared: a.prepared };
-        r = await joinCompose(userId, roomKey, () => ensureLooseRoomBrief(client, userId, roomKey, anchorForBrief));
-      }
+      // The loose anchor, derived EXACTLY as the door derives it — or the sig never matches.
+      const table = linkKind === 'inbox_item' ? 'inbox_items' : linkKind === 'commitment' ? 'commitments' : 'meeting_transcripts';
+      const [{ data: row }, st] = await Promise.all([
+        client.from(table).select(ANCHOR_ROW_SELECT[linkKind]).eq('id', it.id).eq('user_id', userId).maybeSingle(),
+        linkKind === 'meeting' ? Promise.resolve(null) : preparedState(client, userId, { kind: linkKind, id: it.id }).catch(() => null),
+      ]);
+      if (!row) { skipped++; continue; }
+      const a = anchorOf(linkKind, row as unknown as Record<string, unknown>, st?.all ?? []);
+      const anchorForBrief = { title: looseTitleOf(linkKind, row as unknown as Record<string, unknown>), who: a.who, ask: a.ask, prepared: a.prepared };
+      const r = await joinCompose(userId, roomKey, () => ensureLooseRoomBrief(client, userId, roomKey, anchorForBrief));
       warmed++;
       if (r) composed++;
     } catch { skipped++; /* non-fatal — the open composes before its paint as ever */ }

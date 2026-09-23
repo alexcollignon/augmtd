@@ -30,6 +30,11 @@ import { openAgeDays } from '@/lib/commitments/expiry';
 // 5: EVIDENCE SETTLES (W3.1) — the judge reads a SET of candidates (emails on any thread + held/
 //    booked meetings + transcripts with the counterparty) and a held/booked meeting counts as
 //    delivery for a scheduling obligation; the sig is the evidence set, not one message id.
+// W8.1 (EVIDENCE FROM EVERYWHERE) deliberately does NOT bump: every candidate kind that existed under
+//    law 5 (the user's email, a calendar fact, a transcript fact) renders BYTE-IDENTICALLY; the new
+//    lines (a TEAMMATE's email, a DEED FACT from any other registered source) and the teammate clause
+//    appear ONLY when such a candidate is in the set — and such a set has a new sig by construction
+//    (its ids were never in a law-5 set), so no cached verdict is ever served for a prompt it did not see.
 export const FULFILLMENT_LAW_VERSION = 5;
 
 export type FulfillmentVerdict = {
@@ -37,20 +42,29 @@ export type FulfillmentVerdict = {
   /** Only on `promised`: a NEW deadline stated in the message itself (code-verified, future-only). */
   newDue?: string;
   reason: string;
-  /** On `delivered`: WHICH candidate delivered (type + id + its own time) — the settle stamps from it. */
-  by?: { type: 'email' | 'calendar' | 'transcript'; id: string; at: string };
+  /** On `delivered`: WHICH candidate delivered (type + id + its own time) — the settle stamps from it.
+   *  W8.1: `role`/`name`/`deed` say WHO did it (a teammate's delivery is attributed, never the user's). */
+  by?: { type: string; id: string; at: string; role?: 'teammate' | 'counterparty' | 'unknown'; name?: string; deed?: string };
 };
 
-/** One piece of evidence the judge may read — the nominator's shape (lib/work/evidence-nominator). */
+/** One piece of evidence the judge may read — the nominator's shape (lib/work/evidence-nominator).
+ *  `type` is the source row's evidence type ('email' | 'calendar' | 'transcript' | any registered row). */
 export type FulfillmentCandidate = {
-  type: 'email' | 'calendar' | 'transcript';
+  type: string;
   id: string;
   at: string;
   title: string;
   body?: string;
   attachmentCount?: number | null;
   status?: 'held' | 'booked';
+  /** W8.1 — the deed (lib/evidence/types EvidenceDeed) and the source's label, for any non-legacy type. */
+  deed?: string;
+  sourceLabel?: string;
+  /** W8.1 — set when someone OTHER than the owing party acted (a teammate): the judge is told who. */
+  actor?: { role: 'teammate' | 'counterparty' | 'unknown'; name?: string };
 };
+
+const LEGACY_MEETING_TYPES = new Set(['calendar', 'transcript']);
 
 export type FulfillmentObligation = {
   kind?: 'commitment' | 'inbox';
@@ -65,6 +79,22 @@ export type FulfillmentObligation = {
 
 // item_plans kind: 'fulfillment' (the one verdict store both doors share)
 
+/** A verdict plus how it was obtained (W7.1 HEARTBEAT THROUGHPUT): `cached` = served from the
+ *  verdict store (zero spend); `fresh` = a paid reasoned call ran (success OR outage — both cost the
+ *  sweep a slot). A no-evidence short-circuit is neither. The sweeps' per-run caps count `fresh`
+ *  ONLY — a cap spent by cache hits was how a stable head of already-judged rows filled it every
+ *  run and the rows behind it were never reached. Never persisted (the store holds the verdict). */
+export type FulfillmentJudgment = FulfillmentVerdict & { cached: boolean; fresh: boolean };
+
+/** THE CACHE SIG for an evidence set under the current law — ONE definition, read by the judge's own
+ *  cache AND by the sweep's priority order (which rows would spend a fresh judgment). */
+export const fulfillmentSigOf = (candidates: ReadonlyArray<{ type: string; id: string }>): string =>
+  `${FULFILLMENT_LAW_VERSION}:${candidates.map((c) => `${c.type[0]}${c.id}`).sort().join(',')}`;
+
+/** Was a stored fulfillment sig written under the CURRENT law version? (`<version>:<set>`.) */
+export const isCurrentLawSig = (sig: string | null | undefined): boolean =>
+  String(sig ?? '').split(':')[0] === String(FULFILLMENT_LAW_VERSION);
+
 /**
  * Judge whether the candidate fulfilling MESSAGE actually fulfills the commitment.
  * `fulfillerIsUser` — true when the user owes (their sent message is the candidate), false when the
@@ -78,7 +108,7 @@ export async function judgeCommitmentFulfillment(
   commitment: { id?: string; description: string; due_date?: string | null; created_at?: string | null },
   message: { id?: string | null; body: string; attachmentCount?: number | null },
   fulfillerIsUser: boolean,
-): Promise<FulfillmentVerdict> {
+): Promise<FulfillmentJudgment> {
   return judgeFulfillmentFromEvidence(client, userId, { kind: 'commitment', ...commitment },
     [{ type: 'email', id: message.id ? String(message.id) : '', at: '', title: '', body: message.body, attachmentCount: message.attachmentCount }],
     fulfillerIsUser);
@@ -97,7 +127,7 @@ export async function judgeFulfillmentFromEvidence(
   obligation: FulfillmentObligation,
   candidates: FulfillmentCandidate[],
   fulfillerIsUser: boolean,
-): Promise<FulfillmentVerdict> {
+): Promise<FulfillmentJudgment> {
   const todayStr = new Date().toISOString().slice(0, 10);
   // THE TOP MESSAGE: judge only the sender's OWN words — the quoted reply-chain underneath is
   // history, and a delivery mail quoting last week's promise must never be judged as the promise.
@@ -105,20 +135,24 @@ export async function judgeFulfillmentFromEvidence(
   const emails = candidates.filter((c) => c.type === 'email')
     .map((c) => ({ ...c, body: clipForPrompt(topMessageOf(String(c.body ?? '')).replace(/\s+/g, ' '), emailBudget(candidates)) }))
     .filter((c) => c.body.trim());
-  const meetings = candidates.filter((c) => c.type !== 'email');
-  if (!emails.length && !meetings.length) return { verdict: 'unclear', reason: 'no evidence text to judge' };
+  const meetings = candidates.filter((c) => LEGACY_MEETING_TYPES.has(c.type));
+  // W8.1 — any other registered source's deed: a dated fact naming the actor (a body, when the row
+  // hydrates one, is read as that deed's own words).
+  const deeds = candidates.filter((c) => c.type !== 'email' && !LEGACY_MEETING_TYPES.has(c.type))
+    .map((c) => ({ ...c, body: c.body ? clipForPrompt(topMessageOf(String(c.body)).replace(/\s+/g, ' '), 600) : '' }));
+  if (!emails.length && !meetings.length && !deeds.length) return { verdict: 'unclear', reason: 'no evidence text to judge', cached: false, fresh: false };
   const kind = obligation.kind ?? 'commitment';
   // Cache per (obligation, evidence SET) — the sweep re-nominates the same set every pass; a
   // non-delivered verdict must not re-burn AI every 2h. A new piece of evidence re-judges. An
   // id-less candidate (an ad-hoc probe) never caches.
   const allIds = candidates.every((c) => c.id);
-  const sig = `${FULFILLMENT_LAW_VERSION}:${candidates.map((c) => `${c.type[0]}${c.id}`).sort().join(',')}`;
+  const sig = fulfillmentSigOf(candidates);
   const cacheKey = obligation.id && allIds ? { entity: `${kind}:${obligation.id}`, sig } : null;
   if (cacheKey) {
     try {
       const data = await readPlan(client, userId, 'fulfillment', cacheKey.entity);
       const t = (data?.tasks ?? null) as { sig?: string; verdict?: FulfillmentVerdict } | null;
-      if (t?.sig === cacheKey.sig && t.verdict?.verdict) return t.verdict;
+      if (t?.sig === cacheKey.sig && t.verdict?.verdict) return { ...t.verdict, cached: true, fresh: false };
     } catch { /* cache is best-effort */ }
   }
   const who = fulfillerIsUser ? 'the user (who owes it)' : 'the counterparty (who owes it)';
@@ -127,10 +161,14 @@ export async function judgeFulfillmentFromEvidence(
   // never trusted (THE QUOTE LAW's cousin: the model picks, the code validates the pick).
   const labels = new Map<string, FulfillmentCandidate>();
   const evidenceLines: string[] = [];
+  // THE ACTOR IS STATED (W8.1): a teammate's message is labelled as theirs — never as the user's.
+  const sender = (c: FulfillmentCandidate) => c.actor?.role === 'teammate'
+    ? `a TEAMMATE of the user (${clipForPrompt(c.actor.name || 'same organisation', 60)} — same organisation, not the user)`
+    : who;
   emails.forEach((c, i) => {
     const label = `E${i + 1}`; labels.set(label, c);
     evidenceLines.push(
-      `[${label}] EMAIL sent by ${who}${c.at ? ` on ${c.at.slice(0, 10)}` : ''}${c.title ? `, subject "${clipForPrompt(c.title, 100)}"` : ''}. ` +
+      `[${label}] EMAIL sent by ${sender(c)}${c.at ? ` on ${c.at.slice(0, 10)}` : ''}${c.title ? `, subject "${clipForPrompt(c.title, 100)}"` : ''}. ` +
       // TRUE FACTS OR NO FACTS: a count the code cannot verify is passed as UNKNOWN, never as a
       // confident zero (sent-mail metadata may predate attachment capture).
       `FACT: ${typeof c.attachmentCount === 'number' ? `it carries ${c.attachmentCount} attachment(s)` : 'its attachment count is UNKNOWN (metadata unavailable — do not treat as zero; judge from the words)'}. ` +
@@ -142,6 +180,17 @@ export async function judgeFulfillmentFromEvidence(
       ? `[${label}] CALENDAR FACT: a meeting with the counterparty, "${clipForPrompt(c.title || 'meeting', 80)}", ${c.status === 'held' ? `was HELD on ${c.at.slice(0, 16).replace('T', ' ')} (it already took place)` : `is BOOKED for ${c.at.slice(0, 16).replace('T', ' ')} (on the user's calendar, not yet held)`}.`
       : `[${label}] MEETING FACT: a recorded meeting with the counterparty, "${clipForPrompt(c.title || 'meeting', 80)}", took place on ${c.at.slice(0, 16).replace('T', ' ')} (a transcript exists).`);
   });
+  deeds.forEach((c, i) => {
+    const label = `D${i + 1}`; labels.set(label, c);
+    const actorWords = c.actor?.role === 'teammate' ? sender(c) : 'the user';
+    const deedWords = String(c.deed ?? 'acted').replace(/_/g, ' ');
+    evidenceLines.push(
+      `[${label}] DEED FACT (${clipForPrompt(c.sourceLabel || c.type, 40)}): ${actorWords} — ${deedWords}${c.status ? ` (${c.status})` : ''}, "${clipForPrompt(c.title || 'untitled', 80)}", on ${c.at.slice(0, 16).replace('T', ' ')}.` +
+      (c.body ? ` Its own words:\n"""${c.body}"""` : ' (no words recorded — judge it as a dated fact only)'));
+  });
+  const teammateClause = candidates.some((c) => c.actor?.role === 'teammate')
+    ? `THE TEAMMATE CLAUSE: the user and their TEAMMATES are one side — a teammate handing over the thing owed IS delivery of the user's obligation, judged by the same law from the teammate's own words (a teammate's promise or status update is not delivery). Name that piece in "by". `
+    : '';
   try {
     const res = await aiCall<{ verdict?: string; by?: string | null; new_due?: string | null; reason?: string }>({
       userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: 200,
@@ -167,6 +216,7 @@ export async function judgeFulfillmentFromEvidence(
         `If what is owed is a deliverable (report, file, document, artifact, an action to perform), a promise ` +
         `to do it later ("I'll send it by Sunday"), a thank-you, a status update, or a question is NOT delivery — ` +
         `that is "promised" (name the new deadline as YYYY-MM-DD ONLY if an email states one) or "unclear". ` +
+        teammateClause +
         `When you cannot tell, say "unclear" — wrongly closing live work costs trust; leaving it open costs nothing.\n` +
         `JSON only: {"verdict":"delivered|promised|unclear","by":"the label of the piece that delivered (E1/C1/T1…) or null","new_due":"YYYY-MM-DD or null","reason":"<one sentence>"}`,
     });
@@ -177,8 +227,12 @@ export async function judgeFulfillmentFromEvidence(
       // The pick is validated against the candidate list; an invented label falls back to the
       // newest email (a delivery is words or attachments first), else the newest evidence.
       const picked = labels.get(String(res.json?.by ?? '').trim().toUpperCase())
-        ?? emails[0] ?? [...meetings].sort((a, b) => b.at.localeCompare(a.at))[0];
-      out = { verdict: 'delivered', reason, ...(picked?.id ? { by: { type: picked.type, id: picked.id, at: picked.at } } : {}) };
+        ?? emails[0] ?? [...meetings, ...deeds].sort((a, b) => b.at.localeCompare(a.at))[0];
+      out = { verdict: 'delivered', reason, ...(picked?.id ? { by: {
+        type: picked.type, id: picked.id, at: picked.at,
+        ...(picked.actor ? { role: picked.actor.role, ...(picked.actor.name ? { name: picked.actor.name } : {}) } : {}),
+        ...(picked.deed ? { deed: picked.deed } : {}),
+      } } : {}) };
     } else if (v === 'promised') {
       // Re-anchor only on a code-verified future date an EMAIL ITSELF states (same grammar as
       // the expired_on law: the model supplies judgment, the text supplies the fact).
@@ -191,12 +245,12 @@ export async function judgeFulfillmentFromEvidence(
     if (cacheKey) {
       await upsertPlan(client, userId, 'fulfillment', cacheKey.entity, { sig: cacheKey.sig, verdict: out });
     }
-    return out;
+    return { ...out, cached: false, fresh: true };
   } catch (e) {
     // AI outage ≠ fulfillment: the structural candidate stays open and is re-checked next pass —
     // deliberately NOT cached (an outage verdict must not stick).
     console.error('[fulfillment] judge error:', e instanceof Error ? e.message : e);
-    return { verdict: 'unclear', reason: 'fulfillment judge unavailable' };
+    return { verdict: 'unclear', reason: 'fulfillment judge unavailable', cached: false, fresh: true };
   }
 }
 

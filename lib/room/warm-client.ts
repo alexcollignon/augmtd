@@ -39,17 +39,37 @@ export function viewTargetOf(href: string | null | undefined): { kind: ItemViewK
 }
 
 // ── THE ONE VIEW FLIGHT — a hover warm and the open share one request ───────────────────────────
+// W8.4 · A HOVER WARM IS ZERO-AI: a warm flight asks the door with `&warm=1` (a pure read — the door
+// schedules no compose, no recognition, no re-prepare trip). An OPEN that joins a warm still in
+// flight paints from it and posts ONE kick to the budgeted warm door (`kickOpenedItem`), so the open's
+// background work still runs exactly once — never on the hover alone.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ViewPayload = Record<string, any>;
-const _viewFlight = new Map<string, Promise<ViewPayload | null>>();
+type ViewFlight = { p: Promise<ViewPayload | null>; warm: boolean };
+const _viewFlight = new Map<string, ViewFlight>();
+
+/** The open's background work, for an open that joined a hover warm (lib/room/open-kicks.ts). */
+export function kickOpenedItem(kind: ItemViewKind, id: string): void {
+  try {
+    void fetch('/api/items/warm', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [{ kind, id }], open: true }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch { /* non-fatal — the next open schedules it */ }
+}
 
 /** GET the room's outcome read; a caller arriving while one is in flight JOINS it. Writes the cache
- *  (the next open's first paint) on every successful landing. */
-export function fetchItemView(kind: ItemViewKind, id: string): Promise<ViewPayload | null> {
+ *  (the next open's first paint) on every successful landing. `warm` = a hover/intent prefetch. */
+export function fetchItemView(kind: ItemViewKind, id: string, opts: { warm?: boolean } = {}): Promise<ViewPayload | null> {
   const key = itemViewKey(kind, id);
   const flying = _viewFlight.get(key);
-  if (flying) return flying;
-  const p = fetch(`/api/items/view?kind=${kind}&id=${id}`)
+  if (flying) {
+    // The open joined a warm: the warm read no AI, so the open kicks its own work — once.
+    if (!opts.warm && flying.warm) { flying.warm = false; kickOpenedItem(kind, id); }
+    return flying.p;
+  }
+  const p = fetch(`/api/items/view?kind=${kind}&id=${id}${opts.warm ? '&warm=1' : ''}`)
     .then((r) => (r.ok ? r.json() : null))
     .then((d: ViewPayload | null) => {
       if (!d || d.error) return null;
@@ -58,7 +78,7 @@ export function fetchItemView(kind: ItemViewKind, id: string): Promise<ViewPaylo
     })
     .catch(() => null)
     .finally(() => { _viewFlight.delete(key); });
-  _viewFlight.set(key, p);
+  _viewFlight.set(key, { p, warm: !!opts.warm });
   return p;
 }
 
@@ -74,7 +94,7 @@ async function drainViewQueue(): Promise<void> {
     while (_viewQueue.length) {
       const t = _viewQueue.shift()!;
       if (loadLS(itemViewKey(t.kind, t.id), { maxAgeMs: VIEW_WARM_TTL_MS }) != null) continue;
-      await fetchItemView(t.kind, t.id);
+      await fetchItemView(t.kind, t.id, { warm: true });
     }
   } finally { _viewDraining = false; }
 }
@@ -87,7 +107,7 @@ export function prefetchItemView(href: string | null | undefined, opts: { immedi
   const key = itemViewKey(t.kind, t.id);
   if (_viewFlight.has(key) || _viewWarmTimers.has(key)) return;
   if (loadLS(key, { maxAgeMs: VIEW_WARM_TTL_MS }) != null) return; // still fresh — nothing to warm
-  if (opts.immediate) { void fetchItemView(t.kind, t.id); return; }
+  if (opts.immediate) { void fetchItemView(t.kind, t.id, { warm: true }); return; }
   _viewWarmTimers.set(key, setTimeout(() => {
     _viewWarmTimers.delete(key);
     if (_viewQueue.some((q) => itemViewKey(q.kind, q.id) === key)) return;

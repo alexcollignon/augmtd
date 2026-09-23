@@ -156,9 +156,18 @@ export async function prepareOneItem(
           const { data: mIt } = await admin.from('inbox_items').select('source_data').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
           material = String(((mIt?.source_data ?? {}) as { body?: string }).body ?? '').slice(0, 1200) || null;
         }
+        // TRUE ADDRESSEES (W7.3): a commitment's words are addressed by THE ONE LADDER (stamped);
+        // an inbox item's are addressed to the spine's party as before.
+        let packAddr: import('@/lib/prepare/addressee').AddresseeResolution | null = null;
+        if (itemKind === 'commitment') {
+          const { resolveCommitmentAddressee } = await import('@/lib/prepare/addressee');
+          packAddr = await resolveCommitmentAddressee(admin, userId, w.entityId);
+        }
+        const { recipientsLabel: packLabel } = await import('@/lib/prepare/addressee');
         const pack = await preparePastePack(admin, userId, {
           itemKind, itemId: w.entityId, title: w.title,
-          counterparty: w.who ?? w.blockedOn ?? null, reason: elig.reason, material,
+          counterparty: packAddr ? packLabel(packAddr.recipients) : (w.who ?? w.blockedOn ?? null), reason: elig.reason, material,
+          ...(packAddr ? { addressee: packAddr.addressee } : {}),
           // A chase is the only one of these verbs where the OTHER side owes; everything else is
           // the user's own obligation, and the drafter is told which.
           userOwes: verdict.work !== 'chase',
@@ -467,7 +476,11 @@ async function prepareReplyDraft(admin: SupabaseClient, userId: string, w: WorkI
   // O3a: ambient work is ATTRIBUTED — the assistant coworker drafted this (her skills shaped it).
   const pa = await getDraftingAssistant(admin, userId);
   await admin.from('inbox_items')
-    .update({ source_data: { ...sd, draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', prepared_from: currentGround, law_version: DRAFT_LAW_VERSION, ...(stagedAttachment ? { attachment: stagedAttachment } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) } })
+    .update({ source_data: { ...sd, draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', prepared_from: currentGround, law_version: DRAFT_LAW_VERSION,
+      // TRUE ADDRESSEES (W7.3): a reply is addressed to the thread's sender — stamped, so the reader
+      // can refuse one that greets the user (their own sent mail as the item).
+      ...(sd.from_address || sd.from_name ? { addressee: { name: (sd.from_name as string | undefined) ?? null, email: (sd.from_address as string | undefined) ?? null, via: 'sender' } } : {}),
+      ...(stagedAttachment ? { attachment: stagedAttachment } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) } })
     .eq('id', it.id);
   if (movedPast) await narrateGroundMove(admin, userId, w, currentGround, 'reply_draft', existing?.generated_at ?? null);
   return { did: 'draft', worker: pa?.name };
@@ -492,6 +505,10 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem, 
     if (existing && !movedPast && !untrueNudge && (Date.now() - Date.parse(existing.generated_at || '0')) < FRESH_HOURS * 3_600_000) return { did: 'none', reason: 'a fresh nudge is already on it' };
     // THE LANGUAGE MIRROR: the counterparty's own words are the concrete signal.
     const mirrorText = String(sd.body || '').slice(0, 1200) || null;
+    // TRUE ADDRESSEES (W7.3): the nudge is stamped with who it greets — the one the chase is on.
+    const { parseWho } = await import('@/lib/entities/people');
+    const pw = parseWho(w.blockedOn);
+    const inboxAddressee = (pw.name || pw.email) ? { name: pw.name, email: pw.email, via: 'counterparty' as const } : null;
     const raw = await generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays, mirrorText }, admin);
     if (!raw) return { did: 'none', reason: 'could not draft the nudge' };
     const { body, review } = await reviewAndRevise(admin, userId, // O4 review
@@ -499,7 +516,7 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem, 
       (objection) => generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays, mirrorText, instructions: `REVIEWER'S OBJECTION — fix this: ${objection}` }, admin));
     const pa = await getDraftingAssistant(admin, userId); // O3a attribution
     await admin.from('inbox_items')
-      .update({ source_data: { ...sd, nudge_draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', prepared_from: currentGround, ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) } })
+      .update({ source_data: { ...sd, nudge_draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', prepared_from: currentGround, ...(inboxAddressee ? { addressee: inboxAddressee } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) } })
       .eq('id', it.id);
     if (movedPast) await narrateGroundMove(admin, userId, w, currentGround, 'nudge_draft', existing?.generated_at ?? null);
     return { did: 'nudge', worker: pa?.name };
@@ -528,23 +545,34 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem, 
         mirrorText = String(last?.body || '').slice(0, 1200) || null;
       }
     } catch { /* non-fatal */ }
-    const raw = await generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays, mirrorText }, admin);
+    // ── TRUE ADDRESSEES (W7.3): WHO this nudge greets comes from THE ONE LADDER (counterparty →
+    // the source email's other party → the meeting's attendees minus the user → the project's one
+    // external person) — never the spine's `blockedOn`, which carried the USER's own name before the
+    // self-party repair ("Nudge — <user>", "Dear <user>…", To empty — found live). Nothing resolves ⇒
+    // the words greet no one by name and the card ASKS who it goes to. The OWED DIRECTION rides too:
+    // a message about the user's own obligation is never written as a chase. ──
+    const { resolveCommitmentAddressee, recipientsLabel, addresseeStamp } = await import('@/lib/prepare/addressee');
+    const addr = await resolveCommitmentAddressee(admin, userId, w.entityId);
+    const greet = recipientsLabel(addr.recipients);
+    const { data: dirRow } = await admin.from('commitments').select('direction').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
+    const direction: 'you' | 'them' = dirRow?.direction === 'you_owe' ? 'you' : 'them';
+    const raw = await generateNudgeDraft(userId, { counterparty: greet, description: w.title, ageDays, mirrorText, direction }, admin);
     if (!raw) return { did: 'none', reason: 'could not draft the nudge' };
     const { body, review } = await reviewAndRevise(admin, userId, // O4 review
-      { body: raw, task: w.title, recipient: w.blockedOn, entityId: w.entity?.id ?? null, kind: 'nudge' },
-      (objection) => generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays, mirrorText, instructions: `REVIEWER'S OBJECTION — fix this: ${objection}` }, admin));
+      { body: raw, task: w.title, recipient: greet, entityId: w.entity?.id ?? null, kind: 'nudge' },
+      (objection) => generateNudgeDraft(userId, { counterparty: greet, description: w.title, ageDays, mirrorText, direction, instructions: `REVIEWER'S OBJECTION — fix this: ${objection}` }, admin));
     const pa = await getDraftingAssistant(admin, userId); // O3a attribution
     // The superseded nudge FILES into the version chain (the reader skips `version_of` rows) —
     // the past folds, never deletes.
-    if (movedPast && existing) {
+    if ((movedPast || untrueNudge) && existing) {
       await admin.from('item_deliverables')
-        .update({ metadata: { ...priorMeta, version_of: 'superseded:ground-move' } })
+        .update({ metadata: { ...priorMeta, version_of: movedPast ? 'superseded:ground-move' : 'superseded:truth' } })
         .eq('id', existing.id).then(() => {}, () => {});
     }
     await admin.from('item_deliverables').insert({
       user_id: userId, kind: 'commitment', entity_id: w.entityId, type: 'draft',
-      title: `Nudge — ${(w.blockedOn || '').split('<')[0].trim()}`.slice(0, 100), content: body, ref: null,
-      metadata: { ...(pa ? { agentName: pa.name } : {}), prepared_from: currentGround, ...(review.verdict !== 'pass' ? { review } : {}) },
+      title: `Nudge — ${greet ? greet.split('<')[0].trim() : 'recipient to confirm'}`.slice(0, 100), content: body, ref: null,
+      metadata: { ...(pa ? { agentName: pa.name } : {}), prepared_from: currentGround, ...addresseeStamp(addr), ...(review.verdict !== 'pass' ? { review } : {}) },
     }).then(() => {}, () => {});
     if (movedPast) await narrateGroundMove(admin, userId, w, currentGround, 'nudge_draft', (existing?.created_at as string | undefined) ?? null);
     return { did: 'nudge', worker: pa?.name };
@@ -970,14 +998,17 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
     const { verifyArtifactMatch: verifyC } = await import('@/lib/prepare/requirements');
     const cJudge = await verifyC(admin, userId, { task: w.title, candidate: cTop, entityId: w.entity?.id ?? null });
     if (!cJudge.match) { await askForFile(admin, userId, w, `the document itself`); return { did: 'none', reason: 'no confident file match — asked in the room' }; }
-    const cBody = await generateNudgeDraft(userId, { counterparty: w.who ?? w.blockedOn ?? null, description: `${w.title} — the document "${cTop.filename}" will be attached.` }, admin).catch(() => null);
+    // TRUE ADDRESSEES (W7.3): the send is addressed by THE ONE LADDER and stamped with it.
+    const { resolveCommitmentAddressee: resolveC, recipientsLabel: labelC, addresseeStamp: stampC } = await import('@/lib/prepare/addressee');
+    const cAddr = await resolveC(admin, userId, w.entityId);
+    const cBody = await generateNudgeDraft(userId, { counterparty: labelC(cAddr.recipients), description: `${w.title} — the document "${cTop.filename}" will be attached.`, direction: 'you' }, admin).catch(() => null);
     if (!cBody) return { did: 'none', reason: 'could not draft the send' };
     const { writeDeliverable } = await import('@/lib/home/deliverable-pool');
     const paC = await getDraftingAssistant(admin, userId); // O3a attribution
     await writeDeliverable(admin, userId, {
       kind: 'commitment', entityId: w.entityId, taskId: 'prepare-pass-docsend', type: 'draft',
       title: `Send ${cTop.filename}`.slice(0, 100), content: cBody, gist: `send draft with ${cTop.filename}`,
-      metadata: { source: 'preparation_pass', ...(paC ? { agentName: paC.name } : {}), attachment: { fileId: cTop.id, filename: cTop.filename, source: cTop.source }, provenance: { item: w.title.slice(0, 100), ...(w.entity ? { entity: w.entity.name } : {}) } },
+      metadata: { source: 'preparation_pass', ...(paC ? { agentName: paC.name } : {}), ...stampC(cAddr), attachment: { fileId: cTop.id, filename: cTop.filename, source: cTop.source }, provenance: { item: w.title.slice(0, 100), ...(w.entity ? { entity: w.entity.name } : {}) } },
     }).catch(() => {});
     return { did: 'docsend', worker: paC?.name };
   }

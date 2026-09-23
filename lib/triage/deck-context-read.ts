@@ -1,18 +1,18 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE DECK CARD'S CONTEXT — THE ONE BATCHED READ (W3.6). Server-only.
 //
-// A handed commitment card needs four facts the Home never carried: where the obligation came from
-// (its thread's newest message, or the meeting it was said in), the inbox item whose thread IS the
-// founding object (so the card mounts THE ONE OBJECT CARD rather than authoring an excerpt), and the
-// judge's reason. They are read here for THE WHOLE HANDED SET at once — one commitments read, then
-// five reads in parallel, each an `in()` over the set. Never one query per card (no N+1), zero AI.
+// A handed commitment card needs the facts the Home never carried: where the obligation came from
+// (its source email, else its thread's newest message, or the meeting it was said in) and the inbox
+// item that IS the founding object (so the card mounts THE ONE OBJECT CARD rather than authoring an
+// excerpt). The judge's reason is no longer read (W8.3 — the no-internal-text law). They are read
+// for THE WHOLE HANDED SET at once — one commitments read, then five reads in parallel, each an
+// `in()` over the set. Never one query per card (no N+1), zero AI.
 //
 // The prepared artifact's kind is NOT read here: the brief already serves it on every commitment row
 // from THE ONE READER (lib/prepare/read.ts `preparedStatesFor` — kind-true, expired excluded), and a
 // second read of the same fact would be a second answer to one question.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { readPlans, asRawResult } from '@/lib/store/item-plans';
 import { shapeDeckContext, type DeckContext } from '@/lib/triage/deck-context';
 
 /** The handed set is a stack's opening, never the account — the read is bounded. */
@@ -41,7 +41,7 @@ export async function readDeckContexts(
   const EMAIL_COLS = 'id, thread_id, from_name, from_address, body, received_at, is_from_user';
   const none = Promise.resolve({ data: [] as unknown[] });
 
-  const [threadMail, sourceMail, itemsByThread, itemsBySource, meetings, verdicts] = await Promise.all([
+  const [threadMail, sourceMail, itemsByThread, itemsBySource, meetings] = await Promise.all([
     threadIds.length
       ? client.from('emails').select(EMAIL_COLS).eq('user_id', userId).in('thread_id', threadIds)
           .order('received_at', { ascending: false }).limit(400)
@@ -60,7 +60,6 @@ export async function readDeckContexts(
     meetingIds.length
       ? client.from('meeting_transcripts').select('id, title, start_time, created_at').eq('user_id', userId).in('id', meetingIds)
       : none,
-    readPlans(client, userId, 'judgment', { keys: commits.map((c) => `commitment:${c.id}`) }).then(asRawResult),
   ]);
 
   // Newest message per thread (the rows arrive newest-first).
@@ -75,22 +74,20 @@ export async function readDeckContexts(
   }
   const itemBySource = new Map(((itemsBySource.data ?? []) as Array<{ id: string; source_id: string }>).map((r) => [r.source_id, r.id]));
   const meetingById = new Map(((meetings.data ?? []) as Array<{ id: string; title: string | null; start_time: string | null; created_at: string | null }>).map((m) => [m.id, m]));
-  const verdictBy = new Map<string, { reason?: string | null; failed?: boolean | null }>();
-  for (const r of (verdicts.data ?? []) as Array<{ entity_id: string; tasks: { verdict?: { reason?: string; failed?: boolean } } | null }>) {
-    const v = r.tasks?.verdict;
-    if (v) verdictBy.set(String(r.entity_id).replace(/^commitment:/, ''), v);
-  }
 
+  // W8.3 · THE ITEM'S OWN SOURCE FIRST (one reader's order — lib/commitments/source.ts
+  // `inboxItemForEmail`: the exact source row, else the thread). The thread-first order showed an
+  // UNRELATED email as a commitment's evidence whenever the thread had moved on or its newest inbox
+  // row was a different message. The thread is the fallback, never the lead.
   for (const c of commits) {
-    const lastEmail = (c.thread_id ? newestByThread.get(c.thread_id) : undefined)
-      ?? (c.source_id ? emailById.get(c.source_id) : undefined) ?? null;
-    const inboxItemId = (c.thread_id ? itemByThread.get(c.thread_id) : undefined)
-      ?? (c.source_id ? itemBySource.get(c.source_id) : undefined) ?? null;
+    const lastEmail = (c.source_id ? emailById.get(c.source_id) : undefined)
+      ?? (c.thread_id ? newestByThread.get(c.thread_id) : undefined) ?? null;
+    const inboxItemId = (c.source_id ? itemBySource.get(c.source_id) : undefined)
+      ?? (c.thread_id ? itemByThread.get(c.thread_id) : undefined) ?? null;
     out[c.id] = shapeDeckContext({
       commitment: { id: c.id, description: c.description, source: c.source },
       lastEmail, inboxItemId,
       meeting: c.source === 'meeting' && c.source_id ? meetingById.get(c.source_id) ?? null : null,
-      verdict: verdictBy.get(c.id) ?? null,
     });
   }
   return out;

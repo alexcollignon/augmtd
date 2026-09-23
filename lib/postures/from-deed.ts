@@ -65,6 +65,10 @@ export const POSTURE_ELIGIBILITY: Record<HeldClassId, { offered: boolean; why: s
     offered: false,
     why: 'expressible (copied-but-not-addressed is a literal condition) but REFUSED: the class’s account is an ongoing promise — "watched, you’ll hear if anyone asks you something" — and a standing archive cancels the watch it just promised.',
   },
+  not_judged: {
+    offered: false,
+    why: 'membership is the ABSENCE of a judgment (W8.3) — a fact about our own backlog, never about an arriving message. A standing rule over it would archive mail nobody has read against the user’s work.',
+  },
   quieter_threads: {
     offered: false,
     why: 'this class is defined by the BUDGET, not by the mail — it is real correspondence that did not make today’s five. A standing rule over it would archive people’s letters.',

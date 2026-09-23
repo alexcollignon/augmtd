@@ -122,6 +122,9 @@ export async function preparePastePack(
     /** W5c: THE ONE READER hides the prior pack (a false completion claim, a superseded ground) —
      *  a hidden pack is never "fresh", whatever its age. */
     supersede?: boolean;
+    /** TRUE ADDRESSEES (W7.3): who the words greet — stamped on the pack so THE ONE READER can
+     *  withdraw it if it greets the user or someone who is no longer the counterparty. */
+    addressee?: import('@/lib/prepare/addressee').Addressee | null;
   },
 ): Promise<{ status: 'written' | 'fresh' | 'failed'; title?: string; by?: string | null }> {
   const poolKind = args.itemKind === 'commitment' ? 'commitment' : 'email';
@@ -183,6 +186,7 @@ export async function preparePastePack(
     metadata: {
       pastePack: true, pastePackReason: args.reason, note: pastePackNote(args.reason),
       prepared_from: currentGround, ...(pa ? { agentName: pa.name } : {}),
+      ...(args.addressee !== undefined ? { addressee: args.addressee } : {}),
     },
   });
   if (error) return { status: 'failed' };

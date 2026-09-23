@@ -15,6 +15,7 @@
 // persisted (re-asked on a later reflection) — pair-verdict memory lands with the Phase-B migration batch.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
+import { refusesSelfMerge } from '@/lib/entities/self';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { embedText } from '@/lib/knowledge/indexer';
@@ -64,12 +65,17 @@ const pairKey = (a: Ent, b: Ent): string => [a.id, b.id].sort().join(':');
  *  channel-shaped), aliases folded, people fingerprints unioned, links repointed, loser deleted,
  *  stale pair-verdicts cleaned, keeper re-embedded. Used by the reflection loop AND the
  *  user-commanded merge_projects capability (one mechanics, two judges). */
-export async function absorbEntity(supabase: SupabaseClient, userId: string, keepId: string, loseId: string): Promise<{ ok: boolean; primaryName?: string }> {
+export async function absorbEntity(supabase: SupabaseClient, userId: string, keepId: string, loseId: string): Promise<{ ok: boolean; primaryName?: string; refused?: 'self' | 'kind' }> {
   const { data: rows } = await supabase.from('work_entities')
-    .select('id, name, summary, aliases, people').eq('user_id', userId).in('id', [keepId, loseId]);
-  const keep = (rows ?? []).find((r) => r.id === keepId) as { id: string; name: string; summary: string | null; aliases: unknown; people: unknown } | undefined;
+    .select('id, name, summary, aliases, people, kind, state').eq('user_id', userId).in('id', [keepId, loseId]);
+  const keep = (rows ?? []).find((r) => r.id === keepId) as { id: string; name: string; summary: string | null; aliases: unknown; people: unknown; kind?: string; state?: unknown } | undefined;
   const lose = (rows ?? []).find((r) => r.id === loseId) as typeof keep;
   if (!keep || !lose) return { ok: false };
+  // THE MERGE GUARD (W7.5): no merge door folds another person INTO the user's self row (nor the user
+  // into anyone) — the self row is code-owned, and a merge is exactly how it would learn a foreign
+  // identity. Nor may two kinds fold (a person is never a project's alias).
+  if (refusesSelfMerge(keep, lose)) return { ok: false, refused: 'self' };
+  if (keep.kind && lose.kind && keep.kind !== lose.kind) return { ok: false, refused: 'kind' };
   const keepAliases = Array.isArray(keep.aliases) ? (keep.aliases as string[]) : [];
   const loseAliases = Array.isArray(lose.aliases) ? (lose.aliases as string[]) : [];
   const mergedPeople = [...new Set([...(Array.isArray(keep.people) ? keep.people as string[] : []), ...(Array.isArray(lose.people) ? lose.people as string[] : [])])];

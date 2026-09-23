@@ -81,6 +81,9 @@ export async function POST(request: NextRequest) {
     let skipDraft = false;
     let pooledBody = '';            // W2.1 — a pooled nudge served in place of a fresh draft
     let pooledBy: string | null = null;
+    // W7.3 TRUE ADDRESSEES — candidates the ladder saw but may not claim (offered on the card, never sent).
+    let pooledAddressee: import('@/lib/prepare/addressee').Addressee | null = null;
+    let suggestions: Array<{ name: string | null; email: string | null }> = [];
     // For an email/awareness item that genuinely owes a reply, we draft via the shared reply drafter
     // (`generateReplyDraft`) — it detects + mirrors the INCOMING email's language (the A2 fix), so the
     // reply comes back in the thread's language, not the user's default. Set to the item's source_data.
@@ -130,32 +133,39 @@ export async function POST(request: NextRequest) {
         const { preparedState } = await import('@/lib/prepare/read');
         const st = await preparedState(supabase, user.id, { kind: 'commitment', id: entityId });
         const pooled = st.live.find((a) => (a.kind === 'nudge_draft' || a.kind === 'reply_draft') && a.content.trim());
-        if (pooled && !intent?.trim()) { pooledBody = pooled.content; pooledBy = pooled.by; }
+        if (pooled && !intent?.trim()) { pooledBody = pooled.content; pooledBy = pooled.by; pooledAddressee = pooled.addressee ?? null; }
       } catch { /* the reader is an enhancement — fall through to drafting */ }
-      // entityId = the commitment id. Recipient = its counterparty; source thread's sender as fallback.
+      // entityId = the commitment id.
       const { data: c } = await supabase
         .from('commitments')
-        .select('id, description, counterparty, direction, source, source_id, due_date')
+        .select('id, description, counterparty, direction, source, source_id, thread_id, due_date')
         .eq('id', entityId).eq('user_id', user.id).maybeSingle();
       if (!c) return NextResponse.json({ error: 'not found' }, { status: 404 });
 
-      let email = extractEmail(c.counterparty as string | null);
-      recipientName = extractName(c.counterparty as string | null);
+      // ── TRUE ADDRESSEES (W7.3): THE ONE LADDER — counterparty → the source email's other party →
+      // the MEETING's attendees minus the user → the project's one external person. A meeting-born
+      // commitment used to consult nobody (141 open with no resolvable address). The pooled draft's
+      // own stamp wins when it carries an address: the words were written for that person. Nothing
+      // resolves ⇒ an empty To + the candidates as suggestions — the card ASKS, never pretends. ──
+      const { resolveCommitmentAddressee, addresseeLabel } = await import('@/lib/prepare/addressee');
+      const addr = await resolveCommitmentAddressee(supabase, user.id, c as never);
+      const stamped = pooledAddressee?.email && !isSelf(pooledAddressee.email) ? pooledAddressee : null;
+      const toList = stamped ? [stamped] : addr.recipients;
+      to = toList.map((a) => a.email).filter((e): e is string => !!e && !isSelf(e)).slice(0, 20);
+      recipientName = addresseeLabel(stamped ?? addr.addressee);
+      suggestions = addr.suggestions.map((a) => ({ name: a.name, email: a.email }));
       let sourceSubject: string | null = null;
       let sourceBody: string | null = null;
-      if ((!email || !recipientName) && c.source === 'email' && c.source_id) {
+      if (c.source === 'email' && c.source_id) {
         const { data: e } = await supabase
           .from('emails')
-          .select('subject, body, from_name, from_address')
+          .select('subject, body')
           .eq('id', c.source_id).eq('user_id', user.id).maybeSingle();
         if (e) {
           sourceSubject = (e.subject as string) || null;
           sourceBody = typeof e.body === 'string' ? (e.body as string).replace(/\s+/g, ' ').trim().slice(0, 1500) : null;
-          if (!email && !isSelf(e.from_address as string)) email = extractEmail(e.from_address as string);
-          if (!recipientName) recipientName = (e.from_name as string) || extractName(e.from_address as string);
         }
       }
-      if (email && !isSelf(email)) to = [email];
       voiceRecipient = to[0] ?? null;
 
       subject = sourceSubject ? `Re: ${sourceSubject}` : `Following up`;
@@ -246,7 +256,10 @@ export async function POST(request: NextRequest) {
       cc: [],
       subject,
       bodyHTML: body ? paraHTML(body) : '',
+      // W7.3: the plain words too — the ONE email card authors plain text / its own editor HTML.
+      bodyText: body || '',
       recipientName: recipientName ?? null,
+      ...(suggestions.length ? { suggestions } : {}),
       ...(pooledBody ? { prepared: true, preparedBy: pooledBy } : {}),
     });
   } catch (error) {

@@ -35,6 +35,27 @@ export function mergeQueue<T extends Queued>(current: readonly T[], incoming: re
 }
 
 /**
+ * W8.3 · THE SETTLE — once the account is COMPLETE, the stack agrees with it (ONE COUNT).
+ *
+ * The rows at and behind the cursor keep their places exactly (the decided record, and the card
+ * under the reader's hand — the merge's first law, untouched). Rows AHEAD of the cursor that the
+ * account does not hold leave the stack: they were warm rows the ledger has since filed elsewhere,
+ * and a card the header never counted is a second count. What the account holds and the stack does
+ * not is appended, in the account's order. Returns `current` BY IDENTITY when nothing changed.
+ */
+export function settleQueue<T extends Queued>(current: readonly T[], account: readonly T[], cursor: number): T[] {
+  if (current.length === 0) return [...account];
+  const held = new Set(account.map((r) => r.id));
+  const keep = Math.max(0, cursor + 1);
+  const head = current.slice(0, keep);
+  const ahead = current.slice(keep).filter((r) => held.has(r.id));
+  const seen = new Set([...head, ...ahead].map((r) => r.id));
+  const added = account.filter((r) => !seen.has(r.id));
+  if (ahead.length === current.length - head.length && added.length === 0) return current as T[];
+  return [...head, ...ahead, ...added];
+}
+
+/**
  * THE HONEST COUNTER. A stack that is still growing may not state a total: "23 left" over a queue
  * the account has not finished counting is a number we cannot back, and the first extension makes
  * it a visible lie. While partial the deck says what it HAS and admits the rest is still coming.

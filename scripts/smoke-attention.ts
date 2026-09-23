@@ -871,14 +871,17 @@ function qualityGates() {
       },
     };
     const intro = heldIntro(l, 0);
+    // ⟲ RE-POINTED (W8.3 — THE LIST SAYS ONLY WHAT WAS JUDGED): the waiting band is judged work
+    // only, so the intro claims a JUDGMENT ("judged things"), never "real … all alive", and its date
+    // fact is "due today or past due", never "a deadline that has landed" (smoke-waiting-truth A13).
     ok('the intro states the gradient in the served numbers',
-      /12 real things wait behind today's 5/.test(intro) && /none urgent, all alive/.test(intro)
+      /12 judged things wait behind today's 5/.test(intro) && /none due yet\./.test(intro) && !/all alive/.test(intro)
       && /Everything else is handled: 5 filed quietly, 3 more being watched/.test(intro)
       && /Nothing is deleted, and anything comes back\./.test(intro), intro);
-    ok('   …"none urgent" is NEVER spoken over a landed deadline',
-      /2 of them have a deadline that has landed/.test(heldIntro({ ...l, bands: { ...l.bands, waiting: { ...l.bands.waiting, urgent: 2 } } }, 0)));
+    ok('   …"none due yet" is NEVER spoken over a due or past-due row',
+      /2 of them are due today or past due/.test(heldIntro({ ...l, bands: { ...l.bands, waiting: { ...l.bands.waiting, urgent: 2 } } }, 0)));
     ok('   …the deck\'s own held rows count into the waiting number',
-      /14 real things wait/.test(heldIntro(l, 2)));
+      /14 judged things wait/.test(heldIntro(l, 2)));
     ok('   …and an empty account says so rather than composing a hollow claim',
       heldIntro({ total: 0, classes: [], servedCount: 0, bands: { waiting: { count: 0, urgent: 0, rows: [], hasMore: false }, watched: { count: 0, rows: [], hasMore: false }, handled: { count: 0, classes: [] } } } as any, 0)
       === 'Nothing is being held back right now.');
@@ -1525,8 +1528,13 @@ function walkGates() {
       /loadLS<Brief>\('aug-home-brief-v1', \{ maxAgeMs: 15 \* 60_000 \}\)/.test(home));
     ok('   …capped: this is the opening of a stack, not a second account of one',
       /const WARM_DECK_MAX = 12;/.test(home) && /\.slice\(0, WARM_DECK_MAX\)/.test(home));
-    ok('   …and the ledger EXTENDS that stack in place (append-only, nothing re-ordered)',
-      /const waitingRows = deckMode \? mergeQueue\(queueRef\.current, incomingRows\) : listRows;/.test(held));
+    // ⟲ RE-POINTED (W8.3 — ONE COUNT): the stack's state moved INTO the deck (the only party that
+    // knows the cursor). It still EXTENDS append-only while the account is being read, and once the
+    // account is complete it SETTLES — rows ahead of the cursor the account no longer holds leave, so
+    // the deck never counts a card the header does not (smoke-waiting-truth E5–E8).
+    ok('   …and the stack EXTENDS in place while the account is read (append-only), settling once complete',
+      /const waitingRows = deckMode \? \(deckComplete \? listRows : incomingRows\) : listRows;/.test(held)
+      && /complete \? settleQueue\(stackRef\.current, rows, cursor\) : mergeQueue\(stackRef\.current, rows\)/.test(deck));
     // (W5b: the LIST reads `listRows` — the ledger alone once landed; the DECK still extends its stack.)
     ok('the deck\'s day is SERVED either way — the ledger\'s, else the brief\'s',
       /const deckDay = ledger\?\.today \?\? servedDay \?\? null;/.test(held)
@@ -1567,7 +1575,9 @@ function walkGates() {
       // gained the judge's reason (`whyLine = [row.why, ctx?.reason]`). Same facts, same order —
       // the kind still leads, the why still speaks; one list instead of three hand-placed spans.
       && /\[sourceWord, project, row\.dueDate \? whenWords\(row\.dueDate\) : null\]\.filter\(Boolean\)/.test(deck)
-      && /const whyLine = \[row\.why, ctx\?\.reason\]\.filter\(Boolean\)/.test(deck) && /\{whyLine && <p/.test(deck)
+      // ⟲ RE-POINTED (W8.3 — NO INTERNAL TEXT reaches the triage card): the why line is the ledger's
+      // served clause alone; the judge's reason no longer joins it.
+      && /const whyLine = row\.why;/.test(deck) && /\{whyLine && <p/.test(deck)
       && /threaded && tail && tail\.length > 0 \?/.test(deck)
       && /\) : row\.excerpt \? \(/.test(deck));
     ok('   …the kind comes from ONE table, and an unmapped source says nothing',

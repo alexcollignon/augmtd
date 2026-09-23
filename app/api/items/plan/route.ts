@@ -5,6 +5,7 @@ import { PLAN_VERSION } from '@/lib/home/capability-map';
 import { buildItemContext } from '@/lib/home/item-context';
 import { getUnderstanding, type ItemRelevance } from '@/lib/inbox/item-understanding';
 import { computeThreadReplyState } from '@/lib/inbox/thread-resolution';
+import { createSingleFlight } from '@/lib/room/single-flight';
 
 export const maxDuration = 30;
 
@@ -97,6 +98,14 @@ function withAttachmentRequest(task: ItemPlanTask): ItemPlanTask {
   return { ...task, status: 'awaiting_input', request: { prompt } };
 }
 
+// W8.4 · THE PLAN'S ONE FLIGHT (dev logs, Sep 23: 3–6 POSTs around one open). A cached-plan answer
+// is reused for 20s (the thread's freshness still moves it on the next window); an UNPERSISTED
+// fallback ("Handle this" — the generation failed) for 10 min, so a failing planner is not re-bought
+// on every open. Any PATCH to the key forgets its memo (the reader's own edit is never masked).
+const PLAN_MEMO_MS = 20_000;
+const PLAN_FALLBACK_MEMO_MS = 10 * 60_000;
+const planFlight = createSingleFlight<{ tasks: ItemPlanTask[] }>();
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -108,62 +117,70 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'kind and entityId are required' }, { status: 400 });
     }
 
-    // Get-or-generate: an existing plan wins (persists the [You] checklist + edits) — BUT only if it
-    // was generated under the CURRENT PLAN_VERSION. A stale-version row (map/classifier changed since)
-    // is treated as absent → regenerated + re-stamped below. `version` may be absent if the migration
-    // hasn't been applied yet; `?? 0` then reads as stale-safe against a non-zero PLAN_VERSION but
-    // matches when PLAN_VERSION is 0 (no forced churn pre-migration).
-    const { data: existing } = await supabase
-      .from('item_plans')
-      .select('tasks, version, updated_at')
-      .eq('user_id', user.id).eq('kind', kind).eq('entity_id', entityId)
-      .maybeSingle();
-    const existingVersion = existing ? ((existing as { version?: number }).version ?? 0) : null;
-    const isStaleVersion = existing != null && existingVersion !== PLAN_VERSION;
+    // W8.4 · ONE FLIGHT PER (user, kind, item) — lib/room/single-flight.ts. Concurrent POSTs for the
+    // same plan share one computation; an answer is reused for PLAN_MEMO_MS (a PATCH forgets it).
+    const flightKey = `${user.id}|${kind}|${entityId}`;
+    const out = await planFlight.run(flightKey, async () => {
+      // Get-or-generate: an existing plan wins (persists the [You] checklist + edits) — BUT only if it
+      // was generated under the CURRENT PLAN_VERSION. A stale-version row (map/classifier changed since)
+      // is treated as absent → regenerated + re-stamped below. `version` may be absent if the migration
+      // hasn't been applied yet; `?? 0` then reads as stale-safe against a non-zero PLAN_VERSION but
+      // matches when PLAN_VERSION is 0 (no forced churn pre-migration).
+      const { data: existing, error: existingErr } = await supabase
+        .from('item_plans')
+        .select('tasks, version, updated_at')
+        .eq('user_id', user.id).eq('kind', kind).eq('entity_id', entityId)
+        .maybeSingle();
+      if (existingErr) console.warn('[items/plan] stored-plan read failed:', existingErr.message);
+      const existingVersion = existing ? ((existing as { version?: number }).version ?? 0) : null;
+      const isStaleVersion = existing != null && existingVersion !== PLAN_VERSION;
 
-    // Reply context (relevance + whether the user has already answered the thread). Computed up front so
-    // it applies to BOTH a cached plan and a freshly generated one — a stale "draft the reply" step is
-    // stripped the moment the user has replied, without waiting for a regen.
-    const { relevance, alreadyReplied, activityAt } = await getItemReplyContext(supabase, user.id, kind, entityId);
+      // Reply context (relevance + whether the user has already answered the thread). Computed up front so
+      // it applies to BOTH a cached plan and a freshly generated one — a stale "draft the reply" step is
+      // stripped the moment the user has replied, without waiting for a regen.
+      const { relevance, alreadyReplied, activityAt } = await getItemReplyContext(supabase, user.id, kind, entityId);
 
-    // Stale if the map/classifier changed (version) OR the thread has newer activity than the cached plan
-    // (a new message with a different ask — the "scheduling plan on a now-pricing thread" bug). Freshness
-    // applies only to thread-backed kinds (activityAt is null otherwise → version-only, unchanged).
-    const planUpdatedAt = existing ? ((existing as { updated_at?: string }).updated_at ?? null) : null;
-    const isStaleActivity = !!(activityAt && planUpdatedAt && activityAt > planUpdatedAt);
-    const isStale = isStaleVersion || isStaleActivity;
+      // Stale if the map/classifier changed (version) OR the thread has newer activity than the cached plan
+      // (a new message with a different ask — the "scheduling plan on a now-pricing thread" bug). Freshness
+      // applies only to thread-backed kinds (activityAt is null otherwise → version-only, unchanged).
+      const planUpdatedAt = existing ? ((existing as { updated_at?: string }).updated_at ?? null) : null;
+      const isStaleActivity = !!(activityAt && planUpdatedAt && activityAt > planUpdatedAt);
+      const isStale = isStaleVersion || isStaleActivity;
 
-    if (existing && Array.isArray(existing.tasks) && existing.tasks.length && !isStale) {
-      const cached = alreadyReplied ? stripReplyStepsIfReplied(existing.tasks as ItemPlanTask[]) : (existing.tasks as ItemPlanTask[]);
-      return NextResponse.json({ tasks: cached });
-    }
-
-    const context = (await buildContext(supabase, user.id, kind, entityId)) || '';
-    const plan = await generateItemPlan(supabase, user.id, { kind, entityId, context, relevance, alreadyReplied });
-    // task-workflows S3: mark any "provide a document" [You] step as an attachment request up front.
-    plan.tasks = plan.tasks.map(withAttachmentRequest);
-
-    // Persist (best-effort — a failed insert still returns the freshly generated plan). Supabase
-    // returns an { error } object rather than throwing, so check it explicitly — a silently-failed
-    // upsert is exactly what made the plan "regenerate every visit" before the migration existed.
-    // Skip persisting the honest single-[You] fallback: it's not worth caching, and re-opening later
-    // (once generation succeeds) should get a real plan rather than a stuck "Handle this".
-    const isFallback = plan.tasks.length === 1 && plan.tasks[0].actor === 'you' && plan.tasks[0].text === 'Handle this';
-    if (!isFallback) {
-      try {
-        const { error: upsertErr } = await supabase
-          .from('item_plans')
-          .upsert(
-            { user_id: user.id, kind, entity_id: entityId, tasks: plan.tasks, version: PLAN_VERSION, updated_at: new Date().toISOString() },
-            { onConflict: 'user_id,kind,entity_id' },
-          );
-        if (upsertErr) console.error('[items/plan] persist failed:', upsertErr.message);
-      } catch (e) {
-        console.error('[items/plan] persist threw:', e);
+      if (existing && Array.isArray(existing.tasks) && existing.tasks.length && !isStale) {
+        const cached = alreadyReplied ? stripReplyStepsIfReplied(existing.tasks as ItemPlanTask[]) : (existing.tasks as ItemPlanTask[]);
+        return { value: { tasks: cached }, memoMs: PLAN_MEMO_MS };
       }
-    }
 
-    return NextResponse.json({ tasks: plan.tasks });
+      const context = (await buildContext(supabase, user.id, kind, entityId)) || '';
+      const plan = await generateItemPlan(supabase, user.id, { kind, entityId, context, relevance, alreadyReplied });
+      // task-workflows S3: mark any "provide a document" [You] step as an attachment request up front.
+      plan.tasks = plan.tasks.map(withAttachmentRequest);
+
+      // Persist (best-effort — a failed insert still returns the freshly generated plan). Supabase
+      // returns an { error } object rather than throwing, so check it explicitly — a silently-failed
+      // upsert is exactly what made the plan "regenerate every visit" before the migration existed.
+      // Skip persisting the honest single-[You] fallback: it's not worth caching, and re-opening later
+      // (once generation succeeds) should get a real plan rather than a stuck "Handle this".
+      const isFallback = plan.tasks.length === 1 && plan.tasks[0].actor === 'you' && plan.tasks[0].text === 'Handle this';
+      if (!isFallback) {
+        try {
+          const { error: upsertErr } = await supabase
+            .from('item_plans')
+            .upsert(
+              { user_id: user.id, kind, entity_id: entityId, tasks: plan.tasks, version: PLAN_VERSION, updated_at: new Date().toISOString() },
+              { onConflict: 'user_id,kind,entity_id' },
+            );
+          if (upsertErr) console.error('[items/plan] persist failed:', upsertErr.message);
+        } catch (e) {
+          console.error('[items/plan] persist threw:', e);
+        }
+      }
+
+      // An unpersisted fallback is held longer: re-opening must not re-buy a failed generation per call.
+      return { value: { tasks: plan.tasks }, memoMs: isFallback ? PLAN_FALLBACK_MEMO_MS : PLAN_MEMO_MS };
+    });
+    return NextResponse.json(out);
   } catch (error) {
     console.error('[items/plan] POST error:', error);
     return NextResponse.json({ error: 'Could not build the plan.' }, { status: 500 });
@@ -199,6 +216,8 @@ export async function PATCH(request: NextRequest) {
     if (!entityId || !VALID_KINDS.includes(kind)) {
       return NextResponse.json({ error: 'kind and entityId are required' }, { status: 400 });
     }
+    // W8.4: the reader's own edit changes this plan's truth — the POST memo never masks it.
+    planFlight.forget(`${user.id}|${kind}|${entityId}`);
     // Toggle actions (done/dismissed) require a taskId; add/edit/reorder have their own validation below.
     if (!action && !taskId) {
       return NextResponse.json({ error: 'taskId is required' }, { status: 400 });

@@ -2,6 +2,11 @@ import { Client } from '@microsoft/microsoft-graph-client';
 import { refreshAccessToken } from './oauth';
 import { sanitizeAddressList, sanitizeFilename, sanitizeHeaderValue, sanitizeMimeType } from '@/lib/utils/email-headers';
 
+/** THE ONE message $select every Outlook read uses (cron pull · conversation backfill · Sent pass · the
+ *  push webhook). `internetMessageHeaders` stitches threads; `sender` (W7.6) is the transmitting mailbox
+ *  the authorship law reads for on-behalf-of sends. Add a field HERE, never at one call site. */
+export const OUTLOOK_MESSAGE_SELECT = 'id,conversationId,subject,bodyPreview,body,from,sender,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments,isRead,internetMessageHeaders';
+
 interface OutlookMessage {
   id: string;
   conversationId: string;
@@ -17,6 +22,8 @@ interface OutlookMessage {
       address: string;
     };
   };
+  /** W7.6 — the transmitting mailbox (differs from `from` on on-behalf-of / delegate sends). */
+  sender?: { emailAddress?: { name?: string; address?: string } } | null;
   toRecipients: Array<{
     emailAddress: {
       name: string;
@@ -126,7 +133,7 @@ export async function fetchUnreadEmails(
     .api('/me/mailFolders/inbox/messages')
     .filter(`receivedDateTime ge ${dateString}`)
     .top(PAGE)
-    .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments,isRead,internetMessageHeaders')
+    .select(OUTLOOK_MESSAGE_SELECT)
     .orderby('receivedDateTime desc')
     .get()) as { value: OutlookMessage[]; ['@odata.nextLink']?: string };
 
@@ -199,6 +206,14 @@ export function parseOutlookMessage(message: OutlookMessage) {
     metadata: {
       provider: 'outlook',
       outlook_id: message.id,
+      // W7.6 THE AUTHORSHIP LAW — the transmitting mailbox, stored only when it differs from `from`.
+      ...(message.sender?.emailAddress?.address
+        && message.sender.emailAddress.address.toLowerCase() !== (message.from?.emailAddress?.address ?? '').toLowerCase()
+        ? { sender_address: message.sender.emailAddress.address } : {}),
+      // W7.4 — Graph types a meeting request/cancel/response as an eventMessage; the invite is read
+      // from its expanded event (lib/calendar/invite-source.ts), never from the body text.
+      ...(String((message as { '@odata.type'?: string })['@odata.type'] ?? '').toLowerCase().includes('eventmessage')
+        ? { odata_type: String((message as { '@odata.type'?: string })['@odata.type']) } : {}),
       internet_message_id: message.internetMessageId,
       conversation_id: message.conversationId,
     },
@@ -223,7 +238,7 @@ export async function fetchOutlookConversation(
   let response = await client
     .api('/me/messages')
     .filter(`conversationId eq '${conversationId}'`)
-    .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments,isRead,internetMessageHeaders')
+    .select(OUTLOOK_MESSAGE_SELECT)
     .top(50)
     .get();
 
@@ -254,7 +269,7 @@ export async function fetchSentEmails(
     .api('/me/mailFolders/sentItems/messages')
     .filter(`receivedDateTime ge ${dateString}`)
     .top(maxResults)
-    .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments,isRead,internetMessageHeaders')
+    .select(OUTLOOK_MESSAGE_SELECT)
     .orderby('receivedDateTime desc')
     .get();
 

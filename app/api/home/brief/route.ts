@@ -101,6 +101,10 @@ import { isAutomatedSenderStrong as isAutomatedSender, isActionWorthyAutomated }
 // the choke; `scripts/smoke-deck-truth.ts` asserts the world against the very same modules.
 import { rePromotesToDeck, noticeIsDemoted, readJudgedNone, DECK_POOL_LIMIT, ACTION_NOTICE_LIMIT, TRACKED_PROJECTS_LIMIT, FYI_POOL_LIMIT, BUNDLE_ENTITIES_LIMIT, BUNDLE_LINK_ATOMS_LIMIT, type DeckFloors } from '@/lib/home/deck-floors';
 import { guardDeckLabels } from '@/lib/home/serve-labels';
+// W8.3 · THE FYI POOL'S DECLARED SCOPE — a window read whole, under a reported row bound (the named
+// FYI_POOL_LIMIT page of the old read ×10). Never an eviction by recency inside the window.
+const FYI_WINDOW_DAYS = 7;
+const FYI_POOL_MAX = FYI_POOL_LIMIT * 10;
 import { getCampaignSignature, isCampaignEcho } from '@/lib/inbox/campaign-echo';
 // ── THE SERVED-WORDS LAW's serve guard (proactive-reach LAW 3, docs/proactive-reach-plan.md) ─────
 // The deck's whisper label is `understanding.ask` → `work_title` → subject, and all three are FROZEN
@@ -341,15 +345,21 @@ export async function GET() {
     supabase.from('inbox_items').select('id', { count: 'exact', head: true })
       .eq('user_id', user.id).gte('created_at', since24)
       .or('work_state.eq.noise,rule_type.eq.marketing,rule_type.eq.notifications'),         // filtered as noise
-    // FYI tier (for the FYI-by-topic brief): awareness emails, grouped by sender downstream. Wide
-    // window so high-volume people (not just recent newsletters) surface in the people section.
+    // FYI tier (for the FYI-by-topic brief): awareness emails, grouped by sender downstream.
     // (id/created_at carried so a PERSON-kind awareness email can be promoted to "keep an eye on".)
-    withoutMirrors(supabase.from('inbox_items').select('id, work_title, source_data, rule_type, created_at, last_activity_at'))
+    // W8.3 · NO SILENT EVICTION. The read was `.limit(FYI_POOL_LIMIT)` over the whole noted pool — on
+    // a heavy account (3,341 noted rows) it saturated every load and the digest's tail counts spoke of
+    // the newest 200 as if they were the pool. The scope is now a DECLARED WINDOW (the digest is "what
+    // arrived lately"), READ WHOLE through the paged reader, under a reported row bound: measured
+    // Sep 23, the heaviest account holds 369 noted rows in the window.
+    fetchAllRows<Record<string, unknown>>((from, to) => withoutMirrors(supabase.from('inbox_items').select('id, work_title, source_data, rule_type, created_at, last_activity_at'))
       .eq('user_id', user.id).eq('status', 'pending').eq('work_state', 'noted')
-      .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(FYI_POOL_LIMIT),
+      .gte('last_activity_at', new Date(now.getTime() - FYI_WINDOW_DAYS * DAY).toISOString())
+      .order('last_activity_at', { ascending: false, nullsFirst: false }).order('id', { ascending: true })
+      .range(from, to), { maxRows: FYI_POOL_MAX }).then((data) => ({ data, error: null })),
   ]);
   mark('queries');
-  if ((fyiRes.data ?? []).length >= FYI_POOL_LIMIT) console.warn(`[home/brief] FYI pool SATURATED at ${FYI_POOL_LIMIT} — the oldest awareness mail is being evicted by recency; raise the bound`);
+  if ((fyiRes.data ?? []).length >= FYI_POOL_MAX) console.warn(`[home/brief] FYI pool hit its bound — ${FYI_POOL_MAX} noted rows inside the ${FYI_WINDOW_DAYS}-day window; the digest counts stop there (raise FYI_POOL_MAX)`);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const items = (itemsRes.data ?? []) as any[];

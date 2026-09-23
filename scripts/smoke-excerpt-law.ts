@@ -98,6 +98,10 @@ const CLIP_WITHOUT_RULE: Record<string, string> = {
     + 'STATION card\'s served context, which a person reads and scrolls (components/home/item-detail'
     + '.tsx). The route\'s own header states the law; the marker is what tells the reader the pane '
     + 'holds only the first 480 chars of the run\'s bytes.',
+  'lib/commitments/source.ts':
+    'NO PROMPT IS ASSEMBLED HERE: `meetingSourceOf` clips a meeting\'s summary into the SOURCE '
+    + 'OBJECT card a person reads at the head of a meeting-born commitment\'s room (W7.3, the kit\'s '
+    + '`source` kind, `excerpt` lane). smoke-one-stage gates the marker-bearing clip on this call.',
 };
 
 function walk(dir: string, out: string[] = []): string[] {

@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// EVIDENCE SETTLES — THE NOMINATOR (stabilization W3.1, invariant 7; docs/stabilization-plan.md).
+// EVIDENCE SETTLES — THE NOMINATOR (stabilization W3.1, invariant 7; W8.1 EVIDENCE FROM EVERYWHERE).
 //
 // R3, verbatim: "settlement listens to same-thread replies only." Live on Sep 22: 342 of 544 open
 // you_owe commitments and 267 of 684 open actionable inbox items had LATER evidence the user had
@@ -8,49 +8,61 @@
 //
 // THE LAW: a later deed by the user on ANY source (mail on any thread, calendar, meeting) is
 // NOMINATED against open work within one sync cycle. This module is the NOMINATION half and only
-// that — ZERO AI, deterministic address matching, bounded reads. The DISPOSITION stays with the
+// that — ZERO AI, deterministic identity matching, bounded reads. The DISPOSITION stays with the
 // reasoned fulfillment judge (lib/commitments/fulfillment.ts): only `delivered` closes; `unclear`
 // and failure change nothing (the fulfillment-law asymmetry). Nominate → judge → settle.
+//
+// W8.1 — EVIDENCE FROM EVERYWHERE. The sources are ROWS (lib/evidence/sources.ts: mail · calendar ·
+// transcripts · our own commit-door deeds), each emitting ONE shape (lib/evidence/types.ts); the ONE
+// matcher (lib/evidence/match.ts) keys on PERSON IDENTITY (every address of the resolved person + its
+// person id) and on OBJECT links (same thread / calendar event / file / entity membership); the ACTOR
+// LADDER (lib/evidence/actor.ts) says who did a deed — the user, a TEAMMATE (their delivery settles
+// the team's debt, judged with the actor stated), the counterparty, or someone unknown. This module
+// keeps its public names and behaviour for every caller (the judge, the room grounding, the settle,
+// the sweep); it is now the door onto the registry, not a second implementation of it.
 //
 // Two entry points, one pure core (`matchEvidence`):
 //   • FORWARD  — for an open item/commitment: what evidence AFTER it exists with its counterparty?
 //   • REVERSE  — for a NEW evidence event (a sent email, a synced calendar event, a processed
-//                transcript): which open items could it settle? (the sync-time heartbeat)
-// Address matching is the ONLY key: the counterparty resolves to an email address through facts
-// the house already holds (the "Name <email>" form, the person registry's aliases, the thread's
-// inbound sender, the meeting's attendee list) — never a keyword, never a name-similarity guess
-// against free text. No address → no nomination (showing costs less than hiding).
+//                transcript, a commit-door deed): which open items could it settle? (the heartbeat)
+// Identity, never a keyword, never a name-similarity guess against free text. No key → no
+// nomination (showing costs less than hiding).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { normalizeEmail, isEmail } from '@/lib/core/email';
-import { parseWho, findPersonEntity, type PersonEntity } from '@/lib/entities/people';
-import { sameAttendee } from '@/lib/projects/identity';
+import type { PersonEntity } from '@/lib/entities/people';
+import {
+  addressesOf, sameAddress, chunked, attendeeAddressByName, registryAddress, registryPerson, personAddresses, personByAddress,
+  resolveCommitmentIdentities, loadWorkEntities, mergeKeys, emptyKeys, type WorkKeys, type CommitmentIdentityRow,
+} from '@/lib/evidence/identity';
+import { matchEvents, touches, EVIDENCE_PER_TYPE, SETTLE_MATCH, type Evidence, type MatchOptions } from '@/lib/evidence/match';
+import {
+  loadEvidenceEvents, mergePoolEmails, evidenceSource, EVIDENCE_SOURCES, POOL_MAX_PER_SOURCE, SCOPE_CHUNK, POOL_SCOPED_MAX,
+  type PoolEmail, type EvidenceLoadStats,
+} from '@/lib/evidence/sources';
+import { loadActorContext } from '@/lib/evidence/actor';
+import type { ActorContext, EvidenceEvent } from '@/lib/evidence/types';
+import type { WorkspaceFeatures } from '@/lib/workspace/types';
 
-export type EvidenceType = 'email' | 'calendar' | 'transcript';
+export { addressesOf, sameAddress, chunked, attendeeAddressByName, registryAddress, mergePoolEmails, EVIDENCE_PER_TYPE, POOL_MAX_PER_SOURCE, SCOPE_CHUNK, POOL_SCOPED_MAX, SETTLE_MATCH };
+export type { Evidence, PoolEmail, WorkKeys, MatchOptions };
 
-/** One nominated piece of evidence — what the judge reads. `at` is the evidence's OWN time (the
- *  settle stamps resolved_at from it, never from the sweep's clock — the Day-cleared ring lesson). */
-export type Evidence = {
-  type: EvidenceType;
-  id: string;
-  at: string;
-  title: string;
-  /** email only: the message's own words are hydrated by the settle module (bodies stay out of the pool). */
-  body?: string;
-  attachmentCount?: number | null;
-  /** calendar/transcript: has the slot already taken place? */
-  status?: 'held' | 'booked';
-  threadId?: string | null;
-  /** email: who wrote it — the user (a you_owe deed) or the counterparty (an awaiting deed). */
-  by?: 'user' | 'counterparty';
+/** The judge-facing evidence types. The legacy three stay named; any registered row's type is valid. */
+export type EvidenceType = 'email' | 'calendar' | 'transcript' | (string & {});
+
+/** Everything the matcher reads for ONE user — loaded once per user per sweep, bounded. `events` is
+ *  every enabled source's deeds in the one shape; `stats` says how the lanes were filled and whether
+ *  any bound was reached — NO SILENT CAPS. */
+export type EvidencePool = {
+  events: EvidenceEvent[];
+  stats?: EvidenceLoadStats;
+  /** the actor context the pool was built with (the settle reads it for attribution). */
+  actors?: ActorContext;
 };
 
-export type PoolEmail = { id: string; at: string; subject: string; from: string | null; to: string[]; threadId: string | null; attachmentCount: number | null; fromUser: boolean };
-export type PoolEvent = { id: string; at: string; end: string | null; title: string; attendees: string[]; cancelled: boolean };
-export type PoolTranscript = { id: string; at: string; title: string; attendees: string[] };
-
-/** Everything the matcher reads for ONE user — loaded once per user per sweep, bounded. */
-export type EvidencePool = { emails: PoolEmail[]; events: PoolEvent[]; transcripts: PoolTranscript[] };
+/** THE PEOPLE IN PLAY (W7.1): the counterparty addresses + threads of the open work a pool is loaded
+ *  FOR (W8.1: every address of the resolved person; + the work's entities for the entity key). */
+export type EvidenceScope = { addresses: string[]; threadIds: string[]; entityIds?: string[] };
 
 export type OpenWork = {
   kind: 'commitment' | 'inbox';
@@ -62,198 +74,110 @@ export type OpenWork = {
   /** who must act for the work to settle — the user (you_owe / a reply owed) or the counterparty (awaiting). */
   fulfiller: 'user' | 'counterparty';
   description: string;
+  /** W8.1 — the full identity + object keys (person aliases, person ids, the event it arose in · entities). */
+  keys?: Partial<WorkKeys>;
 };
 
-export const EVIDENCE_PER_TYPE = 3;          // top N per type, newest first — the judge is token-tight
-export const POOL_MAX_PER_SOURCE = 400;      // bounded reads; the sweep is budgeted anyway
 export const REVERSE_MAX_WORK = 300;         // open rows read per user on the event path
 export const REVERSE_MAX_NOMINATIONS = 8;    // judgments one event may trigger (bounded spend)
 
 // ── PURE CORES (unit-tested; zero IO) ───────────────────────────────────────────────────────────
 
-/** Every email address a raw attendee/recipient list carries, normalized. Accepts the calendar
- *  shape ({email,name}), the transcript shape (strings or objects), and "Name <email>" forms. */
-export function addressesOf(raw: unknown): string[] {
-  const out = new Set<string>();
-  for (const a of Array.isArray(raw) ? raw : []) {
-    const s = typeof a === 'string' ? a : String((a as { email?: unknown; address?: unknown })?.email ?? (a as { address?: unknown })?.address ?? '');
-    const { email } = parseWho(s);
-    const e = email ? normalizeEmail(email) : (isEmail(normalizeEmail(s)) ? normalizeEmail(s) : null);
-    if (e) out.add(e);
-  }
-  return [...out];
+/** Every key of a work item — the legacy fields folded in with the W8.1 keys. Pure. */
+export function keysOfWork(w: Pick<OpenWork, 'kind' | 'id' | 'counterpartyEmail' | 'threadId' | 'keys'>): WorkKeys {
+  return mergeKeys(
+    { addresses: w.counterpartyEmail ? [w.counterpartyEmail] : [], threadIds: w.threadId ? [String(w.threadId)] : [] },
+    { externalRefs: w.id ? [`${w.kind === 'inbox' ? 'inbox' : 'commitment'}:${w.id}`] : [] },
+    w.keys ?? null,
+  );
 }
 
-/** The ONE address-equality test — deterministic, case-blind, no fuzz. */
-export const sameAddress = (a: string | null | undefined, b: string | null | undefined): boolean =>
-  !!a && !!b && normalizeEmail(a) === normalizeEmail(b);
+/** THE SCOPE — pure: the distinct normalized counterparty addresses + thread ids (+ entities) of a work set. */
+export function scopeOf(work: Array<Pick<OpenWork, 'counterpartyEmail' | 'threadId'> & { keys?: Partial<WorkKeys> }>): EvidenceScope {
+  const addresses = new Set<string>();
+  const threadIds = new Set<string>();
+  const entityIds = new Set<string>();
+  for (const w of work) {
+    for (const a of [w.counterpartyEmail, ...(w.keys?.addresses ?? [])]) { if (a) { const e = normalizeEmail(a); if (isEmail(e)) addresses.add(e); } }
+    for (const t of [w.threadId, ...(w.keys?.threadIds ?? [])]) if (t) threadIds.add(String(t));
+    for (const x of w.keys?.entityIds ?? []) if (x) entityIds.add(String(x));
+  }
+  return { addresses: [...addresses].sort(), threadIds: [...threadIds].sort(), ...(entityIds.size ? { entityIds: [...entityIds].sort() } : {}) };
+}
 
 /**
- * THE MATCH — pure. Evidence strictly after `work.afterISO`, with `work.counterpartyEmail` as a
- * participant (or, for email, on the work's own thread — the same-thread reply the old resolvers
- * already trusted); newest first; top EVIDENCE_PER_TYPE per type. `nowISO` decides held vs booked.
+ * THE MATCH — pure. Evidence strictly after `work.afterISO`, connected to the work by a key (the
+ * counterparty as a participant — by address or person id — or the work's own thread / event /
+ * entity), done by whoever owes it; newest first; top EVIDENCE_PER_TYPE per type. `nowISO` decides
+ * held vs booked. Default options = the view every existing reader rendered (email · calendar ·
+ * transcript; no teammate deeds); the settle path passes SETTLE_MATCH (every source, teammates).
  */
-export function matchEvidence(pool: EvidencePool, work: OpenWork, nowISO: string): Evidence[] {
-  const cp = work.counterpartyEmail ? normalizeEmail(work.counterpartyEmail) : null;
-  const after = work.afterISO;
-  if (!after) return [];
-  const wantFromUser = work.fulfiller === 'user';
-
-  const emails: Evidence[] = pool.emails
-    .filter((m) => m.at > after && m.fromUser === wantFromUser)
-    .filter((m) => {
-      if (work.threadId && m.threadId && m.threadId === work.threadId) return true;
-      if (!cp) return false;
-      // the user's deed = a message TO the counterparty; the counterparty's deed = a message FROM them
-      return wantFromUser ? m.to.some((t) => sameAddress(t, cp)) : sameAddress(m.from, cp);
-    })
-    .map((m) => ({ type: 'email' as const, id: m.id, at: m.at, title: m.subject, threadId: m.threadId, attachmentCount: m.attachmentCount, by: m.fromUser ? 'user' as const : 'counterparty' as const }));
-
-  const events: Evidence[] = cp ? pool.events
-    .filter((e) => !e.cancelled && e.at > after && e.attendees.some((a) => sameAddress(a, cp)))
-    .map((e) => ({ type: 'calendar' as const, id: e.id, at: e.at, title: e.title, status: (e.end ?? e.at) < nowISO ? 'held' as const : 'booked' as const })) : [];
-
-  const transcripts: Evidence[] = cp ? pool.transcripts
-    .filter((t) => t.at > after && t.attendees.some((a) => sameAddress(a, cp)))
-    .map((t) => ({ type: 'transcript' as const, id: t.id, at: t.at, title: t.title, status: 'held' as const })) : [];
-
-  const top = (xs: Evidence[]) => xs.sort((a, b) => b.at.localeCompare(a.at)).slice(0, EVIDENCE_PER_TYPE);
-  return [...top(emails), ...top(events), ...top(transcripts)];
+export function matchEvidence(pool: Pick<EvidencePool, 'events'>, work: OpenWork, nowISO: string, opts: MatchOptions = {}): Evidence[] {
+  return matchEvents(pool.events ?? [], { afterISO: work.afterISO, fulfiller: work.fulfiller, keys: keysOfWork(work) }, nowISO, opts);
 }
 
 /** A stable identity for a set of evidence — the judge's cache sig: a NEW piece re-judges, the same
  *  set never re-spends. Order-independent. */
-export const evidenceSig = (ev: Evidence[]): string =>
+export const evidenceSig = (ev: Array<Pick<Evidence, 'type' | 'id'>>): string =>
   ev.map((e) => `${e.type[0]}${e.id}`).sort().join(',');
 
-/** Pick the counterparty's address out of an attendee list by name (alias-aware, conservative:
- *  exactly one match or nothing). Pure. */
-export function attendeeAddressByName(attendees: unknown, name: string | null | undefined): string | null {
-  if (!name) return null;
-  const hits = new Set<string>();
-  for (const a of Array.isArray(attendees) ? attendees : []) {
-    const email = typeof a === 'string' ? (parseWho(a).email ?? '') : String((a as { email?: unknown })?.email ?? '');
-    const display = typeof a === 'string' ? (parseWho(a).name ?? '') : String((a as { name?: unknown; displayName?: unknown })?.name ?? (a as { displayName?: unknown })?.displayName ?? '');
-    if (!email) continue;
-    if ((display && sameAttendee(display, name)) || sameAttendee(email, name)) hits.add(normalizeEmail(email));
-  }
-  return hits.size === 1 ? [...hits][0] : null;
-}
-
-/** The registry's answer for a raw counterparty string: the person's first alias that is an
- *  address (the person entity is an alias registry — one row per human). Pure over a loaded list. */
-export function registryAddress(list: PersonEntity[], raw: string | null | undefined): string | null {
-  const { email, name } = parseWho(raw);
-  if (email) return normalizeEmail(email);
-  const p = findPersonEntity(list, null, name);
-  if (!p) return null;
-  const alias = p.aliases.find((a) => isEmail(a));
-  return alias ? normalizeEmail(alias) : null;
+/**
+ * THE PRIOR MEETS NEW EVIDENCE (W7.1, pure): true when the item has LATER EVIDENCE and a prior
+ * verdict was not made against exactly that set (a verdict cached before the evidence existed — or
+ * before the judge stamped its set — reads as having seen none). The item judge then relaxes its
+ * "be consistent with your prior" anchor.
+ */
+export function evidenceNewToPrior(currentEvSig: string, priorEv: string | null | undefined): boolean {
+  return !!currentEvSig && (priorEv ?? '') !== currentEvSig;
 }
 
 // ── LOADERS (bounded SELECTs; no writes) ────────────────────────────────────────────────────────
 
-const meta = (m: unknown): number | null => {
-  const a = (m as { attachments?: unknown } | null)?.attachments;
-  return Array.isArray(a) ? a.length : null;
-};
-
-/** Load one user's evidence pool from `sinceISO` on. Bodies are NOT loaded here (the settle module
- *  hydrates the ≤3 chosen candidates); attendee lists are pre-resolved (a transcript without its
- *  own attendees borrows its calendar event's). */
-export async function loadEvidencePool(client: SupabaseClient, userId: string, sinceISO: string): Promise<EvidencePool> {
-  const [em, ev, tr] = await Promise.all([
-    client.from('emails').select('id, received_at, subject, from_address, to_addresses, cc_addresses, thread_id, metadata, is_from_user')
-      .eq('user_id', userId).gt('received_at', sinceISO)
-      .order('received_at', { ascending: false }).limit(POOL_MAX_PER_SOURCE),
-    // Bounded ABOVE too (Sep 22 review): newest-first with no ceiling let far-future recurring
-    // instances crowd the near meetings — the ones that actually settle work — out of the cap.
-    client.from('calendar_events').select('id, start_time, end_time, title, attendees, status')
-      .eq('user_id', userId).gt('start_time', sinceISO)
-      .lte('start_time', new Date(Date.now() + 21 * 86_400_000).toISOString())
-      .order('start_time', { ascending: false }).limit(POOL_MAX_PER_SOURCE),
-    client.from('meeting_transcripts').select('id, start_time, created_at, title, attendees, calendar_event_id')
-      .eq('user_id', userId).gt('start_time', sinceISO)
-      .order('start_time', { ascending: false }).limit(POOL_MAX_PER_SOURCE),
-  ]);
-  const emails: PoolEmail[] = ((em.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
-    id: String(r.id), at: String(r.received_at ?? ''), subject: String(r.subject ?? ''),
-    from: r.from_address ? normalizeEmail(String(r.from_address)) : null,
-    to: [...((r.to_addresses as string[]) ?? []), ...((r.cc_addresses as string[]) ?? [])].map((x) => normalizeEmail(String(x))),
-    threadId: (r.thread_id as string) ?? null, attachmentCount: meta(r.metadata), fromUser: !!r.is_from_user,
-  }));
-  const events: PoolEvent[] = ((ev.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
-    id: String(r.id), at: String(r.start_time ?? ''), end: (r.end_time as string) ?? null, title: String(r.title ?? ''),
-    attendees: addressesOf(r.attendees), cancelled: String(r.status ?? '') === 'cancelled',
-  }));
-  const byEventId = new Map(events.map((e) => [e.id, e.attendees]));
-  const trRows = (tr.data ?? []) as Array<Record<string, unknown>>;
-  // Transcripts whose calendar event sits outside the pool window still borrow its attendees.
-  const missing = trRows.map((r) => r.calendar_event_id as string | null).filter((x): x is string => !!x && !byEventId.has(x));
-  if (missing.length) {
-    const { data } = await client.from('calendar_events').select('id, attendees').eq('user_id', userId).in('id', [...new Set(missing)].slice(0, 200));
-    for (const r of (data ?? []) as Array<Record<string, unknown>>) byEventId.set(String(r.id), addressesOf(r.attendees));
-  }
-  const transcripts: PoolTranscript[] = trRows.map((r) => {
-    const own = addressesOf(r.attendees);
-    const borrowed = r.calendar_event_id ? (byEventId.get(String(r.calendar_event_id)) ?? []) : [];
-    return { id: String(r.id), at: String(r.start_time ?? r.created_at ?? ''), title: String(r.title ?? ''), attendees: [...new Set([...own, ...borrowed])] };
-  });
-  return { emails, events, transcripts };
+/** The workspace feature map, or null (no gating) when it cannot be read — an unreadable map never
+ *  switches a source OFF (the default map has meetings off; failing to it would hide real deeds). */
+async function featuresFor(client: SupabaseClient, userId: string): Promise<WorkspaceFeatures | null> {
+  try {
+    const { getMyWorkspace } = await import('@/lib/workspace/features');
+    const ws = await getMyWorkspace(userId, client);
+    return ws?.features ?? null;
+  } catch { return null; }
 }
 
-type CommitmentRow = { id: string; counterparty?: string | null; thread_id?: string | null; source?: string | null; source_id?: string | null };
+/** Load one user's evidence pool from `sinceISO` on — EVERY enabled registry row (feature-gated by the
+ *  workspace map), the actor ladder's context, person ids stamped from the registry. Bodies are NOT
+ *  loaded here (the settle hydrates the ≤N chosen candidates through each row's `hydrateBody`).
+ *  THE SCOPE (W7.1): given the open work's people + threads, the mail lane is SCOPED to them (paged,
+ *  bounded, reported) and the newest-first window rides beside it — a pool is a superset of the old
+ *  one, never a subset. Without a scope the window alone (the callers that read "anything recent"). */
+export async function loadEvidencePool(client: SupabaseClient, userId: string, sinceISO: string, scope?: EvidenceScope, opts: { registry?: PersonEntity[]; features?: WorkspaceFeatures | null; nowISO?: string } = {}): Promise<EvidencePool> {
+  const nowISO = opts.nowISO ?? new Date().toISOString();
+  const [registry, features] = await Promise.all([
+    opts.registry ? Promise.resolve(opts.registry) : import('@/lib/entities/people').then(({ getPersonEntities }) => getPersonEntities(client, userId)).catch(() => [] as PersonEntity[]),
+    opts.features !== undefined ? Promise.resolve(opts.features) : featuresFor(client, userId),
+  ]);
+  const self = registry.find((p) => p.state?.self === true) ?? null;
+  const actors = await loadActorContext(client, userId, { selfPersonId: self?.id ?? null })
+    .catch(() => ({ own: [], teammates: [], teamDomains: [] }) as ActorContext);
+  const { events, stats } = await loadEvidenceEvents(client, userId, {
+    sinceISO, nowISO, addresses: scope?.addresses ?? [], threadIds: scope?.threadIds ?? [], actors,
+  }, { features, registry, entityIds: scope?.entityIds });
+  return { events, stats, actors };
+}
+
+type CommitmentRow = CommitmentIdentityRow;
 
 /**
- * Resolve each commitment's counterparty to ONE address from facts the house holds, in order:
+ * Resolve each commitment's counterparty to ONE address (the primary) from facts the house holds:
  * the stored "Name <email>" form → the person registry → the thread's inbound sender → the
- * meeting's attendee list (by name, alias-aware). Null when nothing resolves — no nomination.
- * BATCHED: ≤4 reads for any number of rows (the event door runs this per sent email).
+ * meeting's own attendee list (by name). Null when nothing resolves. BATCHED. (The full identity —
+ * every alias, the person id, the object keys — is `resolveCommitmentKeys`.)
  */
 export async function resolveCommitmentAddresses(
   client: SupabaseClient, userId: string, rows: CommitmentRow[], registry: PersonEntity[],
 ): Promise<Map<string, string | null>> {
+  const ids = await resolveCommitmentIdentities(client, userId, rows, registry);
   const out = new Map<string, string | null>();
-  const pending: CommitmentRow[] = [];
-  for (const c of rows) {
-    const a = registryAddress(registry, c.counterparty);
-    if (a) out.set(c.id, a); else pending.push(c);
-  }
-  // the thread's newest inbound sender
-  const threadIds = [...new Set(pending.map((c) => c.thread_id).filter((t): t is string => !!t))].slice(0, 300);
-  const senderByThread = new Map<string, string>();
-  if (threadIds.length) {
-    const { data } = await client.from('emails').select('thread_id, from_address, received_at')
-      .eq('user_id', userId).eq('is_from_user', false).in('thread_id', threadIds)
-      .order('received_at', { ascending: false }).limit(1000);
-    for (const r of (data ?? []) as Array<{ thread_id: string; from_address: string | null }>) {
-      if (r.from_address && !senderByThread.has(r.thread_id)) senderByThread.set(r.thread_id, normalizeEmail(r.from_address));
-    }
-  }
-  const still: CommitmentRow[] = [];
-  for (const c of pending) {
-    const a = c.thread_id ? senderByThread.get(c.thread_id) ?? null : null;
-    if (a) out.set(c.id, a); else still.push(c);
-  }
-  // the meeting's attendee list, by name
-  const meeting = still.filter((c) => c.source === 'meeting' && c.source_id && c.counterparty);
-  const tIds = [...new Set(meeting.map((c) => String(c.source_id)))].slice(0, 300);
-  const tById = new Map<string, { attendees: unknown; calendar_event_id: string | null }>();
-  if (tIds.length) {
-    const { data } = await client.from('meeting_transcripts').select('id, attendees, calendar_event_id').eq('user_id', userId).in('id', tIds);
-    for (const r of (data ?? []) as Array<{ id: string; attendees: unknown; calendar_event_id: string | null }>) tById.set(r.id, r);
-  }
-  const evIds = [...new Set([...tById.values()].map((t) => t.calendar_event_id).filter((x): x is string => !!x))].slice(0, 300);
-  const evById = new Map<string, unknown>();
-  if (evIds.length) {
-    const { data } = await client.from('calendar_events').select('id, attendees').eq('user_id', userId).in('id', evIds);
-    for (const r of (data ?? []) as Array<{ id: string; attendees: unknown }>) evById.set(r.id, r.attendees);
-  }
-  for (const c of still) {
-    const t = c.source_id ? tById.get(String(c.source_id)) : undefined;
-    const a = t ? (attendeeAddressByName(t.attendees, c.counterparty) ?? (t.calendar_event_id ? attendeeAddressByName(evById.get(t.calendar_event_id), c.counterparty) : null)) : null;
-    out.set(c.id, a);
-  }
+  for (const r of rows) out.set(r.id, ids.get(r.id)?.primary ?? null);
   return out;
 }
 
@@ -262,6 +186,38 @@ export async function resolveCommitmentAddress(
   client: SupabaseClient, userId: string, c: CommitmentRow, registry: PersonEntity[],
 ): Promise<string | null> {
   return (await resolveCommitmentAddresses(client, userId, [c], registry)).get(c.id) ?? null;
+}
+
+/** THE FULL IDENTITY for a batch of commitments (W8.1): primary address + every key, with the
+ *  entity memberships folded in. BATCHED. */
+export async function resolveCommitmentKeys(
+  client: SupabaseClient, userId: string, rows: CommitmentRow[], registry: PersonEntity[],
+): Promise<Map<string, { primary: string | null; keys: WorkKeys }>> {
+  const [ids, ents] = await Promise.all([
+    resolveCommitmentIdentities(client, userId, rows, registry),
+    loadWorkEntities(client, userId, rows.map((r) => ({ kind: 'commitment' as const, id: r.id }))).catch(() => new Map<string, string[]>()),
+  ]);
+  const out = new Map<string, { primary: string | null; keys: WorkKeys }>();
+  for (const r of rows) {
+    const id = ids.get(r.id);
+    out.set(r.id, { primary: id?.primary ?? null, keys: mergeKeys(id?.keys ?? emptyKeys(), { entityIds: ents.get(`commitment:${r.id}`) ?? [] }) });
+  }
+  return out;
+}
+
+/** The keys of an actionable inbox item — its sender as a PERSON (every alias + id) + its thread +
+ *  its entity memberships. Pure over the loaded registry + entity map. */
+export function inboxKeys(it: { id: string; source_data?: Record<string, unknown> | null }, registry: PersonEntity[], ents?: Map<string, string[]>): { from: string | null; keys: WorkKeys } {
+  const sd = (it.source_data ?? {}) as Record<string, unknown>;
+  const from = sd.from_address ? normalizeEmail(String(sd.from_address)) : null;
+  const p = from ? personByAddress(registry, from) : null;
+  return {
+    from,
+    keys: mergeKeys(
+      { addresses: [...(from ? [from] : []), ...personAddresses(p)], personIds: p ? [p.id] : [], threadIds: sd.thread_id ? [String(sd.thread_id)] : [] },
+      { entityIds: ents?.get(`inbox:${it.id}`) ?? [] },
+    ),
+  };
 }
 
 /** The open work the reverse path reads — bounded, newest first. Commitment mirrors (source=
@@ -278,86 +234,80 @@ export async function loadOpenWork(client: SupabaseClient, userId: string, regis
   ]);
   const out: OpenWork[] = [];
   // THE STANDING/HANDOFF FLOORS: a workflow's promise or a parked run's gate is never settled by mail.
-  const cRows = ((cRes.data ?? []) as Array<Record<string, unknown>>).filter((c) => !['workflow', 'handoff'].includes(String(c.source ?? '')));
-  const addresses = await resolveCommitmentAddresses(client, userId, cRows as CommitmentRow[], registry);
+  const cRows = (cRes.error ? [] : (cRes.data ?? []) as Array<Record<string, unknown>>).filter((c) => !['workflow', 'handoff'].includes(String(c.source ?? '')));
+  const iRows = (iRes.error ? [] : (iRes.data ?? []) as Array<Record<string, unknown>>).filter((it) => it.type_override !== 'waiting_on' && it.type_override !== 'fyi');
+  const [resolved, iEnts] = await Promise.all([
+    resolveCommitmentKeys(client, userId, cRows as CommitmentRow[], registry),
+    loadWorkEntities(client, userId, iRows.map((it) => ({ kind: 'inbox' as const, id: String(it.id) }))).catch(() => new Map<string, string[]>()),
+  ]);
   for (const c of cRows) {
-    const cp = addresses.get(String(c.id)) ?? null;
+    const r = resolved.get(String(c.id));
     out.push({
-      kind: 'commitment', id: String(c.id), afterISO: String(c.created_at ?? ''), counterpartyEmail: cp,
+      kind: 'commitment', id: String(c.id), afterISO: String(c.created_at ?? ''), counterpartyEmail: r?.primary ?? null,
       threadId: (c.thread_id as string) ?? null, fulfiller: String(c.direction) === 'awaiting' ? 'counterparty' : 'user',
-      description: String(c.description ?? ''),
+      description: String(c.description ?? ''), keys: r?.keys,
     });
   }
-  for (const it of (iRes.data ?? []) as Array<Record<string, unknown>>) {
-    if (it.type_override === 'waiting_on' || it.type_override === 'fyi') continue;
+  for (const it of iRows) {
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
-    const from = sd.from_address ? normalizeEmail(String(sd.from_address)) : null;
+    const { from, keys } = inboxKeys({ id: String(it.id), source_data: sd }, registry, iEnts);
     const ask = (sd.understanding as { ask?: string } | null)?.ask;
     out.push({
       kind: 'inbox', id: String(it.id), afterISO: String(it.last_activity_at ?? it.created_at ?? ''), counterpartyEmail: from,
       threadId: (sd.thread_id as string) ?? null, fulfiller: 'user',
-      description: String(ask || it.work_title || sd.subject || ''),
+      description: String(ask || it.work_title || sd.subject || ''), keys,
     });
   }
   return out;
 }
 
+/** A NEW deed a sync just stored. The legacy three keep their shapes; any registered row's `type`
+ *  (or `source`) with ids plugs in the same way. */
 export type NewEvidenceEvent =
   | { type: 'email'; id: string }
   | { type: 'calendar'; eventIds: string[]; provider?: string }
-  | { type: 'transcript'; id: string };
+  | { type: 'transcript'; id: string }
+  | { type: string; ids: string[]; provider?: string };
+
+const triggerIds = (e: NewEvidenceEvent): string[] =>
+  'eventIds' in e ? e.eventIds : 'ids' in e ? e.ids : 'id' in e ? [e.id] : [];
 
 /**
  * THE REVERSE ENTRY (the heartbeat): a NEW evidence event just landed — which open work could it
- * settle? Address-keyed, bounded (REVERSE_MAX_WORK rows read, REVERSE_MAX_NOMINATIONS returned).
- * Returns each nominated work with the FULL evidence set the forward matcher finds for it (the
- * judge must see the whole picture, not just the trigger).
+ * settle? The trigger is loaded through its registry row (the one shape), and the SAME matcher decides
+ * which open work it touches (so the reverse door can never disagree with the forward one). Bounded
+ * (REVERSE_MAX_WORK rows read, REVERSE_MAX_NOMINATIONS returned). Returns each nominated work with
+ * the FULL evidence set the forward matcher finds for it (the judge must see the whole picture).
  */
 export async function nominateForEvent(
   client: SupabaseClient, userId: string, event: NewEvidenceEvent, registry: PersonEntity[], nowISO = new Date().toISOString(),
 ): Promise<Array<{ work: OpenWork; evidence: Evidence[] }>> {
-  // The event's participants + its moment.
-  let addresses: string[] = [];
-  let at = '';
-  let fromUser: boolean | null = null;
-  if (event.type === 'email') {
-    const { data } = await client.from('emails').select('received_at, from_address, to_addresses, cc_addresses, is_from_user').eq('id', event.id).eq('user_id', userId).maybeSingle();
-    if (!data) return [];
-    fromUser = !!data.is_from_user;
-    addresses = fromUser
-      ? addressesOf([...((data.to_addresses as string[]) ?? []), ...((data.cc_addresses as string[]) ?? [])])
-      : addressesOf([data.from_address]);
-    at = String(data.received_at ?? '');
-  } else if (event.type === 'calendar') {
-    const ids = [...new Set(event.eventIds)].slice(0, 50);
-    if (!ids.length) return [];
-    let q = client.from('calendar_events').select('start_time, attendees, status').eq('user_id', userId).in('event_id', ids);
-    if (event.provider) q = q.eq('provider', event.provider);
-    const { data } = await q;
-    const rows = ((data ?? []) as Array<Record<string, unknown>>).filter((r) => String(r.status ?? '') !== 'cancelled');
-    addresses = [...new Set(rows.flatMap((r) => addressesOf(r.attendees)))];
-    at = rows.map((r) => String(r.start_time ?? '')).sort().pop() ?? '';
-  } else {
-    const { data } = await client.from('meeting_transcripts').select('start_time, created_at, attendees, calendar_event_id').eq('id', event.id).eq('user_id', userId).maybeSingle();
-    if (!data) return [];
-    addresses = addressesOf(data.attendees);
-    if (!addresses.length && data.calendar_event_id) {
-      const { data: ev } = await client.from('calendar_events').select('attendees').eq('id', data.calendar_event_id).maybeSingle();
-      addresses = addressesOf(ev?.attendees);
-    }
-    at = String(data.start_time ?? data.created_at ?? '');
-  }
-  if (!addresses.length || !at) return [];
+  const row = evidenceSource(event.type);
+  const ids = [...new Set(triggerIds(event))];
+  if (!row?.loadByIds || !ids.length) return [];
+  const self = registry.find((p) => p.state?.self === true) ?? null;
+  const actors = await loadActorContext(client, userId, { selfPersonId: self?.id ?? null })
+    .catch(() => ({ own: [], teammates: [], teamDomains: [] }) as ActorContext);
+  const { attachPersons, personIndex } = await import('@/lib/evidence/sources');
+  const trigger = attachPersons(
+    await row.loadByIds(client, userId, ids, { sinceISO: '', nowISO, addresses: [], threadIds: [], actors }, { provider: 'provider' in event ? event.provider : undefined }),
+    personIndex(registry),
+  );
+  if (!trigger.length) return [];
 
   const open = await loadOpenWork(client, userId, registry);
-  const touched = open.filter((w) => w.afterISO < at && w.counterpartyEmail && addresses.some((a) => sameAddress(a, w.counterpartyEmail)))
-    // an inbound (counterparty) email is only evidence for AWAITING work; a sent one for the user's own debts
-    .filter((w) => fromUser === null || (fromUser ? w.fulfiller === 'user' : w.fulfiller === 'counterparty'))
+  const touched = open
+    .filter((w) => touches(trigger, { afterISO: w.afterISO, fulfiller: w.fulfiller, keys: keysOfWork(w) }, nowISO, SETTLE_MATCH))
     .slice(0, REVERSE_MAX_NOMINATIONS);
   if (!touched.length) return [];
   const since = touched.map((w) => w.afterISO).sort()[0];
-  const pool = await loadEvidencePool(client, userId, since);
+  // Scoped by the touched work's own people + threads (W7.1) — the event's counterparty's older
+  // mail reaches the judge however much other mail arrived since.
+  const pool = await loadEvidencePool(client, userId, since, scopeOf(touched), { registry, nowISO });
   return touched
-    .map((work) => ({ work, evidence: matchEvidence(pool, work, nowISO) }))
+    .map((work) => ({ work, evidence: matchEvidence(pool, work, nowISO, SETTLE_MATCH) }))
     .filter((n) => n.evidence.length > 0);
 }
+
+/** The registry's rows, re-exported for the census and the gates (one catalogue). */
+export { EVIDENCE_SOURCES, registryPerson };

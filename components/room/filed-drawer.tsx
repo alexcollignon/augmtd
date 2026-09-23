@@ -26,6 +26,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import { TabBar } from '@/components/ui';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { fmtMonthDay } from '@/lib/utils/format-date';
 
 // THE FILED DRAWER'S WIDTH — the reader's, remembered (owner walk, Sep 14). One key, one clamp,
 // stated once: a pane that can be dragged to zero or past the thread is not adjustable, it is
@@ -197,7 +198,8 @@ export function RoomHistorySection({ lines }: { lines: RoomHistoryLine[] }) {
             ? <span className="font-medium text-neutral-700">You: </span>
             : l.who ? <span className="font-medium text-neutral-700">{l.who.split(' ')[0]}: </span> : null}
           {l.text}
-          {l.at && <span className="ml-1.5 text-[11px] text-neutral-300 tabular-nums">{l.at.slice(0, 10)}</span>}
+          {/* W8.4 · no raw ISO on screen — the ONE short-date grammar. */}
+          {l.at && fmtMonthDay(l.at) && <span className="ml-1.5 text-[11px] text-neutral-300 tabular-nums">{fmtMonthDay(l.at)}</span>}
         </p>
       ))}
     </div>

@@ -16,7 +16,7 @@ import { fetchAllRows } from '@/lib/utils/fetch-all';
 import { readPlansForUsers, upsertPlan } from '@/lib/store/item-plans';
 
 /** The rotation-marker kinds (lib/store/item-plans registry, role 'marker'). */
-export type SweepMarkerKind = 'judgment_sweep' | 'draft_sweep' | 'label_sweep';
+export type SweepMarkerKind = 'judgment_sweep' | 'draft_sweep' | 'label_sweep' | 'evidence_sweep';
 
 export async function activeUserIds(sb: SupabaseClient, opts?: { windowDays?: number }): Promise<string[]> {
   const since = new Date(Date.now() - (opts?.windowDays ?? 60) * 86_400_000).toISOString();

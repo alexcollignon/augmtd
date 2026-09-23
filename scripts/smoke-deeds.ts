@@ -24,12 +24,13 @@
 // Zero AI, zero writes. Run: set -a; source .env.local; set +a; npx tsx scripts/smoke-deeds.ts
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { readFileSync, readdirSync, statSync } from 'fs';
+import { bulkVerbLabel } from '../lib/deeds/held-words-bulk';
 import { join } from 'path';
 import {
   parseUnsubscribe, UNSUBSCRIBE_MAIL_SUBJECT, UNSUBSCRIBE_MAIL_BODY,
 } from '../lib/deeds/unsubscribe';
 import {
-  BULK_VERBS, BULK_DEED_KIND, MAX_DEED_ITEMS, MAX_UNSUBSCRIBE_HEADER_READS,
+  BULK_VERBS, BULK_DEED_KIND, MAX_DEED_ITEMS, MAX_UNSUBSCRIBE_HEADER_READS, DEED_PAGE_SIZE, deedBoundFor,
   composeIntro, composeUndoNote, breakdownLines, tallyLine, doneReceipt,
   type BulkDeed, type DeedOutcome,
 } from '../lib/deeds/words';
@@ -92,9 +93,11 @@ console.log('\nBD1 · PREVIEW THEN COMMIT — a deed is a stored fact, and the c
     && !!words && /items: DeedItemRef\[\];/.test(words) && /breakdown: BulkBreakdown;/.test(words));
 
   // THE COMMIT READS THE STORED DEED, and its per-item walk is over `existing.items`.
+  // ⟲ RE-POINTED (W8.6 — THE WHOLE GROUP): the commit walks the stored list IN PAGES — each page is a
+  // slice of `existing.items`, nothing else; the law (the stored list, never a caller's) is unchanged.
   gate('BD1.3 commit walks the STORED member list, never a list the caller handed it',
     !!bulk && /const existing = await readBulkDeed\(client, userId, deedId\);/.test(bulk)
-    && /for \(const ref of existing\.items\)/.test(bulk));
+    && /const page = existing\.items\.slice\(cursor, cursor \+ DEED_PAGE_SIZE\);/.test(bulk));
 
   gate('BD1.4 an unknown deed REFUSES (and the refusal is the same shape as a foreign one)',
     !!bulk && /if \(!existing\) return \{ ok: false, error: 'that deed is not on file' \};/.test(bulk)
@@ -104,8 +107,11 @@ console.log('\nBD1 · PREVIEW THEN COMMIT — a deed is a stored fact, and the c
   // the preparer. `runOne`, `runArchive`, `runTrash`, `runUnsubscribe`, `runExpire` are private.
   {
     const exportedAsync = [...(bulk ?? '').matchAll(/export async function (\w+)/g)].map((m) => m[1]).sort();
+    // ⟲ RE-POINTED (W8.6): `undoBulkDeed` joins — it only REOPENS what the deed resolved (the batch
+    // undo /api/restore calls); no executor that acts on the world is exported.
     gate('BD1.5 NO EXECUTOR IS EXPORTED — the per-item lanes are unreachable except through commitBulkDeed',
-      exportedAsync.join(',') === 'commitBulkDeed,prepareBulkDeed,readBulkDeed',
+      exportedAsync.join(',') === 'commitBulkDeed,prepareBulkDeed,readBulkDeed,undoBulkDeed'
+      && !!bulk && !/export async function run/.test(bulk),
       exportedAsync.join(','));
     gate('BD1.5b …and the lanes exist as private functions',
       !!bulk && /^async function runArchive\(/m.test(bulk) && /^async function runTrash\(/m.test(bulk)
@@ -130,9 +136,12 @@ console.log('\nBD1 · PREVIEW THEN COMMIT — a deed is a stored fact, and the c
     && !!bulk && /from\('item_plans'\)/.test(bulk)
     && !readdirSync(join(ROOT, 'supabase/migrations')).some((f) => /bulk_deed/i.test(f)));
 
+  // ⟲ RE-POINTED (W8.6 — THE WHOLE GROUP): the bound is now the verb's own stated safety bound
+  // (archive/trash 5,000; unsubscribe/expire one page), and a deed is COMMITTED in pages ≤ 500.
   gate('BD1.10 a deed is BOUNDED — no unbounded set can be minted in one act',
-    MAX_DEED_ITEMS > 0 && MAX_DEED_ITEMS <= 500
-    && !!bulk && /\.slice\(0, MAX_DEED_ITEMS\)/.test(bulk));
+    MAX_DEED_ITEMS > 0 && MAX_DEED_ITEMS <= 5000 && DEED_PAGE_SIZE > 0 && DEED_PAGE_SIZE <= 500
+    && deedBoundFor('unsubscribe') <= 500 && deedBoundFor('expire') <= 500
+    && !!bulk && /const bound = deedBoundFor\(verb\);/.test(bulk) && /\.slice\(0, bound\)/.test(bulk));
 }
 
 // ── BD2 · TRASH, NEVER DELETE ───────────────────────────────────────────────────────────────────
@@ -265,8 +274,11 @@ console.log('\nBD3 · THE HONEST UNSUBSCRIBE SUBSET — link-only is REPORTED, n
 // ── BD4 · EXACTLY-ONCE ──────────────────────────────────────────────────────────────────────────
 console.log('\nBD4 · EXACTLY-ONCE — a second commit returns the first result, it never acts twice');
 {
+  // ⟲ RE-POINTED (W8.6): a COMPLETE deed (every page done) or an undone one returns its prior result;
+  // a committed deed with pages left resumes only through the lease + cursor compare-and-set.
   gate('BD4.1 an already-committed deed returns its PRIOR result before any work happens',
-    !!bulk && /if \(existing\.committedAt\) return \{ ok: true, deed: existing, alreadyCommitted: true \};/.test(bulk));
+    !!bulk && /if \(deedComplete\(existing\) \|\| existing\.undoneAt\) return \{ ok: true, deed: existing, alreadyCommitted: true \};/.test(bulk)
+    && /q\.filter\('tasks->>leaseUntil', 'lt', nowIso\)\.filter\('tasks->progress->>cursor', 'eq', String\(cursor\)\)/.test(bulk));
 
   gate('BD4.2 the claim is ATOMIC — the update is conditional on committedAt still being null',
     !!bulk && /\.filter\('tasks->>committedAt', 'is', null\)/.test(bulk)
@@ -278,7 +290,7 @@ console.log('\nBD4 · EXACTLY-ONCE — a second commit returns the first result,
   gate('BD4.4 the claim is taken BEFORE the per-item work (the commit-door idiom: claim → fire → record)',
     !!bulk && (() => {
       const claim = bulk.indexOf("filter('tasks->>committedAt', 'is', null)");
-      const work = bulk.indexOf('for (const ref of existing.items)');
+      const work = bulk.indexOf('const page = existing.items.slice(cursor'); // ⟲ RE-POINTED (W8.6): the page walk
       return claim > 0 && work > claim;
     })());
 
@@ -483,9 +495,11 @@ console.log('\nBD7 · THE CARD — what will happen, to how many, the undo note,
     && /^Archive 1 message\.$/.test(composeIntro('archive', 1, null))
     && /^Move 4 messages to trash\.$/.test(composeIntro('trash', 4, null)));
 
+  // ⟲ RE-POINTED (W8.6): ONE record per deed — `bulk_deed` (reversible AS ONE via /api/restore), or
+  // `bulk_unsubscribe` (the sender's to reverse — no Undo) — updated in place as later pages land.
   gate('BD7.14 THE DEED IS LOGGED — one activity row carrying the verb, the class and the tally',
-    !!bulk && /logActivity\(client, userId, \{[\s\S]{0,200}type: 'bulk_deed',/.test(bulk)
-    && /metadata: \{ verb: existing\.verb, classKey: existing\.classKey, \.\.\.tally \}/.test(bulk));
+    !!bulk && /logActivity\(client, userId, \{[\s\S]{0,200}type: existing\.verb === 'unsubscribe' \? 'bulk_unsubscribe' : 'bulk_deed',/.test(bulk)
+    && /metadata: \{ verb: existing\.verb, classKey: existing\.classKey, \.\.\.tally, total, deedId: existing\.id \}/.test(bulk));
 
   // RE-POINTED (Sep 17, never weakened): BD7.15 held the SEAM open while the posture door did not
   // exist — "a named seam, not a silent omission". The door exists now, so the gate holds the WIRING
@@ -530,8 +544,9 @@ console.log('\nWD1 · THE LEDGER\'S VERBS — the class row previews; the card i
     !!lens && /fetch\('\/api\/deeds\/prepare', \{/.test(lens)
     && /chosen\.length \? \{ verb, itemIds: chosen \} : \{ verb, classKey: c\.id \}/.test(lens));
 
+  // ⟲ RE-POINTED (W8.3): the card now also carries the class's GROUP TRUTH (the scope line).
   gate('WD1.3 the prepared deed mounts AS THE CARD, in place, directly beneath its class row',
-    !!lens && /<BulkDeedCard deedId=\{deed\.id\} deed=\{deed\} onDone=\{onDeedDone\} \/>/.test(lens));
+    !!lens && /<BulkDeedCard deedId=\{deed\.id\} deed=\{deed\} onDone=\{onDeedDone\}\s+scopeLine=/.test(lens));
 
   gate('WD1.4 NO SECOND COMMIT PATH — the lens never names the commit door or an executor',
     !!lens && !/\/api\/deeds\/commit/.test(code(lens)) && !/commitBulkDeed/.test(code(lens)));
@@ -541,12 +556,19 @@ console.log('\nWD1 · THE LEDGER\'S VERBS — the class row previews; the card i
     && /type="checkbox" checked=\{picked\.has\(m\.itemId\)\}/.test(lens)
     && /onPickAll\(e\.target\.checked\)/.test(lens));
 
-  gate('WD1.6 the verb SAYS WHAT IT WILL ACT ON — the whole class, or exactly the ones picked',
-    !!lens && /picked\.size > 0 \? `\$\{VERB_WORD\[verb\]\} \$\{picked\.size\}`/.test(lens)
-    && /: `\$\{VERB_WORD\[verb\]\} all \$\{c\.count\}`/.test(lens));
+  // ⟲ RE-POINTED (W8.3 — THE GROUP TRUTH): the label law moved to one pure, gate-assertable home
+  // (lib/deeds/held-words-bulk.ts `bulkVerbLabel`); the lens composes through it. The law is the same
+  // — picked → exactly those, within the cap → "all N" — plus the W8.3 clause: past the cap it says
+  // "the newest 200 OF 1,223", never a bare "200" beside a group of 1,223.
+  {
+    gate('WD1.6 the verb SAYS WHAT IT WILL ACT ON — the whole class, or exactly the ones picked',
+      // ⟲ RE-POINTED (W8.6): the cap is the VERB'S own deed bound (the whole group for archive/trash).
+      !!lens && /bulkVerbLabel\(VERB_WORD\[verb\], c\.count, picked\.size, deedBoundFor\(verb\)\)/.test(lens)
+      && bulkVerbLabel('Archive', 12, 3, 200) === 'Archive 3' && bulkVerbLabel('Archive', 12, 0, 200) === 'Archive all 12');
 
-  gate('WD1.6b …and it never promises more than a deed can hold (the card would honestly count less)',
-    !!lens && /c\.count > MAX_DEED_ITEMS \? `\$\{VERB_WORD\[verb\]\} \$\{MAX_DEED_ITEMS\}`/.test(lens));
+    gate('WD1.6b …and it never promises more than a deed can hold — nor prints the cap as the group',
+      bulkVerbLabel('Archive', 1223, 0, 200) === 'Archive the newest 200 of 1,223');
+  }
 
   gate('WD1.7 a committed deed RE-READS the account — an archived member leaves the list honestly',
     !!lens && /export function useHeldLedger\(enabled: boolean\): \{ ledger: HeldLedger \| null; reload: \(\) => void \}/.test(lens)

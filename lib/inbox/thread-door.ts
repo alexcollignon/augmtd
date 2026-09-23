@@ -19,6 +19,8 @@
 
 import { threadTail, type TriageMessage } from '@/lib/triage/words';
 import { decodeEntities } from '@/lib/core/text';
+import { isEventSpec } from '@/lib/present/event';
+import type { InviteObject } from '@/lib/present/invite-object';
 
 /** One file the thread carries, in THE ONE VIEWER's own address shape (the door serves it). */
 export type ThreadDoorFile = {
@@ -37,14 +39,28 @@ export type ThreadDoorData = {
   /** The tail, already clipped by THE ONE CLIPPER with its honest excerpt marker. */
   tail: TriageMessage[];
   files: ThreadDoorFile[];
+  /** INVITES ARE EVENTS (W7.4): the meeting this item IS, when it is an invitation — served by the
+   *  door (lib/present/invite-object.ts), validated here. Null = ordinary mail. */
+  invite: InviteObject | null;
 };
 
-const EMPTY: ThreadDoorData = { subject: null, fromName: null, fromAddress: null, receivedAt: null, tail: [], files: [] };
+const EMPTY: ThreadDoorData = { subject: null, fromName: null, fromAddress: null, receivedAt: null, tail: [], files: [], invite: null };
+
+/** A served invite object survives only whole: a spec must pass the event guard, a card must carry
+ *  a title. Anything else reads as "not an invite" — the mail renders, never a broken card. */
+export function readInviteObject(v: unknown): InviteObject | null {
+  const o = v as InviteObject | null;
+  if (!o || typeof o !== 'object') return null;
+  const spec = o.spec && isEventSpec(o.spec) ? o.spec : null;
+  const card = o.card && typeof o.card.title === 'string' && o.card.title ? o.card : null;
+  if (!spec && !card) return null;
+  return { cancelled: o.cancelled === true, spec, card };
+}
 
 /** What the door serves, narrowed to the fields any consumer here reads. */
 type DoorPayload = {
   subject?: string | null; fromName?: string | null; fromAddress?: string | null; receivedAt?: string | null;
-  messages?: unknown; attachments?: unknown;
+  messages?: unknown; attachments?: unknown; invite?: unknown;
 };
 
 function readPayload(d: DoorPayload | null): ThreadDoorData {
@@ -58,6 +74,7 @@ function readPayload(d: DoorPayload | null): ThreadDoorData {
     receivedAt: d.receivedAt ?? null,
     tail: threadTail(d.messages as Parameters<typeof threadTail>[0]),
     files,
+    invite: readInviteObject(d.invite),
   };
 }
 

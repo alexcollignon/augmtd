@@ -10,7 +10,13 @@
 // The commit body carries ONE field — the deed id. There is no path through this component by which
 // a list of items reaches the server, so nothing can be committed that was never previewed. Every
 // word on the card arrives from `lib/deeds/bulk.ts`'s deterministic composers; this file authors no
-// copy of its own beyond the two surface words ("Working…", the commit verb).
+// copy of its own beyond the surface words ("Working…", the commit verb, "Continue").
+//
+// W8.6 · THE WHOLE GROUP: a deed now acts on its whole group, committed in PAGES through the SAME
+// door. The card keeps calling that one door while each call advances the stored cursor (the deed's
+// own progress record says what is done and what is left); if a call makes no progress — another
+// tab holds the run, the budget stopped it, the tab was closed — the card shows the stored progress
+// and offers "Continue", which is the same door again. Nothing here counts; it prints the record.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import React from 'react';
 import { ThreadCardView } from '@/components/thread';
@@ -18,7 +24,7 @@ import type { ThreadCard } from '@/components/thread/types';
 // THE CLIENT-SAFE IMPORT: the pure words module, NEVER `lib/deeds/bulk` — importing a runtime value
 // from the engine would drag googleapis and the whole server graph into the browser bundle (the
 // repo's standing client-safe module law).
-import { breakdownLines, doneReceipt, type BulkDeed, type BulkVerb } from '@/lib/deeds/words';
+import { breakdownLines, doneReceipt, deedComplete, deedProgressLine, type BulkDeed, type BulkVerb } from '@/lib/deeds/words';
 // THE POSTURE TAIL'S OWN LAW, pure and client-safe (types only from the registry): it decides
 // whether a standing version of THIS deed is keepable at all. The card offers nothing it cannot keep.
 import { postureFromDeed } from '@/lib/postures/from-deed';
@@ -30,11 +36,14 @@ const COMMIT_LABEL: Record<BulkVerb, string> = {
   expire: 'Close them',
 };
 
-export default function BulkDeedCard({ deedId, deed: seed, onDone }: {
+export default function BulkDeedCard({ deedId, deed: seed, onDone, scopeLine = null }: {
   deedId: string;
   /** The deed as the producer already had it — the card paints warm and never flashes a skeleton. */
   deed?: BulkDeed;
   onDone?: (deed: BulkDeed) => void;
+  /** W8.3 · THE GROUP TRUTH beside the deed truth — when a class deed covers the newest N of a larger
+   *  group, the card says so and what happens to the rest (composed by lib/deeds/held-words-bulk). */
+  scopeLine?: string | null;
 }) {
   const [deed, setDeed] = React.useState<BulkDeed | null>(seed ?? null);
   const [committing, setCommitting] = React.useState(false);
@@ -58,22 +67,37 @@ export default function BulkDeedCard({ deedId, deed: seed, onDone }: {
     return () => { live = false; };
   }, [deedId, seed]);
 
+  // The page walk outlives no card: an unmounted card stops calling (the deed resumes on the next
+  // Continue, from its stored cursor).
+  const mounted = React.useRef(true);
+  React.useEffect(() => () => { mounted.current = false; }, []);
+
   const commit = React.useCallback(async () => {
     if (committing) return;
     setCommitting(true);
     setErr(null);
     try {
-      const res = await fetch('/api/deeds/commit', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ deedId }),
-      });
-      const json = await res.json();
-      if (json?.deed) { setDeed(json.deed as BulkDeed); onDone?.(json.deed as BulkDeed); }
-      else setErr(json?.error ?? 'the deed could not be committed');
+      // THE ONE DOOR, called again while each call ADVANCES the stored cursor. A call that makes no
+      // progress ends the loop; the stored record then speaks and "Continue" is the same door.
+      let prevCursor = -1;
+      for (let guard = 0; guard < 100 && mounted.current; guard++) {
+        const res = await fetch('/api/deeds/commit', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ deedId }),
+        });
+        const json = await res.json();
+        if (!json?.deed) { setErr(json?.error ?? 'the deed could not be committed'); break; }
+        const next = json.deed as BulkDeed;
+        if (mounted.current) setDeed(next);
+        if (deedComplete(next)) { onDone?.(next); break; }
+        const cursor = next.progress?.cursor ?? 0;
+        if (cursor <= prevCursor) break;
+        prevCursor = cursor;
+      }
     } catch {
       setErr('the deed could not be committed');
     } finally {
-      setCommitting(false);
+      if (mounted.current) setCommitting(false);
     }
   }, [committing, deedId, onDone]);
 
@@ -108,7 +132,10 @@ export default function BulkDeedCard({ deedId, deed: seed, onDone }: {
     return <div className="text-[12px] text-neutral-400">{err ?? 'Loading the deed…'}</div>;
   }
 
-  const done = !!deed.committedAt;
+  // DONE means every member was processed — a paged deed with members left is PAUSED, not done.
+  const done = deedComplete(deed);
+  const paused = !!deed.committedAt && !done;
+  const progressLine = deedProgressLine(deed);
   const needsClick = deed.verb === 'unsubscribe'
     ? deed.items.filter((i) => i.lane === 'needs_click').map((i) => ({ subject: i.subject, url: i.url }))
     : [];
@@ -123,12 +150,15 @@ export default function BulkDeedCard({ deedId, deed: seed, onDone }: {
     id: `bulk-${deed.id}`,
     state: done ? 'done' : committing ? 'committing' : 'pending',
     intro: deed.intro,
-    lines: breakdownLines(deed),
+    lines: scopeLine && !done ? [scopeLine, ...breakdownLines(deed)] : breakdownLines(deed),
     ...(needsClick.length ? { needsClick } : {}),
     undoNote: done ? undefined : deed.undoNote,
-    commitLabel: COMMIT_LABEL[deed.verb],
-    ...(done || cancelled ? {} : { onCommit: commit, onCancel: () => setCancelled(true) }),
-    receipt: done ? (doneReceipt(deed) ?? undefined) : committing ? 'working…' : cancelled ? 'left alone' : undefined,
+    commitLabel: paused ? 'Continue' : COMMIT_LABEL[deed.verb],
+    ...(done || cancelled ? {} : paused ? { onCommit: commit } : { onCommit: commit, onCancel: () => setCancelled(true) }),
+    receipt: done ? (doneReceipt(deed) ?? undefined)
+      : committing ? (progressLine ? `working… ${progressLine}` : 'working…')
+      : paused ? (progressLine ?? undefined)
+      : cancelled ? 'left alone' : undefined,
     error: err ?? undefined,
     busy: committing,
     ...(offer.ok ? { postureAsk: offer.offer.ask, onKeepDoingThis: keepDoingThis } : {}),

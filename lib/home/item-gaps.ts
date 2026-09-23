@@ -72,3 +72,21 @@ function lowerFirst(s: string): string {
   // Leave acronyms/proper nouns intact — only lowercase a leading capital followed by lowercase.
   return /^[A-Z][a-z]/.test(s) ? s[0].toLowerCase() + s.slice(1) : s;
 }
+
+/**
+ * W7.3 · THE MOTION CHECKLIST'S ONE SOURCE — the clauses of ONE multi-part obligation, and nothing
+ * else. J5's original purpose: an extracted motion ("reply with the deck, the pricing and the answer")
+ * carries its clauses as steps, and the message is checked against them. The identified-tasks plan is
+ * the house's INTERNAL work plan ("review requirements · check calendar · draft · send") — rendered as
+ * "this message should cover" it put 445 open commitments' internal plans on screen as message
+ * content. So: only steps the extractor flagged as CLAUSES (`clause: true`, or the legacy G1 id shape
+ * `g1-*`), only when EVERY step is one (a plan regenerated over the clauses is no longer the motion),
+ * and only ≥2 of them. Pure.
+ */
+export function motionClausesOf(tasks: ItemPlanTask[] | null | undefined): Array<{ id: string; text: string; done: boolean }> | null {
+  const list = (tasks ?? []).filter((t) => !t.dismissed);
+  if (list.length < 2) return null;
+  const isClause = (t: ItemPlanTask) => t.clause === true || /^g1-\d+$/.test(String(t.id));
+  if (!list.every(isClause)) return null;
+  return list.map((t) => ({ id: t.id, text: t.text, done: !!t.done }));
+}

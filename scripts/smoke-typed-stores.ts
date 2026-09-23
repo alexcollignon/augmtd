@@ -69,7 +69,7 @@ const ALLOW: Record<string, { n: number; kinds: string[] }> = {
   'lib/autonomy/ledger.ts': { n: 2, kinds: ['autonomy'] },
   'lib/commitments/expiry.ts': { n: 2, kinds: ['expiry'] },
   'lib/commitments/extract.ts': { n: 1, kinds: ['commitment'] },
-  'lib/deeds/bulk.ts': { n: 4, kinds: ['bulk_deed'] },
+  'lib/deeds/bulk.ts': { n: 3, kinds: ['bulk_deed'] }, // W8.6: the final write moved to the door (updatePlan, lease-guarded)
   'lib/deeds/held-cache.ts': { n: 1, kinds: ['held_cache'] },
   'lib/documents/theme.ts': { n: 3, kinds: ['doc_theme'] },
   'lib/frames/share.ts': { n: 4, kinds: ['frame_share'] },
@@ -107,7 +107,7 @@ const ALLOW: Record<string, { n: number; kinds: string[] }> = {
 const PLAN_KINDS = ['email', 'meeting', 'commitment', 'awareness', 'followup'];
 const HOT: ItemPlanStoreKind[] = [
   'judgment', 'room_brief', 'pending_change', 'prep_outcome', 'workflow_inputs', 'fulfillment',
-  'sweep_claim', 'judgment_sweep', 'draft_sweep', 'label_sweep', 'prep_requeue', 'conversation_pair',
+  'sweep_claim', 'judgment_sweep', 'draft_sweep', 'label_sweep', 'evidence_sweep', 'prep_requeue', 'conversation_pair',
 ];
 
 // Raw-site scan: each `.from('item_plans')` chain, up to its statement end.
@@ -202,7 +202,8 @@ for (const f of files) {
   check('T4.3 every hot kind\'s home module imports the door', doorUsers.length === 0, doorUsers.join(', '));
   const sweepMarkers = src('lib/work/sweep-users.ts');
   check('T4.4 the sweep markers are a typed union (a typo\'d marker kind is a type error)',
-    /export type SweepMarkerKind = 'judgment_sweep' \| 'draft_sweep' \| 'label_sweep'/.test(sweepMarkers)
+    // ⟲ RE-POINTED (W7.1): the evidence lane adds its own marker to the same typed union.
+    /export type SweepMarkerKind = 'judgment_sweep' \| 'draft_sweep' \| 'label_sweep' \| 'evidence_sweep'/.test(sweepMarkers)
       && /markerKind: SweepMarkerKind/.test(sweepMarkers));
 }
 

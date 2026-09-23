@@ -68,20 +68,24 @@ console.log('\nDC3 · FOUNDING CONTEXT');
   const e = shapeDeckContext({
     commitment: { id: 'c1', description: 'Send the deck', source: 'email' },
     lastEmail: { from_name: 'Sam', body: `${long}\n\nOn Mon, Acme wrote:\n> the chain`, received_at: '2026-09-20T10:00:00Z', is_from_user: false },
-    inboxItemId: 'i1', meeting: null, verdict: { reason: 'They are waiting on the deck before Friday.' },
+    inboxItemId: 'i1', meeting: null,
   });
   ok('an email-born commitment carries its source, its thread\'s inbox item and the newest message', e.source === 'email' && e.inboxItemId === 'i1' && e.founding?.who === 'Sam');
   ok('   …the line is the message\'s OWN words, clipped by THE ONE CLIPPER with its marker',
     !!e.founding && e.founding.line.endsWith(EXCERPT_MARK) && !e.founding.line.includes('the chain')
     && e.founding.line.length <= FOUNDING_EXCERPT_CHARS + EXCERPT_MARK.length + 2);
-  ok('   …and the judge\'s reason rides along', e.reason === 'They are waiting on the deck before Friday.');
-  const mine = shapeDeckContext({ commitment: { id: 'c', description: 'x', source: 'email' }, lastEmail: { from_name: 'Acme', body: 'On it.', is_from_user: true }, inboxItemId: null, meeting: null, verdict: null });
+  // ⟲ RE-POINTED (W8.3 — THE NO-INTERNAL-TEXT LAW reaches the triage card): the judge's reason no
+  // longer rides the context at all — it printed raw on the card ("The stated deadline … passed 47
+  // days ago…"). The gate now asserts its ABSENCE, which is the stronger statement.
+  ok('   …and the judge\'s reason NEVER rides along (no field to render)', !('reason' in e));
+  const mine = shapeDeckContext({ commitment: { id: 'c', description: 'x', source: 'email' }, lastEmail: { from_name: 'Acme', body: 'On it.', is_from_user: true }, inboxItemId: null, meeting: null });
   ok('the user\'s own last message is authored "You"', mine.founding?.who === 'You' && mine.inboxItemId === null);
-  const m = shapeDeckContext({ commitment: { id: 'c2', description: 'Share the notes', source: 'meeting' }, lastEmail: null, inboxItemId: 'ignored', meeting: { title: 'Weekly sync', start_time: '2026-09-18T09:00:00Z' }, verdict: { reason: 'Share the notes', failed: false } });
+  const m = shapeDeckContext({ commitment: { id: 'c2', description: 'Share the notes', source: 'meeting' }, lastEmail: null, inboxItemId: 'ignored', meeting: { title: 'Weekly sync', start_time: '2026-09-18T09:00:00Z' } });
   ok('a meeting-born commitment names its meeting and date, and never mounts an inbox item', m.meeting?.title === 'Weekly sync' && m.meeting.date === '2026-09-18' && m.inboxItemId === null && m.founding === null);
-  ok('   …a reason that restates the title is dropped (never say a fact twice)', m.reason === null);
-  const f = shapeDeckContext({ commitment: { id: 'c3', description: 'x', source: 'email' }, lastEmail: null, inboxItemId: null, meeting: null, verdict: { reason: 'AI outage', failed: true } });
-  ok('a FAILED verdict is an outage, never a reason; absent facts are null, never placeholders', f.reason === null && f.founding === null && f.meeting === null);
+  // ⟲ RE-POINTED (W8.3): no reason exists to drop — the shape carries none.
+  ok('   …and carries no reason to restate the title with', !('reason' in m));
+  const f = shapeDeckContext({ commitment: { id: 'c3', description: 'x', source: 'email' }, lastEmail: null, inboxItemId: null, meeting: null });
+  ok('absent facts are null, never placeholders (and no reason field exists)', !('reason' in f) && f.founding === null && f.meeting === null);
   ok('the shaper is pure (no fetch, no clock, no React)', !!shaper && !/fetch\(|useState|new Date\(|Date\.now/.test(shaper));
 
   ok('the card reads founding context through the deck-context door, for commitments only',
@@ -92,8 +96,10 @@ console.log('\nDC3 · FOUNDING CONTEXT');
     && /<SourceObjectMount itemId=\{ctx\.inboxItemId\} \/>/.test(card));
   ok('   …only once its door answered (a served line never swaps for an empty frame)',
     /ctx\.inboxItemId && objectReady \?/.test(card) && /loadThreadDoor\(c\.inboxItemId\)/.test(card));
-  ok('   …a meeting-born one names its meeting; the reason joins the why line',
-    /From \$\{ctx\.meeting\.title\}/.test(card) && /\[row\.why, ctx\?\.reason\]\.filter\(Boolean\)\.join\(' · '\)/.test(card));
+  // ⟲ RE-POINTED (W8.3): the why line is the ledger's served clause ALONE — the judge's reason never
+  // joins it (the no-internal-text law; smoke-waiting-truth asserts the same from its side).
+  ok('   …a meeting-born one names its meeting; the why line is the served clause alone (no judge reason)',
+    /From \$\{ctx\.meeting\.title\}/.test(card) && /const whyLine = row\.why;/.test(card) && !/ctx\??\.reason/.test(card));
   ok('the project reference rides the card\'s source line (served, tracked-only, never doubled)',
     /project: whisperProject\(it, facts\.title\)/.test(home)
     && /initiative: r\.project \?\? null/.test(held)
@@ -102,13 +108,15 @@ console.log('\nDC3 · FOUNDING CONTEXT');
     /preparedKind: it\.prepared \? \(it\.preparedKind \?\? null\) : null/.test(home)
     && /prepared: d\.preparedKind \?\? null/.test(held)
     && !/import\([^)]*prepare\/read|from '@\/lib\/prepare\/read'|from\('item_deliverables'\)/.test(reader));
-  ok('the reader resolves thread → inbox item (and source email as the fallback), meeting titles and verdicts',
+  // ⟲ RE-POINTED (W8.3): the item's OWN source leads (source email → its inbox row), the thread is
+  // the fallback (thread-first showed an unrelated email as a commitment's evidence), and the judge's
+  // verdicts are no longer read at all (the no-internal-text law — the card had printed the reason).
+  ok('the reader resolves source email → inbox item (thread as the fallback) and meeting titles — never verdicts',
     /\.in\('source_data->>thread_id', threadIds\)/.test(reader)
     && /\.in\('source_id', sourceEmailIds\)/.test(reader)
     && /from\('meeting_transcripts'\)/.test(reader)
-    // ⟲ RE-POINTED (W2.6 TYPED STORES): verdicts now read through the typed door (paged + chunked —
-    // the raw unbounded `.in()` was a silent 1000-row cap); same record, same law.
-    && /readPlans\(client, userId, 'judgment', \{ keys: commits\.map/.test(reader));
+    && /\(c\.source_id \? itemBySource\.get\(c\.source_id\) : undefined\)\s*\?\? \(c\.thread_id \? itemByThread\.get/.test(reader)
+    && !/'judgment'/.test(reader));
 }
 
 // ── DC4 · FAST ──────────────────────────────────────────────────────────────────────────────────

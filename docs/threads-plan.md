@@ -47,6 +47,13 @@ DM, room rail) port ONTO this component and their bespoke renderers retire.
 Loose items keep `/item/<id>` and their room IS a thread of the same component (a loose room
 is a project room with less to file — the July law, unchanged).
 
+ONE OBJECT, ONE DOOR (stabilization W7.2, Sep 23 — `docs/laws-registry.md` `one-object-one-door`): a
+loose room converses and composes under the ITEM's own key whatever it is linked to. A link is a
+fact about the item, never a new address for its conversation — recognition of an untracked
+entity stays the quiet "connects to … Track" suggestion; only the TRACKED project's own door
+speaks the project agenda. The one mind per room reads THIS room's object; the item door's chat
+never grounds on a container the panel does not show.
+
 ## ONE AGENDA PER ROOM (born of the owner's Sep 7 walk — "components floating around")
 
 **Nothing STANDS in a room unless the pinned brief speaks it, or it dies.** The live failure:

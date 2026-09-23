@@ -21,7 +21,16 @@ export async function refreshPersonState(supabase: SupabaseClient, userId: strin
     if (!isRealPerson(seed.email || idStr, seed.name)) return; // skip automated/no-reply senders
     // Resolve the person ENTITY (alias containment) — its full alias set widens the ledger assembly.
     const { getPersonEntities, findPersonEntity } = await import('@/lib/entities/people');
-    const entity = findPersonEntity(await getPersonEntities(supabase, userId), seed.email, seed.name);
+    let entity = findPersonEntity(await getPersonEntities(supabase, userId), seed.email, seed.name);
+    // THE SELF ENTITY IS CODE-OWNED (W7.5): the person brain never writes it — no synthesized
+    // relationship state on the user, and above all no alias absorption (this door once taught the
+    // self row a correspondent's address). A seed that resolved to self by NAME but carries an address
+    // self does not own is SOMEONE ELSE sharing a display name — they found their own row.
+    if (entity?.state?.self === true) {
+      const addr = seed.email?.toLowerCase().trim() ?? null;
+      if (!addr || entity.aliases.includes(addr)) return;
+      entity = null;
+    }
     if (entity) seed.aliases = entity.aliases;
     const a = assemblePersonLedger(corpus, seed);
     if (!a) return;

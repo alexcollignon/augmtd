@@ -3,14 +3,25 @@
 import { describe, it, expect } from 'vitest';
 import {
   addressesOf, matchEvidence, evidenceSig, attendeeAddressByName, registryAddress, sameAddress,
-  EVIDENCE_PER_TYPE, type EvidencePool, type OpenWork,
+  EVIDENCE_PER_TYPE, type EvidencePool, type OpenWork, type PoolEmail,
 } from '@/lib/work/evidence-nominator';
+import { mailEventOf, calendarEventOf, transcriptEventOf } from '@/lib/evidence/sources';
+import type { ActorContext } from '@/lib/evidence/types';
 
 const NOW = '2026-09-22T12:00:00.000Z';
 const CP = 'sam@acme-example.com';
 
-const pool: EvidencePool = {
-  emails: [
+// ⟲ RE-POINTED (W8.1 EVIDENCE FROM EVERYWHERE): the pool is ONE list of normalized events; the same
+// fixtures are built through each registry row's own pure mapper (mail · calendar · transcript), so
+// every assertion below reads exactly what the adapters emit.
+const ME: ActorContext = { own: ['me@example.com'], teammates: [], teamDomains: ['example.com'] };
+const mail = (m: Omit<PoolEmail, 'fromName'>) => mailEventOf(m, ME);
+const cal = (r: { id: string; at: string; end: string; title: string; attendees: string[]; cancelled: boolean }) =>
+  calendarEventOf({ id: r.id, start_time: r.at, end_time: r.end, title: r.title, attendees: r.attendees.map((email) => ({ email })), status: r.cancelled ? 'cancelled' : 'confirmed' }, ME, NOW);
+const rec = (r: { id: string; at: string; title: string; attendees: string[] }) => transcriptEventOf({ id: r.id, start_time: r.at, title: r.title }, r.attendees, null);
+
+const pool: EvidencePool = { events: [
+  ...[
     { id: 'e-old', at: '2026-08-01T10:00:00Z', subject: 'before it arose', from: 'me@example.com', to: [CP], threadId: 't9', attachmentCount: 0, fromUser: true },
     { id: 'e1', at: '2026-09-10T10:00:00Z', subject: 'the deck', from: 'me@example.com', to: ['SAM@Acme-Example.com'], threadId: 't2', attachmentCount: 1, fromUser: true },
     { id: 'e2', at: '2026-09-12T10:00:00Z', subject: 'cc only', from: 'me@example.com', to: ['other@x.com', CP], threadId: 't3', attachmentCount: null, fromUser: true },
@@ -19,18 +30,18 @@ const pool: EvidencePool = {
     { id: 'e-other', at: '2026-09-13T10:00:00Z', subject: 'to someone else', from: 'me@example.com', to: ['nobody@x.com'], threadId: 't6', attachmentCount: 0, fromUser: true },
     { id: 'e-same-thread', at: '2026-09-11T10:00:00Z', subject: 'same thread, no cp in to', from: 'me@example.com', to: ['forward@x.com'], threadId: 't1', attachmentCount: 0, fromUser: true },
     { id: 'e-inbound', at: '2026-09-16T10:00:00Z', subject: 'they wrote', from: CP, to: ['me@example.com'], threadId: 't7', attachmentCount: 0, fromUser: false },
-  ],
-  events: [
+  ].map(mail),
+  ...[
     { id: 'c-held', at: '2026-09-11T09:00:00Z', end: '2026-09-11T10:00:00Z', title: 'Sync with Sam', attendees: [CP, 'me@example.com'], cancelled: false },
     { id: 'c-booked', at: '2026-09-30T09:00:00Z', end: '2026-09-30T10:00:00Z', title: 'Next call', attendees: [CP], cancelled: false },
     { id: 'c-cancelled', at: '2026-09-12T09:00:00Z', end: '2026-09-12T10:00:00Z', title: 'Cancelled', attendees: [CP], cancelled: true },
     { id: 'c-before', at: '2026-08-11T09:00:00Z', end: '2026-08-11T10:00:00Z', title: 'Before', attendees: [CP], cancelled: false },
-  ],
-  transcripts: [
+  ].map(cal).filter((e): e is NonNullable<typeof e> => !!e),
+  ...[
     { id: 'tr1', at: '2026-09-11T09:05:00Z', title: 'Sync with Sam (recording)', attendees: [CP] },
     { id: 'tr-none', at: '2026-09-11T09:05:00Z', title: 'Other meeting', attendees: ['x@y.com'] },
-  ],
-};
+  ].map(rec),
+] };
 
 const work: OpenWork = { kind: 'commitment', id: 'k1', afterISO: '2026-09-01T00:00:00Z', counterpartyEmail: CP, threadId: 't1', fulfiller: 'user', description: 'send Sam the deck' };
 

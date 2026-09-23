@@ -30,7 +30,10 @@ import {
   type AttentionRow, type HeldFacts, type HeldClassId, type HeldBandId,
 } from '@/lib/home/attention';
 import { fetchAllRows } from '@/lib/utils/fetch-all';
+import { loadUserForms } from '@/lib/prepare/addressee';
+import type { UserForms } from '@/lib/commitments/extraction-truth';
 import { MIRROR_SOURCE } from '@/lib/inbox/commitment-mirrors';
+import { JUDGE_VERSION } from '@/lib/work/surface-registry';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type DBClient = any;
@@ -63,6 +66,9 @@ export type HeldDerivation = {
    *  `selectGraduates` (pure, zero-AI, zero-IO), so it is the lane's own number and not an
    *  estimate of it. This is what makes "is this account dirty?" a fact instead of a feeling. */
   graduating: number;
+  /** THE USER'S CODE-OWNED FORMS (W7.5) — handed to the pure ledger so its served `prepared` kind
+   *  passes THE ADDRESSEE FLOOR exactly as the ONE READER does. Null = the floor stays silent. */
+  userForms: UserForms | null;
 };
 
 /**
@@ -98,8 +104,20 @@ export async function deriveHeld(
   // own `revisit` with `by: 'user'` (lib/work/judge.ts parkItem), so "when does this come back" is
   // one fact in one place, read here for free rather than from a snooze table that could disagree.
   const userParked = new Map<string, string>();
+  // W8.3 · THE LIST SAYS ONLY WHAT WAS JUDGED — the SAME read says which items were judged AT ALL
+  // (any cached verdict) and which carry a WORK verdict under the CURRENT law. A row with no verdict
+  // never claims "real, alive"; a work verdict from an older JUDGE_VERSION does not shield a kind the
+  // current law floors (the pitch judged `schedule` before the kind floor existed).
+  const judgedAny = new Set<string>();
+  const judgedCurrentWork = new Set<string>();
   for (const j of judgments) {
-    const v = j.tasks?.verdict as { work?: string; resolution?: string; revisit?: { after?: string; by?: string } } | undefined;
+    const v = j.tasks?.verdict as { work?: string; resolution?: string; revisit?: { after?: string; by?: string }; failed?: boolean } | undefined;
+    const jid = String(j.entity_id).replace(/^inbox:/, '');
+    if (v && typeof v.work === 'string' && v.failed !== true) {
+      judgedAny.add(jid);
+      const ver = String((j.tasks as { sig?: string } | null)?.sig ?? '').split(':')[0];
+      if (v.work !== 'none' && ver === String(JUDGE_VERSION)) judgedCurrentWork.add(jid);
+    }
     if (v?.work !== 'none') continue;
     const id = String(j.entity_id).replace(/^inbox:/, '');
     judgedNone.add(id);
@@ -244,6 +262,8 @@ export async function deriveHeld(
       // module owns no clock), on the same day boundary `deadlineAhead` already uses.
       userParkedUntil: userParked.get(id) ?? null,
       userParkDue: userParked.has(id) && userParked.get(id)! <= todayISO,
+      neverJudged: !judgedAny.has(id),
+      judgedCurrent: judgedCurrentWork.has(id),
     };
     facts.push(f);
     const cls = classifyHeld(f);
@@ -258,9 +278,13 @@ export async function deriveHeld(
     bucket.push({ id, source_data: it.source_data ?? null, work_title: it.work_title ?? null });
   }
 
+  // One memoized read (the addressee law's own loader) — the only extra IO, and only once per call.
+  const userForms = await loadUserForms(client, userId).catch(() => null);
+
   return {
     facts,
     membersByClass,
+    userForms,
     graduating: selectGraduates(facts, todayISO).length,
     servedCount: served.length,
     total: facts.length,

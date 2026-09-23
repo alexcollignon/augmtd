@@ -5,7 +5,8 @@
 // NOT reversible — the email is already out — so reply_sent / nudge_sent get no undo anywhere.
 
 // Activity-event types that can be undone → the entity type the restore endpoint expects.
-export const REVERSIBLE_TYPE_ENTITY: Record<string, 'inbox_item' | 'commitment' | 'sender' | 'initiative' | 'membership'> = {
+export type RestoreEntityType = 'inbox_item' | 'commitment' | 'sender' | 'initiative' | 'membership' | 'bulk_deed';
+export const REVERSIBLE_TYPE_ENTITY: Record<string, RestoreEntityType> = {
   dismissed: 'inbox_item',
   marked_done: 'inbox_item',
   commitment_done: 'commitment',
@@ -14,6 +15,9 @@ export const REVERSIBLE_TYPE_ENTITY: Record<string, 'inbox_item' | 'commitment' 
   sender_muted: 'sender',
   initiative_muted: 'initiative', // un-mute → the initiative reappears in In-motion + Projects
   membership_move: 'membership',  // undo = move the item back where it was (metadata.from)
+  // W8.6 · THE BATCH UNDO — a bulk archive/trash/expire deed is ONE record, reversed AS ONE (every
+  // member across every page). `bulk_unsubscribe` is deliberately absent: the sender's to reverse.
+  bulk_deed: 'bulk_deed',
 };
 
 export function isReversibleType(type: string): boolean {
@@ -23,7 +27,7 @@ export function isReversibleType(type: string): boolean {
 // Call the shared restore endpoint. Returns true on success. Non-fatal: swallows/returns false so a
 // failed undo can show a small error without breaking anything.
 export async function restoreEntity(
-  entityType: 'inbox_item' | 'commitment' | 'sender' | 'initiative' | 'membership',
+  entityType: RestoreEntityType,
   entityId: string,
 ): Promise<boolean> {
   try {

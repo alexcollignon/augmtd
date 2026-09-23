@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { createClient } from '@supabase/supabase-js';
-import { getGraphClient } from '@/lib/microsoft/outlook';
+import { getGraphClient, OUTLOOK_MESSAGE_SELECT } from '@/lib/microsoft/outlook';
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
 import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
 import { featureEnabledForUser } from '@/lib/workspace/check-by-userid';
@@ -115,7 +115,7 @@ async function processOutlookNotifications(notifications: any[]) {
         // references_ids from it, which the thread view uses to stitch a conversation.
         // Omitting it (as before) stored null RFC headers on every push-delivered email,
         // splitting threads and dropping replies. Must match the cron/list select.
-        .select('id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,hasAttachments,isRead,internetMessageHeaders')
+        .select(OUTLOOK_MESSAGE_SELECT)
         .get();
 
       await syncEmailsForConnection(connection, adminSupabase, {

@@ -21,8 +21,25 @@ export type BulkVerb = (typeof BULK_VERBS)[number];
 
 export const BULK_DEED_KIND = 'bulk_deed';
 
-/** The bound on one deed. A deed larger than this is not a deed, it is a migration. */
-export const MAX_DEED_ITEMS = 200;
+/** THE HARD SAFETY BOUND on one deed (W8.6 — THE WHOLE GROUP). An archive/trash deed acts on its
+ *  WHOLE group up to this bound; past it the label says so ("the newest 5,000 of 6,200") and the rest
+ *  stay. The deed is COMMITTED in pages of DEED_PAGE_SIZE through the one commit door — the bound is
+ *  a safety floor on one act, never a batch size printed as if it were the group. */
+export const MAX_DEED_ITEMS = 5000;
+
+/** ONE PAGE through the commit door — the unit of work between two persisted progress records.
+ *  A run that stops (budget, crash) loses at most one page's bookkeeping, never its exactly-once. */
+export const DEED_PAGE_SIZE = 200;
+
+/** THE REASONED/EXTERNAL VERBS KEEP THEIR OWN BOUND (W8.6): an unsubscribe fires the SENDER'S links
+ *  (external, irreversible, per sender) and an expire costs one judged pass per commitment — both stay
+ *  one page wide, honestly labelled ("Unsubscribe the newest 200 of 1,815"). */
+export const MAX_REASONED_DEED_ITEMS = 200;
+
+/** The bound a deed of this verb may hold — the ONE answer the label law and the preparer share. */
+export function deedBoundFor(verb: BulkVerb): number {
+  return verb === 'archive' || verb === 'trash' ? MAX_DEED_ITEMS : MAX_REASONED_DEED_ITEMS;
+}
 
 /** Unsubscribe reads one live header per member. Bounded so a preview stays a preview; anything
  *  beyond the cap is REPORTED as unchecked rather than silently dropped. */
@@ -55,6 +72,25 @@ export type BulkBreakdown = {
   unread?: number;
   /** expire — nominated deterministically. */
   pastDue?: number;
+  /** archive · trash (W8.6) — members past the first page whose mailbox is resolved as their page
+   *  runs (the preview reads one page of targets; the rest are REPORTED, never assumed). */
+  unchecked?: number;
+};
+
+/** W8.6 · THE PAGED COMMIT'S OWN RECORD — persisted after every page, so a stopped run is resumable
+ *  and the card can say exactly what was done and what is left. Absent on a pre-W8.6 deed (read as
+ *  complete — those were one page by construction). */
+export type DeedProgress = {
+  /** Members processed so far — the index of the next page's first member in `items`. */
+  cursor: number;
+  total: number;
+  pagesDone: number;
+  pagesTotal: number;
+  /** Members not yet processed (total − cursor). Counted, never implied by silence. */
+  left: number;
+  complete: boolean;
+  /** Why the last run stopped short, in plain words (budget spent / a page failed), when it did. */
+  stoppedBecause?: string | null;
 };
 
 export type DeedOutcomeStatus = 'done' | 'partial' | 'skipped' | 'failed';
@@ -72,8 +108,24 @@ export type BulkDeed = {
   createdAt: string;
   committedAt?: string | null;
   outcomes?: DeedOutcome[];
-  tally?: { done: number; partial: number; skipped: number; failed: number; line: string };
+  tally?: { done: number; partial: number; skipped: number; failed: number; left?: number; line: string };
+  /** W8.6 — the paged commit's progress (see DeedProgress). */
+  progress?: DeedProgress;
+  /** W8.6 — the run lease: one runner at a time walks the pages (compare-and-set on this + cursor). */
+  leaseId?: string | null;
+  leaseUntil?: string | null;
+  /** W8.6 — the ONE activity record for this deed has been written (updated in place afterwards). */
+  loggedAt?: string | null;
+  /** W8.6 — THE BATCH UNDO ran (exactly once; a second undo is a no-op, a correction is a new deed). */
+  undoneAt?: string | null;
 };
+
+/** A deed is COMPLETE when every member has been processed. A pre-W8.6 deed has no progress record
+ *  and was one page by construction — committed means complete. */
+export function deedComplete(deed: BulkDeed): boolean {
+  if (!deed.committedAt) return false;
+  return deed.progress ? deed.progress.complete : true;
+}
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -98,8 +150,8 @@ export function composeIntro(verb: BulkVerb, count: number, className: string | 
  */
 export function composeUndoNote(verb: BulkVerb): string {
   switch (verb) {
-    case 'archive': return 'Reversible — each one is logged in Activity, and Undo puts it back on the deck.';
-    case 'trash': return 'Trash, never delete — the messages stay recoverable in your mailbox, and Undo in Activity puts the items back.';
+    case 'archive': return 'Reversible — the whole deed is one entry in Activity, and its Undo puts every one back on the deck.';
+    case 'trash': return 'Trash, never delete — the messages stay recoverable in your mailbox, and the deed’s one Undo in Activity puts every item back.';
     case 'unsubscribe': return 'Unsubscribing is the sender’s to reverse, not ours — every request is logged, but Undo cannot take it back.';
     case 'expire': return 'Reversible — Undo in Activity reopens the commitment.';
   }
@@ -134,6 +186,7 @@ export function breakdownLines(deed: BulkDeed): string[] {
       ? `${plural(b.noMailbox, 'message')} have no mailbox we can reach — those are left alone`
       : `${plural(b.noMailbox, 'message')} have no mailbox we can reach — those are cleared here only`);
   }
+  if (b.unchecked) out.push(`${plural(b.unchecked, 'more message')} — each one's mailbox is checked as its page runs`);
   return out;
 }
 
@@ -151,8 +204,19 @@ export function tallyLine(verb: BulkVerb, outcomes: DeedOutcome[]): string {
   return parts.join(' · ');
 }
 
+/** W8.6 · THE PROGRESS LINE of a paged deed that has not finished — what was done and what is left,
+ *  from the stored record. Null when the deed is complete (the receipt speaks then) or never ran. */
+export function deedProgressLine(deed: BulkDeed): string | null {
+  const p = deed.progress;
+  if (!deed.committedAt || !p || p.complete) return null;
+  const n = (x: number) => x.toLocaleString('en-US');
+  const why = p.stoppedBecause ? ` (${p.stoppedBecause})` : '';
+  return `${n(p.cursor)} of ${n(p.total)} done so far · ${n(p.left)} left${why}`;
+}
+
 export function doneReceipt(deed: BulkDeed): string | null {
   if (!deed.committedAt || !deed.tally) return null;
+  if (!deedComplete(deed)) return deedProgressLine(deed);
   const undoable = deed.verb !== 'unsubscribe' && deed.tally.done > 0;
   return undoable ? `${deed.tally.line} · undo in Activity` : deed.tally.line;
 }

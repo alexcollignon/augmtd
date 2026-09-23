@@ -40,7 +40,7 @@ export function buildHeldPayload(
 ) {
   const perClass = opts.perClass ?? HELD_MEMBERS_PER_CLASS;
   const offset = opts.offset ?? 0;
-  const ledger = buildHeldLedger(derived.facts, todayISO, { membersPerClass: perClass, offset });
+  const ledger = buildHeldLedger(derived.facts, todayISO, { membersPerClass: perClass, offset, user: derived.userForms ?? null });
   return {
     ...ledger,
     budget: ATTENTION_BUDGET,

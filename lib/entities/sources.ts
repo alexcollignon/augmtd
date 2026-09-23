@@ -64,9 +64,13 @@ export function itemFromCommitment(c: Row): RecogItem {
   // PROVENANCE — a commitment is a fragment of its SOURCE (a meeting or an email). It inherits that
   // parent's entity structurally, never re-guessed on topic. `thread_id` still short-circuits email replies.
   const src = String(c.source || '');
+  // W7.3 · PROVENANCE MISMATCH: sync mints an email commitment's `source_id` as the EMAILS row id
+  // (probe: 25/25 in emails, 0 as inbox_items.id) — the parent is an `email`, mapped to its inbox item
+  // by recognition through THE ONE READ (lib/commitments/source.ts), never taken as an inbox id.
   const parent = c.source_id
     ? (src === 'meeting' ? { kind: 'meeting' as const, id: String(c.source_id) }
-      : (src === 'email' || src === 'inbox') ? { kind: 'inbox_item' as const, id: String(c.source_id) } : null)
+      : src === 'email' ? { kind: 'email' as const, id: String(c.source_id) }
+      : src === 'inbox' ? { kind: 'inbox_item' as const, id: String(c.source_id) } : null)
     : null;
   return {
     kind: 'commitment', id: String(c.id), title: String(c.description || 'Commitment'),

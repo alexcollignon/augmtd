@@ -29,7 +29,9 @@ export function looseRoomKeyOf(linkKind: AnchorLinkKind, id: string): string {
 /** The ONE select per kind for the anchor row (`status` rides so the machine reader needn't re-read). */
 export const ANCHOR_ROW_SELECT: Record<AnchorLinkKind, string> = {
   inbox_item: 'work_title, source, source_data, last_activity_at, created_at, status',
-  commitment: 'description, counterparty, created_at, status',
+  // `source, source_id, thread_id` ride so the door can resolve the commitment's OWN source object
+  // (ONE OBJECT, ONE DOOR — lib/room/door.ts objectIdForDoor) without a second read of the row.
+  commitment: 'description, counterparty, created_at, status, source, source_id, thread_id',
   meeting: 'title, start_time',
 };
 

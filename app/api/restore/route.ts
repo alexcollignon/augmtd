@@ -3,6 +3,7 @@ import { after } from 'next/server';
 import { noteItemAction } from '@/lib/entities/on-action';
 import { createClient } from '@/lib/supabase/server';
 import { logActivity } from '@/lib/activity/log';
+import { reopenInboxItem, reopenCommitment } from '@/lib/activity/reopen';
 
 // W0.5 TIME BUDGET: after() calls noteItemAction / r.runTails (AI-bearing entity re-synthesis) —
 // the platform default kills it mid-work (CLAUDE.md maxDuration lesson).
@@ -17,6 +18,7 @@ export const maxDuration = 300;
 //   • inbox_item — dismissed / marked_done → status='pending' (reappears)
 //   • commitment — commitment_done / commitment_dismissed → status='open' (reappears)
 //   • sender     — sender_muted → the muted awareness items (fyi/noise) from that sender → 'pending'
+//   • bulk_deed  — a bulk archive/trash/expire deed → every member it resolved, as one (W8.6)
 // SENDS ARE NOT REVERSIBLE (reply_sent / nudge_sent) — those never reach this route.
 export async function POST(request: NextRequest) {
   try {
@@ -43,61 +45,20 @@ export async function POST(request: NextRequest) {
       after(async () => { await noteItemAction(supabase, user.id, { kind: entityType as 'inbox_item' | 'commitment', id: entityId }).catch(() => {}); });
     }
     if (entityType === 'inbox_item') {
-      // Flip the item back to pending so classifyItem surfaces it again on the Home. Also CLEAR
-      // source_data.resolved_at/resolved_reason — a reopened item is no longer "cleared today", so it
-      // must drop out of the Day-cleared ring's count (which keys on that timestamp, not updated_at).
-      const { data: pre } = await supabase.from('inbox_items').select('source_data').eq('id', entityId).eq('user_id', user.id).maybeSingle();
-      const preSd = { ...((pre?.source_data ?? {}) as Record<string, unknown>) };
-      delete preSd.resolved_at;
-      delete preSd.resolved_reason;
-      delete preSd.resolution_reason;
-      const { error } = await supabase
-        .from('inbox_items')
-        .update({ status: 'pending', source_data: preSd, updated_at: new Date().toISOString() })
-        .eq('id', entityId)
-        .eq('user_id', user.id);
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-      // Name the specific item so the log reads "Restored: <subject>" (not a vague "Restored an item").
-      const { data: it } = await supabase.from('inbox_items').select('work_title, source_data').eq('id', entityId).eq('user_id', user.id).maybeSingle();
-      const itemTitle = (it?.work_title || (it?.source_data as { subject?: string } | null)?.subject || 'an item') as string;
-      await logActivity(supabase, user.id, {
-        type: 'restored',
-        title: `Restored: ${itemTitle}`,
-        entityType: 'inbox_item',
-        entityId,
-      });
+      // Flip the item back to pending so classifyItem surfaces it again on the Home, CLEARING
+      // resolved_at/resolved_reason (a reopened item leaves the Day-cleared ring) — THE ONE restore
+      // flip (lib/activity/reopen.ts), shared with the guarded repair scripts.
+      const r = await reopenInboxItem(supabase, user.id, entityId);
+      if (!r.ok) return NextResponse.json({ error: r.error }, { status: 500 });
       await bustBriefCache();
       return NextResponse.json({ success: true });
     }
 
     if (entityType === 'commitment') {
-      // Reopen the commitment so it re-enters the Home brief (which reads only status='open'). Also
-      // CLEAR resolved_at/resolved_reason so a reopened commitment drops out of the Day-cleared ring.
-      // resolved_at/resolved_reason may not exist on older schemas → retry status-only on error.
-      let error;
-      ({ error } = await supabase
-        .from('commitments')
-        .update({ status: 'open', resolved_at: null, resolved_reason: null, updated_at: new Date().toISOString() })
-        .eq('id', entityId)
-        .eq('user_id', user.id));
-      if (error) {
-        ({ error } = await supabase
-          .from('commitments')
-          .update({ status: 'open', updated_at: new Date().toISOString() })
-          .eq('id', entityId)
-          .eq('user_id', user.id));
-      }
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-      // Name the specific commitment so the log reads "Restored: <description>".
-      const { data: c } = await supabase.from('commitments').select('description').eq('id', entityId).eq('user_id', user.id).maybeSingle();
-      await logActivity(supabase, user.id, {
-        type: 'restored',
-        title: `Restored: ${c?.description || 'a commitment'}`,
-        entityType: 'commitment',
-        entityId,
-      });
+      // Reopen the commitment so it re-enters the Home brief (status='open', resolved_* cleared) —
+      // THE ONE restore flip (lib/activity/reopen.ts).
+      const r = await reopenCommitment(supabase, user.id, entityId);
+      if (!r.ok) return NextResponse.json({ error: r.error }, { status: 500 });
       await bustBriefCache();
       return NextResponse.json({ success: true });
     }
@@ -157,6 +118,16 @@ export async function POST(request: NextRequest) {
       });
       await bustBriefCache();
       return NextResponse.json({ success: true });
+    }
+
+    if (entityType === 'bulk_deed') {
+      // W8.6 · THE BATCH UNDO — the deed's ONE activity record reverses every member it resolved,
+      // across every page, through the ONE restore flip (exactly once: a claim on the deed's undoneAt).
+      const { undoBulkDeed } = await import('@/lib/deeds/bulk');
+      const r = await undoBulkDeed(supabase, user.id, entityId);
+      if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });
+      await bustBriefCache();
+      return NextResponse.json({ success: true, reopened: r.reopened, skipped: r.skipped, alreadyUndone: r.alreadyUndone });
     }
 
     if (entityType === 'membership') {

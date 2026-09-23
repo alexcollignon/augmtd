@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { loadUserRules } from '@/lib/inbox/rules/load';
-import { setInboxRules, classifyItem, type ItemType } from '@/lib/inbox/classify-item';
+import { classifyItem, type ItemType } from '@/lib/inbox/classify-item';
 import { getUnderstanding, type ItemRelevance } from '@/lib/inbox/item-understanding';
+import { buildInviteObject, type InviteObject } from '@/lib/present/invite-object';
 
 export const maxDuration = 15;
 
@@ -17,30 +18,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const { data: { user }, error } = await supabase.auth.getUser();
   if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { data: item } = await supabase
+  const { data: item, error: itemErr } = await supabase
     .from('inbox_items')
     .select('id, work_title, source_data, created_at, work_state, rule_type, type_override, status, source, project_id')
     .eq('id', id)
     .eq('user_id', user.id)
-    .single();
+    .maybeSingle();
+  if (itemErr) console.warn('[inbox/thread] item read failed:', itemErr.message);
   if (!item) return NextResponse.json({ error: 'not found' }, { status: 404 });
-
-  // Resolve the item's REAL type so the deep-dive header badge matches the classification — an FYI/
-  // `noted` newsletter must never read "Reply needed". Load the user's rules so classifyItem uses their
-  // edited deterministic tier. Gate on the item's own classification, never sender/subject keywords.
-  let itemType: ItemType = 'fyi';
-  try {
-    const rules = await loadUserRules(user.id, supabase);
-    setInboxRules(rules);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    itemType = classifyItem(item as any);
-  } catch { /* fall back to fyi */ }
-
-  // The item's understood RELEVANCE (reply | action | awareness) — the SINGLE signal that drives the
-  // deep-dive's primary surface (reply → composer open; awareness → composer collapsed + Dismiss lead;
-  // action → action lead) AND keeps it coherent with the generated plan (same signal both places).
-  // Non-fatal: missing understanding → null → the client falls back to today's composer-open behavior.
-  const relevance: ItemRelevance | null = getUnderstanding(item)?.relevance ?? null;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sd = (item.source_data ?? {}) as Record<string, any>;
@@ -54,31 +39,62 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type EmailRow = Record<string, any>;
-  let rows: EmailRow[] = [];
-
   const SELECT = 'id, message_id, from_address, from_name, subject, body, html_body, received_at, is_from_user, to_addresses, cc_addresses';
 
-  // Primary path: all emails sharing this thread_id, ordered oldest→newest (the inbox pattern).
-  if (threadId) {
-    const { data } = await supabase
-      .from('emails')
-      .select(SELECT)
-      .eq('user_id', user.id)
-      .eq('thread_id', threadId)
-      .order('received_at', { ascending: true });
-    rows = data ?? [];
-  }
+  // ── W8.4 · ONE FLIGHT, NOT FOUR (dev logs, Sep 23: this door took 3.6–7.4s on an open). Every read
+  // after the item keys on the item alone, so the rules, the thread and the invite object now run
+  // in ONE parallel wave instead of back to back (auth → item → rules → thread → [email] → invite ×
+  // its own 2–4 reads). The rules are handed to classifyItem DIRECTLY — the module-global
+  // rules setter (classify-item.ts) was a cross-request race (two users' opens could classify under each other's
+  // rules on one warm instance).
+  const [rules, threadRows, invite] = await Promise.all([
+    loadUserRules(user.id, supabase).catch(() => null),
+    (async (): Promise<EmailRow[]> => {
+      // Primary path: all emails sharing this thread_id, ordered oldest→newest (the inbox pattern).
+      if (threadId) {
+        const { data, error: tErr } = await supabase
+          .from('emails')
+          .select(SELECT)
+          .eq('user_id', user.id)
+          .eq('thread_id', threadId)
+          .order('received_at', { ascending: true });
+        if (tErr) console.warn('[inbox/thread] thread read failed:', tErr.message);
+        if (data?.length) return data;
+      }
+      // Fallback: single message by its email_id (thread never stitched / single-message thread).
+      if (emailId) {
+        const { data, error: eErr } = await supabase
+          .from('emails')
+          .select(SELECT)
+          .eq('user_id', user.id)
+          .eq('id', emailId)
+          .maybeSingle();
+        if (eErr) console.warn('[inbox/thread] email read failed:', eErr.message);
+        if (data) return [data];
+      }
+      return [];
+    })(),
+    // INVITES ARE EVENTS (W7.4): an item holding a PARSED invite is served as its meeting — the
+    // linked calendar row's live spec (RSVP verbs only for an invitee) or, with no row, the invite's
+    // own facts with no verbs. Null = not an invite object; the mount renders the mail. Never fails.
+    buildInviteObject(supabase, user.id, sd).catch(() => null as InviteObject | null),
+  ]);
+  const rows: EmailRow[] = threadRows;
 
-  // Fallback: single message by its email_id (thread never stitched / single-message thread).
-  if (rows.length === 0 && emailId) {
-    const { data } = await supabase
-      .from('emails')
-      .select(SELECT)
-      .eq('user_id', user.id)
-      .eq('id', emailId)
-      .maybeSingle();
-    if (data) rows = [data];
-  }
+  // Resolve the item's REAL type so the deep-dive header badge matches the classification — an FYI/
+  // `noted` newsletter must never read "Reply needed". The user's rules drive the deterministic tier.
+  // Gate on the item's own classification, never sender/subject keywords.
+  let itemType: ItemType = 'fyi';
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    itemType = classifyItem(item as any, rules);
+  } catch { /* fall back to fyi */ }
+
+  // The item's understood RELEVANCE (reply | action | awareness) — the SINGLE signal that drives the
+  // deep-dive's primary surface (reply → composer open; awareness → composer collapsed + Dismiss lead;
+  // action → action lead) AND keeps it coherent with the generated plan (same signal both places).
+  // Non-fatal: missing understanding → null → the client falls back to today's composer-open behavior.
+  const relevance: ItemRelevance | null = getUnderstanding(item)?.relevance ?? null;
 
   // Render-ready messages — one card per message, like the inbox thread cards. Field names mirror
   // the `emails` columns so the shared <ThreadMessages/> component (used by both the inbox and the
@@ -132,6 +148,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       })),
     // Separate messages (oldest→newest). Empty when neither thread_id nor email_id resolved.
     messages,
+    // The meeting this item IS, when it is an invitation (W7.4). Null for ordinary mail.
+    invite,
     // Legacy fallback body (used only if messages is empty) — the inbox item's own stored body.
     body: typeof sd.body === 'string' ? sd.body : null,
   });

@@ -49,6 +49,10 @@ export type ItemPlanTask = {
   status?: PlanTaskStatus;   // transient runtime state (working / awaiting_approval / done); absent = ready
   done?: boolean;
   dismissed?: boolean;       // the user removed this step from the workflow (persisted)
+  /** W7.3 THE MOTION FLAG: this step is a CLAUSE of one multi-part obligation, written by the
+   *  commitment extractor (G1) — the only plan the room may show as "this message should cover".
+   *  The identified-tasks plan (the internal work plan) never carries it. Legacy G1 rows: id `g1-*`. */
+  clause?: boolean;
   // ── LEGACY: the proposed coworker owner the retired step-panel's owner menu set. Kept in the type
   // so existing item_plans rows still parse; delegation now routes through the steer channel / the
   // preparation pass. Distinct from `handedTo` (a coworker actually ran it).

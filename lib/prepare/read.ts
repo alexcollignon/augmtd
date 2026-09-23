@@ -18,6 +18,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { inviteOutsideStatedWindow, claimsUndoneWork, type ProposedFrom } from '@/lib/prepare/truth';
+import { addresseeOfStamp, addresseeFromNudgeTitle, addresseeWithdrawn, loadUserForms, type Addressee } from '@/lib/prepare/addressee';
+import type { UserForms } from '@/lib/commitments/extraction-truth';
 
 export type PreparedKind = 'reply_draft' | 'nudge_draft' | 'deliverable' | 'invite' | 'forward' | 'paste_pack';
 
@@ -62,6 +64,12 @@ export type PreparedArtifact = {
   /** A CLAIM RENDERS (W5a): the artifact's words claim a deed (finished/sent/attached/delivered)
    *  the facts do not support — an OPEN obligation with nothing staged. Never live. */
   falseClaim?: boolean;
+  /** TRUE ADDRESSEES (W7.3): who the words are FOR, stamped at production (a legacy nudge's title
+   *  carries it). Served so a card can address its To from what the words were written for. */
+  addressee?: Addressee | null;
+  /** TRUE ADDRESSEES (W7.3): the addressee denotes the USER, or is not the item's current
+   *  counterparty — the words greet the wrong person. Never live; the pass re-prepares. */
+  misaddressed?: boolean;
   /** The invite's stored payload (pool invites; the source_data invite carries the same fields on
    *  its own row) — the card mounts from it, never from a fresh live grounding. */
   invite?: { title?: string; startISO?: string; endISO?: string; attendees?: string[]; description?: string; timezone?: string; proposed?: boolean; proposedFrom?: ProposedFrom; alternatives?: Array<{ startISO: string; endISO: string; note?: string }> } | null;
@@ -77,6 +85,9 @@ export type ItemTruthFacts = {
   anchorIso: string | null;
   /** The user OWES this and it is still open — the only case a completion claim can be false. */
   obligationOpen: boolean;
+  /** TRUE ADDRESSEES (W7.3): the item's CURRENT counterparty (commitments) — what an addressed draft
+   *  must agree with. Absent/null = only the not-the-user floor applies. */
+  counterparty?: string | null;
 };
 
 // ── THE TRUTH STAMPS (W5a) — pure, exported for the gate and the sweeps. ──
@@ -93,6 +104,22 @@ export function stampTruth<T extends PreparedArtifact>(arts: T[], facts: ItemTru
   }
   return arts;
 }
+
+/** THE ADDRESSEE FLOOR (W7.3) — pure, in place. A send-shaped artifact (reply/nudge/paste pack) whose
+ *  addressee denotes the user or contradicts the item's current counterparty is `misaddressed`.
+ *  Unaddressed artifacts are untouched (absence is not a wrong address). */
+export function stampAddressees<T extends PreparedArtifact>(arts: T[], facts: { counterparty?: string | null; user: UserForms } | null | undefined): T[] {
+  if (!facts) return arts;
+  for (const a of arts) {
+    if (a.kind !== 'reply_draft' && a.kind !== 'nudge_draft' && a.kind !== 'paste_pack') continue;
+    if (addresseeWithdrawn(a.addressee ?? null, { counterparty: facts.counterparty ?? null, user: facts.user })) a.misaddressed = true;
+  }
+  return arts;
+}
+
+/** Does any artifact carry an addressee the floor could judge? (the loader's cost gate) */
+const hasAddressed = (arts: PreparedArtifact[]): boolean =>
+  arts.some((a) => !!a.addressee && (a.kind === 'reply_draft' || a.kind === 'nudge_draft' || a.kind === 'paste_pack'));
 
 /** THE NOTICE LAW AT THE READER (W5b hand-off, Sep 23): an item the notice law demotes (a list-mail
  *  header, an automated sender, a kind-only notification the brain says nobody owes a move on) may
@@ -119,7 +146,7 @@ async function stripNoticeDrafts<T extends PreparedArtifact>(arts: T[], sd: unkn
   } catch { return arts; }
 }
 
-type CommitFactsRow = { description?: unknown; created_at?: unknown; status?: unknown; direction?: unknown };
+type CommitFactsRow = { description?: unknown; created_at?: unknown; status?: unknown; direction?: unknown; counterparty?: unknown };
 /** A commitment row → its truth facts (the user owes it only on `you_owe`; a chase's words about
  *  what THEY owe are never judged as the user's own deed — fail-safe). */
 export function commitmentTruthFacts(row: CommitFactsRow | null | undefined): ItemTruthFacts | null {
@@ -128,6 +155,7 @@ export function commitmentTruthFacts(row: CommitFactsRow | null | undefined): It
     text: typeof row.description === 'string' ? row.description : null,
     anchorIso: typeof row.created_at === 'string' ? row.created_at : null,
     obligationOpen: String(row.status ?? '') === 'open' && String(row.direction ?? '') === 'you_owe',
+    counterparty: typeof row.counterparty === 'string' ? row.counterparty : null,
   };
 }
 /** An inbox row's source_data → its truth facts. The completion floor stays OFF for inbox replies
@@ -142,8 +170,8 @@ export function inboxTruthFacts(sd: unknown): ItemTruthFacts | null {
 
 type PreparedFrom = { emailId?: string | null; receivedAt?: string | null } | null;
 type SourceData = {
-  draft?: { body?: string; generated_at?: string; sent_at?: string; prepared_from?: PreparedFrom; attachment?: { fileId: string; filename: string; source?: string } } | null;
-  nudge_draft?: { body?: string; generated_at?: string; sent_at?: string; prepared_from?: PreparedFrom } | null;
+  draft?: { body?: string; generated_at?: string; sent_at?: string; prepared_from?: PreparedFrom; attachment?: { fileId: string; filename: string; source?: string }; addressee?: unknown } | null;
+  nudge_draft?: { body?: string; generated_at?: string; sent_at?: string; prepared_from?: PreparedFrom; addressee?: unknown } | null;
   // THE READER READS EVERYTHING (trichotomy T1 find: a fresh prepared invite existed and the
   // canonical reader missed it — every consumer under-reported preparedness for schedule/forward
   // items). Sent artifacts are done work, not pending preparation — they don't render here.
@@ -168,7 +196,7 @@ export function inviteExpired(a: Pick<PreparedArtifact, 'kind' | 'invite'>, now:
  *  ground move, not past its own time, not outside the item's stated window, not claiming a deed
  *  the facts deny (W5a). (Sent artifacts never enter the list at all.) */
 export function isLiveArtifact(a: PreparedArtifact): boolean {
-  return !a.stale && !a.expired && !a.outsideWindow && !a.falseClaim;
+  return !a.stale && !a.expired && !a.outsideWindow && !a.falseClaim && !a.misaddressed;
 }
 
 /** WHY an artifact is not live, in one word — null when it is live. The ONE vocabulary every
@@ -176,6 +204,7 @@ export function isLiveArtifact(a: PreparedArtifact): boolean {
 export function withdrawnReasonOf(a: PreparedArtifact): string | null {
   if (a.outsideWindow) return 'outside the window they stated';
   if (a.falseClaim) return 'its words claimed work that is not done';
+  if (a.misaddressed) return 'it was addressed to the wrong person';
   if (a.expired) return 'its proposed time already passed';
   if (a.stale) return 'superseded by a newer message';
   return null;
@@ -209,12 +238,13 @@ export function preparedFromSourceData(sd: SourceData): PreparedArtifact[] {
       by: sd.prepared_by?.worker ?? null, at: sd.draft.generated_at ?? null,
       attachment: sd.draft.attachment ?? null, provenance: null,
       ground: groundFrom(sd.draft.prepared_from), payload: { store: 'source_data', field: 'draft' },
+      addressee: addresseeOfStamp(sd.draft.addressee),
     });
   }
   if (sd?.nudge_draft?.body && !sd.nudge_draft.sent_at) {
     // B3 (verb-lane sweep): the pass stamps prepared_by on the nudge lane too — reading null here
     // rendered the chase draft unattributed while every sibling lane said "by Clara".
-    out.push({ kind: 'nudge_draft', title: null, content: sd.nudge_draft.body, by: sd.prepared_by?.worker ?? null, at: sd.nudge_draft.generated_at ?? null, attachment: null, provenance: null, ground: groundFrom(sd.nudge_draft.prepared_from), payload: { store: 'source_data', field: 'nudge_draft' } });
+    out.push({ kind: 'nudge_draft', title: null, content: sd.nudge_draft.body, by: sd.prepared_by?.worker ?? null, at: sd.nudge_draft.generated_at ?? null, attachment: null, provenance: null, ground: groundFrom(sd.nudge_draft.prepared_from), payload: { store: 'source_data', field: 'nudge_draft' }, addressee: addresseeOfStamp(sd.nudge_draft.addressee) });
   }
   if (sd?.prepared_invite && !sd.prepared_invite.sent_at) {
     const inv = sd.prepared_invite;
@@ -243,6 +273,27 @@ export function preparedFromSourceData(sd: SourceData): PreparedArtifact[] {
   return stampExpiry(out);
 }
 
+/** THE ONE READER's pure LIVE verdict over an inbox row's own source_data (W7.5 — one reader per
+ *  object): the artifacts preparedFromSourceData finds, run through the SAME truth floors the IO
+ *  reader applies (window · completion claim · THE ADDRESSEE FLOOR when the user's forms are handed
+ *  in), filtered by isLiveArtifact. A pure surface (the held ledger / triage deck) reads THIS, never
+ *  the raw list — a raw list offered "draft ready" for a draft the reader withdraws as misaddressed.
+ *  (Ground staleness needs the emails table and stays the IO reader's; the batched reader's
+ *  last-activity approximation is applied here too when the row carries its clock.) */
+export function liveFromSourceData(
+  sd: unknown, opts: { user?: UserForms | null; lastActivityAt?: string | null } = {},
+): PreparedArtifact[] {
+  const arts = preparedFromSourceData(sd as SourceData);
+  const lastAct = Date.parse(String(opts.lastActivityAt ?? '')) || 0;
+  if (lastAct) for (const a of arts) {
+    const pAt = Date.parse(String(a.ground?.receivedAt ?? '')) || 0;
+    if (pAt && lastAct > pAt + 5000) a.stale = true;
+  }
+  stampTruth(arts, inboxTruthFacts(sd));
+  if (opts.user && hasAddressed(arts)) stampAddressees(arts, { counterparty: null, user: opts.user });
+  return arts.filter(isLiveArtifact);
+}
+
 type PoolMeta = {
   agentName?: string; worker?: string; attachment?: { fileId: string; filename: string; source?: string };
   provenance?: Record<string, string>; version_of?: string; decisionBrief?: boolean; pastePack?: boolean;
@@ -252,6 +303,8 @@ type PoolMeta = {
   invite?: NonNullable<PreparedArtifact['invite']> | null;
   /** The execute door stamps the pool artifact spent here (mirror of source_data's sent_at). */
   sent_at?: string | null;
+  /** TRUE ADDRESSEES (W7.3): who the words are for, stamped by the writer. */
+  addressee?: unknown;
 };
 
 /** The PURE pool-row mapper — the other half of the one reader, shared by preparedState and the
@@ -295,14 +348,18 @@ export function poolRowsToArtifacts(rows: Array<Record<string, unknown>>, poolKi
       out.push({
         kind: 'paste_pack', title: (d.title as string) ?? null, content: String(d.content),
         by, at, attachment: null, provenance: meta.provenance ?? null, note: meta.note ?? null,
-        ground: groundFrom(meta.prepared_from), payload,
+        ground: groundFrom(meta.prepared_from), payload, addressee: addresseeOfStamp(meta.addressee),
       });
       continue;
     }
     const isCommitDraft = poolKind === 'commitment' && d.type === 'draft' && !meta.decisionBrief;
     if (isCommitDraft && sawCommitDraft) continue;
     if (isCommitDraft) sawCommitDraft = true;
+    // TRUE ADDRESSEES (W7.3): the writer's stamp; a LEGACY nudge's own title ("Nudge — X") carries the
+    // name its writer addressed (the same field) — read as a name-only addressee.
+    const addressee = isCommitDraft ? (addresseeOfStamp(meta.addressee) ?? addresseeFromNudgeTitle(d.title as string)) : null;
     out.push({
+      ...(addressee ? { addressee } : {}),
       kind: isCommitDraft ? (String(d.title ?? '').startsWith('Nudge — ') ? 'nudge_draft' : 'reply_draft') : 'deliverable',
       title: (d.title as string) ?? null, content: String(d.content),
       ground: groundFrom(meta.prepared_from),
@@ -360,6 +417,8 @@ export type PreparedState = {
   outsideWindow: PreparedArtifact[];
   /** A CLAIM RENDERS (W5a): words announcing a deed the facts deny — never ready. */
   falseClaim: PreparedArtifact[];
+  /** TRUE ADDRESSEES (W7.3): words addressed to the user / to someone other than the counterparty. */
+  misaddressed: PreparedArtifact[];
   /** A send-shaped artifact on this item already went out (the machine's `committed`). */
   sentStamp: boolean;
   /** 'draft' | preparer's name | null — from live artifacts only. */
@@ -390,6 +449,7 @@ const toState = (all: PreparedArtifact[], sentStamp: boolean): PreparedState => 
     stale: sorted.filter((a) => a.stale),
     outsideWindow: sorted.filter((a) => a.outsideWindow),
     falseClaim: sorted.filter((a) => a.falseClaim),
+    misaddressed: sorted.filter((a) => a.misaddressed),
     sentStamp,
     badge: badgeOf(sorted),
     leadKind: leadKindOf(sorted),
@@ -400,7 +460,7 @@ const sentStampOf = (sd: SourceData, pool: Array<Record<string, unknown>>): bool
   !!(sd?.draft?.sent_at || sd?.prepared_invite?.sent_at || sd?.prepared_forward?.sent_at || sd?.nudge_draft?.sent_at)
   || pool.some((d) => !!((d.metadata ?? {}) as PoolMeta).sent_at);
 
-const EMPTY_STATE: PreparedState = { all: [], live: [], expired: [], stale: [], outsideWindow: [], falseClaim: [], sentStamp: false, badge: null, leadKind: null };
+const EMPTY_STATE: PreparedState = { all: [], live: [], expired: [], stale: [], outsideWindow: [], falseClaim: [], misaddressed: [], sentStamp: false, badge: null, leadKind: null };
 
 /** THE ONE READER — everything prepared for ONE item, across all storage places, with the exact
  *  ground check (one emails query). */
@@ -420,7 +480,7 @@ export async function preparedState(
       facts = inboxTruthFacts(sd);
       out.push(...await stripNoticeDrafts(preparedFromSourceData(sd), sd, data?.work_state));
     } else {
-      const { data: c } = await client.from('commitments').select('description, created_at, status, direction').eq('id', item.id).eq('user_id', userId).maybeSingle();
+      const { data: c } = await client.from('commitments').select('description, created_at, status, direction, counterparty').eq('id', item.id).eq('user_id', userId).maybeSingle();
       facts = commitmentTruthFacts(c as CommitFactsRow | null);
     }
     // Deliverables hang off items under the plan-kind key ('email' for inbox-backed, 'commitment' for commitments).
@@ -444,6 +504,9 @@ export async function preparedState(
     // TIME TRUTH + A CLAIM RENDERS (W5a): an invite outside the item's stated window and words that
     // announce an undone deed are derived FALSE here, at the one reader — never "ready" anywhere.
     stampTruth(out, facts);
+    // TRUE ADDRESSEES (W7.3): words addressed to the user, or to someone who is not the item's
+    // counterparty, are derived WRONG here — never "ready" anywhere; the re-prepare trip replaces them.
+    if (hasAddressed(out)) stampAddressees(out, { counterparty: facts?.counterparty ?? null, user: await loadUserForms(client, userId) });
   } catch { /* non-fatal — prepared work is an enhancement */ }
   return toState(out, sentStampOf(sd, pool));
 }
@@ -482,7 +545,7 @@ export async function preparedStatesFor(
       // THE ITEM'S OWN FACTS for commitments (W5a) — one batched read, so the window and the
       // completion floors hold on a whole deck exactly as they hold on the single reader.
       commitIds.length
-        ? client.from('commitments').select('id, description, created_at, status, direction').eq('user_id', userId).in('id', commitIds)
+        ? client.from('commitments').select('id, description, created_at, status, direction, counterparty').eq('user_id', userId).in('id', commitIds)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
     ]);
     const commitFacts = new Map<string, ItemTruthFacts | null>();
@@ -495,6 +558,8 @@ export async function preparedStatesFor(
       const arr = poolBy.get(k) ?? [];
       arr.push(r); poolBy.set(k, arr);
     }
+    // TRUE ADDRESSEES (W7.3): who the user is — read ONCE for the whole batch, only when needed.
+    let userForms: UserForms | null = null;
     for (const item of items) {
       const row = item.row ?? rows.get(item.id);
       const sd = (row?.source_data ?? null) as SourceData;
@@ -508,7 +573,12 @@ export async function preparedStatesFor(
         const pAt = Date.parse(String(a.ground?.receivedAt ?? '')) || 0;
         if (pAt && lastAct > pAt + 5000) a.stale = true;
       }
-      stampTruth(arts, item.kind === 'inbox' ? inboxTruthFacts(sd) : commitFacts.get(item.id) ?? null);
+      const facts = item.kind === 'inbox' ? inboxTruthFacts(sd) : commitFacts.get(item.id) ?? null;
+      stampTruth(arts, facts);
+      if (hasAddressed(arts)) {
+        userForms ??= await loadUserForms(client, userId);
+        stampAddressees(arts, { counterparty: facts?.counterparty ?? null, user: userForms });
+      }
       out.set(keyOf(item), toState(arts, sentStampOf(sd, pool)));
     }
   } catch { /* the prepared state is an enhancement — rows render without it */ }

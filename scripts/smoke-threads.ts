@@ -830,7 +830,10 @@ console.log('\nT6 · THE ROOM’S CONVERSATION — the rail, through the ONE kit
       ['durable persistence (every write POSTs to the ONE turns table)', /function persistTurn\(roomKey: string/],
       ['the hydrate merge — SERVER TRUTH WINS INCLUDING DELETIONS',
         /SERVER TRUTH WINS — INCLUDING DELETIONS[\s\S]{0,900}const inFlight = local\.filter/],
-      ['the one room-key convention (entity id · `<kind>:<id>` loose)', /const roomKey = ent\?\.id \?\? \(kind === 'entity' \? id/],
+      // ⟲ RE-POINTED (W7.2 ONE OBJECT, ONE DOOR): the key is the DOOR's (lib/room/door.ts
+      // roomKeyForDoor) — entity id on the entity door, `<kind>:<id>` on every item door; the
+      // linked entity's id never wins on an item door. smoke-one-door owns the rule's pure tests.
+      ['the one room-key convention (entity id · `<kind>:<id>` item door)', /const roomKey = roomKeyForDoor\(door\);/],
       ['the steer/send core (one door for typed words, chips and picks)', /'\/api\/items\/steer'/],
       ['THE PARITY LAW — a chat-approved send fires the ONE send door', /send-reply`, \{/],
       ['the ingest funnel (attach lands in the per-item pool)', /'\/api\/items\/ingest'/],
@@ -2216,14 +2219,16 @@ console.log('\nT15 · THE ITEM ROOM IS THE PROJECT ROOM — same header, same ha
   gate('T15.8 the summoned SHEET survives inside it (reply · follow-up · invite · forward, one frame, one Send)',
     !!detail && /function StageOverlay/.test(detail) && (detail.match(/<StageOverlay/g) ?? []).length >= 3
     && /absolute inset-x-0 bottom-0 z-20 max-h-\[72%\]/.test(detail));
-  gate('T15.8b a parked GATE is the room’s one move, so it raises the stage the way a focused artifact does',
+  // RE-POINTED (W7.3 ONE STAGE, Sep 23 — found live: the commitment door's "Source" handle and a
+  // nudge row summoned a split stage holding the OLD ComposePanel while the email door wore the kit
+  // EmailCard in the conversation). The commitment door's stage now exists ONLY for a parked gate;
+  // its message is the ONE EmailCard in the conversation (smoke-one-stage A-block carries the law).
+  gate('T15.8b a parked GATE is the room’s one move, so it raises the stage the way a focused artifact does — and on the commitment door NOTHING ELSE raises one',
     !!detail && /const gateStanding = isHandoff && handoffOpen;/.test(detail)
-    && /stageOpen = sourceOpen \|\| composeRaised \|\| inviteOpen \|\| gateStanding/.test(detail));
-  gate('T15.8c THE JUDGE SEEDS THE COMPOSER, IT NEVER RAISES THE STAGE (walk-found: a chase verdict auto-opened the pane — the docked pane under another name)',
-    !!detail && (detail.match(/const \[composeRaised, setComposeRaised\] = useState\(false\);/g) ?? []).length === 2
-    // the verdict still seeds `composing` (the surface is ready when reached for) …
-    && /if \(!composingTouchedRef\.current && \(d\.verdict\.work === 'chase' \|\| d\.verdict\.work === 'reply'\)\) \{\s*\n\s*setComposing\(true\);/.test(detail)
-    // … and never raises anything: every raise is a person's own door.
+    && /const stageOpen = sourceOpen \|\| \(isHandoff && inviteOpen\) \|\| gateStanding;/.test(detail));
+  gate('T15.8c THE JUDGE NEVER RAISES A STAGE — the meeting door keeps its person-raised composer; the commitment door has NO composer stage at all (W7.3)',
+    !!detail && (detail.match(/const \[composeRaised, setComposeRaised\] = useState\(false\);/g) ?? []).length === 1
+    && !/setComposing\(true\);/.test(detail.slice(detail.indexOf('function CommitmentDetail')))
     && !/stageOpen = sourceOpen \|\| composing/.test(detail));
 
   // THE DRAWER — ⚠️ RE-POINTED (owner, Sep 14, the maintenance-work complaint): this door carried
@@ -2620,7 +2625,12 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
     && /if \(variantBodies\[id\] !== undefined\) \{ serve\(id, variantBodies\[id\]\); return; \}/.test(host)
     && /setVariantBodies\(\(prev\) => \(\{ \.\.\.prev, \[targetVariant\]: String\(d\.draft\) \}\)\)/.test(host)
     // the host never calls a drafter of its own
-    && !/generateReplyDraft|\/api\/compose\/draft|fresh=1/.test(host)
+    // RE-POINTED (W7.3): `/api/compose/draft` is now the COMPOSE lane's FILL READ — the commitment
+    // analog of `/api/inbox/<id>/draft` (it serves the pooled draft through THE ONE READER and
+    // drafts only when nothing is pooled, exactly as the inbox read does). The steer path stays the
+    // one redraft path; no drafter is forked here.
+    && !/generateReplyDraft|fresh=1/.test(host)
+    && (host.match(/fetch\('\/api\/compose\/draft'/g) ?? []).length === 1
     // RE-POINTED (Sep 10, A PREVIEW IS NOT A DEED): the host now holds TWO lanes of the SAME route
     // — `redraft` (persisting, for an instruction the user authored) and `previewBody` (writes
     // nothing, for a direction they have not picked). The law is unchanged: one route, no forked
@@ -2676,18 +2686,24 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
         // reachable only from the card's one `send`. An eighth door is still a new door, and this
         // gate is still where it stops.
         '/api/emails/send',
+        // RE-POINTED (W7.3 ONE STAGE, Sep 23): the COMPOSE lane — a commitment's message, the ONE
+        // card instead of the retired split-stage ComposePanel. Its fill read (the pooled draft,
+        // addressed by THE ONE ADDRESSEE LADDER) and its approve-before-commit send (the commit
+        // door at /api/compose/send, exactly-once). Reachable only from the card's one `send`.
+        '/api/compose/draft',
+        '/api/compose/send',
       ];
       return doors.length === expected.length && expected.every((d) => doors.includes(d));
     })()
-    && !!host && /\/send-coworker-email`/.test(host)
-    && !/\/api\/compose\/send/.test(host ?? ''));
+    && !!host && /\/send-coworker-email`/.test(host));
   gate('T18.13b EVERY SEND IS THE USER’S CLICK — the two doors fire only from the card’s own `send`',
     (() => {
       const code = (host ?? '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
       return /const send = async \(\) => \{/.test(code)
         && (code.match(/send-coworker-email/g) ?? []).length === 1
         && (code.match(/send-reply/g) ?? []).length === 1
-        && (code.match(/emails\/send/g) ?? []).length === 1;
+        && (code.match(/emails\/send/g) ?? []).length === 1
+        && (code.match(/compose\/send/g) ?? []).length === 1;
     })());
   gate('T18.14 `EmailDraftCard` is GONE codebase-wide (a donor retires the wave its successor ships)',
     !read('components/workers/email-draft-card.tsx')
@@ -2723,7 +2739,9 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
   gate('T18.19 THE TIER LAW BOTH WAYS — the mailbox reply lane is gated on the workspace feature; the COWORKER lane (compose_email, feature-null) works on a sovereign workspace',
     !!host && /const mailboxLane = features\.email !== false;/.test(host)
     && /useFeatures\(\)/.test(host)
-    && /const live = !sent && \(coworker \|\| standalone \|\| mailboxLane\)/.test(host)
+    // RE-POINTED (W7.3): the COMPOSE lane is live everywhere too — /api/compose/send falls back to
+    // the assistant's address on a workspace with no mailbox (the universal compose door's own law).
+    && /const live = !sent && \(coworker \|\| standalone \|\| composeLane \|\| mailboxLane\)/.test(host)
     && !!featureMap && /compose_email: null/.test(featureMap)
     && /send_prepared_reply: 'email'/.test(featureMap));
   gate('T18.20 PERSISTENCE PER SURFACE — each lane reuses the store it already had (the item’s own draft; the DM’s message metadata, whose `sent_at` write-back survives a reload)',
@@ -4104,7 +4122,9 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
 {
   console.log('\nT27 · THE EXPIRY LAW — a lapsed obligation gets a verdict, not a nag');
   const exp = read('lib/commitments/expiry.ts');
-  const sweep = read('app/api/cron/commitments-sweep/route.ts');
+  // ⟲ RE-POINTED (W7.1 HEARTBEAT THROUGHPUT): the commitments sweep is a DISPATCHER; the expiry lane
+  // runs in the per-account pass (lib/work/evidence-sweep.ts). The laws below read BOTH files.
+  const sweep = read('app/api/cron/commitments-sweep/route.ts') + '\n' + read('lib/work/evidence-sweep.ts');
   const ful = read('lib/commitments/fulfillment.ts');
   const restore = read('lib/activity/restore.ts');
 
@@ -4135,23 +4155,26 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     // an undated obligation has no moment to have passed — it can never be nominated
     && /An undated commitment can never be nominated/.test(exp)
     // …and the sweep decides "today" on the USER'S clock, never the server's
-    && !!sweep && /localNow\(await userTimezone\(sb, userId\)\)\.dateStr/.test(sweep)
+    && !!sweep && /localNow\(await userTimezone\((sb|admin), userId\)\)\.dateStr/.test(sweep)
     && !/const today = new Date\(\)\.toISOString\(\)\.slice\(0, 10\);/.test(sweep));
 
   // ⟲ RE-POINTED (W2.3 RETIRE THE MIRRORS): the aging surface is GONE — the sweep writes no inbox
   // mirror any more (a commitment has one home). The order law survives as: the expiry verdict
   // still short-circuits the loop, and no `inbox_items` insert exists anywhere after it.
   gate('T27.5 THE ORDER HOLDS — expiry closes short-circuit the loop and no mirror is ever minted after them',
-    !!sweep && /if \(await applyExpiryVerdict\(sb, c\.user_id, c, ev\)\) \{ expired\+\+; continue; \}/.test(sweep)
+    // ⟲ (W7.1) the expiry branch is the pass's LAST step per row — a close ends that row's work.
+    !!sweep && /if \(await applyExpiryVerdict\(admin, userId, c, ev\)\) out\.expiry\.expired\+\+;/.test(sweep)
     && !/from\('inbox_items'\)\s*\.insert\(/.test(sweep) && /RETIRED, W2\.3/.test(sweep));
 
   gate('T27.6 BOUNDED + HONEST — a cap per sweep, the remainder counted and logged, never silent',
-    !!sweep && /const EXPIRY_JUDGMENTS_PER_SWEEP = \d+;/.test(sweep)
-    && /expiryLeftBehind\+\+;/.test(sweep)
+    // ⟲ RE-POINTED (W7.1): the cap is per ACCOUNT per run now (each account has its own pass).
+    !!sweep && /export const EXPIRY_JUDGMENTS_PER_USER = \d+;/.test(sweep)
+    && /out\.expiry\.leftBehind\+\+;/.test(sweep)
     && /expiry cap reached/.test(sweep)
     // ⟲ RE-POINTED (Sep 22 — W3.1): the response now also carries the evidence lanes' counts, so the
     // expiry remainder is one field among several — still RETURNED, not only logged.
-    && /expiryLeftBehind[,\s][^\n]*\n?[^;]*evidence/.test(sweep));
+    // ⟲ (W7.1) RETURNED: the pass's result carries expiry.leftBehind beside the evidence lanes' counts.
+    && /expiry: \{ judged: number; expired: number; leftBehind: number; deferred: number \}/.test(sweep));
 
   gate('T27.7 THE CACHE SIG CARRIES THE LAW VERSION — an older law’s verdict never satisfies this one',
     !!exp && /export const EXPIRY_LAW_VERSION = \d+;/.test(exp)
@@ -4161,8 +4184,10 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     !!exp && /type: 'commitment_expired',/.test(exp)
     && /metadata: \{ reason: verdict\.reason/.test(exp)
     && !!restore && /commitment_expired: 'commitment',/.test(restore)
-    // /api/restore's commitment branch is the flip back to open (unchanged, shared)
-    && (() => /status: 'open', resolved_at: null, resolved_reason: null/.test(read('app/api/restore/route.ts') || ''))());
+    // /api/restore's commitment branch is the flip back to open — ⟲ RE-POINTED (W7.6): the flip moved
+    // into THE ONE restore flip (lib/activity/reopen.ts), which the route calls and the repairs share.
+    && (() => /reopenCommitment\(supabase, user\.id, entityId\)/.test(read('app/api/restore/route.ts') || '')
+      && /status: 'open', resolved_at: null, resolved_reason: null/.test(read('lib/activity/reopen.ts') || ''))());
 
   // ⟲ RE-POINTED (W2.3 RETIRE THE MIRRORS): there is no surfaced row to judge — the commitment leads
   // the deck through its OWN lane, judged natively (`judgeWork({kind:'commitment'})` from the spine's
@@ -4312,7 +4337,10 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     && /return mountedCards\.length === 1 \? mountedCards\[0\] : null;/.test(rail)
     // the validated-ref branch falls through to the SAME rule instead of dying at a missed match
     && /const ofKind = mountedCards\.filter\(\(a\) => \(stageOfArtifactKey\(a\.key\) === 'reply'\) === moveIsMail\);/.test(rail)
-    && /return ofKind\.length === 1 \? ofKind\[0\] : null;/.test(rail)
+    // ⟲ RE-POINTED (W7.2 ONE OBJECT, ONE DOOR): the sole card of the move's kind binds only when it
+    // is THIS DOOR'S OWN for that target (lib/room/door.ts cardMayBindTarget — names the target, or
+    // carries no id on an item door). The latent guess between members on the entity door is closed.
+    && /return ofKind\.length === 1 && cardMayBindTarget\(door, ofKind\[0\], respMoveTargetId\) \? ofKind\[0\] : null;/.test(rail)
     && /const live = \(cardForMove \|\| moveHref \|\| selfTarget \|\| mergedArt\) && moveClick;/.test(rail));
   gate('T28.4j THE FALLBACK NEVER RAISES A REPLY COMPOSER — a mail move with no card goes to the THREAD or SAYS SO; it never asks for a reply stage',
     !!rail && /const moveIsMail = \(respMove\?\.ref \?\? ''\)\.startsWith\('inbox:'\);/.test(rail)
@@ -4391,9 +4419,11 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   gate('T28.14 the context is the WORK’s own names — the ask’s item ref, the room’s move, the item anchor',
     !!rail && (() => {
       const i = rail!.indexOf('const askContext = ');
-      const seg = rail!.slice(i, i + 320);
+      const seg = rail!.slice(i, i + 420);
       return /\(t\.refs \?\? \[\]\)\.map\(\(r\) => r\.label\)/.test(seg)
-        && /resp\?\.move\?\.label \?\? ent\?\.nextMove \?\? null/.test(seg)
+        // ⟲ RE-POINTED (W7.2 ONE OBJECT, ONE DOOR): the entity's own next move is the ENTITY
+        // door's context only — on an item door it would be a second voice.
+        && /resp\?\.move\?\.label \?\? \(inRoom \? ent\?\.nextMove \?\? null : null\)/.test(seg)
         && /view\.anchor\?\.ask \?\? null/.test(seg);
     })());
   // The sweep is scoped to SPEECH — every surface the user reads, plus the room routes that write
@@ -5015,7 +5045,9 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
       const seg = rail30.slice(i, rail30.indexOf('const openerRef'));
       return i > 0
         // the record is DERIVED from what the room already holds — no second fetch, no new fact
-        && /const hasRecord = !!pinned \|\| !!\(ent\?\.briefAt \?\? view\.briefAt\) \|\| !!sum \|\| turns\.length > 0;/.test(seg)
+        // ⟲ RE-POINTED (W7.2 ONE OBJECT, ONE DOOR): the brief watermark is the DOOR's own opening's
+        // (`opening.at` — the entity's on the entity door, the item's on an item door).
+        && /const hasRecord = !!pinned \|\| !!opening\.at \|\| !!sum \|\| turns\.length > 0;/.test(seg)
         // …both branches exist, and the fresh one is the ELSE
         && /Picking \$\{name\} back up — what do you want to look at\?/.test(seg)
         && /Fresh start on \$\{name\}\. What do you want to pick up\?/.test(seg)
@@ -5451,7 +5483,8 @@ console.log('\nT32 · THE ONE OBJECT CARD — the ask and the thing asked about,
       .every((f) => !/pull it together/i.test(read(f) ?? '')));
 
   gate('T32.9 THE ROOM MOUNTS THE OBJECT AT ITS THREE SEATS — the decision, the opening, the ask — through the ONE mount',
-    /import \{ SourceObjectMount \} from '@\/components\/room\/source-object'/.test(rail32)
+    // RE-POINTED (W7.3): the import also brings the meeting mount (a meeting-born commitment's source)
+    /import \{ SourceObjectMount(, [^}]+)? \} from '@\/components\/room\/source-object'/.test(rail32)
     && /<SourceObjectMount itemId=\{objectItemId\}/.test(rail32)
     && /objectNode: objectCard/.test(rail32)          // the decision seat
     && /pinnedSeatsObject && <div className="pt-0.5">\{objectCard\}<\/div>/.test(rail32)  // the opening
@@ -5483,9 +5516,12 @@ console.log('\nT32 · THE ONE OBJECT CARD — the ask and the thing asked about,
 
   gate('T32.10c THE ASK LINE SPEAKS THE COUNTERPARTY\'S OWN ASK — our disposition ("decide…") is attributed to us, the claim renders or is not made, and the name lands once',
     // OUR framing is detected and never put in their mouth
-    /const machineFramed = !!askText/.test(rail32)
-    && /\/\^\(decide\|choose\|determine\|assess\|evaluate\|weigh\|consider\|review\|triage\|judge\)\\b\//.test(rail32)
-    && /\? `From \$\{who\} — this needs you to \$\{askText\}\$\{tail\}\.`/.test(rail32)
+    // ⟲ RE-POINTED (W8.4 THE ROOM SPEAKS TRUE): the detection + the attribution moved into the ONE
+    // pure fallback ladder (lib/room/opening-fallback.ts — "From <who> — <ask>", their seat and our
+    // frame never fused); the rail calls it. smoke-room-voice C1–C4 hold the ladder's fixtures.
+    /const line = fallbackOpeningLine\(\{ who, ask: a\?\.ask \?\? null, preparedClause: prep \}\);/.test(rail32)
+    && /const MACHINE_FRAMED = \/\^\(decide\|choose\|determine\|assess\|evaluate\|weigh\|consider\|review\|triage\|judge\)\\b\/;/.test(read('lib/room/opening-fallback.ts') ?? '')
+    && /\? `From \$\{who\} — \$\{ask\}\$\{tail\}\.` : `\$\{who\} is asking you to \$\{ask\}\$\{tail\}\.`/.test(read('lib/room/opening-fallback.ts') ?? '')
     // "drafted a reply below" only while that card is in THIS stream
     && /const replyMounted = mountedCards\.some\(\(c\) => c\.key === 'reply'\);/.test(rail32)
     && /a\?\.prepared && replyMounted/.test(rail32)
@@ -5498,8 +5534,14 @@ console.log('\nT32 · THE ONE OBJECT CARD — the ask and the thing asked about,
     && /collapseSelfVoice\(\s*\n\s*a\.prepared === 'draft' \? 'I drafted a reply below' : `\$\{a\.prepared\.split\(' '\)\[0\]\} drafted a reply below`,/.test(rail32)
     && (rail32.match(/a\.prepared\.split\(' '\)/g) ?? []).length === 1);
 
-  gate('T32.11 EVERY DOOR, NO NEW PLUMBING — the loose item door is its own object, the project room hands over its focused mail, and a mail MOVE is the fallback',
-    /const objectItemId = kind === 'email' \? id : \(sourceItemId \|\| \(moveIsMail \? respMoveTargetId : null\)\);/.test(rail32)
+  // ⟲ RE-POINTED (W7.2 ONE OBJECT, ONE DOOR): the object is the DOOR's OWN source through one pure
+  // rule (lib/room/door.ts objectIdForDoor) — an email door is itself, a commitment door takes the
+  // source the door serves, and ONLY the entity door may fall back to its mail MOVE's target (a
+  // member it owns). The item-door move fallback is dead: it mounted a sibling's email under a
+  // commitment's title (owner walk, Sep 23). smoke-one-door H1–H5 test the rule.
+  gate('T32.11 EVERY DOOR, ONE OBJECT RULE — the email door is its own object, the commitment door takes its served source, the project room hands over its focused mail, and only the entity door falls back to its mail MOVE',
+    /const objectItemId = objectIdForDoor\(door, \{ sourceItemId, moveRef: respMove\?\.ref \?\? null \}\);/.test(rail32)
+    && !/\(sourceItemId \|\| \(moveIsMail \? respMoveTargetId : null\)\)/.test(rail32)
     && /sourceItemId=\{focused\?\.kind === 'email' \? focused\.id : null\}/.test(room32));
 
   // ── clause 5 · KIT-SIDE RENDER DISCIPLINE ──

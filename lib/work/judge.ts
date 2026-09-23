@@ -19,6 +19,7 @@ import { coerceUnderstanding, type ItemUnderstanding } from '@/lib/inbox/item-un
 import { isBystanderSeat } from '@/lib/inbox/recipient-role';
 import { isNoMoveNotice, isAutomatedSenderStrong, rawMailKindOf, listMailOf } from '@/lib/inbox/notice-demotion';
 import { isOwnCoworkerSender, ownCoworkerLocals, SELF_ECHO_REASON } from '@/lib/inbox/self-echo';
+import { kindFloor, kindFloorReason } from '@/lib/work/kind-floor';
 import { computeThreadReplyState, type ThreadMessage } from '@/lib/inbox/thread-resolution';
 import { preparedState, isLiveArtifact, withdrawnReasonOf, type PreparedArtifact } from '@/lib/prepare/read';
 import { loadRoster, type RosterEntry } from '@/lib/prepare/route-suggestion';
@@ -31,7 +32,9 @@ import { readProofOfLifeAsk, proofOfLifeFact, proofOfLifeSigPart } from '@/lib/w
 import { sigOf } from '@/lib/core/sig';
 import { readPlan, upsertPlan } from '@/lib/store/item-plans';
 import { normalizeEmail } from '@/lib/core/email';
-import { loadEvidencePool, matchEvidence, evidenceSig, resolveCommitmentAddress, type Evidence, type EvidencePool } from '@/lib/work/evidence-nominator';
+import { loadEvidencePool, loadOpenWork, scopeOf, matchEvidence, evidenceSig, evidenceNewToPrior, resolveCommitmentAddress, SETTLE_MATCH, type Evidence, type EvidencePool, type EvidenceScope } from '@/lib/work/evidence-nominator';
+import { actorLabel } from '@/lib/evidence/actor';
+import { deedWords } from '@/lib/evidence/sources';
 
 // ── LATER EVIDENCE (W3.1 EVIDENCE SETTLES, judge half · invariant 7) ─────────────────────────────
 // The judge reads what the user's own record shows AFTER the item — sent mail to the counterparty on
@@ -51,8 +54,18 @@ function judgeEvidencePool(client: SupabaseClient, userId: string): Promise<Evid
   const hit = _evidencePools.get(userId);
   if (hit && now - hit.at < EVIDENCE_POOL_TTL_MS) return hit.p;
   if (_evidencePools.size > 200) for (const [k, v] of _evidencePools) if (now - v.at >= EVIDENCE_POOL_TTL_MS) _evidencePools.delete(k);
-  const p = loadEvidencePool(client, userId, new Date(now - EVIDENCE_LOOKBACK_DAYS * 86_400_000).toISOString())
-    .catch(() => ({ emails: [], events: [], transcripts: [] } as EvidencePool));
+  // THE SCOPE (W7.1 HEARTBEAT THROUGHPUT): the email lane is loaded by the PEOPLE + THREADS of the
+  // account's open work (the nominator's ONE open-work reader), the newest-first window beside it —
+  // found live: a heavy-mail account's newest-400 window had lost the counterparty's older thread.
+  const since = new Date(now - EVIDENCE_LOOKBACK_DAYS * 86_400_000).toISOString();
+  const p = (async () => {
+    let scope: EvidenceScope | undefined;
+    try {
+      const { getPersonEntities } = await import('@/lib/entities/people');
+      scope = scopeOf(await loadOpenWork(client, userId, await getPersonEntities(client, userId)));
+    } catch { scope = undefined; } // the scope is an enhancement; the window alone still serves
+    return loadEvidencePool(client, userId, since, scope);
+  })().catch(() => ({ emails: [], events: [], transcripts: [] } as EvidencePool));
   _evidencePools.set(userId, { at: now, p });
   return p;
 }
@@ -63,20 +76,29 @@ function atLocal(iso: string, tz: string): string {
 }
 
 /** The LATER EVIDENCE facts block — dated, short, one line per piece. '' when nothing was found.
- *  The calendar lines keep the ALREADY ON THE USER'S CALENDAR header the ALREADY BOOKED rule reads. */
+ *  The calendar lines keep the ALREADY ON THE USER'S CALENDAR header the ALREADY BOOKED rule reads.
+ *  W8.7 THE JUDGE SEES WHAT THE SETTLE SEES: the pool is matched with SETTLE_MATCH (every registry row,
+ *  teammates included), so a TEAMMATE's mail renders as theirs — "a teammate (<name>) sent …", never
+ *  as the user's — and a deed done THROUGH AUGMTD (the commit-door ledger) renders as a dated deed.
+ *  The legacy sections are byte-identical; the new ones appear only when such a piece is present. */
 export function laterEvidenceBlock(ev: Evidence[], tz: string): string {
   if (!ev.length) return '';
   const q = (t: string) => `"${clipLabel(String(t || 'untitled'), 70)}"`;
   const cal = ev.filter((e) => e.type === 'calendar');
   const sent = ev.filter((e) => e.type === 'email' && e.by === 'user');
+  const mate = ev.filter((e) => e.type === 'email' && e.by === 'teammate');
   const recv = ev.filter((e) => e.type === 'email' && e.by === 'counterparty');
   const tr = ev.filter((e) => e.type === 'transcript');
+  const deeds = ev.filter((e) => e.type === 'deed');
   return `LATER EVIDENCE — the user's own record AFTER this item, with this counterparty (dated facts, not a verdict):\n` +
     (cal.length ? `ALREADY ON THE USER'S CALENDAR with this counterparty:\n${cal.map((e) => `- ${q(e.title)} at ${atLocal(e.at, tz)} (${e.status === 'held' ? 'held' : 'booked, upcoming'})`).join('\n')}\n` : '') +
     (sent.length ? `SENT BY THE USER to this counterparty since (any thread):\n${sent.map((e) => `- ${q(e.title)} on ${atLocal(e.at, tz)}`).join('\n')}\n` : '') +
+    (mate.length ? `SENT BY A TEAMMATE of the user (the user's side, not the user) to this counterparty since (any thread):\n${mate.map((e) => `- a teammate (${clipLabel(actorLabel(e.actor), 40)}) sent ${q(e.title)} on ${atLocal(e.at, tz)}`).join('\n')}\n` : '') +
     (recv.length ? `RECEIVED FROM THIS COUNTERPARTY since (any thread):\n${recv.map((e) => `- ${q(e.title)} on ${atLocal(e.at, tz)}`).join('\n')}\n` : '') +
-    (tr.length ? `MEETINGS RECORDED with this counterparty since:\n${tr.map((e) => `- ${q(e.title)} on ${atLocal(e.at, tz)}`).join('\n')}\n` : '');
+    (tr.length ? `MEETINGS RECORDED with this counterparty since:\n${tr.map((e) => `- ${q(e.title)} on ${atLocal(e.at, tz)}`).join('\n')}\n` : '') +
+    (deeds.length ? `DONE BY THE USER THROUGH AUGMTD since (a recorded deed):\n${deeds.map((e) => `- ${deedWords(e)} ${q(e.title)} on ${atLocal(e.at, tz)}`).join('\n')}\n` : '');
 }
+
 
 // Word-boundary clip with NO ellipsis — for a `requires` label, which is an IDENTITY (it keys the
 // staged `require:<label>` rows), so it must not grow a display glyph. Titles use clipLabel.
@@ -236,29 +258,35 @@ async function coerceVerdict(raw: unknown, roster: RosterEntry[], ctx: TimeCtx, 
  *  zero-migration, owner-RLS). tasks jsonb holds { verdict, sig }. */
 async function readCache(
   client: SupabaseClient, userId: string, input: JudgeInput, sig: string,
-): Promise<{ hit: WorkVerdict | null; prior: WorkVerdict | null; priorSig: string | null }> {
+): Promise<{ hit: WorkVerdict | null; prior: WorkVerdict | null; priorSig: string | null; priorEv: string | null }> {
   const data = await readPlan(client, userId, 'judgment', `${input.kind}:${input.id}`);
-  const t = (data?.tasks ?? null) as { verdict?: unknown; sig?: string } | null;
+  const t = (data?.tasks ?? null) as { verdict?: unknown; sig?: string; ev?: string } | null;
   const v = (t?.verdict ?? null) as WorkVerdict | null;
   const valid = !!v && WORKS.has(v.work) && COMPONENT_KEYS.has(v.component);
-  if (!valid) return { hit: null, prior: null, priorSig: null };
+  if (!valid) return { hit: null, prior: null, priorSig: null, priorEv: null };
+  // W7.1: the evidence set the prior was made AGAINST (absent on verdicts cached before the stamp
+  // existed — read as "none seen", so a pre-deploy prior never anchors against evidence it never saw).
+  const priorEv = typeof t!.ev === 'string' ? t!.ev : null;
   // A stale-sig verdict is still the judge's OWN PRIOR JUDGMENT — fed back into the re-judgment
   // as self-consistency context (stickiness through reasoning, never a lock): an ambiguous item
   // must not flip verdicts on a daily re-check unless something material actually changed.
   // SAME-VERSION ONLY: a prior made under an older JUDGE_VERSION was judged under different laws —
   // anchoring on it would entrench exactly the calls a version bump exists to correct.
   const sameVersion = String(t!.sig ?? '').split(':')[0] === String(JUDGE_VERSION);
-  if (t!.sig === sig) return { hit: v, prior: v, priorSig: String(t!.sig) };
-  return { hit: null, prior: sameVersion ? v : null, priorSig: sameVersion ? String(t!.sig ?? '') : null };
+  if (t!.sig === sig) return { hit: v, prior: v, priorSig: String(t!.sig), priorEv };
+  return { hit: null, prior: sameVersion ? v : null, priorSig: sameVersion ? String(t!.sig ?? '') : null, priorEv };
 }
 
 /** The sig with its DAY component blanked — the parked-serve comparison: same item facts (version,
  *  activity, pool), only the calendar moved. */
 const nonDaySig = (s: string): string => { const p = s.split(':'); return [p[0], ...p.slice(2)].join(':'); };
 
-async function writeCache(client: SupabaseClient, userId: string, input: JudgeInput, sig: string, verdict: WorkVerdict): Promise<void> {
-  await upsertPlan(client, userId, 'judgment', `${input.kind}:${input.id}`, { verdict, sig });
+/** `ev` (W7.1) = the evidenceSig the verdict was judged against — the re-judgment reads it to know
+ *  whether LATER EVIDENCE is new to the prior (never part of the sig itself; the sig already moves). */
+async function writeCache(client: SupabaseClient, userId: string, input: JudgeInput, sig: string, verdict: WorkVerdict, ev?: string | null): Promise<void> {
+  await upsertPlan(client, userId, 'judgment', `${input.kind}:${input.id}`, ev != null ? { verdict, sig, ev } : { verdict, sig });
 }
+
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // Q9 · ← LATER — THE PERSON'S OWN PARK (docs/attention-plan.md PART III, THE TRIAGE DECK).
@@ -323,6 +351,10 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     // ── Load the item + its brain neighborhood. ──
     let title = '', body = '', who: string | null = null, whoEmail: string | null = null, threadNow = '';
     let u: ItemUnderstanding | null = null, activityAt = '', workState: string | null = null, rawKind: string | null = null, listMail = false;
+    // THE REASONED KIND alone (the user's own override, else the understanding's kind) — the kind
+    // floor never reads the header tier's inferred 'newsletter' (a list conversation stays the
+    // notice law's, where the ownership key protects it).
+    let reasonedKind: string | null = null;
     let dueDate: string | null = null; // the item's own stated date (commitment due / extracted deadline) — the event-boundary anchor
     let threadMsgs: ThreadMessage[] = [];
     // AN ITEM'S OWN DOCUMENT IS THE ITEM'S OWN CONTEXT (owner walk, Sep 10): the files that arrived
@@ -354,6 +386,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       u = coerceUnderstanding(sd.understanding);
       dueDate = u?.deadline ?? null;
       rawKind = rawMailKindOf(sd);
+      reasonedKind = String(sd.kind_override ?? '').toLowerCase() || u?.mailKind || null;
       listMail = listMailOf(sd);
       workState = (it.work_state as string) || null;
       try {
@@ -493,7 +526,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
           kind: input.kind, id: input.id, afterISO: evAfterISO,
           counterpartyEmail: whoEmail ? normalizeEmail(whoEmail) : null, threadId: evThreadId,
           fulfiller: evFulfiller, description: title,
-        }, new Date().toISOString());
+        }, new Date().toISOString(), SETTLE_MATCH);
       } catch { evidence = []; } // the evidence fact is an enhancement
     }
     // THE ONE SIG HELPER (W2.5): `<JUDGE_VERSION>:<day>:<deps>` — the version and day slots stay
@@ -505,7 +538,8 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       outcome: outcomeSigPart(outcomeFacts), evidence: evidenceSig(evidence),
       entity: ent ? String((ent as { sig?: string | null }).sig ?? '') : null,
     } })}`;
-    const { hit: cached, prior, priorSig } = await readCache(client, userId, input, sig);
+    const { hit: cached, prior, priorSig, priorEv } = await readCache(client, userId, input, sig);
+    const evSig = evidenceSig(evidence);
     if (cached) return cached;
     // W4 PARKED SERVE — a revisit verdict holds WITHOUT AI until its date: same item facts (only
     // the day moved) + the revisit date still ahead → re-serve the parked verdict under today's
@@ -519,7 +553,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     // judged fresh, exactly as they always were: the park expires, it never self-renews.
     if (prior?.revisit?.after && prior.revisit.after > todayStr
       && (prior.revisit.by === 'user' || (priorSig && nonDaySig(priorSig) === nonDaySig(sig)))) {
-      await writeCache(client, userId, input, sig, prior);
+      await writeCache(client, userId, input, sig, prior, priorEv);
       return prior;
     }
 
@@ -551,6 +585,19 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       const v = fallbackVerdict('an automated notice nobody owes a move on');
       await writeCache(client, userId, input, sig, v);
       return v;
+    }
+    // THE KIND FLOOR (W8.3, JUDGE_VERSION 21) — the notice law's class, one kind wider: an
+    // UNSOLICITED kind (cold outreach, a newsletter) owes nothing until the user has answered it, and
+    // a NOTICE kind (notification, receipt) owes nothing without a you_owe key. Found live: a
+    // cold-outreach pitch judged `schedule` and listed as real, alive work. Structural, before AI;
+    // the one escape is the user's own message in the thread (a pitch they answered is a conversation).
+    if (input.kind === 'inbox') {
+      const kf = kindFloor({ kind: reasonedKind, ownership: u?.ownership ?? null, userEngaged: threadMsgs.some((m) => m.is_from_user) });
+      if (kf.refuses) {
+        const v = fallbackVerdict(kindFloorReason(kf.why));
+        await writeCache(client, userId, input, sig, v);
+        return v;
+      }
     }
 
     // ── The brain neighborhood: entity + person (assembled, not re-derived). ──
@@ -635,7 +682,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         `${EXCERPT_RULE}\n\n` +
         `THE TEAM (for executor "coworker"):\n${roster.map((w) => `- ${w.name} — ${w.role.replace(/_/g, ' ')}: ${w.description}`).join('\n') || '(none)'}\n\n` +
         `COMPONENTS (pick exactly one — what the work surface should mount):\n${renderComponentOptions()}\n\n` +
-        (prior ? `YOUR PRIOR JUDGMENT on this item: work=${prior.work}${prior.resolution ? ` resolution=${prior.resolution}` : ''}${prior.revisit ? ` revisit=${prior.revisit.after}` : ''} — "${clipForPrompt(prior.reason, 120)}". BE CONSISTENT with it unless something in the item MATERIALLY changed since; do not flip an ambiguous call on a re-read.${prior.revisit && prior.revisit.after <= todayStr ? ' YOU SET THIS ASIDE until that date and THE DATE HAS ARRIVED — judge it fresh NOW as live work (the wait is over; do not re-park it without a NEW stated basis).' : ''}\n\n` : '') +
+        (prior ? `YOUR PRIOR JUDGMENT on this item: work=${prior.work}${prior.resolution ? ` resolution=${prior.resolution}` : ''}${prior.revisit ? ` revisit=${prior.revisit.after}` : ''} — "${clipForPrompt(prior.reason, 120)}". BE CONSISTENT with it unless something in the item MATERIALLY changed since; do not flip an ambiguous call on a re-read.${evidenceNewToPrior(evSig, priorEv) ? ' NEW SINCE THAT CALL: the LATER EVIDENCE above was NOT in front of you when you made it — it IS a material change; where it shows the thing done, held or booked, judge from the evidence and never repeat a prior reason it contradicts.' : ''}${prior.revisit && prior.revisit.after <= todayStr ? ' YOU SET THIS ASIDE until that date and THE DATE HAS ARRIVED — judge it fresh NOW as live work (the wait is over; do not re-park it without a NEW stated basis).' : ''}\n\n` : '') +
         `Rules:\n` +
         `- work: reply|decide|produce|send_file|schedule|forward|chase|none. CONSERVATIVE: unsure → "none"/"message_only" — a wrong mount costs trust, none costs nothing.\n` +
         `- "forward" ONLY when the item explicitly asks the user to PASS this thread/document on to a NAMED third party ("please forward this to…", "can you share this with finance/legal/<person>") — the passing-on IS the work. A reply that merely mentions someone else is still "reply".\n` +
@@ -704,7 +751,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       }
       verdict = rv;
     }
-    await writeCache(client, userId, input, sig, verdict);
+    await writeCache(client, userId, input, sig, verdict, evSig);
     return verdict;
   } catch { return { ...fallbackVerdict('could not judge this yet — it will retry'), failed: true }; }
 }

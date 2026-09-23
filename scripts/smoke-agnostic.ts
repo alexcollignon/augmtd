@@ -56,8 +56,6 @@ const G1_ALLOWLIST: readonly string[] = [
   'lib/commitments/extract.ts',
   // lib/home/** — DO NOT TOUCH this wave; "the EG Bank benchmark" comment.
   'lib/home/delegate.ts',
-  // app/api/cron/** — DO NOT TOUCH this wave; "the Fidelidade" comment.
-  'app/api/cron/commitments-sweep/route.ts',
   // components/home/** — DO NOT TOUCH this wave; a "René sweep" comment.
   'components/home/item-detail.tsx',
   // components/entities/** — DO NOT TOUCH this wave; an "EG Bank" correction example.

@@ -73,8 +73,12 @@ async function main() {
       WARM_MAX_ITEMS > 0 && WARM_MAX_ITEMS <= 10 && WARM_DEDUPE_MS >= 60_000
       && /items\.slice\(0, WARM_MAX_ITEMS\)/.test(wb) && /claimWarm\(userId, roomKey\)/.test(wb)
       && /doneRooms\.has\(roomKey\)/.test(wb) && !/Promise\.all\(items/.test(wb));
-    gate('A6 the warm composes through the SAME sig-gated ensure* + joinCompose, with the SAME anchor derivation as the door',
-      /joinCompose\(userId, eid, \(\) => ensureRoomBrief\(client, userId, eid\)\)/.test(wb)
+    gate('A6 the warm composes through the SAME sig-gated ensureLooseRoomBrief + joinCompose, with the SAME anchor derivation as the door',
+      // ⟲ RE-POINTED (W7.2 ONE OBJECT, ONE DOOR): the item door's brief is item-first under its own
+      // key whatever it is linked to, so the warm composes exactly that — its linked→entity branch
+      // is gone (it warmed a page the door no longer serves).
+      !/ensureRoomBrief\(client, userId, eid\)/.test(wb)
+      && /const roomKey = looseRoomKeyOf\(linkKind, it\.id\);/.test(wb)
       && /joinCompose\(userId, roomKey, \(\) => ensureLooseRoomBrief\(client, userId, roomKey, anchorForBrief\)\)/.test(wb)
       && /anchorOf\(linkKind,/.test(wb) && /looseTitleOf\(linkKind,/.test(wb));
 
@@ -128,9 +132,16 @@ async function main() {
     gate('B3 workStateOf honours `held` (row + prepared) and keeps its own reads for unheld callers',
       /held\?: \{/.test(machine) && /held\?\.row !== undefined/.test(machine) && /const st = held\?\.prepared\s*\?\? await preparedState\(/.test(machine)
       && /held \? asksRead\(\) : Promise\.resolve\(null\)/.test(machine));
-    gate('B4 the rail and the machine run in ONE flight (Promise.all), beside the already-running compose',
-      /const \[room, machine\] = await Promise\.all\(\[/.test(view)
-      && view.indexOf('const paintP = (() =>') < view.indexOf('const [room, machine] = await Promise.all(['));
+    gate('B4 the rail, the machine and the door\'s own source object run in ONE flight (Promise.all), beside the already-running compose',
+      // ⟲ RE-POINTED (W7.2): the flight gained the door's own source-object resolve (one small
+      // read, zero AI) — same wave, no new round trip.
+      // ⟲ RE-POINTED (W7.3): + the meeting source object (a meeting-born commitment's source) in the
+      // SAME flight — one small read, zero AI, no new round trip.
+      /const \[room, machine, sourceItemId, sourceMeeting\] = await Promise\.all\(\[/.test(view)
+      // ⟲ RE-POINTED (W8.4): no compose runs on the paint path any more — the last-good read is what
+      // starts before the wave (the vacuous `indexOf('const paintP')` would have passed at -1).
+      && view.indexOf('const lastGoodP = readRoomResponse(') > 0
+      && view.indexOf('const lastGoodP = readRoomResponse(') < view.indexOf('const [room, machine, sourceItemId, sourceMeeting] = await Promise.all(['));
     gate('B5 the perf watchdog: phase marks + ONE `[items/view] slow` line past a threshold',
       /const VIEW_SLOW_MS = [\d_]+;/.test(view) && /\[items\/view\] slow \$\{totalMs\}ms/.test(view)
       && /mark\('wave1'\)/.test(view) && /mark\('wave2'\)/.test(view));
@@ -186,7 +197,8 @@ async function main() {
       && /\}, \[roomKey, turnsNonce, pending\]\);/.test(rail));
     gate('C6 the late brief re-check is timed to the new budget (one re-check; the append rule unchanged)',
       /const LATE_BRIEF_RECHECK_MS = [\d_]+;/.test(detail) && /\}, LATE_BRIEF_RECHECK_MS\);/.test(detail)
-      && /lateBrief: \{ text, at: d2\.briefAt \?\? d2\.entity\?\.briefAt \?\? null \}/.test(detail));
+      // ⟲ RE-POINTED (W7.2): the item door's late brief rides its OWN field (never the entity's).
+      && /lateBrief: \{ text, at: d2\.briefAt \?\? null \}/.test(detail));
 
     // pure — the thread door: two concurrent readers + the narrowed reader = ONE request
     const calls = stubFetch((url) => (url.includes('/thread') ? { subject: 'S', fromName: 'Acme', messages: [], attachments: [] } : null));
