@@ -145,16 +145,20 @@ say "4. replace the container"
 run_remote "docker stop $CONTAINER 2>/dev/null || true; docker rm $CONTAINER 2>/dev/null || true; docker run -d --name $CONTAINER --restart unless-stopped -p $PORT:$PORT -v $VOLUME:/data --env-file $ENV_FILE $IMAGE:latest"
 
 # ── 5. verify ────────────────────────────────────────────────────────────────────────────────────
-say "5. verify: /health serves every worker, then the logs"
+say "5. verify: /health is up and /agents serves every worker, then the logs"
 WANT="${EXPECTED_WORKERS[*]}"
 HEALTH=$(cat <<EOF
 for i in \$(seq 1 30); do
-  body=\$(curl -fsS localhost:$PORT/health 2>/dev/null || true)
+  # /health only says the process is up; the WORKERS are listed by /agents (bearer-authed with the
+  # box's own AGENTOS_SECRET from the env file) — found on the first real run, Sep 23.
+  up=\$(curl -fsS localhost:$PORT/health 2>/dev/null || true)
+  secret=\$(grep '^AGENTOS_SECRET=' $ENV_FILE | cut -d= -f2-)
+  body=\$( [ -n "\$up" ] && curl -fsS -H "Authorization: Bearer \$secret" localhost:$PORT/agents 2>/dev/null || true)
   if [ -n "\$body" ]; then
     missing=""
     for w in $WANT; do echo "\$body" | grep -q "\"\$w\"" || missing="\$missing \$w"; done
-    if [ -z "\$missing" ]; then echo "healthy: \$body"; exit 0; fi
-    echo "health answered but missing workers:\$missing — \$body"; exit 1
+    if [ -z "\$missing" ]; then echo "healthy — every worker served"; exit 0; fi
+    echo "agents answered but missing workers:\$missing"; exit 1
   fi
   sleep 2
 done
