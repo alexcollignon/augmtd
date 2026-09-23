@@ -2568,11 +2568,12 @@
     "UPGRADE LAW",
     "THE KIND COMPLETER",
     "THREAD-SCOPED RECONCILE",
-    "applied|noop|failed"
+    "applied|noop|failed",
+    "NO KIND LABEL"
    ],
    "tier": 2,
    "domain": "inbox",
-   "statement": "A mailbox label pair is KIND × POSTURE; a fallback kind is a placeholder never stamped final; applying a kind strips every other kind; and 'nothing to apply' is never recorded as success.",
+   "statement": "AUGMTD's mailbox labels are POSTURE-only (Needs reply · To do · Waiting on → Done) — the KIND is resolved in-app (override → reasoned → structural fallback) and never written to a mailbox; a structural kind is a placeholder the reasoned completer upgrades in-app; and 'nothing to apply' is never recorded as success.",
    "homes": [
     "lib/inbox/rules/write-back.ts",
     "lib/inbox/ensure-mail-kind.ts",
@@ -2583,17 +2584,145 @@
      "suite": "smoke-label-flip",
      "ids": [
       "U1",
+      "U2",
+      "U3",
       "U4"
      ],
      "kind": "outcome",
-     "cost": "cached"
+     "cost": "cached",
+     "note": "⟲ RE-POINTED W10: U2/U3 + the truth checks now assert posture-only write-back, the in-app kind completer for every account, and kind labels as cleanup targets (ONE KIND LABEL → NO KIND LABEL)"
+    },
+    {
+     "suite": "smoke-mailbox-labels",
+     "ids": [
+      "M2",
+      "M3"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W10: posture-only resolver over 1134 combinations; the applier/reconciler never write a kind or a retired posture; reconcile removals peek, never ensure"
     }
    ],
-   "fn": "resolveKind · kindTier",
+   "fn": "resolveKind · kindTier · mailboxLabelNamesFor",
    "version_key": null,
-   "status": "holding",
+   "status": "holding-uncommitted",
    "broken_by": null,
-   "collides_with": []
+   "collides_with": [
+    {
+     "law": "mailbox-is-the-users",
+     "precedence": "mailbox-is-the-users decides WHETHER and WHAT AUGMTD writes (off unless chosen; posture only); label-truth governs the bookkeeping of what it does write"
+    }
+   ],
+   "fixed_by": "W10 (Sep 23)",
+   "note": "W10 (Sep 23, owner call): the meaning changed honestly — ONE KIND LABEL (applying a kind strips the others) became NO KIND LABEL in the mailbox; the upgrade law lives on in-app only. Found in passing: the reconciler resolved removal ids with ensure(), which CREATED every retired label (FYI/Marketing/…) in the mailbox on each reconcile — now peek."
+  },
+  {
+   "id": "mailbox-is-the-users",
+   "name": "THE MAILBOX IS THE USER'S",
+   "aliases": [
+    "AUGMTD LABELS OFF BY DEFAULT",
+    "POSTURE LABELS ONLY",
+    "USER-NAMED LABELS",
+    "apply_label",
+    "THE AUGMTD-LABEL CLEANUP",
+    "augmtdLabelsOn"
+   ],
+   "tier": 2,
+   "domain": "inbox",
+   "statement": "AUGMTD writes its own mailbox labels only for an account that explicitly chose them (email_settings.auto_label === true; unset is off), and then only the live posture labels; a user rule's own label (outcome.apply_label — a validated name outside the AUGMTD namespace, created if missing) is the user's instruction and applies regardless of that switch, governed by the rule's own toggle; the cleanup removes only AUGMTD-created labels/categories, dry-run by default and a provider write only on --apply --yes or the user's confirmed click.",
+   "homes": [
+    "lib/inbox/rules/label-name.ts",
+    "lib/inbox/email-settings.ts",
+    "app/api/inbox/email-settings/route.ts",
+    "lib/inbox/rules/write-back.ts",
+    "lib/inbox/rules/mailbox-labels.ts",
+    "scripts/remove-augmtd-labels.ts",
+    "app/api/inbox/mailbox-labels/cleanup/route.ts",
+    "components/settings/email-settings.tsx",
+    "app/api/cron/label-sweep/route.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-mailbox-labels",
+     "ids": [
+      "M1",
+      "M2",
+      "M4",
+      "M5",
+      "M8"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W10: defaults + the one reader on an in-memory client; posture-only resolver; apply_label planned regardless of auto_label; the name floor; the Gmail removal plan never touches a user label; the script/route guards"
+    }
+   ],
+   "fn": "augmtdLabelsOn · validateUserLabelName · planGmailRemoval · cleanupScopeFor",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "fixed_by": "W10 (Sep 23)",
+   "broken_by": null,
+   "collides_with": [
+    {
+     "law": "label-truth",
+     "precedence": "this law decides whether and what AUGMTD writes (off unless chosen, posture only); label-truth governs the bookkeeping of what it writes"
+    },
+    {
+     "law": "human-in-the-loop",
+     "precedence": "a user rule's mailbox label is the user's own standing instruction (like a Gmail filter), not an autonomous deed; the cleanup writes only on the user's confirmed click or the owner's --apply --yes"
+    }
+   ],
+   "note": "W10 (Sep 23, owner call): unset → ON before (the sweep skipped only === false, the settings default was true, and the settings PUT wrote every default into the row — so any toggle recorded auto_label: true as if chosen; the PUT now stores only what the user chose). Kind labels retired from the mailbox. Cleanup census: scripts/remove-augmtd-labels.ts (DB census by default; --provider-census read-only)."
+  },
+  {
+   "id": "rule-outcomes-execute",
+   "name": "EVERY RULE OUTCOME EXECUTES",
+   "aliases": [
+    "NO LYING RULE DOORS",
+    "THE RULES TRUTH AUDIT",
+    "THE RULE EXECUTOR",
+    "executeRuleDeeds"
+   ],
+   "tier": 2,
+   "domain": "inbox",
+   "statement": "Every outcome a user can author on a rule is executed: set_type (classifier + AI pass), set_kind (kind_override), apply_label, mark_read, archive and trash (on arriving mail, exactly once per rule×message through the commit door's claim, reversible, logged in activity as rule_applied); outcomes nothing executes (auto_draft, escalate) are neither authorable nor rendered; forward_to — an external send — is never executed and never authorable on any surface.",
+   "homes": [
+    "lib/inbox/rules/execute.ts",
+    "lib/inbox/rules/label-name.ts",
+    "lib/inbox/rules/batch-match.ts",
+    "lib/postures/registry.ts",
+    "lib/email-sync/sync-emails.ts",
+    "app/api/inbox/rules/route.ts",
+    "components/settings/email-settings.tsx"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-mailbox-labels",
+     "ids": [
+      "M4",
+      "M6",
+      "M7"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W10: the executor on an in-memory client — set_kind lands, a failed mailbox deed releases its claim, a duplicate claim never acts, left-behind is reported, activity names only what landed; authorable == executed; forward_to unexecuted + unauthorable"
+    }
+   ],
+   "fn": "planRuleDeeds · governingRule · sanitizeRuleOutcome · validatePrimitives",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "fixed_by": "W10 (Sep 23)",
+   "broken_by": null,
+   "collides_with": [
+    {
+     "law": "human-in-the-loop",
+     "precedence": "a rule the user authored is their explicit standing instruction on their own mailbox (reversible, logged) — it may archive/label/mark read/trash; it can never send: forward_to stays unexecuted"
+    },
+    {
+     "law": "exactly-once-deeds",
+     "precedence": "each (rule, message) mailbox deed is claimed through the commit door (key rule:<ruleId>:<emailId>); a failed deed releases its claim"
+    }
+   ],
+   "note": "W10 rules truth audit (Sep 23): before, only set_type executed; archive/trash/mark_read/set_kind/auto_draft/escalate/forward_to were authorable (the bulk-deed tail even offered 'archive newsletters as they arrive') and nothing ran them; AI rules without a set_type reached the model as label undefined and could never match."
   },
   {
    "id": "sync-single-flight",
@@ -6185,6 +6314,80 @@
     }
    ],
    "note": "Finding (Sep 23 audit: every prepare lane re-generated on a 24h clock (FRESH_HOURS) at the conversation tier + evaluator even on an unchanged ground; no edit was ever persisted or protected. Census (14 d, 4 accounts): 26 definite + 23 probable clock re-buys; 1 steered version later replaced by a pass draft.) Precedence ruling 8 applies: replace-in-place only as the user's own action (the edit door, ?fresh=1, a picked steer — each files the prior first); an engine-initiated change versions or marks. W9.1b closed the deletion debt: a verdict consequence (apply-verdict hygiene on a kind change + its resolution), the evidence settle, the conversation cascade, the mirror archive, the booked-meeting floor and the pool's re-run dedupe (writeDeliverable) all strip through ONE partition (lib/prepare/hand.ts partitionStrip → lib/prepare/hand-store.ts stripSourceArtifacts / fileHeldPoolRow): machine words strip as before; an unsent hand-held artifact — which has no live card under the new verdict — is FILED into the version chain (version_of, hand: true) and narrated ONCE into the item's room WITH the user's words (dedupe hand-filed:<item>:<kind>:<hash>, zero AI), so the claim renders where they can still find it; a filing that fails keeps the artifact in place (fail closed)."
+  },
+  {
+   "id": "hot-path-law",
+   "name": "THE HOT-PATH LAW",
+   "aliases": [
+    "STOP READING BODIES ON PAGE LOADS",
+    "THE BODY-FREE PROJECTION",
+    "THE LEAN READ",
+    "leanSelect · foldLean · readLeanPool · hydrateSource"
+   ],
+   "tier": 2,
+   "domain": "platform",
+   "statement": "A request that renders a surface reads bounded, body-free work rows: every inbox_items/commitments read on a page-load path names its columns and the JSON paths its derivation reads (one declared key set per reader), never select('*') or the whole source_data; the mail body rides only where a derivation provably reads it (a user rule with a body_* condition, the deck's served snippets, an invite's stated-window floor) or for the SERVED rows alone, id-keyed under a declared bound; a large pool pages its ids and projects each row once. Whole rows belong to writers, background jobs, censuses and the object's own POST lanes.",
+   "homes": [
+    "lib/home/lean-source.ts",
+    "lib/deeds/held-members.ts",
+    "lib/deeds/held-cache.ts",
+    "app/api/home/brief/route.ts",
+    "app/api/home/held/route.ts",
+    "app/api/items/view/route.ts",
+    "lib/prepare/read.ts",
+    "lib/room/item-anchor.ts",
+    "lib/room/grounding.ts",
+    "lib/room/user-grounding.ts",
+    "lib/room/open-kicks.ts",
+    "lib/room/warm-briefs.ts",
+    "lib/triage/deck-context-read.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-hot-paths",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "H1",
+      "H2",
+      "H3",
+      "H4",
+      "H5",
+      "H6",
+      "H8"
+     ],
+     "note": "no select(*)/whole source_data/body field on the hot files (shrinking allowlist with reasons, incl. the declared debt lib/work/machine.ts + lib/work-items/model.ts); every lean read names its set; no ordered+ranged lean read; THE KEY UNIVERSE (every source_data key the code reads is declared); the held derivation's import closure reads only what its reads carry; no lean row written back"
+    },
+    {
+     "suite": "smoke-hot-paths",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "H7"
+     ],
+     "note": "projection · fold · collision refusal · whole-row pass-through · rulesReadBody · the hydrate bound (reported) · the id-paged pool (ordered, projected once, a failed chunk throws) — plus tests/unit/lean-source.test.ts"
+    }
+   ],
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "event-spine P0",
+   "fn": "lib/home/lean-source.ts leanSelect · foldLean · rulesReadBody · hydrateSource · readLeanPool (tests/unit/lean-source.test.ts)",
+   "collides_with": [
+    {
+     "law": "one-reader-per-object",
+     "precedence": "the projection lives INSIDE each object's one reader (the held derivation, THE ONE READER, the anchor): a reader narrows its own read and hydrates what its served rows need — no second reader exists to serve a lean shape, and a derivation never reads a key its reader did not project (smoke-hot-paths H4/H5)"
+    },
+    {
+     "law": "no-silent-caps",
+     "precedence": "bounds are declared and reported, never silent: the held pool pages its ids under HELD_POOL_MAX and still reports saturation; a served-row hydrate names its bound and logs what it left behind; a failed projection chunk THROWS rather than shortening the pool (a short pool would count wrong)"
+    },
+    {
+     "law": "one-fact-one-home",
+     "precedence": "the body keeps its one home (emails; the row's copy until the P5 strip sweep); the lean fold is an in-memory view, never written back (H6)"
+    }
+   ],
+   "note": "Census Sep 23 (docs/event-spine-plan.md PART 0): every Home open walked the held pool with the whole source_data (~76 MB on the heaviest account, 96% mail bodies). P0 measured with scripts/bench-hot-paths.ts (read-only, zero AI, the SAME code in a legacy-shape 'before' mode + a shadow check that every served derivation is identical): Home-open reads 87.7 MB → ~4.3 MB; held door ~3.4–3.7 s → ~1.5 s span; FYI pool 7.95 MB → 0.19 MB; deck-context 12.2 MB → 0.8 MB; outputs identical. FINDING: Postgres de-toasts the jsonb once PER PATH EXPRESSION (~28 µs per 20 KB row) and evaluates paths before sort+OFFSET — so each reader names its SMALLEST set and large pools page ids first (readLeanPool). Outcome census: scripts/bench-hot-paths.ts (not in board: it reads ~90 MB)."
   }
  ],
  "lessons": [

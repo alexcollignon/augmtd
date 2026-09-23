@@ -1,11 +1,12 @@
-// THE LABEL FLIP GATES + IMPACT SIMULATIONS.
+// THE LABEL FLIP GATES + IMPACT SIMULATIONS. ⟲ W10: the mailbox half is posture-only now (see
+// scripts/smoke-mailbox-labels.ts); the kind resolver below is the IN-APP truth.
 //   Kind (identity, stable) × Posture (lifecycle, reconciled) — ONE resolver, one precedence
 //   chain (override → reasoned kind → structural fallback), pair applied everywhere labels are
 //   written. Unit truth-table must be 100%; sims measure the real-data impact per user.
 import { config } from 'dotenv'; config({ path: '.env.local' });
 import { readFileSync } from 'fs';
 import { createClient } from '@supabase/supabase-js';
-import { resolveKind, postureFor, labelNamesFor, mapWorkStateToLabel } from '../lib/inbox/rules/write-back';
+import { resolveKind, postureFor, labelNamesFor, mailboxLabelNamesFor, mapWorkStateToLabel } from '../lib/inbox/rules/write-back';
 import { resolveProbeUser } from './probe-user';
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
@@ -20,15 +21,19 @@ const src = (p: string) => readFileSync(p, 'utf8');
   PERSONAL = await resolveProbeUser(sb);
   // ── STRUCTURAL ──
   const wb = src('lib/inbox/rules/write-back.ts');
-  check('flip: the KIND label set is the Scape vocabulary (8 kinds) + ONE resolver with the precedence chain',
+  // ⟲ RE-POINTED (W10, Sep 23 — THE MAILBOX IS THE USER'S): kind labels are RETIRED from the mailbox
+  // (the names stay only in AUGMTD_RETIRED_LABELS, for the guarded cleanup); the resolver and its
+  // precedence chain remain — IN-APP. The applier writes the live POSTURE only, and only for an
+  // account that explicitly chose AUGMTD labels. The mailbox half is gated by smoke-mailbox-labels.
+  check('flip: the KIND vocabulary (8 kinds) + ONE resolver with the precedence chain — in-app; the names listed as RETIRED for the cleanup',
     ['Receipt', 'Newsletter', 'Notification', 'Calendar', 'Cold outreach', 'Customer', 'Team', 'Personal']
       .every((k) => wb.includes(`AUGMTD/${k}`)) &&
-    wb.includes('export function resolveKind') && wb.includes('kind_override'));
+    wb.includes('export function resolveKind') && wb.includes('kind_override') && wb.includes('export const AUGMTD_RETIRED_LABELS'));
   check('flip: posture is LIFECYCLE-only (fyi/notifications/marketing/meeting → no posture label)',
     wb.includes('export function postureFor') && wb.includes("ruleType === 'fyi' || ruleType === 'notifications' || ruleType === 'marketing' || ruleType === 'meeting') return null"));
   check('flip: the reconciler swaps POSTURE only — kind labels are structurally untouchable (separate map)',
     wb.includes('NEVER touches a KIND label') && wb.includes('const ALL_STATE_LABELS = Object.values(LABEL_DISPLAY)'));
-  check('flip: all three write sites apply the PAIR via writeBackLabels (sync fast-path, sync classified, sweep)',
+  check('flip ⟲ W10: all three write sites apply the POSTURE via writeBackLabels (sync fast-path, sync classified, sweep) — never a kind',
     (src('lib/email-sync/sync-emails.ts').match(/writeBackLabels/g)?.length ?? 0) >= 2 &&
     src('app/api/cron/label-sweep/route.ts').includes('writeBackLabels'));
   check('flip: rules gained the kind-override channel (set_kind typed; resolver honors kind_override at the top)',
@@ -53,6 +58,9 @@ const src = (p: string) => readFileSync(p, 'utf8');
     ['pair: customer + needs_reply → BOTH labels', (() => { const p = labelNamesFor({ understanding: { mailKind: 'customer' } }, 'needs_reply'); return p.kindName === 'AUGMTD/Customer' && p.postureName === 'AUGMTD/Needs reply'; })()],
     ['pair: newsletter + fyi → kind ONLY', (() => { const p = labelNamesFor({ understanding: { mailKind: 'newsletter' } }, 'fyi'); return p.kindName === 'AUGMTD/Newsletter' && p.postureName === null; })()],
     ['pair: nothing → nothing (no label soup)', (() => { const p = labelNamesFor({}); return p.kindName === null && p.postureName === null; })()],
+    // ⟲ W10 — the MAILBOX receives the posture only; the kind never leaves the app.
+    ['mailbox: customer + needs_reply → the posture ONLY', JSON.stringify(mailboxLabelNamesFor({ understanding: { mailKind: 'customer' } }, 'needs_reply')) === '["AUGMTD/Needs reply"]'],
+    ['mailbox: newsletter + fyi → NOTHING', mailboxLabelNamesFor({ understanding: { mailKind: 'newsletter' } }, 'fyi').length === 0],
   ];
   const failed = cases.filter(([, ok]) => !ok);
   check(`unit truth-table — ${cases.length}/${cases.length} required`, failed.length === 0,
@@ -73,12 +81,16 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('truth · the sync stamps `labeled` ONLY on applied (noop stays unstamped for the sweep)',
     src('lib/email-sync/sync-emails.ts').includes("ok === 'applied'") &&
     !src('lib/email-sync/sync-emails.ts').includes('if (ok) await adminSupabase'));
-  check('truth · the sweep COMPLETES the missing kind (ensureMailKind, capped) before applying — the cause-fix, not a backfill',
+  // ⟲ RE-POINTED (W10): the completer no longer feeds a mailbox label — it stays because IN-APP
+  // floors read the raw kind, so it runs for EVERY account, ahead of (and independent of) the labels gate.
+  check('truth ⟲ W10 · the sweep COMPLETES the missing kind (ensureMailKind, capped) for every account, before the labels gate',
     src('app/api/cron/label-sweep/route.ts').includes('ensureMailKind') &&
     src('app/api/cron/label-sweep/route.ts').includes('KIND_COMPUTE_CAP') &&
-    src('lib/inbox/ensure-mail-kind.ts').includes('ROUTING-INERT'));
-  check('truth · a computed-but-null kind stamps FINAL (terminates) while budget-exhausted noop is revisited',
-    src('app/api/cron/label-sweep/route.ts').includes("ok === 'noop' && kindComputed"));
+    src('app/api/cron/label-sweep/route.ts').indexOf('ensureMailKind') < src('app/api/cron/label-sweep/route.ts').indexOf('if (!labelsOn)') &&
+    src('lib/inbox/ensure-mail-kind.ts').includes('IN-APP CONSUMERS'));
+  check('truth ⟲ W10 · a judged-none kind is stamped `kind_checked` (terminates); a posture noop is never stamped labeled',
+    src('app/api/cron/label-sweep/route.ts').includes('kind_checked: true') &&
+    !src('app/api/cron/label-sweep/route.ts').includes("ok === 'noop' && kindComputed"));
   check('truth · thread-scoped reconcile — applying the pair strips every OTHER state label from the thread (peek, never create)',
     src('lib/inbox/rules/write-back.ts').includes('THREAD-SCOPED RECONCILE') &&
     src('lib/inbox/rules/write-back.ts').includes('async peek('));
@@ -174,13 +186,18 @@ const src = (p: string) => readFileSync(p, 'utf8');
     check('U1 · the stamp records the TIER (sync stamps fallback-kinds upgradeable; kindTier exported; only reasoned/override stamps final)',
       src('lib/inbox/rules/write-back.ts').includes('export function kindTier') &&
       src('lib/email-sync/sync-emails.ts').includes("tier === 'fallback' ? 'fallback' : true"));
-    check('U2 · the sweep works fallback-stamped items ONLY with reasoning budget (never re-stamps the same guess as final) + the repair sweep exists',
-      src('app/api/cron/label-sweep/route.ts').includes("sd.labeled === 'fallback' && needsReasonedKind && kindBudget <= 0") &&
+    // ⟲ RE-POINTED (W10): with no kind label in the mailbox there is no placeholder to upgrade there;
+    // the upgrade law lives on in-app (the completer lands the reasoned kind over the structural tier).
+    check('U2 ⟲ W10 · a fallback-stamped row is simply re-labelled with its posture; the reasoned kind still lands in-app (completer) + the repair sweep exists',
+      src('app/api/cron/label-sweep/route.ts').includes("source_data->>labeled.neq.true") &&
       src('scripts/sweep-kind-upgrade.ts').includes('ensureMailKind'));
-    check('U3 · ONE KIND LABEL — applying a kind strips every other kind label (Gmail thread peek-strip + Outlook category removal)',
-      src('lib/inbox/rules/write-back.ts').includes('ONE KIND LABEL') &&
-      src('lib/inbox/rules/write-back.ts').includes('removeOutlookCategory') &&
-      (src('lib/inbox/rules/write-back.ts').match(/Object\.values\(KIND_DISPLAY\)/g) ?? []).length >= 2);
+    // ⟲ RE-POINTED (W10): ONE KIND LABEL became NO KIND LABEL — the applier writes no kind, and the
+    // kind labels earlier eras wrote are removed by the guarded cleanup (both providers).
+    check('U3 ⟲ W10 · NO KIND LABEL — the applier writes posture only; every kind name is a cleanup target (Gmail label delete + Outlook category removal)',
+      !src('lib/inbox/rules/write-back.ts').slice(src('lib/inbox/rules/write-back.ts').indexOf('export async function writeBackLabels')).includes('KIND_DISPLAY') &&
+      src('lib/inbox/rules/write-back.ts').includes('...Object.values(KIND_DISPLAY)') &&
+      src('lib/inbox/rules/mailbox-labels.ts').includes('deleteGmailLabel') &&
+      src('lib/inbox/rules/mailbox-labels.ts').includes("categories/any(c:c eq"));
     check('U4 · facts constrain the reasoned kind (computeUnderstanding takes facts; the own-coworker registry fact rides ensureMailKind)',
       src('lib/ai/email-processor.ts').includes('facts?: string[]') &&
       src('lib/inbox/ensure-mail-kind.ts').includes("endsWith('@team.augmtd.ai')"));

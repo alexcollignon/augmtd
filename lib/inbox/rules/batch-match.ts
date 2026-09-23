@@ -11,16 +11,23 @@ import type { InboxRule, RuleEmail, RuleLabel } from './types';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
 
-const SYSTEM = `You match emails against an ordered list of user rules. Each rule has a "label" and a natural-language "description". For each email, return the label of the FIRST rule (in order) whose description fits the email. If no rule fits, return "none". Some emails include a "relationship" note (what we already know about the sender — an active deal, open commitments, a recent meeting): use it as context when judging whether a rule about clients / deals / active work fits. The relationship note is a reason to treat the email as MORE important (real, live work), NEVER less — do not let it route a message that otherwise needs a reply or an action into a lower-attention label (fyi / notifications / marketing). Respond ONLY with JSON: {"results":[{"id":"...","label":"..."}]}. Include every id. No explanations.`;
+const SYSTEM = `You match emails against an ordered list of user rules. Each rule has an "id", a "label" and a natural-language "description". For each email, return the id of the FIRST rule (in order) whose description fits the email. If no rule fits, return "none". Some emails include a "relationship" note (what we already know about the sender — an active deal, open commitments, a recent meeting): use it as context when judging whether a rule about clients / deals / active work fits. The relationship note is a reason to treat the email as MORE important (real, live work), NEVER less — do not let it route a message that otherwise needs a reply or an action into a lower-attention label (fyi / notifications / marketing). Respond ONLY with JSON: {"results":[{"id":"<email id>","rule":"<rule id or none>"}]}. Include every email id. No explanations.`;
 
 // Pass the FULL rule set (deterministic + AI). The deterministic rules (no-reply/automated senders,
 // etc.) pre-filter: mail they already settle never reaches the AI — so the AI only adjudicates the
 // genuinely ambiguous mail, which keeps it cheap and stops it over-labeling automated senders.
+//
+// W10 — the model answers with the matched RULE (by a positional id), not its label: rules that
+// carry no `set_type` (a user's "archive newsletters", "file under Clients/Acme") used to reach the
+// model as `label: undefined` and could never match, and two rules sharing a label were
+// indistinguishable. The label map keeps its shape for the classifier; `opts.matchedRules`
+// receives the matched rule itself, for the executor (lib/inbox/rules/execute.ts).
 export async function batchMatchRules(
   envelopes: EmailEnvelope[],
   rules: InboxRule[],
   userId: string,
   client: DBClient,
+  opts: { matchedRules?: Map<string, InboxRule> } = {},
 ): Promise<Map<string, RuleLabel>> {
   const result = new Map<string, RuleLabel>();
   const aiRules = rules.filter(r => r.enabled && r.ai_match).sort((a, b) => a.priority - b.priority);
@@ -43,13 +50,13 @@ export async function batchMatchRules(
 
   try {
     const { client: ai, model } = await getAIClient(userId, 'classification', client);
-    const valid = new Set(aiRules.map(r => r.outcome.set_type));
-    const rulesPayload = aiRules.map(r => ({ label: r.outcome.set_type, description: r.ai_match }));
+    const ruleById = new Map(aiRules.map((r, i) => [`R${i + 1}`, r]));
+    const rulesPayload = aiRules.map((r, i) => ({ id: `R${i + 1}`, label: r.outcome.set_type ?? 'custom', description: r.ai_match }));
 
     // One chunk → one AI call. Returns the matches AND the set of ids the model actually listed —
     // so an OMITTED id (model skipped/truncated it) is distinguishable from a returned "none".
-    const runChunk = async (chunk: EmailEnvelope[]): Promise<{ m: Map<string, RuleLabel>; returned: Set<string> }> => {
-      const m = new Map<string, RuleLabel>();
+    const runChunk = async (chunk: EmailEnvelope[]): Promise<{ m: Map<string, InboxRule>; returned: Set<string> }> => {
+      const m = new Map<string, InboxRule>();
       const returned = new Set<string>();
       try {
         const userContent = JSON.stringify({
@@ -62,10 +69,11 @@ export async function batchMatchRules(
           // truncates the response mid-list and silently drops the tail's ids (→ null → misclassified).
           max_tokens: Math.min(8192, Math.max(1024, chunk.length * 90)), temperature: 0,
         });
-        const parsed = parseModelJSON<{ results: Array<{ id: string; label: string }> }>(res.choices[0]?.message?.content || '', { results: [] });
+        const parsed = parseModelJSON<{ results: Array<{ id: string; rule?: string; label?: string }> }>(res.choices[0]?.message?.content || '', { results: [] });
         for (const item of parsed.results) {
           returned.add(item.id);
-          if (item.label && item.label !== 'none' && valid.has(item.label as RuleLabel)) m.set(item.id, item.label as RuleLabel);
+          const rule = ruleById.get(String(item.rule ?? item.label ?? '').trim());
+          if (rule) m.set(item.id, rule);
         }
       } catch { /* this chunk fails → its emails fall back to heuristics */ }
       return { m, returned };
@@ -77,7 +85,11 @@ export async function batchMatchRules(
     for (let i = 0; i < unmatched.length; i += CHUNK) chunks.push(unmatched.slice(i, i + CHUNK));
     const parts = await Promise.all(chunks.map(runChunk));
     const returnedAll = new Set<string>();
-    for (const p of parts) { for (const [id, label] of p.m) result.set(id, label); for (const id of p.returned) returnedAll.add(id); }
+    const take = (id: string, rule: InboxRule) => {
+      opts.matchedRules?.set(id, rule);
+      if (rule.outcome.set_type) result.set(id, rule.outcome.set_type);
+    };
+    for (const p of parts) { for (const [id, rule] of p.m) take(id, rule); for (const id of p.returned) returnedAll.add(id); }
 
     // Fill-missing safety net: any email the model OMITTED (not a genuine "none") gets one focused
     // retry in small chunks, where the model reliably lists every id. Guarantees full coverage.
@@ -86,7 +98,7 @@ export async function batchMatchRules(
       const rchunks: EmailEnvelope[][] = [];
       for (let i = 0; i < missing.length; i += 10) rchunks.push(missing.slice(i, i + 10));
       const rparts = await Promise.all(rchunks.map(runChunk));
-      for (const p of rparts) for (const [id, label] of p.m) result.set(id, label);
+      for (const p of rparts) for (const [id, rule] of p.m) take(id, rule);
     }
   } catch {
     /* no matches on failure — heuristics still classify */

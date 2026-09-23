@@ -15,7 +15,7 @@ const ONLY = process.argv.includes('--user') ? process.argv[process.argv.indexOf
   const { data: profs } = await sb.from('profiles').select('id, email_settings');
   for (const p of (profs ?? []) as Array<{ id: string; email_settings: { auto_label?: boolean } | null }>) {
     if (ONLY && p.id !== ONLY) continue;
-    if ((p.email_settings ?? {}).auto_label === false) continue;
+    if ((p.email_settings ?? {}).auto_label !== true) continue; // W10: AUGMTD labels only where explicitly chosen
     const { data: conns } = await sb.from('connections').select('provider, metadata').eq('user_id', p.id).eq('status', 'active');
     const tokensByProvider = new Map((conns ?? []).map((c) => [c.provider, (c.metadata as { tokens?: string } | null)?.tokens]));
     if (!tokensByProvider.size) continue;

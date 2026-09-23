@@ -44,13 +44,15 @@ const COMMON_RULES: InboxRule[] = [
     name: 'Urgent — needs my attention',
     enabled: true, priority: 40, trigger: 'received', match_mode: 'all', conditions: [],
     ai_match: "Time-sensitive, blocking, or requires my direct attention — escalations, urgent customer issues, deal-critical asks, anything I must personally see immediately.",
-    outcome: { set_type: 'needs_reply', escalate: { enabled: true } }, source: 'default',
+    // W10: no `escalate` — nothing ever executed it (the rules truth audit); the label is the effect.
+    outcome: { set_type: 'needs_reply' }, source: 'default',
   },
   {
     name: 'Needs reply',
     enabled: true, priority: 50, trigger: 'received', match_mode: 'all', conditions: [],
     ai_match: "The sender expects a reply, confirmation, solution, or action from me.",
-    outcome: { set_type: 'needs_reply', auto_draft: { enabled: true } }, source: 'default',
+    // W10: no per-rule `auto_draft` — drafting is the account-level Drafting setting; nothing read this.
+    outcome: { set_type: 'needs_reply' }, source: 'default',
   },
   {
     name: 'Meeting updates',

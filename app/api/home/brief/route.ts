@@ -101,6 +101,7 @@ import { isAutomatedSenderStrong as isAutomatedSender, isActionWorthyAutomated }
 // the choke; `scripts/smoke-deck-truth.ts` asserts the world against the very same modules.
 import { rePromotesToDeck, noticeIsDemoted, readJudgedNone, DECK_POOL_LIMIT, ACTION_NOTICE_LIMIT, TRACKED_PROJECTS_LIMIT, FYI_POOL_LIMIT, BUNDLE_ENTITIES_LIMIT, BUNDLE_LINK_ATOMS_LIMIT, type DeckFloors } from '@/lib/home/deck-floors';
 import { guardDeckLabels } from '@/lib/home/serve-labels';
+import { leanSelect, foldLeanRows, hydrateBodies, readLeanPool, DECK_KEYS, FYI_KEYS, COMMITMENT_ROW_COLS as OPEN_COMMITMENT_COLS } from '@/lib/home/lean-source';
 // W8.3 · THE FYI POOL'S DECLARED SCOPE — a window read whole, under a reported row bound (the named
 // FYI_POOL_LIMIT page of the old read ×10). Never an eviction by recency inside the window.
 const FYI_WINDOW_DAYS = 7;
@@ -304,7 +305,10 @@ export async function GET() {
     // THE MIRROR FLOOR (W2.3): a historical `source='commitment'` row never enters the actionable pool —
     // the commitment lane (commitsRes) IS that fact's one home. One predicate, every listing read.
     withoutMirrors(supabase.from('inbox_items')
-      .select('id, work_title, work_state, rule_type, type_override, source, source_id, source_meeting_transcript_id, source_data, created_at, last_activity_at'))
+      // THE HOT-PATH LAW (event-spine P0): the deck's declared keys (DECK_KEYS — every key the
+      // brief's closure reads off a row) + `body` only — its served snippets and the synthesis
+      // grounding are clipped from it — never `html_body` / `thread_history`. Folded back below.
+      .select(leanSelect('id, work_title, work_state, rule_type, type_override, source, source_id, source_meeting_transcript_id, created_at, last_activity_at', { keys: DECK_KEYS, withBody: true })))
       .eq('user_id', user.id).eq('status', 'pending')
       // Action work_states (reply-via-email + external tasks + meeting action items) OR a rule that
       // classified it actionable (rule_type) — so a needs_reply the RULES found on a 'noted' email
@@ -325,7 +329,7 @@ export async function GET() {
     // it (one real account sits at 469, close enough that the cap is live, not theoretical); the
     // 500-cap saturation warning below is worthless without a stable, meaningful eviction order.
     // Soonest-due-first (nulls last) means a saturating pool drops the LEAST time-critical rows first.
-    supabase.from('commitments').select('*').eq('user_id', user.id).eq('status', 'open')
+    supabase.from('commitments').select(OPEN_COMMITMENT_COLS).eq('user_id', user.id).eq('status', 'open')
       .order('due_date', { ascending: true, nullsFirst: false }).limit(500),
     supabase.from('calendar_events')
       .select('id, title, start_time, attendees, timezone, is_all_day')
@@ -352,17 +356,21 @@ export async function GET() {
     // the newest 200 as if they were the pool. The scope is now a DECLARED WINDOW (the digest is "what
     // arrived lately"), READ WHOLE through the paged reader, under a reported row bound: measured
     // Sep 23, the heaviest account holds 369 noted rows in the window.
-    fetchAllRows<Record<string, unknown>>((from, to) => withoutMirrors(supabase.from('inbox_items').select('id, work_title, source_data, rule_type, created_at, last_activity_at'))
+    // THE HOT-PATH LAW: body-free (FYI_KEYS — the grouping reads sender, subject, understanding, list
+    // facts), and paged by ID then projected once per row (readLeanPool: an ordered range() lean read
+    // would de-toast every matching row for every page).
+    readLeanPool(supabase, user.id, (from, to) => withoutMirrors(supabase.from('inbox_items').select('id'))
       .eq('user_id', user.id).eq('status', 'pending').eq('work_state', 'noted')
       .gte('last_activity_at', new Date(now.getTime() - FYI_WINDOW_DAYS * DAY).toISOString())
       .order('last_activity_at', { ascending: false, nullsFirst: false }).order('id', { ascending: true })
-      .range(from, to), { maxRows: FYI_POOL_MAX }).then((data) => ({ data, error: null })),
+      .range(from, to), 'id, work_title, rule_type, created_at, last_activity_at', { keys: FYI_KEYS, maxRows: FYI_POOL_MAX })
+      .then((data) => ({ data: data as Record<string, unknown>[], error: null })),
   ]);
   mark('queries');
   if ((fyiRes.data ?? []).length >= FYI_POOL_MAX) console.warn(`[home/brief] FYI pool hit its bound — ${FYI_POOL_MAX} noted rows inside the ${FYI_WINDOW_DAYS}-day window; the digest counts stop there (raise FYI_POOL_MAX)`);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const items = (itemsRes.data ?? []) as any[];
+  const items = foldLeanRows((itemsRes.data ?? []) as unknown as Record<string, unknown>[], { keys: DECK_KEYS, withBody: true }) as any[];
   // The saturation log the bound's comment has promised since August and never actually written.
   if (items.length >= DECK_POOL_LIMIT) console.warn(`[home/brief] deck pool SATURATED at ${DECK_POOL_LIMIT} — rows are being evicted by recency; raise the bound`);
   if ((commitsRes.data ?? []).length >= 500) console.warn('[home/brief] open-commitments pool SATURATED the 500 cap — some obligations may be missing; raise the bound');
@@ -1286,7 +1294,7 @@ export async function GET() {
     .filter((it) => { const u = getUnderstanding(it); return !!u && u.relevance === 'awareness'; })
     .filter((it) => !isBulk((it.source_data ?? {}) as Record<string, unknown>)) // real correspondence only
     .map((it) => ({ id: it.id as string, source_data: (it.source_data ?? {}) as Record<string, unknown>, work_title: (it.work_title as string) || null }));
-  const forYourAwareness = ([...fyaFromItems, ...fyaFromNoted] as FyaCand[])
+  const fyaTop = ([...fyaFromItems, ...fyaFromNoted] as FyaCand[])
     // No overlap: excluded if already surfaced as a reply/action (needs-you) or in keep-an-eye.
     .filter((c) => !mustItemIds.has(c.id) && !eyeItemIds.has(c.id) && !priorityItemIds.has(c.id))
     // dedup by id (an item can't be in both pools, but guard anyway).
@@ -1300,7 +1308,13 @@ export async function GET() {
       const at = String(a.source_data.received_at || ''); const bt = String(b.source_data.received_at || '');
       return ra === rb ? bt.localeCompare(at) : ra - rb;
     })
-    .slice(0, 12)
+    .slice(0, 12);
+  // THE HOT-PATH LAW: the noted pool is read body-free; a subject-less row among these ≤12 SERVED
+  // rows is the only one whose one-liner reads the body — it gets exactly that, one id-keyed read.
+  await hydrateBodies(supabase, user.id,
+    fyaTop.filter((c) => !String((c.work_title as string) || (c.source_data.subject as string) || '').trim()), 12)
+    .catch(() => null);
+  const forYourAwareness = fyaTop
     .map((c) => {
       const sd = c.source_data;
       const who = (sd.from_name as string) || (sd.from as string) || 'Someone';
@@ -2035,6 +2049,10 @@ export async function GET() {
         import('@/lib/deeds/held-cache'), import('@/lib/work/graduation'),
       ]);
       const filedThisMonth = await countGraduatedThisMonth(supabase, user.id).catch(() => 0);
+      // THE HOT-PATH LAW: the count's derivation was body-free; the rows the ledger renders get
+      // their words here, off the paint (bounded by the ledger's own row bound).
+      const { hydrateHeldBodies } = await import('@/lib/deeds/held-members');
+      await hydrateHeldBodies(supabase, user.id, c.derived, todayStr);
       await storeHeldCache(supabase as never, user.id,
         buildHeldPayload(c.derived, todayStr, { filedThisMonth }));
     } catch { /* the door derives for itself, exactly as it did before */ }

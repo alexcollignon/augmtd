@@ -26,10 +26,10 @@ import { getCampaignSignature, isCampaignEcho, type CampaignSignature } from '@/
 import { deckEligible, fromEmailOf, type DeckFloors, type DeckItem } from '@/lib/home/deck-floors';
 import {
   whyNowOf, rankAttention, classifyHeld, bandOf, internalDomainsOf, isInternalBridge, selectGraduates,
-  ATTENTION_BUDGET, MAX_ADJACENCY_PROMOTIONS,
+  buildHeldLedger, ATTENTION_BUDGET, MAX_ADJACENCY_PROMOTIONS, HELD_MEMBERS_PER_CLASS,
   type AttentionRow, type HeldFacts, type HeldClassId, type HeldBandId,
 } from '@/lib/home/attention';
-import { fetchAllRows } from '@/lib/utils/fetch-all';
+import { readLeanPool, rulesReadBody, hydrateSource, CLASSIFY_KEYS, PREPARED_KEYS, DEED_KEYS } from '@/lib/home/lean-source';
 import { loadUserForms } from '@/lib/prepare/addressee';
 import type { UserForms } from '@/lib/commitments/extraction-truth';
 import { MIRROR_SOURCE } from '@/lib/inbox/commitment-mirrors';
@@ -83,55 +83,18 @@ export async function deriveHeld(
   const todayISO = now.toISOString().slice(0, 10);
   const self = selfEmail?.toLowerCase();
 
-  // ── THE POOL — paged, stable-ordered (fetchAllRows' own contract). ─────────────────────────────
-  const rows = await fetchAllRows<any>((from, to) => client.from('inbox_items')
-    .select('id, user_id, work_title, work_state, rule_type, type_override, source, source_data, created_at, last_activity_at')
-    .eq('user_id', userId).eq('status', 'pending').neq('source', MIRROR_SOURCE) // THE MIRROR FLOOR (W2.3)
-    .order('last_activity_at', { ascending: false, nullsFirst: false }).order('id', { ascending: true })
-    .range(from, to), { maxRows: HELD_POOL_MAX });
-
-  // ── THE FACTS, all cached or structural — no AI anywhere on this path. ─────────────────────────
-  let sig: CampaignSignature | null = null;
-  try { sig = await getCampaignSignature(client, userId); } catch { /* the floor goes inert, never fabricates */ }
-  const userRules = await loadUserRules(userId, client).catch(() => []);
-
-  // The cached judgments, read WHOLE (paged) rather than chunked per candidate: the ledger needs the
-  // disposition too ('answered' / 'expired'), which is what makes `judged_quiet` a real account.
-  const judgments = (await readPlans(client, userId, 'judgment', { keyPrefix: 'inbox:' })).map((r) => ({ entity_id: r.key, tasks: r.tasks }));
-  const judgedNone = new Set<string>();
-  const judgedResolution = new Map<string, string | null>();
-  // Q9 · THE PERSON'S OWN PARK rides the SAME read: the triage deck's ← LATER writes the judgment's
-  // own `revisit` with `by: 'user'` (lib/work/judge.ts parkItem), so "when does this come back" is
-  // one fact in one place, read here for free rather than from a snooze table that could disagree.
-  const userParked = new Map<string, string>();
-  // W8.3 · THE LIST SAYS ONLY WHAT WAS JUDGED — the SAME read says which items were judged AT ALL
-  // (any cached verdict) and which carry a WORK verdict under the CURRENT law. A row with no verdict
-  // never claims "real, alive"; a work verdict from an older JUDGE_VERSION does not shield a kind the
-  // current law floors (the pitch judged `schedule` before the kind floor existed).
-  const judgedAny = new Set<string>();
-  const judgedCurrentWork = new Set<string>();
-  for (const j of judgments) {
-    const v = j.tasks?.verdict as { work?: string; resolution?: string; revisit?: { after?: string; by?: string }; failed?: boolean } | undefined;
-    const jid = String(j.entity_id).replace(/^inbox:/, '');
-    if (v && typeof v.work === 'string' && v.failed !== true) {
-      judgedAny.add(jid);
-      const ver = String((j.tasks as { sig?: string } | null)?.sig ?? '').split(':')[0];
-      if (v.work !== 'none' && ver === String(JUDGE_VERSION)) judgedCurrentWork.add(jid);
-    }
-    if (v?.work !== 'none') continue;
-    const id = String(j.entity_id).replace(/^inbox:/, '');
-    judgedNone.add(id);
-    judgedResolution.set(id, v?.resolution ?? null);
-    if (v.revisit?.by === 'user' && typeof v.revisit.after === 'string') userParked.set(id, v.revisit.after.slice(0, 10));
-  }
-
-  const floors: DeckFloors = { judgedNone, isEcho: (it) => isCampaignEcho(it as never, sig) };
-
+  // ── THE INDEPENDENT FACTS START NOW, beside the pool (event-spine P0): none of them reads the pool,
+  //    so they ride its latency instead of queueing after it. Each is awaited where it was read.
+  const settle = <T,>(p: Promise<T>) => p.then((v) => ({ ok: true as const, v }), (e: unknown) => ({ ok: false as const, e }));
+  const unwrap = async <T,>(p: Promise<{ ok: true; v: T } | { ok: false; e: unknown }>): Promise<T> => { const r = await p; if (!r.ok) throw r.e; return r.v; };
+  const sigP = getCampaignSignature(client, userId).catch(() => null);
+  const judgmentsP = settle(readPlans(client, userId, 'judgment', { keyPrefix: 'inbox:' }));
+  const userFormsP = loadUserForms(client, userId).catch(() => null);
   // ── Q8 · WHO COUNTS AS A BRIDGE. The user's own corporate domains (their connected mailboxes +
   //    profile address, free-mail providers excluded) plus our coworkers' sending domain. An
   //    attendee inside those domains is a TEAMMATE, and a teammate attends everything — the recurring
   //    internal standup made five colleagues "adjacent" and every mail they ever sent got promoted.
-  const internalDomains = await (async () => {
+  const internalDomainsP = (async () => {
     const addrs: Array<string | null> = [selfEmail ?? null];
     try {
       const [{ data: conns }, { data: prof }] = await Promise.all([
@@ -149,7 +112,9 @@ export async function deriveHeld(
   // ── THE CALENDAR ADJACENCY FACT (shared with A1's why-now) — the near-calendar counterparties. ─
   // THE DAY ANCHOR's fact rides here too (Sep 18): the adjacency carries WHICH event it is, so the
   // two readers of this fact — the deck's why-now and the ledger's band — stay the same fact.
+  const adjByEmailP = (async () => {
   const adjByEmail = new Map<string, { localTime: string | null; title: string | null; eventId: string }>();
+  const internalDomains = await internalDomainsP;
   try {
     const { data: tzRows } = await client.from('calendar_events').select('timezone')
       .eq('user_id', userId).not('timezone', 'is', null).limit(300);
@@ -179,6 +144,65 @@ export async function deriveHeld(
       }
     }
   } catch { /* non-fatal — no brought_forward class, never a fabricated one */ }
+  return adjByEmail;
+  })();
+
+  // The user's rules FIRST: they decide whether the pool must carry the body (a deterministic
+  // `body_*` condition is the only derivation on this path that reads it).
+  const userRules = await loadUserRules(userId, client).catch(() => []);
+  const withBody = rulesReadBody(userRules);
+
+  // ── THE POOL — paged, stable-ordered, under a reported bound (NO SILENT CAPS). ─────────────────
+  // THE HOT-PATH LAW (event-spine P0): BODY-FREE. The whole `source_data` was ~20 KB a row, 96% mail
+  // body nothing on this path reads — ~72 MB per Home open on the heaviest account. The derivation
+  // reads THE CLASSIFICATION FACTS only (each JSON path de-toasts the row once, so the set is the
+  // smallest the derivation reads — lib/home/lean-source.ts), folded back into `source_data`.
+  // Paged by ID first (ordered, cheap), then projected once per row (lib/home/lean-source.ts
+  // `readLeanPool` — an ordered range() read would de-toast every matching row for every page).
+  const rows: any[] = await readLeanPool(client, userId, (from, to) => client.from('inbox_items')
+    .select('id')
+    .eq('user_id', userId).eq('status', 'pending').neq('source', MIRROR_SOURCE) // THE MIRROR FLOOR (W2.3)
+    .order('last_activity_at', { ascending: false, nullsFirst: false }).order('id', { ascending: true })
+    .range(from, to),
+  'id, user_id, work_title, work_state, rule_type, type_override, source, created_at, last_activity_at',
+  { keys: CLASSIFY_KEYS, withBody, maxRows: HELD_POOL_MAX });
+
+  // ── THE FACTS, all cached or structural — no AI anywhere on this path. ─────────────────────────
+  const sig: CampaignSignature | null = await sigP; // the floor goes inert on failure, never fabricates
+
+  // The cached judgments, read WHOLE (paged) rather than chunked per candidate: the ledger needs the
+  // disposition too ('answered' / 'expired'), which is what makes `judged_quiet` a real account.
+  const judgments = (await unwrap(judgmentsP)).map((r) => ({ entity_id: r.key, tasks: r.tasks }));
+  const judgedNone = new Set<string>();
+  const judgedResolution = new Map<string, string | null>();
+  // Q9 · THE PERSON'S OWN PARK rides the SAME read: the triage deck's ← LATER writes the judgment's
+  // own `revisit` with `by: 'user'` (lib/work/judge.ts parkItem), so "when does this come back" is
+  // one fact in one place, read here for free rather than from a snooze table that could disagree.
+  const userParked = new Map<string, string>();
+  // W8.3 · THE LIST SAYS ONLY WHAT WAS JUDGED — the SAME read says which items were judged AT ALL
+  // (any cached verdict) and which carry a WORK verdict under the CURRENT law. A row with no verdict
+  // never claims "real, alive"; a work verdict from an older JUDGE_VERSION does not shield a kind the
+  // current law floors (the pitch judged `schedule` before the kind floor existed).
+  const judgedAny = new Set<string>();
+  const judgedCurrentWork = new Set<string>();
+  for (const j of judgments) {
+    const v = j.tasks?.verdict as { work?: string; resolution?: string; revisit?: { after?: string; by?: string }; failed?: boolean } | undefined;
+    const jid = String(j.entity_id).replace(/^inbox:/, '');
+    if (v && typeof v.work === 'string' && v.failed !== true) {
+      judgedAny.add(jid);
+      const ver = String((j.tasks as { sig?: string } | null)?.sig ?? '').split(':')[0];
+      if (v.work !== 'none' && ver === String(JUDGE_VERSION)) judgedCurrentWork.add(jid);
+    }
+    if (v?.work !== 'none') continue;
+    const id = String(j.entity_id).replace(/^inbox:/, '');
+    judgedNone.add(id);
+    judgedResolution.set(id, v?.resolution ?? null);
+    if (v.revisit?.by === 'user' && typeof v.revisit.after === 'string') userParked.set(id, v.revisit.after.slice(0, 10));
+  }
+
+  const floors: DeckFloors = { judgedNone, isEcho: (it) => isCampaignEcho(it as never, sig) };
+
+  const adjByEmail = await adjByEmailP;
   const adjacencyOf = (it: DeckItem) => {
     const e = fromEmailOf((it.source_data ?? {}) as Record<string, unknown>);
     return e ? adjByEmail.get(e.toLowerCase()) ?? null : null;
@@ -279,7 +303,7 @@ export async function deriveHeld(
   }
 
   // One memoized read (the addressee law's own loader) — the only extra IO, and only once per call.
-  const userForms = await loadUserForms(client, userId).catch(() => null);
+  const userForms = await userFormsP;
 
   return {
     facts,
@@ -297,6 +321,28 @@ export async function deriveHeld(
 }
 
 /**
+ * THE SERVED ROWS' WORDS (event-spine P0 · the hot-path law). The derivation reads the classification
+ * facts only; the ledger's RENDERED members still quote an excerpt and serve their live prepared kind
+ * (THE ONE READER's inputs + the item's own words under an invite — lib/prepare/read.ts). So, before
+ * the payload is built, exactly the rows it will render get those — one id-keyed read, bounded by the
+ * payload's own row bound (bands + classes × perClass), never the pool. Which rows render is decided by the SAME pure ledger (body-independent:
+ * class, band and order never read the body), so the payload is identical to the whole-body read.
+ */
+export async function hydrateHeldBodies(
+  client: DBClient, userId: string, derived: HeldDerivation, todayISO: string,
+  opts: { perClass?: number; offset?: number } = {},
+): Promise<{ read: number; leftBehind: number }> {
+  const ledger = buildHeldLedger(derived.facts, todayISO, {
+    membersPerClass: opts.perClass ?? HELD_MEMBERS_PER_CLASS, offset: opts.offset ?? 0, user: derived.userForms ?? null,
+  });
+  const ids = new Set<string>([
+    ...ledger.bands.waiting.rows, ...ledger.bands.watched.rows, ...ledger.classes.flatMap((c) => c.members),
+  ].map((m) => m.itemId));
+  const served = derived.facts.filter((f) => ids.has(String(f.item.id))).map((f) => f.item);
+  return hydrateSource(client, userId, served as never, [...PREPARED_KEYS, 'body'], served.length);
+}
+
+/**
  * The deed engine's view of the same derivation: "everything the ledger filed under Notices",
  * resolved to real item ids. A deed named by CLASS must act on exactly the set the ledger shows, so
  * it reads the SAME function rather than a second copy of the law.
@@ -304,7 +350,13 @@ export async function deriveHeld(
 export async function deriveHeldMembers(
   client: DBClient, userId: string, selfEmail?: string | null,
 ): Promise<Map<HeldClassId, HeldMemberRow[]>> {
-  return (await deriveHeld(client, userId, selfEmail)).membersByClass;
+  const byClass = (await deriveHeld(client, userId, selfEmail)).membersByClass;
+  // THE HOT-PATH LAW: the derivation reads the classification facts only; a deed resolves its
+  // mailbox targets (lib/deeds/mail-target reads DEED_KEYS), so the deed path — never a page load —
+  // pays for the address of every member it may act on.
+  const all = [...byClass.values()].flat();
+  await hydrateSource(client, userId, all, DEED_KEYS, all.length);
+  return byClass;
 }
 
 /**

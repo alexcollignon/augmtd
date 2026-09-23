@@ -16,6 +16,7 @@
 // receipts · the machine · the room grounding board · prepare-action · smokes.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
+import { leanSelect, foldLean, foldLeanRows, hydrateBodies, isLeanSource, PREPARED_KEYS, ONE_READER_KEYS } from '@/lib/home/lean-source';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { inviteOutsideStatedWindow, claimsUndoneWork, type ProposedFrom } from '@/lib/prepare/truth';
 import { addresseeOfStamp, addresseeFromNudgeTitle, addresseeWithdrawn, loadUserForms, type Addressee } from '@/lib/prepare/addressee';
@@ -498,7 +499,10 @@ export async function preparedState(
   let facts: ItemTruthFacts | null = null;
   try {
     if (item.kind === 'inbox_item') {
-      const { data } = await client.from('inbox_items').select('source_data, work_state').eq('id', item.id).eq('user_id', userId).maybeSingle();
+      // THE HOT-PATH LAW (event-spine P0): the one reader's declared keys + `body` (the window floor
+      // reads the item's words) — never `html_body` / `thread_history`.
+      const { data: raw } = await client.from('inbox_items').select(leanSelect('work_state', { keys: ONE_READER_KEYS, withBody: true })).eq('id', item.id).eq('user_id', userId).maybeSingle();
+      const data = raw ? foldLean(raw as unknown as Record<string, unknown>, { keys: ONE_READER_KEYS, withBody: true }) as { source_data: unknown; work_state?: string | null } : null;
       sd = data?.source_data as SourceData;
       facts = inboxTruthFacts(sd);
       out.push(...await stripNoticeDrafts(preparedFromSourceData(sd), sd, data?.work_state));
@@ -553,7 +557,10 @@ export async function preparedStatesFor(
     const { fetchAllRows } = await import('@/lib/utils/fetch-all');
     const [inboxRes, poolEmail, poolCommit, commitFactsRes] = await Promise.all([
       inboxNeedingRows.length
-        ? client.from('inbox_items').select('id, source_data, last_activity_at').eq('user_id', userId).in('id', inboxNeedingRows)
+        // THE HOT-PATH LAW: body-free; the one floor that reads the item's words (an invite's stated
+        // window) gets them below, for exactly the rows carrying an invite.
+        ? client.from('inbox_items').select(leanSelect('id, last_activity_at', { keys: PREPARED_KEYS })).eq('user_id', userId).in('id', inboxNeedingRows)
+            .then((r) => ({ data: foldLeanRows((r.data ?? []) as unknown as Array<Record<string, unknown>>, { keys: PREPARED_KEYS }) }))
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
       inboxIds.length
         ? fetchAllRows<Record<string, unknown>>((from, to) => client.from('item_deliverables').select(`entity_id, ${POOL_SELECT}`)
@@ -581,6 +588,11 @@ export async function preparedStatesFor(
       const arr = poolBy.get(k) ?? [];
       arr.push(r); poolBy.set(k, arr);
     }
+    // THE WINDOW FLOOR'S WORDS: a body-free row carrying an invite gets its body (bounded id read).
+    await hydrateBodies(client, userId, items
+      .filter((i) => i.kind === 'inbox')
+      .map((i) => ({ id: i.id, source_data: (i.row ?? rows.get(i.id))?.source_data }))
+      .filter((r) => isLeanSource(r.source_data) && preparedFromSourceData(r.source_data as SourceData).some((a) => a.kind === 'invite')));
     // TRUE ADDRESSEES (W7.3): who the user is — read ONCE for the whole batch, only when needed.
     let userForms: UserForms | null = null;
     for (const item of items) {

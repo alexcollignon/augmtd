@@ -12,6 +12,7 @@
 // from THE ONE READER (lib/prepare/read).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { isLiveArtifact, type PreparedArtifact } from '@/lib/prepare/read';
+import { leanSelect, foldLean, ANCHOR_KEYS } from '@/lib/home/lean-source';
 
 export type AnchorLinkKind = 'inbox_item' | 'commitment' | 'meeting';
 export type ItemAnchor = { who: string | null; ask: string | null; prepared: string | null };
@@ -28,7 +29,9 @@ export function looseRoomKeyOf(linkKind: AnchorLinkKind, id: string): string {
 
 /** The ONE select per kind for the anchor row (`status` rides so the machine reader needn't re-read). */
 export const ANCHOR_ROW_SELECT: Record<AnchorLinkKind, string> = {
-  inbox_item: 'work_title, source, source_data, last_activity_at, created_at, status',
+  // THE HOT-PATH LAW (event-spine P0): the anchor reads sender, subject, the understanding's ask and
+  // the prepared stamps — body-free JSON paths, folded back by `foldAnchorRow` below.
+  inbox_item: leanSelect('work_title, source, last_activity_at, created_at, status', { keys: ANCHOR_KEYS }),
   // `source, source_id, thread_id` ride so the door can resolve the commitment's OWN source object
   // (ONE OBJECT, ONE DOOR — lib/room/door.ts objectIdForDoor) without a second read of the row.
   commitment: 'description, counterparty, created_at, status, source, source_id, thread_id',
@@ -37,6 +40,14 @@ export const ANCHOR_ROW_SELECT: Record<AnchorLinkKind, string> = {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRow = Record<string, any> | null | undefined;
+
+/** The row an `ANCHOR_ROW_SELECT` read returned, in the shape every anchor reader expects (the inbox
+ *  row's projected JSON paths folded back into `source_data`). Every caller of the select folds. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function foldAnchorRow(linkKind: AnchorLinkKind, row: unknown): any {
+  if (!row || linkKind !== 'inbox_item') return row ?? null;
+  return foldLean(row as Record<string, unknown>, { keys: ANCHOR_KEYS });
+}
 
 /** Who this is with · the item's verb-first ask · whether prepared work already arrived.
  *  Grounded-or-absent per part; never invented. */

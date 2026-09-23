@@ -29,7 +29,7 @@ const userArg = process.argv.includes('--user') ? process.argv[process.argv.inde
 
   for (const u of targets) {
     const { data: prof } = await sb.from('profiles').select('email_settings').eq('id', u.id).maybeSingle();
-    if (((prof?.email_settings ?? {}) as { auto_label?: boolean }).auto_label === false) continue;
+    if (((prof?.email_settings ?? {}) as { auto_label?: boolean }).auto_label !== true) continue; // W10: AUGMTD labels only where explicitly chosen
     const { data: conns } = await sb.from('connections').select('provider, metadata').eq('user_id', u.id).eq('status', 'active');
     const tokensByProvider = new Map((conns ?? []).map((c) => [c.provider, (c.metadata as { tokens?: string } | null)?.tokens]));
     const gmailTokens = tokensByProvider.get('gmail');

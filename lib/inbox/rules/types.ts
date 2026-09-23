@@ -25,12 +25,22 @@ export type RuleOutcome = {
    *  ONE resolver (lib/inbox/rules/write-back.ts `resolveKind`). Rules stay posture-authoritative
    *  via set_type; set_kind is the correction channel, never the default classifier. */
   set_kind?: 'receipt' | 'newsletter' | 'notification' | 'calendar' | 'cold_outreach' | 'customer' | 'team' | 'personal';
-  auto_draft?: { enabled: boolean; instructions?: string };
+  /** W10 USER-NAMED LABELS — the user's OWN mailbox label ("Clients/Acme"; Gmail nests on '/',
+   *  Outlook keeps it as one category), applied by lib/inbox/rules/execute.ts when the rule matches
+   *  arriving mail. The user's explicit instruction: applies whatever `auto_label` says (that switch
+   *  governs AUGMTD's own posture labels only). Name floor: lib/inbox/rules/label-name.ts. */
+  apply_label?: string;
+  /** Executed on arriving mail by lib/inbox/rules/execute.ts (W10) — the user's standing mailbox
+   *  instruction, like a Gmail filter: reversible, logged in activity, exactly once per message. */
   mark_read?: boolean;
   archive?: boolean;
+  trash?: boolean;
+  // ── LEGACY, UNEXECUTED (W10 rules truth audit) — kept on the type only because old rows carry
+  // them. NOTHING executes these; they are not authorable (label-name.ts UNEXECUTED_OUTCOME_KEYS)
+  // and are stripped on save. `forward_to` is an external send: unexecuted + unauthorable by design.
+  auto_draft?: { enabled: boolean; instructions?: string };
   forward_to?: string;
   escalate?: { enabled: boolean; instructions?: string };
-  trash?: boolean;
 };
 
 export type InboxRule = {

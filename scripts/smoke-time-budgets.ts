@@ -104,7 +104,7 @@ ok('the completion stamp sits after the last pass section (silence watch), not b
 
 console.log('\nGATE 4 — PAGED/ORDERED READ: the brief\'s open-commitments read carries a stable order');
 const briefRoute = readFileSync('app/api/home/brief/route.ts', 'utf8');
-const commitsQueryMatch = briefRoute.match(/supabase\.from\('commitments'\)\.select\('\*'\)[\s\S]{0,200}/);
+const commitsQueryMatch = briefRoute.match(/supabase\.from\('commitments'\)\.select\((?:'\*'|OPEN_COMMITMENT_COLS)\)[\s\S]{0,200}/); // column-named since event-spine P0 (hot-path-law)
 ok('the commitments query exists', !!commitsQueryMatch);
 ok('the commitments query carries an .order(', !!commitsQueryMatch && /\.order\(/.test(commitsQueryMatch[0]),
   'unordered .limit() returns an ARBITRARY slice once the pool exceeds the cap');

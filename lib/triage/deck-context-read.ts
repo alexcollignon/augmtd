@@ -38,7 +38,10 @@ export async function readDeckContexts(
   const threadIds = [...new Set(emailCommits.map((c) => c.thread_id).filter((t): t is string => !!t))];
   const sourceEmailIds = [...new Set(emailCommits.map((c) => c.source_id).filter((t): t is string => !!t))];
   const meetingIds = [...new Set(commits.filter((c) => c.source === 'meeting' && c.source_id).map((c) => c.source_id as string))];
-  const EMAIL_COLS = 'id, thread_id, from_name, from_address, body, received_at, is_from_user';
+  // THE HOT-PATH LAW (event-spine P0): the thread listing is BODY-FREE (up to 400 messages, of which
+  // one per thread is used); the founding lines' bodies are read after the pick, for exactly the
+  // chosen emails (≤ one per handed commitment — bounded by DECK_CONTEXT_MAX_IDS).
+  const EMAIL_COLS = 'id, thread_id, from_name, from_address, received_at, is_from_user';
   const none = Promise.resolve({ data: [] as unknown[] });
 
   const [threadMail, sourceMail, itemsByThread, itemsBySource, meetings] = await Promise.all([
@@ -74,6 +77,22 @@ export async function readDeckContexts(
   }
   const itemBySource = new Map(((itemsBySource.data ?? []) as Array<{ id: string; source_id: string }>).map((r) => [r.source_id, r.id]));
   const meetingById = new Map(((meetings.data ?? []) as Array<{ id: string; title: string | null; start_time: string | null; created_at: string | null }>).map((m) => [m.id, m]));
+
+  // THE FOUNDING BODIES — one id-keyed read for the emails the cards will quote, nothing else.
+  {
+    const chosen = new Map<string, EmailRow[]>();
+    for (const c of commits) {
+      const e = (c.source_id ? emailById.get(c.source_id) : undefined) ?? (c.thread_id ? newestByThread.get(c.thread_id) : undefined);
+      if (e) (chosen.get(e.id) ?? chosen.set(e.id, []).get(e.id)!).push(e);
+    }
+    const bodyIds = [...chosen.keys()];
+    if (bodyIds.length) {
+      const { data: bodies } = await client.from('emails').select('id, body').eq('user_id', userId).in('id', bodyIds);
+      for (const b of (bodies ?? []) as Array<{ id: string; body: string | null }>) {
+        for (const e of chosen.get(b.id) ?? []) e.body = b.body;
+      }
+    }
+  }
 
   // W8.3 · THE ITEM'S OWN SOURCE FIRST (one reader's order — lib/commitments/source.ts
   // `inboxItemForEmail`: the exact source row, else the thread). The thread-first order showed an

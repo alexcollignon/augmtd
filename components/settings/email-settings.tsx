@@ -4,8 +4,10 @@ import { useEffect, useState } from 'react';
 import {
   PlusIcon, PencilIcon, TrashIcon, Bars2Icon,
   SparklesIcon, FunnelIcon, ArrowDownTrayIcon, ArrowUturnLeftIcon, XMarkIcon,
-  BellAlertIcon, PaperAirplaneIcon, ArchiveBoxIcon, ArrowPathIcon,
+  ArchiveBoxIcon, ArrowPathIcon, TagIcon,
 } from '@heroicons/react/24/outline';
+// Client-safe (pure, zero imports) — the SAME name floor + outcome floor the server re-runs.
+import { validateUserLabelName, sanitizeRuleOutcome } from '@/lib/inbox/rules/label-name';
 import ConnectionCard from './connection-card';
 import SyncAllButton from './sync-all-button';
 import PosturesSection from './postures-section';
@@ -13,11 +15,14 @@ import PosturesSection from './postures-section';
 export type EmailSection = 'connections' | 'rules' | 'drafting' | 'todo';
 
 type Condition = { field: string; value: string };
+// W10 — only what something EXECUTES (lib/inbox/rules/execute.ts). The legacy forward_to /
+// auto_draft / escalate keys are not offered: nothing performs them (forward_to never will — an
+// external send is always the user's own click).
 type Outcome = {
   set_type?: string;
-  auto_draft?: { enabled: boolean; instructions?: string };
-  mark_read?: boolean; archive?: boolean; forward_to?: string;
-  escalate?: { enabled: boolean; instructions?: string }; trash?: boolean;
+  set_kind?: string;
+  apply_label?: string;
+  mark_read?: boolean; archive?: boolean; trash?: boolean;
 };
 type Rule = {
   id: string; name: string; enabled: boolean; priority: number;
@@ -52,12 +57,10 @@ const FIELD_LABEL: Record<string, string> = {
 // always reflects the rule (any combination), never a hardcoded subset.
 function outcomeChips(o: Outcome): string[] {
   const out: string[] = [];
-  if (o.auto_draft?.enabled) out.push('auto-draft');
+  if (o.apply_label) out.push(`label “${o.apply_label}”`);
   if (o.mark_read) out.push('mark read');
-  if (o.archive) out.push('archive');
-  if (o.forward_to) out.push('forward');
-  if (o.escalate?.enabled) out.push('escalate');
   if (o.trash) out.push('trash');
+  else if (o.archive) out.push('archive');
   return out;
 }
 
@@ -157,6 +160,29 @@ export default function EmailSettings({ connections, section = 'connections' }: 
     fetch('/api/inbox/email-settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [key]: val }) }).catch(() => {});
   };
 
+  // W10 — turning AUGMTD's labels OFF offers to take the ones already in the mailbox away too (the
+  // same cleanup the ops script runs: only AUGMTD-created labels, never the user's own). A provider
+  // write, so it runs only on an explicit click + confirm.
+  const [offerCleanup, setOfferCleanup] = useState(false);
+  const [cleanupState, setCleanupState] = useState<'idle' | 'running' | string>('idle');
+  const toggleAugmtdLabels = () => {
+    const next = !settings?.auto_label;
+    setSetting('auto_label', next);
+    setOfferCleanup(!next);
+    setCleanupState('idle');
+  };
+  const runCleanup = async () => {
+    if (!confirm('Remove the labels AUGMTD added to your Gmail / Outlook? Your own labels are never touched.')) return;
+    setCleanupState('running');
+    try {
+      const res = await fetch('/api/inbox/mailbox-labels/cleanup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) });
+      const d = await res.json();
+      if (!res.ok) { setCleanupState(d.error || 'Could not remove the labels.'); return; }
+      setCleanupState(`Removed ${d.removed ?? 0} AUGMTD label${d.removed === 1 ? '' : 's'}${d.leftBehind ? ` — ${d.leftBehind} left, run it again to finish` : ''}.`);
+      setOfferCleanup(false);
+    } catch { setCleanupState('Could not remove the labels.'); }
+  };
+
   const onSaved = (saved: Rule) => {
     setRules(rs => rs.some(r => r.id === saved.id) ? rs.map(r => r.id === saved.id ? saved : r) : [...rs, saved]);
     setEditing(null);
@@ -249,16 +275,30 @@ export default function EmailSettings({ connections, section = 'connections' }: 
           desc="Each line is one thing I hold to. Say a new one, re-say one to change it, or switch it off."
         />
 
-        {/* THE LABEL MIRROR AS A CHOICE — the kill-switch already existed; it stops being silent.
-            Reads and writes the SAME email_settings.auto_label, no new flag, no behaviour change. */}
+        {/* THE LABEL MIRROR AS A CHOICE — W10: OFF unless chosen (the SAME email_settings.auto_label).
+            Governs AUGMTD's own posture labels only; your rules' own labels apply regardless. */}
         {settings && (
           <div className="mb-4 rounded-xl border border-neutral-200 px-4">
             <SettingRow
               title="Mirror my triage into Gmail / Outlook labels"
-              desc="Namespaced AUGMTD labels in your mailbox — never touches your own labels."
+              desc="Adds AUGMTD/Needs reply · To do · Waiting on · Done to your mailbox. Off unless you turn it on. Labels your own rules apply are separate — they always follow the rule."
               on={settings.auto_label}
-              onToggle={() => setSetting('auto_label', !settings.auto_label)}
+              onToggle={toggleAugmtdLabels}
             />
+            {(offerCleanup || (cleanupState !== 'idle' && cleanupState !== 'running')) && (
+              <div className="flex items-center justify-between gap-3 pb-3 -mt-1">
+                <p className="text-[12px] text-neutral-500">
+                  {offerCleanup ? 'Also remove the AUGMTD labels already in your mailbox?' : cleanupState}
+                </p>
+                {offerCleanup && (
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button onClick={() => setOfferCleanup(false)} className="text-[12px] text-neutral-400 hover:text-neutral-700">Keep them</button>
+                    <button onClick={runCleanup} className="rounded-lg border border-neutral-200 px-2.5 py-1 text-[12px] text-neutral-700 hover:bg-neutral-50">Remove them</button>
+                  </div>
+                )}
+              </div>
+            )}
+            {cleanupState === 'running' && <p className="pb-3 -mt-1 text-[12px] text-neutral-400">Removing…</p>}
           </div>
         )}
 
@@ -333,10 +373,10 @@ export default function EmailSettings({ connections, section = 'connections' }: 
                     <span className="text-[13px] font-medium text-neutral-800 truncate">{rule.name}</span>
                     {rule.trigger === 'sent' && <span className="text-[10px] uppercase tracking-wide text-neutral-400">sent</span>}
                   </div>
-                  {meta && (
+                  {(meta || outcomeChips(rule.outcome).length > 0) && (
                     <span className="inline-flex items-center gap-1 text-[11px] text-neutral-400 mt-0.5">
-                      → <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} /> {meta.label}
-                      {outcomeChips(rule.outcome).map(c => ` · ${c}`).join('')}
+                      → {meta && <><span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} /> {meta.label}</>}
+                      {outcomeChips(rule.outcome).map((c, j) => `${meta || j > 0 ? ' · ' : ''}${c}`).join('')}
                     </span>
                   )}
                 </div>
@@ -412,8 +452,13 @@ function RuleEditor({ rule, onClose, onSaved }: { rule: Rule; onClose: () => voi
     if (!name.trim()) return 'Give the rule a name.';
     if (mode === 'ai' && !aiMatch.trim()) return 'Describe what this AI rule should match.';
     if (mode === 'filters' && !conditions.some(c => c.value.trim())) return 'Add at least one condition with a value.';
-    if (outcome.forward_to != null && !outcome.forward_to.trim()) return 'Enter an email address to forward to.';
-    if (outcome.escalate?.enabled && !outcome.escalate.instructions?.trim()) return 'Add escalation instructions, or turn Escalate off.';
+    if (outcome.apply_label != null && outcome.apply_label.trim()) {
+      const v = validateUserLabelName(outcome.apply_label);
+      if (!v.ok) return v.reason;
+    }
+    const checked = sanitizeRuleOutcome(outcome, trigger);
+    if (!checked.ok) return checked.reason;
+    if (!Object.keys(checked.outcome).length) return 'Choose at least one thing the rule does.';
     return null;
   };
 
@@ -425,7 +470,7 @@ function RuleEditor({ rule, onClose, onSaved }: { rule: Rule; onClose: () => voi
       name: name.trim(), trigger, match_mode: matchMode,
       conditions: mode === 'filters' ? conditions.filter(c => c.value.trim()) : [],
       ai_match: mode === 'ai' ? aiMatch.trim() : null,
-      outcome,
+      outcome: (() => { const c = sanitizeRuleOutcome(outcome, trigger); return c.ok ? c.outcome : outcome; })(),
       connection_id: rule.connection_id ?? null,
     };
     try {
@@ -434,6 +479,7 @@ function RuleEditor({ rule, onClose, onSaved }: { rule: Rule; onClose: () => voi
         : await fetch(`/api/inbox/rules/${rule.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json();
       if (data.rule) onSaved(data.rule);
+      else setError(data.error || 'Could not save the rule.');
     } finally { setSaving(false); }
   };
 
@@ -496,39 +542,38 @@ function RuleEditor({ rule, onClose, onSaved }: { rule: Rule; onClose: () => voi
             )}
           </div>
 
-          {/* Outcome */}
+          {/* Outcome — W10: only what the rule engine actually performs. */}
           <div>
             <p className="text-[12px] font-semibold text-neutral-500 mb-1.5">Outcome</p>
             <div className="space-y-2.5">
               <div className="flex items-center gap-2">
                 <ArrowDownTrayIcon className="w-4 h-4 text-neutral-400" />
-                <span className="text-[13px] text-neutral-700 flex-1">Apply label</span>
-                <select value={outcome.set_type ?? ''} onChange={e => setOut({ set_type: e.target.value })}
+                <span className="text-[13px] text-neutral-700 flex-1">Sort in AUGMTD as</span>
+                <select value={outcome.set_type ?? ''} onChange={e => setOut({ set_type: e.target.value || undefined })}
                   className="rounded-lg border border-neutral-200 px-2 py-1 text-[12px]">
+                  <option value="">Don’t change</option>
                   {LABELS.map(l => <option key={l} value={l}>{LABEL_META[l].label}</option>)}
                 </select>
               </div>
-              <OutcomeToggle icon={<PencilIcon className="w-4 h-4 text-neutral-400" />} label="Auto-draft reply"
-                on={!!outcome.auto_draft?.enabled} onToggle={() => setOut({ auto_draft: { enabled: !outcome.auto_draft?.enabled, instructions: outcome.auto_draft?.instructions } })}
-                detail={outcome.auto_draft?.enabled ? (
-                  <input value={outcome.auto_draft?.instructions ?? ''} onChange={e => setOut({ auto_draft: { enabled: true, instructions: e.target.value } })}
-                    placeholder="Optional instructions, e.g. Never use em-dashes" className="mt-1 w-full rounded-lg border border-neutral-200 px-2 py-1.5 text-[12px]" />
-                ) : null} />
-              <OutcomeToggle icon={<ArrowUturnLeftIcon className="w-4 h-4 text-neutral-400" />} label="Mark as read" on={!!outcome.mark_read} onToggle={() => setOut({ mark_read: !outcome.mark_read })} />
-              <OutcomeToggle icon={<ArchiveBoxIcon className="w-4 h-4 text-neutral-400" />} label="Archive" on={!!outcome.archive} onToggle={() => setOut({ archive: !outcome.archive })} />
-              <OutcomeToggle icon={<BellAlertIcon className="w-4 h-4 text-neutral-400" />} label="Escalate"
-                on={!!outcome.escalate?.enabled} onToggle={() => setOut({ escalate: { enabled: !outcome.escalate?.enabled, instructions: outcome.escalate?.instructions } })}
-                detail={outcome.escalate?.enabled ? (
-                  <input value={outcome.escalate?.instructions ?? ''} onChange={e => setOut({ escalate: { enabled: true, instructions: e.target.value } })}
-                    placeholder="e.g. Notify me if no reply is expected within an hour" className="mt-1 w-full rounded-lg border border-neutral-200 px-2 py-1.5 text-[12px]" />
-                ) : null} />
-              <OutcomeToggle icon={<PaperAirplaneIcon className="w-4 h-4 text-neutral-400" />} label="Forward to"
-                on={outcome.forward_to != null} onToggle={() => setOut({ forward_to: outcome.forward_to != null ? undefined : '' })}
-                detail={outcome.forward_to != null ? (
-                  <input value={outcome.forward_to} onChange={e => setOut({ forward_to: e.target.value })}
-                    placeholder="name@example.com" className="mt-1 w-full rounded-lg border border-neutral-200 px-2 py-1.5 text-[12px]" />
-                ) : null} />
-              <OutcomeToggle icon={<TrashIcon className="w-4 h-4 text-red-400" />} label="Move to trash" on={!!outcome.trash} onToggle={() => setOut({ trash: !outcome.trash })} />
+              {trigger === 'received' ? (
+                <>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <TagIcon className="w-4 h-4 text-neutral-400" />
+                      <span className="text-[13px] text-neutral-700 flex-1">Add my own mailbox label</span>
+                    </div>
+                    <input value={outcome.apply_label ?? ''} onChange={e => setOut({ apply_label: e.target.value })}
+                      placeholder="e.g. Clients/Acme — created in Gmail (or as an Outlook category) if missing"
+                      className="mt-1 w-full rounded-lg border border-neutral-200 px-2 py-1.5 text-[12px] focus:border-indigo-300 focus:outline-none" />
+                  </div>
+                  <OutcomeToggle icon={<ArrowUturnLeftIcon className="w-4 h-4 text-neutral-400" />} label="Mark as read" on={!!outcome.mark_read} onToggle={() => setOut({ mark_read: !outcome.mark_read })} />
+                  <OutcomeToggle icon={<ArchiveBoxIcon className="w-4 h-4 text-neutral-400" />} label="Archive" on={!!outcome.archive} onToggle={() => setOut({ archive: !outcome.archive, ...(outcome.archive ? {} : { trash: false }) })} />
+                  <OutcomeToggle icon={<TrashIcon className="w-4 h-4 text-red-400" />} label="Move to trash" on={!!outcome.trash} onToggle={() => setOut({ trash: !outcome.trash, ...(outcome.trash ? {} : { archive: false }) })} />
+                  <p className="text-[11px] text-neutral-400">These act on your mailbox as mail arrives, every time the rule matches — and show in your activity. Switch the rule off to stop them.</p>
+                </>
+              ) : (
+                <p className="text-[11px] text-neutral-400">A rule on mail you send can only sort it — mailbox actions run on mail as it arrives.</p>
+              )}
             </div>
           </div>
         </div>

@@ -506,6 +506,9 @@ export async function syncEmailsForConnection(
   // W9.2 THE SYNC TAIL — every post-store side effect that must not block the message loop is ADDED
   // here and DRAINED in the finally below (never a bare `void` a response can cut off).
   const _tail = createSyncTail('Sync');
+  // W10 THE USER'S STANDING RULES ACT — one job per newly stored inbound message a rule governs,
+  // executed AFTER the tail drains (lib/inbox/rules/execute.ts; see the finally below).
+  const _ruleDeeds: import('@/lib/inbox/rules/execute').RuleDeedJob[] = [];
 
   try {
     // ── SINGLE-FLIGHT (per connection): the callback's server-side initial sync, the client's
@@ -671,6 +674,8 @@ export async function syncEmailsForConnection(
     // as AI — default, edited, or added alike). Heuristics in classifyItem are only the fallback.
     // Keyed by envelope index; scoped to actionable emails (where the typed label matters).
     const ruleMap = new Map<string, string>();
+    // W10 — the AI pass's matched RULE per envelope index (not just its label), for the executor.
+    const ruleMatchMap = new Map<string, import('@/lib/inbox/rules/types').InboxRule>();
     try {
       const { activeAiRules } = await import('@/lib/inbox/rules/load');
       const aiRules = activeAiRules(userRules);
@@ -681,7 +686,7 @@ export async function syncEmailsForConnection(
         // senders never reach it.) Full rule set passed.
         const ruleEnvelopes = envelopes.filter((_e, i) => classMap.get(String(i)) !== 'noise');
         const { batchMatchRules } = await import('@/lib/inbox/rules/batch-match');
-        const matched = await batchMatchRules(ruleEnvelopes, userRules, connection.user_id, adminSupabase);
+        const matched = await batchMatchRules(ruleEnvelopes, userRules, connection.user_id, adminSupabase, { matchedRules: ruleMatchMap });
         const ACTIONABLE = new Set(['needs_reply', 'to_do', 'waiting_on']);
         for (const [id, label] of matched) {
           ruleMap.set(id, label);
@@ -1303,6 +1308,22 @@ export async function syncEmailsForConnection(
           }
         }
         // ── END SAFETY NET ───────────────────────────────────────────────────────────
+
+        // W10 THE USER'S STANDING RULES ACT (lib/inbox/rules/execute.ts) — the rule that governs this
+        // newly stored inbound message (deterministic first, else the AI pass's match) queues its
+        // deeds: set_kind · apply_label (the user's OWN label — regardless of auto_label) · mark_read ·
+        // archive · trash. Executed once, after the tail drains, so no source_data rebuild below
+        // overwrites the kind override. forward_to / auto_draft / escalate are never executed.
+        try {
+          const { ruleDeedJobFor, ruleEmailOf } = await import('@/lib/inbox/rules/execute');
+          const _job = ruleDeedJobFor({
+            rules: userRules,
+            aiMatched: ruleMatchMap.get(String(_msgIdx)) ?? null,
+            email: ruleEmailOf({ ...storedEmail, labels: (parsed as { labels?: string[] }).labels ?? [] }),
+            stored: storedEmail,
+          });
+          if (_job) _ruleDeeds.push(_job);
+        } catch { /* non-fatal — a rule job that cannot be planned is simply not queued */ }
 
         // Backfill full thread history so AI sees complete context (non-fatal). W9.2: the rows it
         // inserted are returned — the user-authored ones route through THE ONE handler.
@@ -2257,6 +2278,16 @@ export async function syncEmailsForConnection(
     // the cron request await this function, so nothing is cut off). Bounded; the remainder is REPORTED.
     const _drain = await _tail.drain();
     if (!_drain.drained) result.errors.push(`tail: ${_drain.leftRunning} side effect(s) left running at the drain budget`);
+    // W10 — the user's standing rules act, after every write for these messages has landed. Bounded;
+    // exactly once per (rule, message) through the commit door's claim; what the clock leaves is reported.
+    if (_ruleDeeds.length) {
+      try {
+        const { executeRuleDeeds } = await import('@/lib/inbox/rules/execute');
+        const _rd = await executeRuleDeeds(adminSupabase, { userId: connection.user_id, connection, jobs: _ruleDeeds, deadlineMs: 60_000 });
+        if (_rd.executed) console.log(`[rules] ${_rd.executed} message(s) acted on by the user's rules: ${JSON.stringify(_rd.deeds)}`);
+        if (_rd.leftBehind || _rd.failed) result.errors.push(`rules: ${_rd.failed} failed · ${_rd.leftBehind} left behind (the next sync does not retry them; the activity log lists what ran)`);
+      } catch (e) { console.warn('[rules] executor skipped (non-fatal):', e); }
+    }
   }
 
   return result;

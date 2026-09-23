@@ -10,6 +10,7 @@
 // not exist; a claim that contradicts the grounding cannot be authored, because every author read
 // the same page. Adding a knowledge source = one section here, visible to ALL reasoning at once.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
+import { leanSelect, foldLeanRows, BOARD_KEYS } from '@/lib/home/lean-source';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { readPlans, asRawResult } from '@/lib/store/item-plans';
 import { assembleLedger } from '@/lib/entities/state';
@@ -285,9 +286,13 @@ export async function assembleRoomGrounding(
     // could never see it). The read is unfiltered and RECENT-ACTIVITY-FIRST; the BOARD still keeps
     // only live work (filtered in code below) — the evidence keeps the rest.
     inboxIds.length
-      ? client.from('inbox_items').select('id, work_title, status, source_data, last_activity_at')
+      // THE HOT-PATH LAW (event-spine P0): body-free JSON paths, folded back into `source_data`
+      // (the board reads sender, subject, thread, attachments and prepared work — never the body;
+      // THE ONE READER hydrates an invite's words itself).
+      ? client.from('inbox_items').select(leanSelect('id, work_title, status, last_activity_at', { keys: BOARD_KEYS }))
           .in('id', inboxIds).eq('user_id', userId)
           .order('last_activity_at', { ascending: false, nullsFirst: false })
+          .then((r) => ({ data: foldLeanRows((r.data ?? []) as unknown as Array<Record<string, unknown>>, { keys: BOARD_KEYS }) }))
       : Promise.resolve({ data: [] }),
     commitIds.length
       ? client.from('commitments').select('id, description, counterparty, due_date, status, direction, thread_id, source, source_id, created_at').in('id', commitIds).eq('user_id', userId).eq('status', 'open')

@@ -3173,7 +3173,8 @@ console.log('\nT21 · THE HOME PAINTS FIRST — the read path carries only the r
   gate('T21.5 NO SILENT CAPS — the open-commitments pool is explicitly bounded and says when it saturates',
     // ⟲ RE-POINTED (Sep 22 — W0.5): the bounded read is now ORDERED soonest-due first on its own line,
     // so a saturated pool drops the least time-critical rows, never an arbitrary set.
-    !!route && /from\('commitments'\)\.select\('\*'\)[^;]*?\.order\('due_date'[^;]*?\.limit\(500\)/.test(route)
+    // (column-named since event-spine P0 — hot-path-law)
+    !!route && /from\('commitments'\)\.select\((?:'\*'|OPEN_COMMITMENT_COLS)\)[^;]*?\.order\('due_date'[^;]*?\.limit\(500\)/.test(route)
     && /open-commitments pool SATURATED/.test(route));
   gate('T21.6 the perf watchdog stands AT THE DOOR (it measures what the reader actually waited for)',
     !!route && (() => {

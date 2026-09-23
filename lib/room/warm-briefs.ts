@@ -22,7 +22,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { preparedState } from '@/lib/prepare/read';
-import { anchorOf, linkKindOf, looseRoomKeyOf, looseTitleOf, ANCHOR_ROW_SELECT } from '@/lib/room/item-anchor';
+import { anchorOf, linkKindOf, looseRoomKeyOf, looseTitleOf, ANCHOR_ROW_SELECT, foldAnchorRow } from '@/lib/room/item-anchor';
 
 export const WARM_MAX_ITEMS = 6;
 export const WARM_DEDUPE_MS = 3 * 60_000;
@@ -81,10 +81,11 @@ export async function warmRoomBriefs(
       doneRooms.add(roomKey);
       // The loose anchor, derived EXACTLY as the door derives it — or the sig never matches.
       const table = linkKind === 'inbox_item' ? 'inbox_items' : linkKind === 'commitment' ? 'commitments' : 'meeting_transcripts';
-      const [{ data: row }, st] = await Promise.all([
+      const [{ data: rawRow }, st] = await Promise.all([
         client.from(table).select(ANCHOR_ROW_SELECT[linkKind]).eq('id', it.id).eq('user_id', userId).maybeSingle(),
         linkKind === 'meeting' ? Promise.resolve(null) : preparedState(client, userId, { kind: linkKind, id: it.id }).catch(() => null),
       ]);
+      const row = foldAnchorRow(linkKind, rawRow);
       if (!row) { skipped++; continue; }
       const a = anchorOf(linkKind, row as unknown as Record<string, unknown>, st?.all ?? []);
       const anchorForBrief = { title: looseTitleOf(linkKind, row as unknown as Record<string, unknown>), who: a.who, ask: a.ask, prepared: a.prepared };

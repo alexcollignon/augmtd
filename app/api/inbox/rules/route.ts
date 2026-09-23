@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { defaultRulesForProvider } from '@/lib/inbox/rules/defaults';
 import type { InboxRule } from '@/lib/inbox/rules/types';
+import { sanitizeRuleOutcome } from '@/lib/inbox/rules/label-name';
 
 function toRow(r: InboxRule, userId: string, connectionId: string) {
   return {
@@ -48,6 +49,10 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json();
   const connectionId = body.connection_id ?? null;
+  // W10 NO LYING DOORS — only executed outcome keys are stored (forward_to / auto_draft / escalate
+  // are dropped: nothing executes them); the user's label name passes the one name floor.
+  const checked = sanitizeRuleOutcome(body.outcome, body.trigger || 'received');
+  if (!checked.ok) return NextResponse.json({ error: checked.reason }, { status: 400 });
 
   let q = supabase.from('inbox_rules').select('priority').eq('user_id', user.id);
   q = connectionId ? q.eq('connection_id', connectionId) : q.is('connection_id', null);
@@ -64,7 +69,7 @@ export async function POST(request: NextRequest) {
     match_mode: body.match_mode || 'all',
     conditions: body.conditions || [],
     ai_match: body.ai_match ?? null,
-    outcome: body.outcome || {},
+    outcome: checked.outcome,
     source: 'user',
   }).select('*').single();
   if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });

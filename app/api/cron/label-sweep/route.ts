@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { writeBackLabels, GmailLabelCache } from '@/lib/inbox/rules/write-back';
+import { augmtdLabelsOn } from '@/lib/inbox/rules/label-name';
 import { hasBearer } from '@/lib/utils/bearer-auth';
 import { activeUserIds, orderLeastRecentlyServed, stampServed } from '@/lib/work/sweep-users';
 
@@ -36,6 +37,17 @@ export const maxDuration = 300;
 //       reads newest first, with an exact count;
 //   (2) rows the cap or the per-user clock left are COUNTED (`itemsLeftBehind`) and reported.
 // If label work ever grows into minutes per account, promote it to a fan-out lane then.
+//
+// ── W10 THE MAILBOX IS THE USER'S — the sweep now runs TWO passes, and only one touches a mailbox ──
+//   (1) THE KIND COMPLETER — EVERY active account. `ensureMailKind` lands the reasoned
+//       `understanding.mailKind` on fast-pathed mail that never got one. It stays because IN-APP
+//       consumers read that raw kind: the held/deck notice floors (`rawMailKindOf` in
+//       lib/inbox/notice-demotion.ts → lib/home/attention.ts, lib/home/deck-floors.ts), the judge's
+//       kind floor (lib/work/judge.ts) and the not-judged lane (lib/work/judgment-sweep.ts). It no
+//       longer feeds any mailbox label (kind labels are retired). Zero provider calls. A judged-none
+//       row is stamped `kind_checked` so the paid call is never repeated.
+//   (2) THE POSTURE LABELS — ONLY for an account that explicitly chose AUGMTD labels
+//       (auto_label === true; unset is OFF). Posture only (Needs reply · To do · Waiting on → Done).
 const ITEMS_PER_USER = 150;
 
 export async function GET(request: NextRequest) {
@@ -53,7 +65,7 @@ export async function GET(request: NextRequest) {
   const budgetMs = Math.min(60_000, Math.max(10_000, Math.floor(180_000 / Math.max(1, users.length))));
   const routeDeadline = Date.now() + 265_000; // stop cleanly before the 300s kill
 
-  let labeled = 0, kindsCompleted = 0, usersTouched = 0, usersLeftBehind = 0, itemsLeftBehind = 0;
+  let labeled = 0, kindsCompleted = 0, usersTouched = 0, usersLeftBehind = 0, itemsLeftBehind = 0, kindsLeftBehind = 0, usersLabelsOff = 0;
   const KIND_COMPUTE_CAP = 40; // per user per sweep — the ambient kind-completer stays cheap
 
   for (const uid of users) {
@@ -61,18 +73,47 @@ export async function GET(request: NextRequest) {
     const userDeadline = Date.now() + budgetMs;
     let userLabeled = 0, userKinds = 0;
     try {
-      const { data: prof } = await sb.from('profiles').select('email_settings').eq('id', uid).maybeSingle();
-      const settings = (prof?.email_settings ?? {}) as { auto_label?: boolean };
-      if (settings.auto_label === false) { await stampServed(sb, uid, 'label_sweep', { skipped: 'auto_label_off' }); continue; }
+      const { data: prof, error: profErr } = await sb.from('profiles').select('email_settings').eq('id', uid).maybeSingle();
+      if (profErr) console.warn(`[label-sweep] ${uid.slice(0, 8)} profile read failed: ${profErr.message}`);
+      const labelsOn = augmtdLabelsOn((prof?.email_settings ?? null) as { auto_label?: unknown } | null);
+
+      // ── (1) THE KIND COMPLETER — in-app, every account (no provider call) ──
+      const { data: kindRows, count: kindCount, error: kindErr } = await sb.from('inbox_items')
+        .select('id, source_data', { count: 'exact' })
+        .eq('user_id', uid).eq('status', 'pending').eq('source', 'email')
+        .gte('created_at', since)
+        .is('source_data->understanding->>mailKind', null)
+        .is('source_data->>kind_override', null)
+        .is('source_data->>kind_checked', null)
+        .order('created_at', { ascending: false })
+        .limit(KIND_COMPUTE_CAP);
+      if (kindErr) console.warn(`[label-sweep] ${uid.slice(0, 8)} kind read failed: ${kindErr.message}`);
+      const kRows = kindRows ?? [];
+      kindsLeftBehind += Math.max(0, (kindCount ?? kRows.length) - kRows.length);
+      let addrs: string[] | null = null; // lazily resolved once per user
+      for (let k = 0; k < kRows.length; k++) {
+        if (Date.now() > userDeadline) { kindsLeftBehind += kRows.length - k; break; }
+        const it = kRows[k];
+        const sd = (it.source_data ?? {}) as Record<string, unknown>;
+        const { ensureMailKind, userAddresses } = await import('@/lib/inbox/ensure-mail-kind');
+        if (!addrs) addrs = await userAddresses(sb, uid);
+        const kind = await ensureMailKind(sb, uid, { id: it.id as string, source_data: sd }, addrs);
+        if (kind) { kindsCompleted++; userKinds++; }
+        // Judged none → stamp it checked so the paid call is not repeated every sweep.
+        else await sb.from('inbox_items').update({ source_data: { ...sd, kind_checked: true } }).eq('id', it.id).eq('user_id', uid);
+      }
+
+      // ── (2) THE POSTURE LABELS — only an account that CHOSE AUGMTD labels ──
+      if (!labelsOn) { usersLabelsOff++; if (userKinds > 0) usersTouched++; await stampServed(sb, uid, 'label_sweep', { skipped: 'auto_label_off', kindsCompleted: userKinds }); continue; }
 
       const { data: conns } = await sb.from('connections').select('provider, metadata').eq('user_id', uid).eq('status', 'active');
       const tokensByProvider = new Map((conns ?? []).map((c) => [c.provider, c.metadata?.tokens]));
-      if (!tokensByProvider.size) { await stampServed(sb, uid, 'label_sweep', { skipped: 'no_connection' }); continue; }
+      if (!tokensByProvider.size) { await stampServed(sb, uid, 'label_sweep', { skipped: 'no_connection', kindsCompleted: userKinds }); continue; }
       const gmailTokens = tokensByProvider.get('gmail');
       const gmailCache = gmailTokens ? new GmailLabelCache(gmailTokens) : undefined;
 
-      // Not-yet-final rows only (`labeled` absent or 'fallback'), newest first, counted exactly — the
-      // cap is a stated per-run slice, and what it leaves is reported, never silently dropped.
+      // Not-yet-final rows only (`labeled` absent or a pre-W10 'fallback'), newest first, counted
+      // exactly — the cap is a stated per-run slice, and what it leaves is reported, never dropped.
       const { data: items, count: windowCount, error: itemsError } = await sb.from('inbox_items')
         .select('id, source_data, work_state, rule_type', { count: 'exact' })
         .eq('user_id', uid).eq('status', 'pending').eq('source', 'email')
@@ -84,61 +125,37 @@ export async function GET(request: NextRequest) {
       const rows = items ?? [];
       itemsLeftBehind += Math.max(0, (windowCount ?? rows.length) - rows.length);
 
-      let kindBudget = KIND_COMPUTE_CAP;
-      let addrs: string[] | null = null; // lazily resolved once per user
       for (let idx = 0; idx < rows.length; idx++) {
         const it = rows[idx];
         if (Date.now() > userDeadline) { itemsLeftBehind += rows.length - idx; break; } // per-user budget — never let one account burn the route
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const sd = (it.source_data ?? {}) as any;
         if (sd.labeled === true) continue;                 // already handled (final)
-        // THE UPGRADE LAW (July 31): 'fallback' = a structural placeholder awaiting the reasoned
-        // kind. Work it ONLY when the completer has budget to actually reason (else the re-apply
-        // would just re-stamp the same guess as final) — next sweep picks it up otherwise.
-        const needsReasonedKind = !sd.understanding?.mailKind && !sd.kind_override;
-        if (sd.labeled === 'fallback' && needsReasonedKind && kindBudget <= 0) continue;
         if (!sd.thread_id && !sd.message_id) continue;
         const provider = sd.provider as string | undefined;
         const tokens = provider ? tokensByProvider.get(provider) : undefined;
         if (!tokens) continue;
-        // THE LABEL FLIP: the pair (kind + posture) via the ONE resolver. The sweep runs with the
-        // FULL source_data, so it's the completeness backstop — the reasoned kind lands here even
-        // when the sync fast-path only had header signals.
         const ruleType = it.rule_type && it.rule_type !== 'none' ? (it.rule_type as string) : null;
         if (ruleType === 'done') continue;
-        // THE KIND COMPLETER (the cause-fix for permanently-unlabeled mail): fast-pathed
-        // transactional mail has NO understanding and NO bulk headers — nothing for resolveKind.
-        // The sweep MAKES the reasoned kind land (merge-only-mailKind, routing-inert) before
-        // applying, instead of waiting for an understanding nothing else computes.
-        let kindComputed = false;
-        if (needsReasonedKind && kindBudget > 0) {
-          kindBudget--;
-          const { ensureMailKind, userAddresses } = await import('@/lib/inbox/ensure-mail-kind');
-          if (!addrs) addrs = await userAddresses(sb, uid);
-          const kind = await ensureMailKind(sb, uid, { id: it.id as string, source_data: sd }, addrs);
-          kindComputed = true;
-          if (kind) { kindsCompleted++; userKinds++; }
-        }
-        const bulk = ((sd.gmail_labels ?? []) as string[]).includes('CATEGORY_PROMOTIONS') || sd.has_unsubscribe === true;
+        // THE POSTURE (W10 — posture only, never a kind): the live lifecycle label via the ONE resolver.
         const ok = await writeBackLabels({
           provider: provider as 'gmail' | 'outlook',
           encryptedTokens: tokens,
           sd,
           ruleType,
           workState: it.work_state as string | null,
-          hints: { bulk, noise: it.work_state === 'noise' },
           gmailThreadId: sd.thread_id,
           gmailCache,
           outlookMessageId: sd.outlook_id ?? sd.message_id,
         });
-        // Bookkeeping by HONEST outcome: 'applied' → stamp. 'noop' AFTER a kind compute → stamp too
-        // (the reasoned kind was judged and still nothing to label — final, stop revisiting).
-        // 'noop' without a compute (budget exhausted) → left for the next sweep. 'failed' → retry.
-        if (ok === 'applied' || (ok === 'noop' && kindComputed)) {
+        // Bookkeeping by HONEST outcome: 'applied' → stamp. 'noop' (no live posture) → NOT stamped:
+        // nothing to apply is never recorded as success, and a posture that goes live later is
+        // labelled by a later sweep. 'failed' → retried.
+        if (ok === 'applied') {
           await sb.from('inbox_items').update({ source_data: { ...sd, labeled: true } }).eq('id', it.id);
-          if (ok === 'applied') { labeled++; userLabeled++; }
+          labeled++; userLabeled++;
+          await new Promise((r) => setTimeout(r, 60)); // gentle throttle — avoid Gmail rate-limit bursts
         }
-        await new Promise((r) => setTimeout(r, 60)); // gentle throttle — avoid Gmail rate-limit bursts
       }
       if (userLabeled + userKinds > 0) usersTouched++;
     } catch { /* non-fatal per user */ }
@@ -147,5 +164,6 @@ export async function GET(request: NextRequest) {
 
   if (usersLeftBehind > 0) console.log(`[label-sweep] route budget spent: ${usersLeftBehind} user(s) lead the next run (least-recently-served)`);
   if (itemsLeftBehind > 0) console.log(`[label-sweep] ${itemsLeftBehind} unlabeled row(s) beyond the per-user slice or clock — the next run reaches them`);
-  return NextResponse.json({ labeled, kindsCompleted, usersTouched, usersLeftBehind, itemsLeftBehind, itemsPerUser: ITEMS_PER_USER, budgetMs, activeUsers: users.length });
+  if (kindsLeftBehind > 0) console.log(`[label-sweep] ${kindsLeftBehind} row(s) still without a reasoned kind beyond the per-user cap or clock — the next run reaches them`);
+  return NextResponse.json({ labeled, kindsCompleted, usersTouched, usersLeftBehind, itemsLeftBehind, kindsLeftBehind, usersLabelsOff, itemsPerUser: ITEMS_PER_USER, kindCap: KIND_COMPUTE_CAP, budgetMs, activeUsers: users.length });
 }

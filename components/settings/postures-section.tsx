@@ -81,7 +81,7 @@ function SentenceComposer({
         onChange={e => { setText(e.target.value); setUnderstood(null); setPrimitives(null); setReason(null); }}
         rows={2}
         autoFocus
-        placeholder="Say it plainly — e.g. “Label anything from our accountant as To do.”"
+        placeholder="Say it plainly — e.g. “Label anything from our accountant as To do and file it under Finance/Accounts.”"
         className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-[13px] focus:border-indigo-300 focus:outline-none resize-none"
       />
       {understood && (

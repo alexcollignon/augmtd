@@ -1,18 +1,21 @@
-// Label write-back — THE LABEL FLIP (work-surface M + one-room era). An email carries up to TWO
-// labels, two orthogonal dimensions:
-//   KIND    — what the mail IS (Receipt · Newsletter · Notification · Calendar · Cold outreach ·
-//             Customer · Team · Personal). Stable for the thread's life; the reasoned
-//             `understanding.mailKind` is the source, a user/rule `kind_override` outranks it,
-//             cheap structural signals are the fallback. The PRIMARY identity label.
-//   POSTURE — what it needs from YOU (Needs reply · To do · Waiting on → Done). The lifecycle
-//             label: applied only while alive, swapped by the reconciler as the thread resolves/
-//             reactivates. FYI/bulk mail gets NO posture label — identity is the kind's job now
-//             (the old FYI/Notifications/Marketing posture labels are RETIRED; the reconciler
-//             still strips them from old threads).
-// Precedence everywhere: user override → reasoned kind → structural fallback. Rules keep posture
-// authority (set_type) and gain `set_kind` (types.ts) as the override channel.
-// Purely ADDITIVE in the mailbox — never archives, moves, or touches the user's own labels —
-// and reversible (delete the AUGMTD labels to undo). Gated on auto_label.
+// Label write-back — AUGMTD's OWN mailbox labels.
+//
+// ── W10 THE MAILBOX IS THE USER'S (owner call, Sep 23) ───────────────────────────────────────────
+//   1 · OFF BY DEFAULT. AUGMTD writes its own labels only for an account that EXPLICITLY set
+//       `email_settings.auto_label = true` (the one reader: label-name.ts `augmtdLabelsOn`). An
+//       account that never chose is never labelled.
+//   2 · POSTURE ONLY. When on, AUGMTD writes the lifecycle labels alone — Needs reply · To do ·
+//       Waiting on → Done. KIND labels (Receipt / Newsletter / Notification / Calendar / Cold
+//       outreach / Customer / Team / Personal) are RETIRED from the mailbox: nothing here writes
+//       them any more. The kind itself lives on in-app — `resolveKind` (override → reasoned
+//       `understanding.mailKind` → structural fallback) still feeds the kind floor and routing —
+//       it simply never becomes a mailbox label. The names stay listed below ONLY so the guarded
+//       cleanup (scripts/remove-augmtd-labels.ts · lib/inbox/rules/mailbox-labels.ts) can find and
+//       remove what earlier eras wrote.
+//   3 · A USER RULE'S OWN LABEL (`outcome.apply_label`) is not AUGMTD's label — it is the user's
+//       instruction, applied by lib/inbox/rules/execute.ts regardless of auto_label.
+// Purely ADDITIVE in the mailbox — never archives, moves, or touches the user's own labels — and
+// reversible (the cleanup removes every AUGMTD label). Gated on auto_label === true by every caller.
 
 import type { RuleLabel } from './types';
 
@@ -27,7 +30,8 @@ const LABEL_DISPLAY: Record<RuleLabel, string> = {
   done: 'AUGMTD/Done',
 };
 
-// ── THE KIND LABEL SET (the Scape-style identity vocabulary, mailbox form). ──
+// ── THE KIND LABEL SET — RETIRED FROM THE MAILBOX (W10). Kept for the in-app resolver's key set and
+// so the cleanup can recognise the labels earlier eras wrote. Nothing writes these names any more. ──
 export type MailKindKey = 'receipt' | 'newsletter' | 'notification' | 'calendar' | 'cold_outreach' | 'customer' | 'team' | 'personal';
 const KIND_DISPLAY: Record<MailKindKey, string> = {
   receipt: 'AUGMTD/Receipt',
@@ -40,6 +44,21 @@ const KIND_DISPLAY: Record<MailKindKey, string> = {
   personal: 'AUGMTD/Personal',
 };
 const KIND_KEYS: ReadonlySet<string> = new Set(Object.keys(KIND_DISPLAY));
+
+/** The Gmail parent AUGMTD nests its labels under (Outlook categories use `AUGMTD: <name>`). */
+export const AUGMTD_PARENT_LABEL = 'AUGMTD';
+/** The posture labels AUGMTD still writes (when the account chose labels). */
+export const AUGMTD_LIVE_POSTURE_LABELS: readonly string[] = ['needs_reply', 'to_do', 'waiting_on', 'done'].map((k) => LABEL_DISPLAY[k as RuleLabel]);
+/** Every AUGMTD label nothing writes any more: the retired FYI/Meeting/Notifications/Marketing
+ *  postures + every KIND label. The cleanup removes these from EVERY account. */
+export const AUGMTD_RETIRED_LABELS: readonly string[] = [
+  ...['meeting', 'fyi', 'notifications', 'marketing'].map((k) => LABEL_DISPLAY[k as RuleLabel]),
+  ...Object.values(KIND_DISPLAY),
+];
+/** Every label name AUGMTD has ever created (Gmail form). Nothing outside this list is AUGMTD's. */
+export const AUGMTD_ALL_LABELS: readonly string[] = [...AUGMTD_LIVE_POSTURE_LABELS, ...AUGMTD_RETIRED_LABELS];
+/** The Outlook category form of an AUGMTD label name ('AUGMTD/Done' → 'AUGMTD: Done'). */
+export const outlookCategoryOf = (gmailName: string): string => gmailName.replace('/', ': ');
 
 export function mapWorkStateToLabel(ws?: string | null): RuleLabel {
   if (ws === 'work_prepared' || ws === 'decision_required') return 'needs_reply';
@@ -95,7 +114,8 @@ export function postureFor(ruleType?: string | null, workState?: string | null):
   return ws === 'fyi' ? null : ws;
 }
 
-/** The pair of display names an item should carry (either may be null — grounded-or-absent). */
+/** The resolved pair (either may be null — grounded-or-absent). The KIND half is IN-APP ONLY since
+ *  W10 — `mailboxLabelNamesFor` is what the mailbox receives. */
 export function labelNamesFor(
   sd: Record<string, unknown> | null | undefined,
   ruleType?: string | null, workState?: string | null,
@@ -104,6 +124,16 @@ export function labelNamesFor(
   const kind = resolveKind(sd, ruleType, hints);
   const posture = postureFor(ruleType, workState);
   return { kindName: kind ? KIND_DISPLAY[kind] : null, postureName: posture ? LABEL_DISPLAY[posture] : null };
+}
+
+/** W10 — the ONLY names AUGMTD writes into a mailbox: the live posture, never a kind. */
+export function mailboxLabelNamesFor(
+  sd: Record<string, unknown> | null | undefined,
+  ruleType?: string | null, workState?: string | null,
+  hints?: { bulk?: boolean; noise?: boolean },
+): string[] {
+  const { postureName } = labelNamesFor(sd, ruleType, workState, hints);
+  return postureName ? [postureName] : [];
 }
 
 // Per-connection Gmail label cache: list once, create namespaced labels on demand, cache ids.
@@ -180,34 +210,38 @@ export async function reconcileAugmtdLabel(opts: {
   onTokenRefresh?: any;
 }): Promise<boolean> {
   const target: RuleLabel = opts.targetLabel ?? mapWorkStateToLabel(opts.targetWorkState);
-  const targetName = LABEL_DISPLAY[target];
-  if (!targetName) return false;
+  // W10 POSTURE ONLY — a target that is not a LIVE posture (the retired FYI/Meeting/Notifications/
+  // Marketing) is never written: the stale postures are stripped and nothing is added.
+  const liveTarget = postureFor(target) !== null;
+  const targetName: string | null = liveTarget ? LABEL_DISPLAY[target] : null;
   try {
     if (opts.provider === 'gmail' && opts.gmailThreadId) {
       const cache = opts.gmailCache ?? new GmailLabelCache(opts.encryptedTokens);
       const { addGmailThreadLabel, removeGmailThreadLabel } = await import('@/lib/google/gmail');
-      // Remove every OTHER existing AUGMTD/* state label. We only resolve ids for labels that already
-      // exist (ensure() would create them, but a removed label absent from the thread is a harmless
-      // no-op), so we list once via the cache and skip names it can't resolve.
+      // Remove every OTHER existing AUGMTD/* state label. PEEK, never ensure (W10): ensure() CREATES
+      // a missing label, so a removal pass re-created every retired label (FYI, Marketing, …) in the
+      // mailbox on each reconcile — undoing the cleanup. Only labels that already exist are resolved.
       for (const name of ALL_STATE_LABELS) {
         if (name === targetName) continue;
-        const id = await cache.ensure(name).catch(() => null);
+        const id = await cache.peek(name).catch(() => null);
         if (!id) continue;
         await removeGmailThreadLabel(opts.encryptedTokens, opts.gmailThreadId, id).catch(() => {});
       }
-      // Add the target.
+      // Add the target (a live posture only).
+      if (!targetName) return false;
       const targetId = await cache.ensure(targetName);
       if (!targetId) return false;
       await addGmailThreadLabel(opts.encryptedTokens, opts.gmailThreadId, targetId);
       return true;
     } else if (opts.provider === 'outlook' && opts.outlookMessageId) {
       const { addOutlookCategory, removeOutlookCategory } = await import('@/lib/microsoft/outlook');
-      const targetCategory = targetName.replace('/', ': ');
+      const targetCategory = targetName ? outlookCategoryOf(targetName) : null;
       for (const name of ALL_STATE_LABELS) {
-        const category = name.replace('/', ': ');
+        const category = outlookCategoryOf(name);
         if (category === targetCategory) continue;
         await removeOutlookCategory(opts.encryptedTokens, opts.outlookMessageId, category, opts.onTokenRefresh).catch(() => {});
       }
+      if (!targetCategory) return false;
       await addOutlookCategory(opts.encryptedTokens, opts.outlookMessageId, targetCategory, opts.onTokenRefresh);
       return true;
     }
@@ -230,7 +264,8 @@ export async function writeBackLabel(opts: {
   // Returns whether the label was actually applied. NEVER throws (write-back must not break sync) —
   // but the boolean lets callers (e.g. the label-sweep) know NOT to mark an item "labeled" on a
   // transient failure, so it retries instead of silently recording a label that never landed.
-  const name = LABEL_DISPLAY[opts.label as RuleLabel];
+  // W10 POSTURE ONLY — a retired posture (FYI/Meeting/Notifications/Marketing) is never written.
+  const name = postureFor(opts.label) ? LABEL_DISPLAY[opts.label as RuleLabel] : null;
   if (!name) return false;
   try {
     if (opts.provider === 'gmail' && opts.gmailThreadId && opts.gmailCache) {
@@ -250,21 +285,17 @@ export async function writeBackLabel(opts: {
   }
 }
 
-/**
- * THE LABEL FLIP's applier — write the item's PAIR (kind + posture) in one call. Adds only (the
- * reconciler owns posture swaps; kind never needs one). Returns true when every label the pair
- * called for actually landed — a partial/failed apply stays unmarked so the sweep retries.
- * NEVER throws.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-/** The pair-applier's HONEST outcome — the caller's bookkeeping depends on the distinction:
- *  'applied' = labels landed (stamp `labeled`) · 'noop' = nothing to apply YET (no kind resolved,
- *  no live posture — do NOT stamp; the sweep completes the kind and revisits) · 'failed' =
- *  transient apply failure (do not stamp; retried next sweep). The old boolean recorded 'noop' as
- *  success, which poisoned the sweep's work-list — fresh transactional mail with no understanding
- *  and no bulk headers was stamped "labeled" with zero labels and never revisited. */
+/** The applier's HONEST outcome — the caller's bookkeeping depends on the distinction:
+ *  'applied' = the label landed (stamp `labeled`) · 'noop' = nothing to apply (no live posture — do
+ *  NOT stamp; a posture that goes live later is labelled by the next sweep) · 'failed' = transient
+ *  apply failure (do not stamp; retried next sweep). 'noop' is never recorded as success. */
 export type WriteBackOutcome = 'applied' | 'noop' | 'failed';
 
+/**
+ * THE POSTURE APPLIER (W10 — was the kind+posture pair). Adds the item's live posture label and
+ * strips every OTHER AUGMTD posture label from the thread. Never writes a kind. NEVER throws.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function writeBackLabels(opts: {
   provider: string;
   encryptedTokens: string;
@@ -277,9 +308,10 @@ export async function writeBackLabels(opts: {
   outlookMessageId?: string | null;
   onTokenRefresh?: any;
 }): Promise<WriteBackOutcome> {
-  const { kindName, postureName } = labelNamesFor(opts.sd, opts.ruleType, opts.workState, opts.hints);
-  const names = [kindName, postureName].filter(Boolean) as string[];
-  if (!names.length) return 'noop'; // nothing to label YET — the sweep completes the kind first
+  // W10 POSTURE ONLY: the mailbox receives the live posture and nothing else (no kind label).
+  const names = mailboxLabelNamesFor(opts.sd, opts.ruleType, opts.workState, opts.hints);
+  const postureName = names[0] ?? null;
+  if (!names.length) return 'noop'; // no live posture — nothing of AUGMTD's belongs in the mailbox
   let allOk = true;
   try {
     if (opts.provider === 'gmail' && opts.gmailThreadId) {
@@ -292,7 +324,7 @@ export async function writeBackLabels(opts: {
       }
       // THREAD-SCOPED RECONCILE (the stacked-labels fix): Gmail's thread row shows the UNION of
       // every message's labels, so stale postures from earlier eras (incl. the retired FYI/
-      // Notifications/Marketing) sit next to the current pair forever. Strip every OTHER state
+      // Notifications/Marketing) sit next to the current one forever. Strip every OTHER state
       // label from the thread — only ones that already EXIST in the mailbox (peek, never create).
       try {
         for (const stale of ALL_STATE_LABELS) {
@@ -300,30 +332,13 @@ export async function writeBackLabels(opts: {
           const staleId = await cache.peek(stale);
           if (staleId) await removeGmailThreadLabel(opts.encryptedTokens, opts.gmailThreadId, staleId).catch(() => {});
         }
-        // ONE KIND LABEL (July 31 — the upgrade law's other half): when a kind is applied, every
-        // OTHER kind label leaves the thread — a reasoned Receipt replaces the fallback
-        // Notification instead of stacking beside it. Peek-only, best-effort, same as postures.
-        if (kindName) {
-          for (const staleKind of Object.values(KIND_DISPLAY)) {
-            if (staleKind === kindName) continue;
-            const staleId = await cache.peek(staleKind);
-            if (staleId) await removeGmailThreadLabel(opts.encryptedTokens, opts.gmailThreadId, staleId).catch(() => {});
-          }
-        }
-      } catch { /* reconcile is best-effort — the applied pair stands */ }
+      } catch { /* reconcile is best-effort — the applied posture stands */ }
       return allOk ? 'applied' : 'failed';
     } else if (opts.provider === 'outlook' && opts.outlookMessageId) {
-      const { addOutlookCategory, removeOutlookCategory } = await import('@/lib/microsoft/outlook');
+      const { addOutlookCategory } = await import('@/lib/microsoft/outlook');
       for (const name of names) {
-        try { await addOutlookCategory(opts.encryptedTokens, opts.outlookMessageId, name.replace('/', ': '), opts.onTokenRefresh); }
+        try { await addOutlookCategory(opts.encryptedTokens, opts.outlookMessageId, outlookCategoryOf(name), opts.onTokenRefresh); }
         catch { allOk = false; }
-      }
-      // ONE KIND LABEL — Outlook mirror (categories): drop every other kind category, best-effort.
-      if (kindName) {
-        for (const staleKind of Object.values(KIND_DISPLAY)) {
-          if (staleKind === kindName) continue;
-          await removeOutlookCategory(opts.encryptedTokens, opts.outlookMessageId, staleKind.replace('/', ': '), opts.onTokenRefresh).catch(() => {});
-        }
       }
       return allOk ? 'applied' : 'failed';
     }

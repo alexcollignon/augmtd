@@ -30,7 +30,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { preparedState, isLiveArtifact, type PreparedState } from '@/lib/prepare/read';
-import { anchorOf, activityAtOf, linkKindOf, looseRoomKeyOf, looseTitleOf, ANCHOR_ROW_SELECT } from '@/lib/room/item-anchor';
+import { anchorOf, activityAtOf, linkKindOf, looseRoomKeyOf, looseTitleOf, ANCHOR_ROW_SELECT, foldAnchorRow } from '@/lib/room/item-anchor';
 import { deriveGap, isOpenStep, isSendBlocked, motionClausesOf } from '@/lib/home/item-gaps';
 import type { ItemPlanKind, ItemPlanTask } from '@/lib/home/item-plan';
 
@@ -92,7 +92,7 @@ export async function GET(request: NextRequest) {
     // per part; never invented. ONE derivation (lib/room/item-anchor) shared with THE WARM — the
     // loose brief's sig rides it, so a warm that derived it differently would warm nothing.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const itemRow = (itemRowRes.data ?? null) as any;
+    const itemRow = foldAnchorRow(linkKind, itemRowRes.data ?? null) as any;
     const anchor = anchorOf(linkKind, itemRow, preparedArts);
     const itemActivityAt: string | null = activityAtOf(linkKind, itemRow);
 
