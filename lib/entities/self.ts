@@ -16,6 +16,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 const norm = (s: string) => s.toLowerCase().trim();
 
@@ -30,6 +31,10 @@ async function deriveSelfForms(supabase: SupabaseClient, userId: string): Promis
     supabase.from('profiles').select('email, full_name').eq('id', userId).maybeSingle(),
     supabase.from('connections').select('metadata, provider_account_id').eq('user_id', userId),
     // From-forms on the user's OWN sent mail — the self-evidence that catches nickname forms.
+    // BOUNDED-EXPLICIT (invariant 10): this is a SAMPLE, not a full listing — any 500 of the
+    // user's own sent messages is enough to observe every from-name variant they've ever sent
+    // under (the set of forms is small and stable), and a missed form is self-healing on the
+    // next call. Never a decision that goes wrong from truncation, only slower to converge.
     supabase.from('emails').select('from_name, from_address').eq('user_id', userId).eq('is_from_user', true).limit(500),
   ]);
   add(prof?.email); add(prof?.full_name);
@@ -51,10 +56,13 @@ export async function ensureSelfEntity(supabase: SupabaseClient, userId: string)
 
     // The marked row first; else an existing person entity that IS the user (matched on any derived
     // form — e.g. one accidentally minted from the user's alt address) gets ADOPTED as self, so one
-    // human never has two rows.
-    const { data: persons } = await supabase.from('work_entities')
-      .select('id, name, aliases, state').eq('user_id', userId).eq('kind', 'person').eq('status', 'active').limit(500);
-    const rows = (persons ?? []) as Array<{ id: string; name: string; aliases: unknown; state: Record<string, unknown> | null }>;
+    // human never has two rows. NO SILENT CAPS (invariant 10): this must be a FULL listing — an
+    // unpaged `.limit(500)` could miss the user's own already-existing person row past 500 person
+    // entities and mint a SECOND self row, exactly the duplicate this code exists to prevent.
+    const rows = await fetchAllRows<{ id: string; name: string; aliases: unknown; state: Record<string, unknown> | null }>((from, to) =>
+      supabase.from('work_entities')
+        .select('id, name, aliases, state').eq('user_id', userId).eq('kind', 'person').eq('status', 'active')
+        .order('id', { ascending: true }).range(from, to));
     const formSet = new Set(aliases);
     const existing =
       rows.find((r) => (r.state as { self?: boolean } | null)?.self === true)

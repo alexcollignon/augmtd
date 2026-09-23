@@ -2,6 +2,7 @@
 
 import { forwardRef, useCallback, useRef } from 'react';
 import FormatToolbar from './format-toolbar';
+import { sanitizeDraftHtml } from '@/lib/utils/sanitize-html';
 
 // ── The shared rich-text reply editor: a `contentEditable` surface + the inbox `<FormatToolbar/>`
 // (bold / italic / underline / font size / bullet + numbered lists / link). ONE source of truth so
@@ -69,7 +70,9 @@ const ReplyEditor = forwardRef<HTMLDivElement, ReplyEditorProps>(function ReplyE
       if (typeof ref === 'function') ref(el);
       else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = el;
       if (el && initialHTML != null && !el.innerHTML) {
-        el.innerHTML = initialHTML;
+        // RENDER SAFETY (Sep 22): a seed is model-authored — sanitized before it mounts (no
+        // handlers, no remote fetch before the user approved anything).
+        el.innerHTML = sanitizeDraftHtml(initialHTML);
         onInput?.(el.innerHTML);
       }
     },

@@ -25,8 +25,13 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { resolveProbeUser } from './probe-user';
 import {
   fetchMemberDirectory, renderMemberProfileDoc, memberDocFilename, readMemberManifest,
-  cacheFromManifest, MEMBER_FOLDER_NAME, type PortalMember, type MemberDerived,
+  cacheFromManifest, type PortalMember, type MemberDerived,
 } from '../lib/tenders/member-directory';
+
+// THE AGNOSTIC CLAUSE (stabilization plan W4.4): the folder name + doc source label are the live
+// client's config, not the lib's — see the matching note in ahk-member-sync.ts.
+const MEMBER_FOLDER_NAME = 'AHK Member companies';
+const MEMBER_SOURCE_LABEL = 'AHK-Mitgliederverzeichnis (Portal)';
 import {
   enrichMember, readEnrichmentStore, writeEnrichmentStore, websiteNoteOf, siteUrlOf,
   type EnrichOutcome, type MemberEnrichment,
@@ -143,7 +148,7 @@ async function folderIdOf(userId: string): Promise<string | null> {
         if (note && folderId) {
           const derived: MemberDerived = derivedCache[id]?.derived
             ?? { sectorTags: ['Sonstiges'], cpvDivisions: [], germanLink: false, via: 'cached' };
-          const doc = renderMemberProfileDoc(m, derived, { website: note });
+          const doc = renderMemberProfileDoc(m, derived, { website: note, sourceLabel: MEMBER_SOURCE_LABEL });
           const w = await writeProfileDoc(sb, userId, folderId, memberDocFilename(m), doc);
           if (w === 'wrote') docsWritten++; else if (w === 'skipped') docsSkipped++; else docsFailed++;
         }

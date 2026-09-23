@@ -74,11 +74,14 @@ export function pickFreeSlots(opts: {
   days?: number;
   hours?: readonly string[];
   minutes?: number;
+  /** TIME TRUTH (W5a): the clock — a slot at or before it is never proposed. Default: now. */
+  nowMs?: number;
 }): ProposedSlot[] {
   const count = Math.max(0, opts.count ?? MAX_PROPOSALS);
   const days = opts.days ?? PROPOSAL_HORIZON_DAYS;
   const hours = opts.hours ?? PROPOSAL_HOURS;
   const minutes = opts.minutes ?? DEFAULT_MINUTES;
+  const nowMs = opts.nowMs ?? Date.now();
   const out: ProposedSlot[] = [];
   for (let d = 1; d <= days && out.length < count; d++) {
     const day = addDays(opts.todayStr, d);
@@ -88,6 +91,7 @@ export function pickFreeSlots(opts: {
       if (out.length >= count) break;
       const start = zonedTimeToUtc(day, hh, opts.tz);
       if (Number.isNaN(start)) continue;
+      if (start <= nowMs) continue;                    // TIME TRUTH: never a slot behind the clock
       const end = start + minutes * 60_000;
       const clash = opts.busy.some((b) => b.startMs < end && b.endMs > start);
       if (clash) continue;
@@ -116,13 +120,20 @@ export async function proposeFreeSlots(
   opts: { tz: string; todayStr: string; count?: number; minutes?: number; fromDayStr?: string; toDayStr?: string },
 ): Promise<ProposedSlot[]> {
   try {
+    // TIME TRUTH (W5a): a stated window is honored, but never behind the clock. A window opening in
+    // the past is clamped to tomorrow; a window already CLOSED proposes nothing (the card then asks
+    // — an honest empty beats a slot the counterparty never stated).
+    const tomorrow = addDays(opts.todayStr, 1);
+    const fromDayStr = opts.fromDayStr && opts.fromDayStr < tomorrow ? tomorrow : opts.fromDayStr;
+    if (opts.toDayStr && opts.toDayStr < tomorrow) return [];
+    if (fromDayStr && opts.toDayStr && fromDayStr > opts.toDayStr) return [];
     // The search anchor: proposals start the day AFTER `todayStr` (never today), so an explicit
     // window shifts the anchor back one day to make its own first day eligible.
-    const anchor = opts.fromDayStr ? new Date(Date.parse(`${opts.fromDayStr}T00:00:00Z`) - DAY_MS).toISOString().slice(0, 10) : opts.todayStr;
-    const days = opts.fromDayStr && opts.toDayStr
+    const anchor = fromDayStr ? new Date(Date.parse(`${fromDayStr}T00:00:00Z`) - DAY_MS).toISOString().slice(0, 10) : opts.todayStr;
+    const days = fromDayStr && opts.toDayStr
       ? Math.max(1, Math.round((Date.parse(`${opts.toDayStr}T00:00:00Z`) - Date.parse(`${anchor}T00:00:00Z`)) / DAY_MS))
       : PROPOSAL_HORIZON_DAYS;
-    const floorMs = opts.fromDayStr ? Date.parse(`${opts.fromDayStr}T00:00:00Z`) : Date.now();
+    const floorMs = fromDayStr ? Date.parse(`${fromDayStr}T00:00:00Z`) : Date.now();
     const ceil = new Date(Date.parse(`${anchor}T00:00:00Z`) + (days + 2) * DAY_MS).toISOString();
     const { data } = await client.from('calendar_events').select('start_time, end_time, status')
       .eq('user_id', userId).eq('status', 'confirmed')

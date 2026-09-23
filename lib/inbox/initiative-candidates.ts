@@ -6,7 +6,7 @@
 // is ALREADY associated with, so the model can REUSE an existing label instead of minting a synonym. The
 // decision stays reasoned (reuse-or-mint is the model's call), it just isn't blind anymore.
 //
-// Over-merge guard (the Galp lesson): we ground on the item's OWN correspondents (their own history), and
+// Over-merge guard (the internal-colleague-bridge lesson): we ground on the item's OWN correspondents (their own history), and
 // the model can still say "genuinely different deal" — we never force a merge. Bounded to the top few
 // candidates so a chatty sender can't flood the prompt.
 
@@ -27,7 +27,7 @@ const FREE_EMAIL_DOMAINS = new Set(['gmail.com', 'googlemail.com', 'outlook.com'
 
 // The user's CORPORATE domain(s) — non-free-provider domains of their login + connected mailboxes. A person
 // on one of these is an INTERNAL colleague who's on EVERYTHING, so they must NEVER bridge an email to a deal
-// (the documented "Galp swallowed 47 unrelated items via an internal colleague" over-merge). Cached per user.
+// (the documented "one deal swallowed 47 unrelated items via an internal colleague" over-merge). Cached per user.
 const corpMemo = new Map<string, { at: number; domains: Set<string> }>();
 async function corporateDomains(supabase: SupabaseClient, userId: string): Promise<Set<string>> {
   const c = corpMemo.get(userId);

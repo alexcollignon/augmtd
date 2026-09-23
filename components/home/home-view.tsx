@@ -12,7 +12,8 @@ import { useLiveRefresh } from '@/hooks/use-live-refresh';
 import { MOMENTUM as MOMENTUM_TOKENS } from '@/lib/work-items/states';
 import { WorkRow as DoRow, useExit, useCommitmentAct, useRowActions, ctaFor, RowControls, RowHoverRail, EffortDate, InitiativeTag, prefetchItem, fmtDue, exitCls, DO_META } from '@/components/work/work-row';
 // THE CALM HOME (docs/threads-plan.md) — the pick, the words, the receipts, all pure.
-import { pickWhispers, toWhisper, sortDoorRows, servedWho, CALM_MAX_WHISPERS, type Whisper } from '@/lib/home/calm';
+import { pickWhispers, toWhisper, sortDoorRows, servedWho, whisperBody, whisperProject, CALM_MAX_WHISPERS, type Whisper } from '@/lib/home/calm';
+import { cardFacts } from '@/lib/triage/deck-context';
 import { createClient } from '@/lib/supabase/client';
 import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon, FolderIcon,
@@ -76,7 +77,7 @@ type FyiDigest = { groups: { label: string; summary: string; kind: 'person' | 'n
 // THE MACHINE'S ONE WORD (experience-spec, Part "THE MACHINE") — the served lifecycle of an actionable
 // row. Optional on every lane: a cached brief written before it existed simply carries no field.
 type MachineHint = { state: string; word: string | null; surfaced?: boolean };
-type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string; draft?: string | null; preparedBy?: string | null; subject?: string; snippet?: string; receivedAt?: string; effort?: 'quick' | 'medium' | 'deep' | null; dueDate?: string | null; initiative?: string | null; initiativeTotal?: number | null; machine?: MachineHint | null }[] };
+type MustRespond = { teaser: string; items: { who: string; ask: string; angle: string; itemId: string; draft?: string | null; preparedBy?: string | null; preparedKind?: string | null; subject?: string; snippet?: string; receivedAt?: string; effort?: 'quick' | 'medium' | 'deep' | null; dueDate?: string | null; initiative?: string | null; initiativeTotal?: number | null; machine?: MachineHint | null }[] };
 type KeepAnEyeOn = { items: { who: string; why: string; itemId: string }[] };
 // "For your awareness" — REAL correspondence you're only informed on (understanding=awareness):
 // real people, real work, no move expected. Distinct from the `noted` newsletter/promotion bulk,
@@ -86,7 +87,7 @@ type ForYourAwareness = { itemId: string; who: string; summary: string }[];
 // NOT a reply-to-a-person (payment failed, security alert, account expiring, storage full, "pay for
 // your booking"). Its OWN home, separate from replies ("What needs you") so notices don't clutter the
 // reply lane. Same row shape as For-your-awareness (sender + grounded one-liner + deep-dive + dismiss).
-type ActionNotices = { itemId: string; who: string; summary: string; preparedBy?: string | null; dueDate?: string | null; initiative?: string | null; machine?: MachineHint | null }[];
+type ActionNotices = { itemId: string; who: string; summary: string; preparedBy?: string | null; preparedKind?: string | null; dueDate?: string | null; initiative?: string | null; machine?: MachineHint | null }[];
 type Brief = {
   firstName: string | null;
   briefLine: string | null;
@@ -100,7 +101,7 @@ type Brief = {
   status: { needsReply: number; meetingsToday: number; waitingOn: number; handledToday: number };
   dayProgress?: { cleared: number; needYou: number };
   priorities: (Priority & { machine?: MachineHint | null })[];
-  commitments: { id: string; description: string; prepared?: string | null; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean; initiative?: string | null; initiativeTotal?: number | null; machine?: MachineHint | null }[];
+  commitments: { id: string; description: string; prepared?: string | null; preparedKind?: string | null; counterparty: string | null; dueDate: string | null; overdue: boolean; dueToday: boolean; initiative?: string | null; initiativeTotal?: number | null; machine?: MachineHint | null }[];
   waitingOn: { id: string; description: string; counterparty: string | null; ageDays: number; initiative?: string | null; initiativeTotal?: number | null }[];
   schedule: { id: string; time: string; localTime?: string; title: string; attendees: number; prep: { lastEmail?: { subject: string }; openCommitments: string[]; lastMeeting?: { title: string; date: string; recall: string; person: string } } | null }[];
   handled?: { triaged: number; filtered: number; summarised: number; tracked: number; resolved: number };
@@ -477,47 +478,16 @@ function DigestReply({ m, onDismiss, emphasis = false, onUndoInbox }: { m: Diges
   );
 }
 
-// Ball-in-your-court item (a commitment you're WAITING on) with Done/Dismiss + a real "Draft nudge"
-// affordance (Bug #2): generates a voice-grounded follow-up to the counterparty (POST
-// /api/commitments/[id]/nudge), shown editable, then Send (PATCH) sends it as a reply on the original
-// thread and closes the commitment. A draft the user reviews + sends — never auto-sent. Mirrors the
-// digest's Send-draft pattern; on components/ui indigo tokens.
+// Ball-in-your-court item (a commitment you're WAITING on) with Done/Dismiss + a "Follow up" door.
+// ONE COMMIT LINE (docs/threads-plan.md — one email card / one commit line; experience-spec law 7,
+// W4.1): the row used to carry its OWN textarea + Send — a second Send on the deck, forked from the
+// stage. "Follow up" now OPENS the follow-up deep-dive (kind=followup), where the stage's nudge
+// composer holds the only Send. The row keeps fast triage (✓/✕), never a commit.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function FollowUpItem({ f, index, onCleared, onUndoCommitment }: { f: { id?: string; who: string; status: string; nextMove: string }; index: number; onCleared?: (id: string) => void; onUndoCommitment?: (message: string, id: string) => void }) {
   const router = useRouter();
   const { removed, exiting, acting, act } = useCommitmentAct(f.id, onCleared, onUndoCommitment);
-  const [open, setOpen] = useState(false);
-  // Open the follow-up deep-dive — the thread you're waiting on + a nudge composer (kind=followup,
-  // id = the commitment id). The inline "Draft nudge" + ✓/✕ stay for fast triage without opening.
   const openDeepDive = () => { if (f.id) router.push(`/item/${f.id}?kind=followup`); };
-  const [draft, setDraft] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const openNudge = async () => {
-    setOpen(true);
-    if (draft || loading || !f.id) return;
-    setLoading(true); setErr(null);
-    try {
-      const res = await fetch(`/api/commitments/${f.id}/nudge`, { method: 'POST' });
-      const d = await res.json();
-      setDraft(d.draft || 'Could not write a follow-up.');
-    } catch { setDraft('Could not write a follow-up.'); } finally { setLoading(false); }
-  };
-  const send = async () => {
-    if (!draft || sending || !f.id) return;
-    setSending(true); setErr(null);
-    try {
-      const res = await fetch(`/api/commitments/${f.id}/nudge`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: draft }),
-      });
-      if (res.ok) { setSent(true); setOpen(false); }
-      else { const d = await res.json().catch(() => ({})); setErr(d.error || 'Could not send the follow-up.'); }
-    } catch { setErr('Could not send the follow-up.'); } finally { setSending(false); }
-  };
 
   if (removed) return null;
   return (
@@ -528,37 +498,15 @@ function FollowUpItem({ f, index, onCleared, onUndoCommitment }: { f: { id?: str
           onKeyDown={(e) => { if (f.id && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDeepDive(); } }}
           className={`text-[13px] font-semibold text-neutral-800 leading-snug ${f.id ? 'cursor-pointer hover:text-indigo-700 transition-colors' : ''}`}>{f.who}</p>
         {f.status && <p className="text-[12.5px] text-neutral-500 mt-0.5 leading-snug">{f.status}</p>}
-        {sent ? (
-          <p className="text-[12.5px] text-emerald-600 mt-1 leading-snug font-medium">Follow-up sent ✓</p>
-        ) : f.id && (
-          <button onClick={() => (open ? setOpen(false) : openNudge())}
+        {f.id && (
+          <button onClick={openDeepDive}
             className="inline-flex items-center gap-1 text-[12.5px] font-medium text-indigo-600 hover:text-indigo-700 mt-1 transition-colors">
-            {loading ? 'Writing…' : open ? 'Collapse' : 'Follow up'}
-            {!open && !loading && <ArrowRightIcon className="w-3.5 h-3.5" />}
+            Follow up
+            <ArrowRightIcon className="w-3.5 h-3.5" />
           </button>
         )}
-        {open && !sent && (
-          <div className="mt-2">
-            {loading && <div className="h-16 rounded-xl bg-neutral-100 animate-pulse" />}
-            {draft && (
-              <div className="rounded-xl border border-neutral-200 bg-neutral-50/70 p-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 mb-1.5">Follow-up</p>
-                <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
-                  rows={Math.min(12, Math.max(4, draft.split('\n').length + 1))}
-                  className="w-full bg-transparent text-[12.5px] text-neutral-700 leading-relaxed resize-none focus:outline-none" />
-                {err && <p className="text-[11.5px] text-rose-600 mt-1.5 leading-snug">{err}</p>}
-                <div className="mt-2 flex items-center gap-3">
-                  <button onClick={send} disabled={sending}
-                    className="inline-flex items-center rounded-lg bg-indigo-600 text-white px-3 py-1.5 text-[12px] font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors">{sending ? 'Sending…' : 'Send'}</button>
-                  <button onClick={() => { if (draft) { navigator.clipboard?.writeText(draft); setCopied(true); setTimeout(() => setCopied(false), 1500); } }}
-                    className="text-[12px] font-medium text-neutral-600 hover:text-neutral-800">{copied ? 'Copied' : 'Copy'}</button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
       </div>
-      {f.id && !sent && (
+      {f.id && (
         <span className="flex-shrink-0 flex items-center gap-1 mt-0.5">
           <button onClick={() => act('done')} disabled={acting} title="Mark done" className="w-6 h-6 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors text-[13px]">✓</button>
           <button onClick={() => act('dismissed')} disabled={acting} title="Dismiss" className="w-6 h-6 inline-flex items-center justify-center rounded-lg border border-neutral-200 text-neutral-400 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 transition-colors text-[13px]">✕</button>
@@ -1423,7 +1371,7 @@ function freezeForOpen(prev: Brief, next: Brief): Brief {
   };
 }
 
-export function HomeView() {
+export function HomeView({ initialView = null }: { initialView?: string | null } = {}) {
   const [brief, setBrief] = useState<Brief | null>(null);
   // THE NO-MUTATION LAW needs the SERVED deck synchronously (the merge decides what the reader
   // keeps, and the cleared-id reconcile in the same tick must read the merged result, not the raw
@@ -1534,7 +1482,12 @@ export function HomeView() {
     let alive = true;
     return () => { alive = false; };
   }, []);
-  const [view, setViewState] = useState<HomeViewLens>('dashboard'); // Home lens: dashboard · timeline · projects · held
+  // THE ADDRESS PAINTS FIRST (W5b): the server hands the `?view=` it rendered with, so the SSR
+  // HTML and the first client render are the SAME lens — a cold deep link never flashes the bare
+  // Home. The layout effect below still reads `location` (the belt: a caller with no server prop).
+  const [view, setViewState] = useState<HomeViewLens>(
+    () => (initialView && (LENSES as readonly string[]).includes(initialView) ? (initialView as HomeViewLens) : 'dashboard'),
+  ); // Home lens: dashboard · timeline · projects · held
   const [projectDetailOpen, setProjectDetailOpen] = useState(false); // a project deep-dive is open → hide the Home greeting header
   // Reflect the lens in the URL (?view=…) WITHOUT a reload (replaceState, not a soft nav) — deep-linkable,
   // survives refresh, and the switch feels instant (never "navigating to another screen").
@@ -2041,6 +1994,7 @@ export function HomeView() {
     when: fmtWhen(m.receivedAt), effort: m.effort ?? null, dueDate: m.dueDate ?? null, initiative: m.initiative ?? null, initiativeTotal: m.initiativeTotal ?? null,
     relCue: b?.personCues?.[m.itemId] ?? null,
     prepared: oneClaimPrepared(m.preparedBy ?? (m.draft ? 'draft' : null), m.machine),
+    preparedKind: m.preparedKind ?? (m.draft ? 'reply_draft' : null),
     stateWord: machineWord(m.machine, m.preparedBy ?? (m.draft ? 'draft' : null)),
   }));
   const agendaNoticeItems: DoItem[] = (b?.actionNotices ?? []).filter((a) => !clearedIds.has(a.itemId) && !dismissed.has(a.itemId)).map((a) => ({
@@ -2050,6 +2004,7 @@ export function HomeView() {
     dueDate: a.dueDate ?? null, overdue: !!a.dueDate && a.dueDate < todayISOStr,
     initiative: a.initiative ?? null,
     prepared: oneClaimPrepared(a.preparedBy ?? null, a.machine),
+    preparedKind: a.preparedKind ?? null,
     stateWord: machineWord(a.machine, a.preparedBy ?? null),
   }));
   const agendaCommitItems: DoItem[] = looseCommitments.map((c) => ({
@@ -2062,6 +2017,7 @@ export function HomeView() {
     second: withMachineWord(c.counterparty ? (/^from /i.test(c.counterparty) ? c.counterparty : `You owe ${c.counterparty}`) : null, machineWord(c.machine, c.prepared ?? null)),
     overdue: c.overdue, dueToday: c.dueToday, dueDate: c.dueDate ?? null, initiative: c.initiative ?? null, initiativeTotal: c.initiativeTotal ?? null,
     prepared: oneClaimPrepared(c.prepared ?? null, c.machine),
+    preparedKind: c.preparedKind ?? null,
     stateWord: machineWord(c.machine, c.prepared ?? null),
   }));
   const liveDeals = (b?.slippingDeals ?? []).filter((d) => !dismissedDeals.has(d.key));
@@ -2146,15 +2102,27 @@ export function HomeView() {
   // rather than becoming blank space with a label over it.
   const handedRow = (it: DoItem): DeckHeldRow => {
     const w = toWhisper(it);
-    const why = [w.urgency, w.receipt ?? w.note].filter(Boolean).join(', ');
+    // THE CARD'S OWN FACTS (W3.6, lib/triage/deck-context.ts `cardFacts`): the card's header shows
+    // the who, so its TITLE is the raw ask (never "Name — ask", the name said twice); the receipt
+    // rides ONCE, as the chip, so the card's subline drops it. The LIST keeps its own grammar —
+    // `line` is the whisper sentence and `why` still carries the receipt (a list row has no chip).
+    const who = servedWho(it);
+    const facts = cardFacts({ sentence: w.sentence, body: whisperBody(it), who, urgency: w.urgency, receipt: w.receipt, note: w.note });
+    const why = facts.listWhy;
     return {
       id: it.entityId, href: it.href, line: w.sentence, why,
+      cardTitle: facts.title, cardWhy: facts.why,
+      // THE PROJECT REFERENCE — served (tagByAtom, tracked-only), never said twice.
+      project: whisperProject(it, facts.title),
+      // THE LIVE PREPARED KIND — THE ONE READER's lead kind, as the brief served it (kind-true,
+      // expired excluded). The card words its chip from it; it never mounts a renderer off it.
+      preparedKind: it.prepared ? (it.preparedKind ?? null) : null,
       // …and its KIND rides along, so the ledger's per-row verbs reach ITS door (a commitment
       // settles through the commitments route; a deal has no per-row door and wears no verbs).
       source: it.source as DeckHeldRow['source'],
       // THE ROW LEADS WITH WHO, in the ledger too — one served reading (calm.ts `servedWho`), so a
       // commitment's counterparty is the same who here as in the whisper it was worded from.
-      who: servedWho(it),
+      who,
       dueDate: it.dueDate ?? null,
       // The prepared RECEIPT as a word ("drafted" / "ready to send"), never the ledger's artifact
       // token: mounting an artifact card off a word the Home never promised would be a second,
@@ -2544,10 +2512,13 @@ export function HomeView() {
               </div>
             ) : b?.mail?.syncing ? (
               <div className="mt-4 rounded-2xl border border-dashed border-neutral-200 px-6 py-14 text-center">
+                {/* THE AVATAR STATUS GRAMMAR (docs/threads-plan.md — "we render neither spinner-dots
+                    nor tool-call narration"): no ring spinner; the still envelope + the quiet sentence
+                    below carry the state (the page updates on its own). */}
                 <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center mx-auto mb-3">
-                  <span className="w-5 h-5 rounded-full border-2 border-indigo-300 border-t-indigo-600 animate-spin" aria-hidden />
+                  <EnvelopeIcon className="w-6 h-6 text-indigo-400" aria-hidden />
                 </div>
-                <p className="text-[14px] font-medium text-neutral-700">Syncing your inbox</p>
+                <p className="text-[14px] font-medium text-neutral-700" role="status">Syncing your inbox</p>
                 <p className="text-[12.5px] text-neutral-400 mt-0.5 max-w-md mx-auto">Pulling in your last 7 days of mail, then judging what actually needs you and preparing first drafts. Your first look is minutes away — this page updates on its own.</p>
               </div>
             ) : (

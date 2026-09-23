@@ -563,7 +563,9 @@ const src = (p: string) => readFileSync(p, 'utf8');
       src('lib/prepare/requirements.ts').includes('async function attachableOnly') &&
       src('lib/prepare/requirements.ts').includes('requires = await attachableOnly(admin, userId, requires)') &&
       src('lib/prepare/requirements.ts').includes('return requires; // failure ≠ a verdict — keep all') &&
-      src('lib/work/judge.ts').includes('function clipLabel'));
+      // RE-POINTED W2.7: the local word-boundary helper for require labels is `clipWords` now (the
+      // shared clipLabel took the title/reason sites; a require label is an identity — no glyph).
+      src('lib/work/judge.ts').includes('function clipWords'));
     // LIVE — the floor discriminates on the real label classes (the Carson answer vs EG Bank docs).
     try {
       const { aiCall } = await import('../lib/ai/call');
@@ -589,7 +591,9 @@ const src = (p: string) => readFileSync(p, 'utf8');
     const g = src('lib/room/grounding.ts');
     check('R13 · THE ONE GROUNDING exists and merges what no consumer held together (board = judged verbs + ACTUAL prepared state per item, asks, ledger, transcript, files)',
       g.includes('export async function assembleRoomGrounding') && g.includes('judgedWork') &&
-      g.includes('function preparedOf') && g.includes('THE LIVE BOARD') && g.includes('OPEN ASKS'));
+      // ⟲ RE-POINTED (stabilization W2.1, Sep 22): the board's prepared words come from THE ONE READER
+      // (`preparedStatesFor` → `preparedWordsOf`); the source_data-only `preparedOf` is gone.
+      g.includes('preparedStatesFor') && g.includes('function preparedWordsOf') && !g.includes('function preparedOf(') && g.includes('THE LIVE BOARD') && g.includes('OPEN ASKS'));
     check('R13 · every room-scope reasoner reads the SAME page: the responder, the chat question path, the agent loop',
       src('lib/room/brief.ts').includes('assembleRoomGrounding') &&
       src('lib/entities/ask.ts').includes('assembleRoomGrounding') &&

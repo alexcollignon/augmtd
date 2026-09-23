@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { hasBearer } from '@/lib/utils/bearer-auth';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import {
   executeGetEmails,
   executeWebSearch, executeFetchUrl, executeDeepResearch,
-  executeSlackListChannels, executeSlackPostMessage, executeSlackReadMessages, executeSlackListMembers,
+  executeSlackListChannels, executeSlackReadMessages, executeSlackListMembers,
   executeFindTeamWork, executeReadTeamWork,
   executeComposeEmail,
 } from '@/lib/tools';
@@ -25,6 +26,9 @@ import { executePrepareEventAction, eventToolResult } from '@/lib/tools/prepare-
 import { pushDmPresent } from '@/lib/present/dm-channel';
 import type { CollectionSpec } from '@/lib/present/collection';
 import type { EventSpec } from '@/lib/present/event';
+import type { ChangeSpec } from '@/lib/present/change';
+import { prepareSlackPostArgs } from '@/lib/tools/slack';
+import { prepareBoxChange } from '@/lib/work/pending-change';
 
 export const maxDuration = 60;
 
@@ -64,7 +68,7 @@ export async function POST(request: NextRequest) {
   if (!secret) {
     return NextResponse.json({ error: 'AGENTOS_SECRET not configured' }, { status: 500 });
   }
-  if ((request.headers.get('authorization') ?? '') !== `Bearer ${secret}`) {
+  if (!hasBearer(request, 'AGENTOS_SECRET')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -86,7 +90,18 @@ export async function POST(request: NextRequest) {
   const turnId = typeof body.turn_id === 'string' ? body.turn_id.slice(0, 64) : null;
   /** The DATA half this call produced, if any. Written to the channel AFTER the switch — it is an
    *  ENHANCEMENT: a failure here can never change what the model is told. */
-  let present: { collection?: CollectionSpec; event?: EventSpec } | null = null;
+  let present: { collection?: CollectionSpec; event?: EventSpec; change?: ChangeSpec } | null = null;
+
+  // THE CONFIRM CARD (stabilization W0.3c — HUMAN IN THE LOOP, posts included): this lane reads
+  // untrusted content (Slack, the web, mail), so a class-A tool here is PREPARED through the ONE
+  // box-lane helper the tasks route uses, and applied ONLY through /api/changes/[id]/apply on the
+  // user's own click. The card rides the presentation side-channel; the model gets "prepared".
+  const prepare = async (tool: string, toolArgs: Record<string, unknown>): Promise<string> => {
+    if (!user_id) return 'That change could not be prepared — nothing was changed.';
+    const out = await prepareBoxChange(ac, user_id, { tool, args: toolArgs, agentId: agent_id ?? null, threadId: thread_id ?? null });
+    if (out.spec) present = { change: out.spec };
+    return out.modelText;
+  };
 
   // Feature gate (single source: tool-capabilities map) — parity with the native loop's
   // tool filter. Off-feature tools return a short "unavailable" string so the worker adapts.
@@ -108,10 +123,14 @@ export async function POST(request: NextRequest) {
         result = await executeSlackListChannels(user_id, ac, agent_id);
         break;
 
-      case 'slack_post_message':
+      case 'slack_post_message': {
         if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });
-        result = await executeSlackPostMessage(config, user_id, agent_id, ac);
+        // PREPARED, NEVER POSTED: the preflight resolves the target (no Slack write) and the card
+        // is the only way to the post — the apply door runs executeSlackPostMessage on the click.
+        const pre = await prepareSlackPostArgs(config, user_id, agent_id, ac);
+        result = pre.ok ? await prepare('slack_post_message', pre.args) : pre.result;
         break;
+      }
 
       case 'slack_read_messages':
         if (!user_id) return NextResponse.json({ error: 'user_id required' }, { status: 400 });

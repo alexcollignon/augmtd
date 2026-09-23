@@ -3,6 +3,7 @@ import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { buildWorkItems, partitionByTime } from '@/lib/work-items/model';
 import { ganttMarkerOf } from '@/lib/work-items/gantt-date';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 const MOM_DOT: Record<string, string> = { needs_you: 'bg-rose-500', gone_quiet: 'bg-amber-500', stalled: 'bg-amber-500', waiting: 'bg-blue-400', active: 'bg-emerald-500', unknown: 'bg-neutral-300' };
 
@@ -81,9 +82,14 @@ async function computePayload(supabase: any, userId: string) {
       const entMeta = new Map(laneRows.map((e) => [e.id as string, { name: e.name as string, dot: MOM_DOT[((e.state ?? {}) as { momentum?: string }).momentum ?? 'unknown'] ?? MOM_DOT.unknown }]));
       // raw id → entity (only for inbox/commitment work items).
       const rawToEntity = new Map<string, string>();
-      const { data: gl } = await supabase.from('entity_links').select('item_id, entity_id')
-        .eq('user_id', user.id).in('item_kind', ['inbox_item', 'commitment']).not('entity_id', 'is', null).limit(2000);
-      for (const l of (gl ?? []) as Array<{ item_id: string; entity_id: string }>) rawToEntity.set(l.item_id, l.entity_id);
+      // NO SILENT CAPS (W1.6): unordered `.limit(2000)` silently returned an arbitrary 1000-row
+      // page on a large account — the gantt would drop entity tags for whichever items happened to
+      // land outside that slice. Paged + ordered via fetchAllRows.
+      const gl = await fetchAllRows<{ item_id: string; entity_id: string }>((from, to) =>
+        supabase.from('entity_links').select('item_id, entity_id')
+          .eq('user_id', user.id).in('item_kind', ['inbox_item', 'commitment']).not('entity_id', 'is', null)
+          .order('item_id', { ascending: true }).range(from, to), { maxRows: 20000 });
+      for (const l of gl) rawToEntity.set(l.item_id, l.entity_id);
       // Action badges — the SAME shared builder the entity room's Gantt uses (what happened on
       // each item, from recorded facts; zero AI).
       const { ganttEventsFor } = await import('@/lib/work-items/gantt-badges');

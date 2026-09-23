@@ -23,8 +23,8 @@ export type FeatureKey = keyof WorkspaceFeatures;
 // /home→/home forever); normalizeFeatures pins it true and the page guard ignores it.
 export const FEATURE_KEYS: FeatureKey[] = ['email', 'meetings', 'drive', 'agents', 'studio'];
 
-// meetings is off by default — bot infrastructure is being replaced (Vexa migration pending).
-// Admin opts IN via platform admin UI.
+// meetings is off by default — admin opts IN via platform admin UI. (Historically gated the
+// auto-join bot, removed Sep 23; what it gates today is the meetings/recording surface.)
 export const DEFAULT_FEATURES: WorkspaceFeatures = {
   email: true,
   meetings: false,

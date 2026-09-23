@@ -48,7 +48,7 @@ export const TOOL_LABELS: Record<string, string> = {
   find_team_work: 'Checking a teammate’s work',
   read_team_work: 'Reading a teammate’s work',
   slack_list_channels: 'Checking Slack channels',
-  slack_post_message: 'Posting to Slack',
+  slack_post_message: 'Preparing a Slack post',
   slack_read_messages: 'Reading Slack',
   slack_list_members: 'Checking Slack members',
   list_skills: 'Checking skills',

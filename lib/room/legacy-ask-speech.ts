@@ -23,6 +23,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { readPlans } from '@/lib/store/item-plans';
 
 /** The marker every retired ask template ends on — assembled from fragments so that no whole
  *  legacy sentence exists as a literal anywhere in the tree, not even here. */
@@ -85,10 +86,8 @@ export async function recomposeLegacyAsks(
       let work: string | null = null;
       const itemId = (t.key ?? '').startsWith('requires:') ? (t.key ?? '').slice('requires:'.length) : '';
       if (itemId) {
-        const { data } = await client.from('item_plans').select('tasks')
-          .eq('user_id', userId).eq('kind', 'judgment')
-          .in('entity_id', [`inbox:${itemId}`, `commitment:${itemId}`]).limit(1);
-        const row = (data ?? [])[0] as { tasks?: { verdict?: { work?: string } } } | undefined;
+        const data = await readPlans(client, userId, 'judgment', { keys: [`inbox:${itemId}`, `commitment:${itemId}`], limit: 1 });
+        const row = data[0] as { tasks?: { verdict?: { work?: string } } } | undefined;
         const v = row?.tasks?.verdict?.work;
         work = typeof v === 'string' ? v : null;
       }

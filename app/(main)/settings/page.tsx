@@ -126,8 +126,8 @@ export default async function SettingsPage({ searchParams }: Props) {
                   />
                 </section>
 
-                {/* Meeting Assistant (auto-join bot) UI retired Aug 10 — in-person recording is
-                    the product; routes/infra stay dormant. */}
+                {/* Meeting Assistant (auto-join bot) UI retired Aug 10; the bot itself (routes,
+                    Hetzner join path) removed Sep 23 — in-person recording is the product. */}
                 <section className="px-6 py-5">
                   <DataManagementSection connections={connections} userEmail={user.email ?? ''} />
                 </section>

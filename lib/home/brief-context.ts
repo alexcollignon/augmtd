@@ -11,6 +11,8 @@
 // per-person context (emails, meetings, commitments, timestamps) to judge supersession / staleness /
 // relevance / grouping holistically. No AI here; this layer is deterministic + parallel.
 
+import { OPEN_COMMITMENT_STATUSES } from '@/lib/core/statuses';
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
 const DAY = 86_400_000;
@@ -110,7 +112,8 @@ export async function buildBriefContext(
       .from('commitments')
       .select('description, direction, due_date, counterparty, status')
       .eq('user_id', userId)
-      .eq('status', 'open')
+      // ONE OPEN-STATUS CONSTANT (W2.2) — the per-person map speaks the same "open" as the spine.
+      .in('status', [...OPEN_COMMITMENT_STATUSES])
       .limit(100),
     client
       .from('meeting_transcripts')

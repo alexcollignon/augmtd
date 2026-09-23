@@ -39,6 +39,7 @@ import InputCard from '@/components/home/input-card';
 import DecisionCard from '@/components/home/decision-card';
 import CollectionCard from '@/components/home/collection-card';
 import EventCard from '@/components/home/event-card';
+import ChangeCard from '@/components/home/change-card';
 import { WorkerMentionInput } from '@/components/workers/worker-mention-input';
 import { AliveMark } from '@/components/home/alive-mark';
 import { OrbSeat, type OrbEntrance } from '@/components/home/orb-entrance';
@@ -182,6 +183,34 @@ const SECTIONS: Section[] = [
               steps: { done: 4, total: 6 },
               preview: { text: '## Week 1–2\n\nCapture layer live on ten seats.\n\n| Phase | Seats | Owner |\n| --- | --- | --- |\n| 1 | 10 | Ops |\n| 2 | 25 | Ops |', truncated: false },
               notable: true,
+            }}
+          />
+        ),
+      },
+      {
+        label: 'approval · open — THE CHANGE HOST (a prepared state change awaiting the click)',
+        note: 'components/home/change-card.tsx — the same kit kind, a different object: a class-A change from a tool-bearing lane (stabilization W0.3b). Apply runs the executor through /api/changes/[id]/apply; nothing ran when the card was drawn',
+        node: (
+          <ChangeCard
+            spec={{
+              id: 'cat-change-open', tool: 'update_task',
+              summary: 'Change "Weekly tender briefing": email recipients → ops@northwind.example',
+              lines: ['Email recipients → ops@northwind.example'],
+              lane: 'coworker_dm', preparedBy: 'Clara', status: 'pending',
+              expiresAt: '2099-01-01T00:00:00.000Z',
+            }}
+          />
+        ),
+      },
+      {
+        label: 'approval · settled — THE CHANGE HOST (applied)',
+        node: (
+          <ChangeCard
+            spec={{
+              id: 'cat-change-applied', tool: 'delete_task',
+              summary: 'Delete "Competitor digest" permanently', lines: ['This cannot be undone.'],
+              lane: 'home_chat', status: 'applied', expiresAt: '2099-01-01T00:00:00.000Z',
+              result: '"Competitor digest" has been permanently deleted.',
             }}
           />
         ),

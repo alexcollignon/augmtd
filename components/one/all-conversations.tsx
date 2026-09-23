@@ -3,7 +3,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // ALL CONVERSATIONS (reworked Aug 8, owner: "the conversations page needs rework"). The Claude
 // Recents anatomy: TIME BUCKETS (Today · Yesterday · This week · Earlier) over a clean divided
-// list — glyph (what it is) · title · sub (who/where: "with Clara" / "in EG Bank" / the kind
+// list — glyph (what it is) · title · sub (who/where: "with Clara" / "in Acme Corp" / the kind
 // word) · a short date. Hover shows the manage verbs (rename inline · delete with the Undo
 // toast — archive under the hood, never destruction). Chat rows load into the ONE Home panel;
 // room rows open their door. The chip pills died — the glyph + sub carry the kind now.

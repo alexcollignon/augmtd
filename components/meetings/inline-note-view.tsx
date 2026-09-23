@@ -1022,7 +1022,6 @@ const handleRetry = async () => {
         <div className="mb-6">
           <ProcessingPipeline
             source={(transcript.source ?? 'recording') as 'recording' | 'upload' | 'text'}
-            attendeeBotState={null}
             botState={transcript.botState}
             processed={transcript.processed}
           />

@@ -91,6 +91,7 @@ def get_meeting_context(
     since: str = "30d",
     include: str = "summaries",
     with_person: Optional[str] = None,
+    include_upcoming: bool = True,
 ) -> str:
     """Read the user's calendar and past meeting notes. Use to prep for meetings,
     recall what was discussed, or find meetings with a person.
@@ -99,8 +100,9 @@ def get_meeting_context(
         since: Lookback window, e.g. "30d".
         include: "summaries" or "transcripts".
         with_person: Filter to meetings with this person.
+        include_upcoming: Also include upcoming calendar events for the next 7 days. Default: true.
     """
-    config = {"since": since, "include": include}
+    config = {"since": since, "include": include, "include_upcoming": include_upcoming}
     if with_person:
         config["with_person"] = with_person
     return _call("get_meeting_context", run_context, config)
@@ -189,13 +191,19 @@ def web_search(run_context: RunContext, query: str, max_results: int = 6) -> str
 
 
 @tool
-def fetch_url(run_context: RunContext, urls: list) -> str:
+def fetch_url(run_context: RunContext, urls: list, max_age_days: Optional[int] = None) -> str:
     """Fetch and read the full content of one or more URLs.
 
     Args:
-        urls: List of URLs to fetch.
+        urls: List of URLs to fetch (max 5).
+        max_age_days: Optional freshness guard — pages whose detected publication date is older
+            than this many days are dropped (replaced by a skip note). Pages with no detectable
+            date are kept but flagged UNDATED.
     """
-    return _call("fetch_url", run_context, {"urls": urls}, needs_user=False)
+    config: dict = {"urls": urls}
+    if max_age_days:
+        config["max_age_days"] = max_age_days
+    return _call("fetch_url", run_context, config, needs_user=False)
 
 
 @tool
@@ -237,9 +245,11 @@ def generate_document(
 @tool
 def run_compute(
     run_context: RunContext,
-    description: str,
     script: str,
+    description: Optional[str] = None,
     file_ids: Optional[list] = None,
+    data: Optional[str] = None,
+    timeout_s: Optional[int] = None,
 ) -> str:
     """Run a Python script in a locked sandbox over files the user already has
     (spreadsheets, PDFs, CSVs, documents) or inline data — to parse, reconcile,
@@ -252,13 +262,21 @@ def run_compute(
     numbers are trustworthy, asserted ones are not.
 
     Args:
-        description: One line — what this computation does.
         script: The Python script (reads /job/inputs, writes /job/out, prints checks).
+        description: One line — what this computation does.
         file_ids: Knowledge-base file ids to mount as inputs (from search_knowledge_base results).
+        data: Small inline text/CSV data — mounted at /job/inputs/data.txt.
+        timeout_s: Wall-clock budget in seconds (default 60, max 120).
     """
-    config: dict = {"description": description, "script": script}
+    config: dict = {"script": script}
+    if description:
+        config["description"] = description
     if file_ids:
         config["file_ids"] = file_ids
+    if data:
+        config["data"] = data
+    if timeout_s:
+        config["timeout_s"] = timeout_s
     return _call("run_compute", run_context, config)
 
 

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
 import type { ComposerChip } from './types';
 
@@ -32,34 +32,29 @@ export interface ThreadComposerProps {
   attachSlot?: React.ReactNode;
   /** Anything the host wants between the affordances and Send (a project chip, a model note). */
   trailingSlot?: React.ReactNode;
+  /** What already rides with the next send (file chips, "Extracting…") — inside the box, above the
+   *  text. Presentational; the host owns the files (W4.1b — the inbox AI panel's file chips). */
+  attachmentsSlot?: React.ReactNode;
+  /** The host's handle on the textarea (focus after a stream / on open) — the legacy panels'
+   *  existing refs keep working when they port onto the kit. */
+  inputRef?: React.Ref<HTMLTextAreaElement>;
+  autoFocus?: boolean;
   className?: string;
-}
-
-function MentionIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-      <circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.4" />
-      <path d="M11 8v1.2a1.8 1.8 0 0 0 3.6 0V8a6.6 6.6 0 1 0-2.6 5.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function AttachIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-      <path d="m13.2 7.4-5 5a3.2 3.2 0 0 1-4.6-4.6l5.6-5.6a2.2 2.2 0 0 1 3.2 3.2l-5.5 5.5a1.2 1.2 0 0 1-1.8-1.8l4.8-4.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-    </svg>
-  );
 }
 
 export function ThreadComposer({
   placeholder = 'Message the team — @ hands it to someone',
-  value, onChange, onSend, disabled, chips, mentionSlot, attachSlot, trailingSlot, className,
+  value, onChange, onSend, disabled, chips, mentionSlot, attachSlot, trailingSlot, attachmentsSlot,
+  inputRef, autoFocus, className,
 }: ThreadComposerProps) {
   const [inner, setInner] = useState('');
   const ref = useRef<HTMLTextAreaElement>(null);
+  useImperativeHandle(inputRef, () => ref.current as HTMLTextAreaElement, []);
   const controlled = value !== undefined;
   const text = controlled ? value! : inner;
+  // A CONTROLLED host clears its draft after a send — the grown box shrinks back with it (the
+  // uncontrolled path resets in `send`; this is the same law for a host-held draft).
+  useEffect(() => { if (text === '' && ref.current) ref.current.style.height = 'auto'; }, [text]);
 
   function set(v: string) {
     if (!controlled) setInner(v);
@@ -70,7 +65,11 @@ export function ThreadComposer({
     const t = text.trim();
     if (!t || disabled) return;
     onSend?.(t);
-    if (!controlled) setInner('');
+    if (!controlled) {
+      setInner('');
+      // The grown box shrinks back with the sent draft (an uncontrolled send left it tall).
+      if (ref.current) ref.current.style.height = 'auto';
+    }
   }
 
   return (
@@ -87,12 +86,15 @@ export function ThreadComposer({
       )}
 
       <div className="flex flex-col gap-2.5 rounded-2xl border border-neutral-200/80 bg-white px-4 py-3.5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
+        {attachmentsSlot}
         <textarea
           ref={ref}
           rows={1}
+          autoFocus={autoFocus}
           value={text}
           disabled={disabled}
           placeholder={placeholder}
+          aria-label={placeholder || 'Message'}
           onChange={(e) => {
             set(e.target.value);
             const el = e.currentTarget;
@@ -100,17 +102,17 @@ export function ThreadComposer({
             el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
           }}
           onKeyDown={(e) => {
+            // IME SAFETY: an Enter that CONFIRMS a composition (CJK input, dead keys) is not a send.
+            if (e.nativeEvent.isComposing) return;
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
           }}
           className="w-full resize-none bg-transparent text-[13px] leading-[1.55] text-neutral-800 outline-none placeholder:text-neutral-400 disabled:opacity-60"
         />
         <div className="flex items-center gap-3.5">
-          {mentionSlot ?? (
-            <span className="flex items-center gap-1.5 text-[12px] text-neutral-500"><MentionIcon />Mention</span>
-          )}
-          {attachSlot ?? (
-            <span className="flex items-center gap-1.5 text-[12px] text-neutral-500"><AttachIcon />Attach</span>
-          )}
+          {/* NO LYING DOORS (W4.1): an affordance renders only when the host mounted one — an
+              unslotted "Mention"/"Attach" label looked like a door and did nothing. */}
+          {mentionSlot}
+          {attachSlot}
           {trailingSlot}
           <span className="flex-grow" />
           <button type="button" onClick={send} disabled={disabled || !text.trim()} aria-label="Send"

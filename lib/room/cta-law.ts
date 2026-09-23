@@ -78,6 +78,29 @@ export function shapingSay(label: string): string {
     : 'Prepare the next step on this and show me the draft before anything is sent.';
 }
 
+// ── THE SOLE-ARTIFACT BINDING (stabilization W3.5 (c)) ──────────────────────────────────────────
+// Found live (Sep 22 census: 20 of 23 v14 moves were offers; 9/9 null-ref moves demoted): the
+// model's target failed the aboutness check → ref null → "unstaged" → a false "I can shape this up
+// — … Say the word." beside a READY draft. When the room holds EXACTLY ONE staged entry there is no
+// guess to make — that entry IS what the move is about, so the ref binds to it deterministically
+// and the floor above sees it staged. Two staged entries and the move stays unbound (code never
+// guesses between two). Pure; both the composer and the gate read it.
+export type StagedEntry = { ref: string; prepared: boolean };
+
+export function bindToSoleStaged<M extends MoveLike>(move: M, entries: StagedEntry[]): M {
+  if (!move?.label || move.ref) return move;
+  const staged = entries.filter((e) => e.prepared);
+  return staged.length === 1 ? { ...move, ref: staged[0].ref } : move;
+}
+
+/** AT THE RENDER: an offer never stands beside a mounted prepared card — the card IS the deed's
+ *  surface (A CLAIM RENDERS; the MOVE yields to any mounted card). Null = say nothing. */
+export function offerLineFor(move: (MoveLike & { offer?: boolean; offerText?: string }) | null | undefined, f: { cardMounted: boolean }): string | null {
+  if (!move?.offer) return null;
+  if (f.cardMounted) return null;
+  return move.offerText ?? shapingOffer(move.label);
+}
+
 export type CtaVerdict<M extends MoveLike> = {
   /** The move as it may render: `offer: true` means NEVER a primary button. */
   move: (M & { offer?: boolean }) | null;

@@ -1,5 +1,6 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 import { searchKnowledgeGrouped, type FileChunkGroup } from './search'
+import { packContext } from '@/lib/utils/pack-context'
 
 interface KBContextOptions {
   fileLimit?: number
@@ -19,6 +20,10 @@ export interface KBContextResult {
    *  from the very same search — never a second query that could rank differently. Additive; every
    *  existing consumer reads `context`/`fileGroups` exactly as before. */
   groups: FileChunkGroup[]
+  /** THE CONTEXT BUDGET (W2.7): the file ids whose text actually reached `context` (whole or
+   *  clipped-and-declared). A caller that SHOWS documents shows these — a card must never list a
+   *  file the model never saw. */
+  packedFileIds: string[]
 }
 
 export async function buildKBContext(
@@ -48,23 +53,25 @@ export async function buildKBContext(
       // else: fall through to full global results (agent KB had no relevant hits)
     }
 
-    if (groups.length === 0) return { context: '', filenames: [], fileGroups: [], groups: [] }
+    if (groups.length === 0) return { context: '', filenames: [], fileGroups: [], groups: [], packedFileIds: [] }
 
-    const sections = groups.map((g) => {
+    // PACKED BY FILE, in rank order (the best match survives longest) — a budget overrun clips or
+    // drops whole files with a declared mark/line, never a raw slice through the middle of one.
+    const packed = packContext(groups.map((g, i) => {
       const summaryLine = g.summary ? `Summary: ${g.summary}\n` : '';
-      return `[${g.filename}]\n${summaryLine}${g.contextText}`;
-    })
-    const joined = sections.join('\n\n')
+      return { id: g.fileId, label: `[${g.filename}]`, text: `[${g.filename}]\n${summaryLine}${g.contextText}`, priority: groups.length - i, minChars: 300 }
+    }), maxTotalChars)
     const filenames = groups.map((g) => g.filename)
     const fileGroups = groups.map((g) => ({ fileId: g.fileId, filename: g.filename }))
 
     return {
-      context: `RELEVANT KNOWLEDGE BASE (from your indexed files — use this content when answering):\n\n${joined.slice(0, maxTotalChars)}`,
+      context: `RELEVANT KNOWLEDGE BASE (from your indexed files — use this content when answering):\n\n${packed.text}`,
       filenames,
       fileGroups,
       groups,
+      packedFileIds: groups.filter((g) => packed.report[g.fileId]?.status !== 'dropped').map((g) => g.fileId),
     }
   } catch {
-    return { context: '', filenames: [], fileGroups: [], groups: [] }
+    return { context: '', filenames: [], fileGroups: [], groups: [], packedFileIds: [] }
   }
 }

@@ -68,6 +68,7 @@ export function InviteCard({ kind, entityId, taskId, verdictLevel, chat, onSent,
   const [description, setDescription] = useState('');
   const [timezone, setTimezone] = useState('UTC');
   const [proposed, setProposed] = useState(false);
+  const [proposedFrom, setProposedFrom] = useState<'stated_window' | 'calendar' | undefined>(undefined);
   const [alternatives, setAlternatives] = useState<InviteSlot[]>([]);
   const [picked, setPicked] = useState<string | null>(null);   // the selector's current row id
   const [customLocal, setCustomLocal] = useState('');           // the open row's own time field
@@ -75,6 +76,10 @@ export function InviteCard({ kind, entityId, taskId, verdictLevel, chat, onSent,
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // W5c · A CARD NEVER RENDERS HOLLOW: when the preparer hands back no invite at all (a compose
+  // pointer, a failure), there is nothing to review — the card says so in one quiet line instead of
+  // an empty shell that only reads "Type a time…" (found live, Sep 23).
+  const [hollow, setHollow] = useState(false);
 
   // THE CHAT LANE's pre-fill: the payload came WITH the turn (the preparer already ran when the
   // card was spoken) — seed the fields once, fetch nothing.
@@ -101,7 +106,7 @@ export function InviteCard({ kind, entityId, taskId, verdictLevel, chat, onSent,
   useEffect(() => {
     if (chat || !entityId || !kind) return;
     let alive = true;
-    setLoading(true);
+    setLoading(true); setHollow(false);
     fetch('/api/items/prepare', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kind, entityId, taskId, ...(verdictLevel ? { actionType: 'calendar_invite' } : {}) }),
@@ -109,7 +114,11 @@ export function InviteCard({ kind, entityId, taskId, verdictLevel, chat, onSent,
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((d: PreparedInviteResponse | { type: string }) => {
         if (!alive) return;
-        if (d && (d as PreparedInviteResponse).type === 'calendar_invite') {
+        // W5c re-walk: a "calendar_invite" with no title, no time and no attendee is still HOLLOW —
+        // a partial that would render as the bare "Type a time…" row. Nothing to review.
+        const partial = d as Partial<PreparedInviteResponse> | null;
+        const hollowInvite = !partial?.title?.trim() && !partial?.startISO && !(Array.isArray(partial?.attendees) && partial!.attendees!.length);
+        if (d && (d as PreparedInviteResponse).type === 'calendar_invite' && !hollowInvite) {
           const inv = d as PreparedInviteResponse;
           setTitle(inv.title || '');
           setStartISO(inv.startISO || '');
@@ -118,14 +127,17 @@ export function InviteCard({ kind, entityId, taskId, verdictLevel, chat, onSent,
           setDescription(inv.description || '');
           setTimezone(inv.timezone || 'UTC');
           setProposed(inv.proposed === true);
+          setProposedFrom(inv.proposedFrom);
           // The verified alternatives, MINUS whichever slot is currently filled in — so the
           // originally prepared slot keeps its row after the user picks another one.
           setAlternatives((Array.isArray(inv.alternatives) ? inv.alternatives : [])
             .concat(inv.startISO ? [{ startISO: inv.startISO, endISO: inv.endISO || '', note: 'the prepared time' }] : []));
           setPicked(inv.startISO || null);
+        } else {
+          setHollow(true);
         }
       })
-      .catch(() => { if (alive) setErr('Could not prepare the invite — pick a time below.'); })
+      .catch(() => { if (alive) setHollow(true); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -135,7 +147,7 @@ export function InviteCard({ kind, entityId, taskId, verdictLevel, chat, onSent,
   // verified slot; the one currently filled in is excluded, so the prepared time keeps a row of
   // its own after the user picks another (a chosen alternative must never erase the original).
   const props = inviteCardOf({
-    title, startISO, endISO, attendees, description, timezone, proposed,
+    title, startISO, endISO, attendees, description, timezone, proposed, proposedFrom,
     alternatives: alternatives.filter((a) => a.startISO !== startISO),
   });
 
@@ -194,6 +206,10 @@ export function InviteCard({ kind, entityId, taskId, verdictLevel, chat, onSent,
 
   if (loading) {
     return <div className="w-full max-w-[480px] rounded-xl border border-neutral-200/80 bg-white p-4"><div className="h-24 animate-pulse rounded-lg bg-neutral-100" /></div>;
+  }
+
+  if (hollow) {
+    return <p className="text-[12.5px] text-neutral-500">Nothing to review yet — the invite is still being prepared.</p>;
   }
 
   const card: ThreadCard = {

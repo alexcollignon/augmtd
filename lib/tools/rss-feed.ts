@@ -1,6 +1,8 @@
 // ─── RSS / Atom feed reader ───────────────────────────────────────────────────
 
 import { XMLParser } from 'fast-xml-parser';
+// THE SAFE FETCH (W0.3): scheme + IP-literal + DNS law, pinned sockets, re-checked redirects.
+import { classifyUrl, safeFetch } from '@/lib/utils/safe-fetch';
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -8,19 +10,10 @@ const parser = new XMLParser({
   textNodeName: '#text',
 });
 
-const PRIVATE_IP_RE = /^https?:\/\/(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i;
 const MAX_FEEDS = 10;
 const MAX_ITEMS = 30;
 const SUMMARY_CHARS = 250;
-
-function isValidUrl(url: string): boolean {
-  try {
-    const u = new URL(url);
-    return (u.protocol === 'https:' || u.protocol === 'http:') && !PRIVATE_IP_RE.test(url);
-  } catch {
-    return false;
-  }
-}
+const MAX_FEED_BYTES = 5 * 1024 * 1024;
 
 function coerceText(val: unknown): string {
   if (typeof val === 'string') return val;
@@ -113,7 +106,7 @@ export async function executeRssFeed(
     Array.isArray(rawFeeds) ? rawFeeds.filter(f => typeof f === 'string') :
     typeof rawFeeds === 'string' ? rawFeeds.split('\n').map(s => s.trim()).filter(Boolean) :
     []
-  ).filter(isValidUrl).slice(0, MAX_FEEDS);
+  ).filter(u => classifyUrl(u).ok).slice(0, MAX_FEEDS);
 
   if (feeds.length === 0) return '[rss_feed] No valid feed URLs provided.';
 
@@ -135,11 +128,12 @@ export async function executeRssFeed(
   await Promise.allSettled(
     feeds.map(async feedUrl => {
       try {
-        const res = await fetch(feedUrl, {
-          signal: AbortSignal.timeout(8000),
+        const res = await safeFetch(feedUrl, {
+          timeoutMs: 8000,
+          maxBytes: MAX_FEED_BYTES,
           headers: { 'User-Agent': 'Mozilla/5.0' },
         });
-        const text = await res.text();
+        const text = res.body;
         const xml = parser.parse(text) as Record<string, unknown>;
         const { items, title: sourceName } = parseItems(xml);
 

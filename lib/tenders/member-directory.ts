@@ -24,7 +24,17 @@ import { logAIUsage } from '@/lib/ai/log-usage';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import { PROFILE_MANIFEST_VERSION, type ProfileManifest } from '@/lib/matching/manifest';
 
-export const MEMBER_FOLDER_NAME = 'AHK Member companies';
+// THE AGNOSTIC CLAUSE (stabilization plan W4.4): this module reads a specific chamber's public
+// member portal, but the FOLDER NAME + the SOURCE ATTRIBUTION LINE in the rendered doc are the
+// only two client-specific STRINGS that used to be baked in here. Both are now parameters with a
+// generic default — the live client's actual values (e.g. a chamber's own folder/label) belong to
+// their workflow step config or an ops script under scripts/, never to this file. Changing the
+// LIVE default would strand any workflow step already bound to the old folder name by NAME (see
+// lib/knowledge/rename-folder.ts) — a live client's folder must be moved via that heal, or a config
+// update, never by editing the default here.
+export const DEFAULT_MEMBER_FOLDER_NAME = 'Member companies';
+/** Generic fallback for the doc's source-attribution line when the caller supplies none. */
+export const DEFAULT_MEMBER_SOURCE_LABEL = 'Mitgliederverzeichnis (Portal)';
 export const MEMBER_MANIFEST_KIND = 'tender_member_manifest';
 export const MEMBER_MANIFEST_VERSION = 1;
 
@@ -482,7 +492,7 @@ export const WEBSITE_SECTION_HEADING = '## Von der Website / From the website';
 export function renderMemberProfileDoc(
   m: PortalMember,
   derived: MemberDerived,
-  opts?: { syncedAt?: string; website?: MemberWebsiteNote | null },
+  opts?: { syncedAt?: string; website?: MemberWebsiteNote | null; sourceLabel?: string },
 ): string {
   const syncedAt = (opts?.syncedAt ?? new Date().toISOString()).slice(0, 10);
   const activity = String(m.activity ?? '').trim();
@@ -522,7 +532,7 @@ export function renderMemberProfileDoc(
   // the reader has to take on trust.
   out.push(line('Portal-Profil', memberPortalUrl(m.id)));
   out.push('');
-  out.push(`_Quelle: AHK-Mitgliederverzeichnis (Portal), Stand ${syncedAt}._`);
+  out.push(`_Quelle: ${(opts?.sourceLabel ?? DEFAULT_MEMBER_SOURCE_LABEL).trim() || DEFAULT_MEMBER_SOURCE_LABEL}, Stand ${syncedAt}._`);
   // THE ENRICHMENT RUNG (law 4 — the profile is the product): the company's own website, read once
   // and summarised to stated facts. It sits BELOW the directory sections (the portal row is the
   // spine; this accretes onto it) and ABOVE "## Chamber notes" (a human's correction outranks
@@ -639,7 +649,7 @@ export function memberDocPrefix(portalId: string): string {
 // nothing about chambers or tenders. The chamber-specific facts (a German tie, a size band, a
 // district) become display badges and a ranking number HERE, where they are still understood.
 
-export function profileManifestFrom(manifest: MemberManifest, folder = MEMBER_FOLDER_NAME): ProfileManifest {
+export function profileManifestFrom(manifest: MemberManifest, folder = DEFAULT_MEMBER_FOLDER_NAME): ProfileManifest {
   return {
     version: PROFILE_MANIFEST_VERSION,
     folder,

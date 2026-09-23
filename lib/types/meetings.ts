@@ -67,8 +67,6 @@ export interface CalendarEvent {
   meeting_status: MeetingStatus;
   meeting_metadata: MeetingMetadata;
   has_transcript?: boolean;
-  attendee_bot_id?: string | null;
-  attendee_bot_state?: string | null;
 
   folder_id?: string | null;
 

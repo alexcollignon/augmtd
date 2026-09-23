@@ -11,12 +11,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { fetchUnreadEmails as fetchGmailEmails, parseGmailMessage } from '@/lib/google/gmail';
 import { fetchUnreadEmails as fetchOutlookEmails, parseOutlookMessage } from '@/lib/microsoft/outlook';
+import { hasBearer } from '@/lib/utils/bearer-auth';
 
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
-  const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.BOT_SECRET}`) {
+  if (!hasBearer(request, 'BOT_SECRET')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

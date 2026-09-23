@@ -4,6 +4,7 @@
 // own coworkers' deliverables (artifacts on their work threads) — RLS-safe.
 
 import type { DocumentArtifact, DocContent } from '@/lib/types/inbox';
+import { clipWithRule } from '@/lib/utils/pack-context';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Admin = any;
@@ -48,7 +49,10 @@ function renderDoc(content: unknown): string {
     }
     return parts.filter(Boolean).join('\n\n');
   }
-  return JSON.stringify(content).slice(0, 4000);
+  // EXCERPT HONESTY (invariant 13): the fallback path for an unrecognized artifact shape used a
+  // raw `.slice()` — declared + boundary-cut via `clipWithRule` instead (this result rides straight
+  // back to the model as a standalone tool result, so the rule must ride with it).
+  return clipWithRule(JSON.stringify(content), 4000);
 }
 
 export async function executeFindTeamWork(config: Record<string, unknown>, userId: string, admin: Admin): Promise<string> {
@@ -121,7 +125,10 @@ export async function executeReadTeamWork(config: Record<string, unknown>, userI
     if (!art) continue;
     const text = renderDoc(art.content);
     if (!text) return `"${art.title}" (${art.type}) — no text preview available.`;
-    return `"${art.title}":\n\n${text.slice(0, 9000)}`;
+    // EXCERPT HONESTY (invariant 13): the whole point of read_team_work is handing another
+    // coworker's document text to the model as material to build on — a silent mid-word cut here
+    // is the exact failure that produces a confabulated "the document got cut off" report.
+    return `"${art.title}":\n\n${clipWithRule(text, 9000)}`;
   }
   return "Couldn't find that document — call find_team_work again for a valid id.";
 }

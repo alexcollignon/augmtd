@@ -24,14 +24,17 @@
 
 import type { DoSource } from '@/lib/home/agenda';
 import type { DeckItem } from '@/lib/home/deck-floors';
-import { urgencyOf } from '@/lib/home/calm';
+import { urgencyOf, receiptWordOf } from '@/lib/home/calm';
 import { getUnderstanding } from '@/lib/inbox/item-understanding';
-import { isNoMoveNotice, rawMailKindOf, isAutomatedSenderStrong } from '@/lib/inbox/notice-demotion';
+import { isNoMoveNotice, rawMailKindOf, isAutomatedSenderStrong, listMailOf } from '@/lib/inbox/notice-demotion';
 import { fromEmailOf } from '@/lib/home/deck-floors';
 import { NEEDS_SHAPING_WORD } from '@/lib/work/machine';
 // THE EXCERPT-HONESTY LAW, on a surface instead of a prompt (Q9 · the triage card shows the
 // message's own first words): the ONE clipper, word-boundary, declaring its own cut.
 import { clipForPrompt } from '@/lib/utils/clip-for-prompt';
+// THE ONE ENTITY DECODER (W5b): provider snippets arrive HTML-escaped; a plain excerpt never shows
+// `&#39;` as text.
+import { decodeEntities } from '@/lib/core/text';
 // THE ONE PREPARED-WORK READER's pure half — no queries, so the ledger's own pool read is the only
 // IO on this path. The deck needs to know a card HAS prepared work before it offers to review it.
 import { preparedFromSourceData } from '@/lib/prepare/read';
@@ -70,6 +73,8 @@ export type WhyNowFacts = {
   dueToday?: boolean;
   /** The deck's own prepared token — 'draft' (in-house) or a coworker's name. */
   prepared?: string | null;
+  /** WHAT is prepared — THE ONE READER's lead kind (W2.1); the receipt words itself by it. */
+  preparedKind?: string | null;
   /** THE MACHINE'S ONE WORD (lib/work/machine.ts STATE_WORDS), as served. */
   stateWord?: string | null;
   /** A1's calendar half — this row's counterparty sits on the near calendar. */
@@ -94,9 +99,7 @@ function clipClause(s: string, max = WHY_NOW_MAX_CHARS): string {
 
 /** THE RECEIPT HALF, mapped (never authored) — the same mapping `calm.receiptOf` prints. */
 function receiptWord(f: WhyNowFacts): string | null {
-  if (!f.prepared) return null;
-  if (f.source === 'reply') return 'reply ready';
-  return f.prepared === 'draft' ? 'drafted' : 'ready to send';
+  return receiptWordOf(f.prepared ?? null, f.preparedKind ?? null, f.source);
 }
 
 /** THE WHY-YOU HALF — what this lane means for the person reading it. Honest per lane: a `notice`
@@ -175,6 +178,8 @@ export type AttentionRow = {
   whyNow: string;
   calendarAdjacent?: boolean;
   prepared?: string | null;
+  /** WHAT is prepared (W2.1) — rides beside the who-token so the receipt can word itself. */
+  preparedKind?: string | null;
   overdue?: boolean;
   dueToday?: boolean;
   dueDate?: string | null;
@@ -387,6 +392,8 @@ export type HeldFacts = {
  *
  *   1. brought_forward — CONTEXT RE-PROMOTES IT. A row whose counterparty sits on the near calendar
  *      is held only because the budget was full; it is the first thing the ledger should offer back.
+ *      NEVER NOISE (W5b): a row the bulk or notice floors below would file is not alive, so no
+ *      calendar adjacency can promote it (a notetaker bot is an attendee of every meeting it records).
  *   2. own_outreach   — the echo floor (LAW 5): the user's own outbound campaign coming back.
  *      Above the notice law deliberately: `isNoMoveNotice` also swallows echoes, and "your own
  *      sequence answered itself" is a far better account than "a notice".
@@ -421,23 +428,43 @@ export function classifyHeld(f: HeldFacts): HeldClassId {
   // today's calendar. Requiring `budgetOverflow` makes the class a strict subset of the WAITING band,
   // which is what lets the section dissolve into that band instead of standing as its own wall.
   const kindWord = (rawMailKindOf(sd) ?? '').toLowerCase();
-  if (f.calendarAdjacent && f.budgetOverflow === true && kindWord !== 'calendar') return 'brought_forward';
-  if (f.isEcho) return 'own_outreach';
-  if (f.judgedNone && f.judgedResolution) return 'judged_quiet';
-
   const kind = kindWord;
-  if (u?.bulk === true || kind === 'newsletter' || sd.has_unsubscribe === true
-    || it.rule_type === 'marketing') return 'bulk_mail';
-
+  // THE NOISE FACTS, read ONCE and BEFORE adjacency (W5b, owner walk Sep 23): a notetaker bot's
+  // address sits on the calendar as an ATTENDEE of every recorded meeting, so its "your bot wasn't
+  // admitted" notices were calendar-adjacent and LED the waiting band as brought-forward — A3's
+  // own words forbid exactly that ("never a promotion of a newsletter whose sender happens to sit
+  // on today's calendar"). Adjacency promotes something already ALIVE; bulk mail and no-move
+  // notices never are, so they can never be brought forward.
+  const bulk = u?.bulk === true || kind === 'newsletter' || sd.has_unsubscribe === true
+    || it.rule_type === 'marketing';
   const noMove = isNoMoveNotice({
     u, rawKind: rawMailKindOf(sd), fromEmail: fromEmailOf(sd),
     fromName: (sd.from_name as string) || null,
     subject: (sd.subject as string) || it.work_title || null,
     workState: (it.work_state as string) || null,
     campaignEcho: f.isEcho,
+    listMail: listMailOf(sd),
   });
-  if (noMove || isAutomatedSenderStrong(fromEmailOf(sd), (sd.from_name as string) || null,
-    (sd.subject as string) || it.work_title || null)) return 'notices';
+  const autoSender = isAutomatedSenderStrong(fromEmailOf(sd), (sd.from_name as string) || null,
+    (sd.subject as string) || it.work_title || null);
+  const notice = noMove || autoSender;
+  // The echo is NOT noise for adjacency (the precedence below is deliberate: a reply into your own
+  // sequence from someone on your calendar is alive) — so the adjacency test asks the notice law
+  // WITHOUT the echo input; everything else it swallows is noise.
+  const noticeApartFromEcho = autoSender || (f.isEcho ? isNoMoveNotice({
+    u, rawKind: rawMailKindOf(sd), fromEmail: fromEmailOf(sd),
+    fromName: (sd.from_name as string) || null,
+    subject: (sd.subject as string) || it.work_title || null,
+    workState: (it.work_state as string) || null,
+    campaignEcho: false,
+    listMail: listMailOf(sd),
+  }) : noMove);
+  if (f.calendarAdjacent && f.budgetOverflow === true && kindWord !== 'calendar' && !bulk && !noticeApartFromEcho) return 'brought_forward';
+  if (f.isEcho) return 'own_outreach';
+  if (f.judgedNone && f.judgedResolution) return 'judged_quiet';
+
+  if (bulk) return 'bulk_mail';
+  if (notice) return 'notices';
 
   const bystander = sd.is_cc_only === true || u?.role === 'bystander' || u?.role === 'one_of_many';
   const owesNothing = u?.ownership !== 'you_owe';
@@ -801,18 +828,26 @@ export const graduationSentence = (days: number): string =>
 
 const memberOf = (cls: HeldClassId, m: HeldFacts): HeldBandRow => {
   const sd = (m.item.source_data ?? {}) as Record<string, unknown>;
-  const body = String(sd.body ?? '').replace(/\s+/g, ' ').trim();
+  // DECODED ONCE, BEFORE THE CLIP (W5b): the clip measures characters the reader will see, and an
+  // escaped snippet ("wasn&#39;t") must never reach a card as literal text.
+  const body = decodeEntities(String(sd.body ?? '')).replace(/\s+/g, ' ').trim();
+  const from = (sd.from_name as string) || (sd.from_address as string) || null;
   // GROUNDED-OR-ABSENT, per field. A row with no stored body shows no excerpt rather than an empty
   // quotation; a row with no sender shows no name rather than "(unknown)".
   return {
     itemId: String(m.item.id),
-    subject: clipSubject(String((sd as any).subject ?? m.item.work_title ?? '(no subject)')),
+    subject: clipSubject(decodeEntities(String((sd as any).subject ?? m.item.work_title ?? '(no subject)'))),
     why: whyHeldOf(cls, m),
     dueDate: statedDueOf(m.item),
     cls,
-    from: (sd.from_name as string) || (sd.from_address as string) || null,
+    from: from ? decodeEntities(from) : null,
     excerpt: body ? clipForPrompt(body, HELD_EXCERPT_CHARS) : null,
-    prepared: preparedFromSourceData(sd as never)[0]?.kind ?? null,
+    // THE SENDER FLOOR REACHES THE RECEIPT (W5b, owner walk Sep 23 — an automated "your bot wasn't
+    // admitted" notice wore "draft ready"). Noise never gets drafts; a draft that predates the
+    // floor (or slipped past it) is not prepared work the reader should be offered. A row filed in
+    // a NOISE class serves no prepared kind, so no surface can chip it. The artifact itself is
+    // stripped by the verdict's own consequence module when the item is next judged.
+    prepared: NOISE_CLASSES.has(cls) ? null : (preparedFromSourceData(sd as never)[0]?.kind ?? null),
   };
 };
 

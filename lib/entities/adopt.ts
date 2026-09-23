@@ -21,7 +21,7 @@ export async function adoptEntity(
   const r = await absorbEntity(supabase, userId, targetId, sourceId);
   if (!r.ok) return { ok: false };
 
-  // LABEL-ERA MEMBERS (the iScore class): entities from before the link backfills hold their
+  // LABEL-ERA MEMBERS (the pre-backfill-account class): entities from before the link backfills hold their
   // members as `initiative` strings on items, not links. The user just CONFIRMED this adoption —
   // link those members to the target (only items with NO existing link; never steal from
   // another entity). via 'user' (the confirm), unlocked (reconcile may still refine per-item).

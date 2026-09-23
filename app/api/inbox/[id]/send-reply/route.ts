@@ -7,7 +7,11 @@ import { sendOutlookReply } from '@/lib/microsoft/outlook';
 import { ContextService } from '@/lib/context/context-service';
 import { logActivity } from '@/lib/activity/log';
 import { resolveConnectionForItem } from '@/lib/inbox/resolve-connection';
-import { checkRateLimit } from '@/lib/utils/rate-limit';
+import { claimCommit, recordCommitResult, releaseCommitClaim } from '@/lib/work/commit-door';
+
+// THE AFTER() BUDGET (W0.4): the after() block re-authors the room brief (AI) and reconciles labels —
+// it must not die at the platform default.
+export const maxDuration = 120;
 
 // Plain-text, whitespace-normalised view of a draft for comparing AI vs sent.
 const norm = (s: string) => s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
@@ -54,17 +58,36 @@ export async function POST(
     // SAME reply ~19× at 2–3s intervals to one thread (which then inflated the day-cleared ring and, worse,
     // actually delivered ~50 duplicate emails). A reply is only ever meant ONCE per (item, body): dedup on
     // a content hash so a burst can't send twice, while a genuinely DIFFERENT follow-up — or the same text
-    // sent much later — still goes through. Two layers: an in-memory guard (catches a burst hitting the
-    // same warm serverless instance) + a DB-stamped backstop on source_data (survives cold starts / spans
-    // instances). Either match within the 2-min window → an idempotent no-op (no send, no re-resolve).
+    // sent much later — still goes through. The DB-stamped backstop on source_data stays (a match inside
+    // the 2-min window → an idempotent no-op); the atomic guarantee is THE COMMIT DOOR below (W0.4 —
+    // the in-memory limiter only ever caught a burst on one warm instance).
     const bodyHash = createHash('sha1').update(norm(customMessage || '')).digest('hex').slice(0, 16);
     const lastAt = sourceData?.last_reply_at ? Date.parse(sourceData.last_reply_at) : 0;
     const dbDuplicate = !!lastAt && Date.now() - lastAt < DEDUP_WINDOW_MS && sourceData?.last_reply_hash === bodyHash;
-    const memGuard = checkRateLimit(`send-reply:${user.id}:${id}:${bodyHash}`, 1, DEDUP_WINDOW_MS);
-    if (dbDuplicate || !memGuard.allowed) {
+    if (dbDuplicate) {
       console.warn('[SendReply] deduped a duplicate/looping send for item', id);
       return NextResponse.json({ success: true, deduped: true });
     }
+
+    // ── THE COMMIT DOOR (W0.4 — EXACTLY-ONCE DEEDS). The read-then-write hash above and the old
+    // in-memory limiter both let two concurrent requests through (each read "not sent yet"); the
+    // claim is ONE atomic insert. The key carries the thread's CURRENT ground (its last activity):
+    // a double-click on the same state sends once, while the same words answering a NEW inbound
+    // later are a new deed, never a swallowed duplicate.
+    const ground = String(item.last_activity_at ?? sourceData?.received_at ?? item.created_at ?? '');
+    const recipients = createHash('sha1').update(JSON.stringify([to ?? '', cc ?? '', bcc ?? ''])).digest('hex').slice(0, 8);
+    const idemKey = `reply:${id}:${bodyHash}:${recipients}:${ground}`;
+    const claim = await claimCommit(supabase, user.id, {
+      idempotencyKey: idemKey, actionType: 'send_reply',
+      payload: { itemId: id, to: to ?? sourceData?.from ?? null, cc: cc ?? null, provider: sourceData?.provider ?? null },
+    });
+    if (claim.status === 'duplicate') {
+      if (claim.priorResult == null) {
+        return NextResponse.json({ error: 'That reply is already on its way.' }, { status: 409 });
+      }
+      return NextResponse.json({ success: true, deduped: true });
+    }
+    const release = async () => { if (claim.status === 'claimed') await releaseCommitClaim(supabase, user.id, idemKey); };
 
     // Get user's email connection — prefer connection_id FK, else recipient-aware provider resolution
     // (so a user with two accounts of the same provider replies from the mailbox the mail arrived on).
@@ -72,6 +95,7 @@ export async function POST(
 
     if (!connection) {
       console.error('[SendReply] No connection found for item', id, 'provider:', sourceData.provider);
+      await release();
       return NextResponse.json({ error: 'Email connection not found' }, { status: 404 });
     }
 
@@ -80,49 +104,57 @@ export async function POST(
     // Send reply based on provider
     let sentMessageId: string;
 
-    if (sourceData.provider === 'gmail') {
-      sentMessageId = await sendGmailReply({
-        encryptedTokens: connection.metadata.tokens,
-        threadId: sourceData.thread_id,
-        messageId: sourceData.message_id,
-        to: to || sourceData.from,
-        subject: sourceData.subject,
-        body: messageBody,
-        inReplyTo: sourceData.message_id,
-        references: sourceData.references,
-        attachments,
-        cc: cc || undefined,
-        bcc: bcc || undefined,
-      });
-    } else if (sourceData.provider === 'outlook') {
-      // Graph API needs the internal Outlook ID (not the RFC 2822 internet message ID).
-      // Look it up from the emails table where it's stored in metadata.outlook_id.
-      let outlookMessageId = sourceData.message_id;
-      if (sourceData.email_id) {
-        const { data: email } = await supabase
-          .from('emails')
-          .select('metadata')
-          .eq('id', sourceData.email_id)
-          .single();
-        if (email?.metadata?.outlook_id) {
-          outlookMessageId = email.metadata.outlook_id;
+    try {
+      if (sourceData.provider === 'gmail') {
+        sentMessageId = await sendGmailReply({
+          encryptedTokens: connection.metadata.tokens,
+          threadId: sourceData.thread_id,
+          messageId: sourceData.message_id,
+          to: to || sourceData.from,
+          subject: sourceData.subject,
+          body: messageBody,
+          inReplyTo: sourceData.message_id,
+          references: sourceData.references,
+          attachments,
+          cc: cc || undefined,
+          bcc: bcc || undefined,
+        });
+      } else if (sourceData.provider === 'outlook') {
+        // Graph API needs the internal Outlook ID (not the RFC 2822 internet message ID).
+        // Look it up from the emails table where it's stored in metadata.outlook_id.
+        let outlookMessageId = sourceData.message_id;
+        if (sourceData.email_id) {
+          const { data: email } = await supabase
+            .from('emails')
+            .select('metadata')
+            .eq('id', sourceData.email_id)
+            .single();
+          if (email?.metadata?.outlook_id) {
+            outlookMessageId = email.metadata.outlook_id;
+          }
         }
+        sentMessageId = await sendOutlookReply({
+          encryptedTokens: connection.metadata.tokens,
+          messageId: outlookMessageId,
+          body: messageBody,
+          attachments,
+          to: to || undefined,
+          cc: cc || undefined,
+          bcc: bcc || undefined,
+        });
+      } else {
+        await release();
+        return NextResponse.json(
+          { error: 'Unsupported provider' },
+          { status: 400 }
+        );
       }
-      sentMessageId = await sendOutlookReply({
-        encryptedTokens: connection.metadata.tokens,
-        messageId: outlookMessageId,
-        body: messageBody,
-        attachments,
-        to: to || undefined,
-        cc: cc || undefined,
-        bcc: bcc || undefined,
-      });
-    } else {
-      return NextResponse.json(
-        { error: 'Unsupported provider' },
-        { status: 400 }
-      );
+    } catch (sendErr) {
+      // A FAILED SEND RELEASES ITS CLAIM — nothing left the mailbox, so a retry must be able to fire.
+      await release();
+      throw sendErr;
     }
+    if (claim.status === 'claimed') await recordCommitResult(supabase, user.id, idemKey, `Reply sent (${sentMessageId || 'ok'})`);
 
     // Log learning signal
     const { error: signalError } = await supabase.from('learning_signals').insert({
@@ -152,17 +184,26 @@ export async function POST(
       ContextService.logDraftEdit(user.id, id, norm(aiDraft), norm(customMessage || '')).catch(() => {});
     }
 
-    // THE OUTCOME LOG (proactive-team R1) — the prepared reply's fate, stamped at its resolution
-    // moment: sent verbatim (accepted) or changed first (edited, with a rough edit share). The raw
-    // evidence the learning arc + the future autonomy ladder need and cannot backfill.
-    if (typeof aiDraft === 'string' && aiDraft.trim()) {
-      const { logPreparedOutcome, estimateEditShare } = await import('@/lib/prepare/outcome');
-      const sentBody = customMessage || aiDraft;
-      const edited = norm(aiDraft) !== norm(sentBody);
-      logPreparedOutcome(supabase, user.id, {
-        outcome: edited ? 'edited' : 'accepted', artifact: 'reply_draft', itemKind: 'inbox', itemId: id,
-        ...(edited ? { editShare: estimateEditShare(aiDraft, sentBody) } : {}),
-      }).catch(() => {});
+    // THE OUTCOME LOG (proactive-team R1 → W3.2 THE TWO-WAY LEDGER) — the prepared reply's fate,
+    // stamped at its resolution moment: sent verbatim (accepted) or changed first (edited, with a
+    // rough edit share). THE PREPARED TEXT is the one the client seeded (`aiDraft`) — else the
+    // server's own STORED unsent draft: a surface that posts without `aiDraft` (the stage send did,
+    // for weeks — every accept/edit went unlogged) is still measured against what we prepared.
+    {
+      const storedDraft = (sourceData as { draft?: { body?: unknown; sent_at?: unknown; generated_at?: unknown } } | null)?.draft;
+      const storedBody = storedDraft && typeof storedDraft.body === 'string' && !storedDraft.sent_at ? storedDraft.body : '';
+      const prepared = typeof aiDraft === 'string' && aiDraft.trim() ? aiDraft : storedBody;
+      if (prepared.trim()) {
+        const { logPreparedOutcome, sendVerdict } = await import('@/lib/prepare/outcome');
+        const sentBody = customMessage || prepared;
+        const v = sendVerdict(prepared, sentBody);
+        logPreparedOutcome(supabase, user.id, {
+          outcome: v.outcome, artifact: 'reply_draft', itemKind: 'inbox', itemId: id,
+          ...(v.editShare !== undefined ? { editShare: v.editShare } : {}),
+          door: 'send_reply', source: sourceData,
+          preparedAt: typeof storedDraft?.generated_at === 'string' ? storedDraft.generated_at : null,
+        }).catch(() => {});
+      }
     }
 
     // Resolution-on-reply: the loop is closed — clear this item so it leaves "Needs reply"

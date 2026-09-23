@@ -7,6 +7,7 @@ import { setInboxRules, shouldDraftReply } from '@/lib/inbox/classify-item';
 import { detectLanguage } from '@/lib/inbox/detect-language';
 import { generateReplyDraft } from '@/lib/inbox/draft-reply';
 import { loadPlanStepSummaries, type ItemPlanKind } from '@/lib/home/item-plan';
+import { firstEmailIn, looksLikeEmail } from '@/lib/core/email';
 
 export const maxDuration = 30;
 
@@ -22,12 +23,11 @@ export const maxDuration = 30;
 
 type Kind = 'meeting' | 'commitment' | 'awareness' | 'email';
 
-const EMAIL_RE = /[^\s<>"]+@[^\s<>"]+\.[^\s<>"]+/;
-const extractEmail = (s?: string | null): string | null => (s ? (s.match(EMAIL_RE)?.[0] ?? null) : null);
+const extractEmail = (s?: string | null): string | null => firstEmailIn(s);
 const extractName = (s?: string | null): string | null => {
   if (!s) return null;
   const t = s.replace(/<[^>]*>/g, '').trim().replace(/^"|"$/g, '').trim();
-  return t && !EMAIL_RE.test(t) ? t : null;
+  return t && !looksLikeEmail(t) ? t : null;
 };
 
 function paraHTML(text: string): string {
@@ -79,6 +79,8 @@ export async function POST(request: NextRequest) {
     // inbox item should never get a canned reply (the user can still write one). Set only in the
     // awareness/email branch, from the item's own classification (never sender/subject keywords).
     let skipDraft = false;
+    let pooledBody = '';            // W2.1 — a pooled nudge served in place of a fresh draft
+    let pooledBy: string | null = null;
     // For an email/awareness item that genuinely owes a reply, we draft via the shared reply drafter
     // (`generateReplyDraft`) — it detects + mirrors the INCOMING email's language (the A2 fix), so the
     // reply comes back in the thread's language, not the user's default. Set to the item's source_data.
@@ -121,6 +123,15 @@ export async function POST(request: NextRequest) {
         ? intent.trim()
         : `Write a brief follow-up email to the meeting attendees, summarizing what was decided and confirming the next step. Keep it warm and concise.`;
     } else if (kind === 'commitment') {
+      // W2.1 ONE READER PER OBJECT: the prepare pass already wrote this commitment's nudge to the
+      // pool — serve THAT (live: unsent, not superseded) instead of paying for a fresh draft on
+      // every open; a fresh draft only when nothing is pooled. Recipient/subject still resolve below.
+      try {
+        const { preparedState } = await import('@/lib/prepare/read');
+        const st = await preparedState(supabase, user.id, { kind: 'commitment', id: entityId });
+        const pooled = st.live.find((a) => (a.kind === 'nudge_draft' || a.kind === 'reply_draft') && a.content.trim());
+        if (pooled && !intent?.trim()) { pooledBody = pooled.content; pooledBy = pooled.by; }
+      } catch { /* the reader is an enhancement — fall through to drafting */ }
       // entityId = the commitment id. Recipient = its counterparty; source thread's sender as fallback.
       const { data: c } = await supabase
         .from('commitments')
@@ -195,8 +206,9 @@ export async function POST(request: NextRequest) {
 
     // Draft in the user's voice — same voice block the reply drafter uses (per-recipient tone). Skipped
     // for FYI/`noted` inbox items (recipient/subject still returned; the user writes the body themselves).
-    let body = '';
-    if (!skipDraft && replyItemSD) try {
+    let body = pooledBody;
+    if (pooledBody) { /* served from the pool — no AI call */ }
+    else if (!skipDraft && replyItemSD) try {
       // Fix 3 — draft ↔ plan coherence: load this item's LIVE plan step summaries (deep-dives plan
       // inbox items under kind 'email') so the reply narrates one story with the Identified tasks.
       const planSteps = await loadPlanStepSummaries(supabase, user.id, 'email' as ItemPlanKind, entityId).catch(() => []);
@@ -235,6 +247,7 @@ export async function POST(request: NextRequest) {
       subject,
       bodyHTML: body ? paraHTML(body) : '',
       recipientName: recipientName ?? null,
+      ...(pooledBody ? { prepared: true, preparedBy: pooledBy } : {}),
     });
   } catch (error) {
     console.error('[compose/draft] error:', error);

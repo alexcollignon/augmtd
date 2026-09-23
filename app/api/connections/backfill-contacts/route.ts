@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { upsertContacts } from '@/lib/contacts/extract-contacts';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 export const maxDuration = 60;
 
@@ -42,15 +43,20 @@ export async function POST() {
     return NextResponse.json({ message: 'Already seeded', contactsTotal: existing });
   }
 
-  // Read up to 5000 emails from the emails table
-  const { data: emails, error: emailsError } = await adminSupabase
-    .from('emails')
-    .select('from_address, from_name, to_addresses, cc_addresses, received_at')
-    .eq('user_id', user.id)
-    .order('received_at', { ascending: false })
-    .limit(5000);
-
-  if (emailsError) {
+  // Read up to 5000 emails from the emails table.
+  // NO SILENT CAPS (W1.6): `.limit(5000)` on PostgREST silently returns only its 1000-row page —
+  // paged via fetchAllRows so a real backfill actually sees up to 5000, not an arbitrary 1000.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let emails: any[];
+  try {
+    emails = await fetchAllRows<any>((from, to) => // eslint-disable-line @typescript-eslint/no-explicit-any
+      adminSupabase
+        .from('emails')
+        .select('from_address, from_name, to_addresses, cc_addresses, received_at')
+        .eq('user_id', user.id)
+        .order('received_at', { ascending: false })
+        .range(from, to), { maxRows: 5000 });
+  } catch {
     return NextResponse.json({ error: 'Failed to fetch emails' }, { status: 500 });
   }
 

@@ -100,6 +100,12 @@ const PAIR_SRC =
   `|(?<m2>${MONTH_ALT})\\b\\.?\\s+(?<d2>\\d{1,2})(?<ord2>st|nd|rd|th)?(?![:\\d]))` +
   `(?:\\s*,?\\s*(?<yr>\\d{4})\\b)?`;
 
+/** THE MAY RULE (W3.4): "may" is the month only in a date shape that does not read on as a verb.
+ *  A following lowercase word that is not a date-tail word ("Monday 15 may be fine") makes it the
+ *  auxiliary — the pair is not parsed and the floor keeps its hands off. Shared with the stated-
+ *  window parser (lib/commitments/extraction-truth.ts) so both floors read "may" one way. */
+export const MAY_VERB_TAIL = /^\s+(?!(?:or|and|at|to|by|from|for|until|\d))[a-z]/;
+
 /** Words that may legitimately follow a bare day-number in scheduling prose. Anything else ("Friday
  *  15 people attended") means the number was never a date, and the floor keeps its hands off. */
 const MONTHLESS_TAIL_RE = new RegExp(
@@ -188,6 +194,8 @@ export function enforceWeekdayDatePairs(text: string, opts: { now?: Date; userTe
       if (monthTok) {
         const mi = MONTHS[String(monthTok).toLowerCase()];
         if (mi === undefined) return null;
+        // THE MAY RULE — the auxiliary verb is never the month.
+        if (mi === 4 && g.m1 && MAY_VERB_TAIL.test(text.slice(at + whole.length))) return null;
         month = mi;
         year = yr ?? currentYear;
         if (yr === null) {

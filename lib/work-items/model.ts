@@ -8,13 +8,18 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getUnderstanding } from '@/lib/inbox/item-understanding';
 import { isAutomatedSender, isAutomatedWho } from '@/lib/inbox/automated';
-import { isNoMoveNotice, rawMailKindOf } from '@/lib/inbox/notice-demotion';
+import { isNoMoveNotice, rawMailKindOf, listMailOf } from '@/lib/inbox/notice-demotion';
 import { buildInitiativeMap } from '@/lib/projects/initiative-resolver';
 import { computeEventUnderstanding } from '@/lib/calendar/event-understanding';
 import { resolveOutboundAwaiting } from '@/lib/outbound/resolve';
 import { reconcileRepliedItems } from '@/lib/inbox/reconcile-replied';
 import { isDupOfVisible, visibleObligationsFromItems } from '@/lib/home/dedupe-deck';
 import { inferBucket, type TimeBucket } from './timeframe';
+// ONE OPEN-STATUS CONSTANT (W2.2): the fetch and the in-memory "open" test read the SAME set — they
+// used to disagree inside this file (a fetched 'in_progress' row was then treated as not open).
+import { OPEN_COMMITMENT_STATUSES, isOpenCommitmentStatus } from '@/lib/core/statuses';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
+import { MIRROR_SOURCE } from '@/lib/inbox/commitment-mirrors';
 
 // 'event' = a scheduled calendar meeting — a dated CONTEXT point, never an action (no done/dismiss). It
 // rides the same spine so the Timeline shows real meetings, and (Phase 4) projects see them as activity.
@@ -187,7 +192,10 @@ export async function buildWorkItems(
   const [inboxPending, inboxResolved, commitsOpen, commitsDone, { data: threads }, { data: basisRows }] = await Promise.all([
     // LIVE — the product. Ordered newest-activity first so a cap that ever bites drops the quietest
     // rows, never the ones a person is looking at today.
-    runLane<Row>((ids) => withIds(supabase.from('inbox_items').select(INBOX_COLS)
+    // THE MIRROR FLOOR (W2.3): a historical `source='commitment'` row is a second home for a
+    // commitment the commitment lane below already carries — excluded here so it is never judged,
+    // prepared or shown twice. One predicate, `lib/inbox/commitment-mirrors.ts`, every listing read.
+    runLane<Row>((ids) => withIds(supabase.from('inbox_items').select(INBOX_COLS).neq('source', MIRROR_SOURCE)
       .eq('user_id', userId).eq('status', 'pending')
       .or('work_state.in.(work_prepared,decision_required,action_required),rule_type.in.(needs_reply,to_do,waiting_on),source.eq.meeting'), ids)
       .order('last_activity_at', { ascending: false, nullsFirst: false })
@@ -199,16 +207,16 @@ export async function buildWorkItems(
     // today's `resolved_at` while being, in truth, months-old rows nobody touched. Counting them as
     // recent history buries the real deeds and (before the split) ate the whole page. `is.null`
     // rides the filter because SQL's `!=` drops NULLs — a row with no reason is a human deed.
-    runLane<Row>((ids) => withIds(supabase.from('inbox_items').select(INBOX_COLS)
+    runLane<Row>((ids) => withIds(supabase.from('inbox_items').select(INBOX_COLS).neq('source', MIRROR_SOURCE)
       .eq('user_id', userId).in('status', ['completed', 'dismissed'])
       .gte('source_data->>resolved_at', doneSince)
       .or('source_data->>resolution_reason.is.null,source_data->>resolution_reason.neq.graduated'), ids)
       .order('source_data->>resolved_at', { ascending: false })
       .limit(scope ? ID_CHUNK : RESOLVED_CAP)),
-    // Active commitments use status 'open' (some legacy 'pending'; B4 adds the human-set
-    // 'in_progress'); resolved = done/dismissed. 'suggested' (B2) is excluded by construction.
+    // Active commitments = the ONE open set (lib/core/statuses: 'open' + legacy 'pending' + the
+    // human-set 'in_progress'); resolved = done/dismissed. 'suggested' (B2) is excluded by construction.
     runLane<Row>((ids) => withIds(supabase.from('commitments').select(COMMIT_COLS)
-      .eq('user_id', userId).in('status', ['open', 'pending', 'in_progress']), ids)
+      .eq('user_id', userId).in('status', [...OPEN_COMMITMENT_STATUSES]), ids)
       .order('created_at', { ascending: false })
       .limit(scope ? ID_CHUNK : COMMIT_OPEN_CAP)),
     runLane<Row>((ids) => withIds(supabase.from('commitments').select(COMMIT_COLS)
@@ -281,7 +289,7 @@ export async function buildWorkItems(
     : inbox.filter((it) => String(it.status || 'pending') === 'pending');
   const pendingVisible = visibleObligationsFromItems(dedupeBasis);
   const dedupedCommits = commits.filter((c) => {
-    const open = ['open', 'pending'].includes(String(c.status || 'pending'));
+    const open = isOpenCommitmentStatus(c.status as string | null);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return !open || !isDupOfVisible(c as any, pendingVisible);
   });
@@ -334,7 +342,7 @@ export async function buildWorkItems(
     const overrideActionable = override === 'needs_reply' || override === 'to_do' || override === 'waiting_on';
     const automated = isMeeting ? false : (!overrideActionable && (
       isAutomatedSender(fromEmail, (sd.from_name as string) || null, subj) || u?.bulk === true ||
-      isNoMoveNotice({ u, rawKind: rawMailKindOf(sd), fromEmail, fromName: (sd.from_name as string) || null, subject: subj, workState: ws })
+      isNoMoveNotice({ u, rawKind: rawMailKindOf(sd), fromEmail, fromName: (sd.from_name as string) || null, subject: subj, workState: ws, listMail: listMailOf(sd) })
     ));
     items.push({
       id: `inbox:${it.id}`, entityId: String(it.id), kind,
@@ -492,12 +500,16 @@ export async function buildWorkItems(
     }
     const linkByItem = new Map(linkRows.map((l) => [l.item_id, l.entity_id]));
     // B4: the human's MANUAL priority (commitments.priority — migration 20260724c; the query simply
-    // returns nothing pre-migration, so this degrades to no overrides).
+    // returns nothing pre-migration, so this degrades to no overrides). NO SILENT CAPS (invariant
+    // 10): a human's explicit priority override is a decision, not an enhancement — an unpaged,
+    // unordered `.limit(500)` could silently drop a user's own override past 500 prioritized
+    // commitments. Paged, stable `id` order.
     const manualPriority = new Map<string, string>();
     {
-      const { data: pr } = await supabase.from('commitments').select('id, priority')
-        .eq('user_id', userId).not('priority', 'is', null).limit(500);
-      for (const p of (pr ?? []) as Array<{ id: string; priority: string | null }>) {
+      const pr = await fetchAllRows<{ id: string; priority: string | null }>((from, to) =>
+        supabase.from('commitments').select('id, priority')
+          .eq('user_id', userId).not('priority', 'is', null).order('id', { ascending: true }).range(from, to));
+      for (const p of pr) {
         if (p.priority) manualPriority.set(`commit:${p.id}`, String(p.priority));
       }
     }

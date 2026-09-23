@@ -42,12 +42,19 @@ export type PanelPlanInput = {
    *  not in the rail, not in the card — is what keeps ONE placement table: any future card that
    *  IS the room's decision sets this flag and inherits the yield by construction. */
   hasGatedDecision?: boolean;
+  /** THE MOVE YIELDS TO ANY MOUNTED CARD (stabilization W3.5 (b); registry precedence #10). The
+   *  room mounts a kit card for the move's own target — a draft, an invite, a forward, a paste
+   *  pack — and that card carries its own deed (Send · Approve · Copy). A `proposal` card above
+   *  it would be a second door to one deed. Found live: the yield covered ONLY the decision, so a
+   *  self-targeting move rendered an inert CTA above a ready reply card. Same table, one more
+   *  input — the rail states the fact, the table decides. */
+  moveCardMounted?: boolean;
 };
 
 export function panelPlan(raw: PanelPlanInput): PanelPlan {
   // ONE notion of "a decision is rendered here" — every kind of decision card folds into it
   // BEFORE the table reads it, so the table itself never branches on kind.
-  const input = { hasDecision: raw.hasDecision || !!raw.hasGatedDecision };
+  const input = { hasDecision: raw.hasDecision || !!raw.hasGatedDecision, cardForMove: !!raw.moveCardMounted };
   return {
     // The spec's seat order: the brief opens; the decision (when present) is the primary and sits
     // directly under it; a surviving ask follows (the editor reconciles coexistence); document
@@ -56,7 +63,8 @@ export function panelPlan(raw: PanelPlanInput): PanelPlan {
       ? ['brief', 'decision', 'ask', 'artifacts', 'move', 'composer']
       : ['brief', 'ask', 'artifacts', 'move', 'composer'],
     showOffers: !input.hasDecision,
-    showMove: !input.hasDecision,
+    // The MOVE yields to a rendered decision AND to any mounted card for its target.
+    showMove: !input.hasDecision && !input.cardForMove,
     mergedCardDecisionChips: false,
     stageHostsDecision: false,
   };

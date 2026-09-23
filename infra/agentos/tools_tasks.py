@@ -197,7 +197,10 @@ def update_task(
     so you have the current state. Supports rename, schedule, event doors, the inputs tray,
     the daily event limit, output settings, task instructions, status, pinned skills, and
     single-step edits (step_patch — identify the right step from the labels and prompts you
-    read). Act immediately — do not ask to confirm first.
+    read). Call it directly: the card is the user's confirmation, so a spoken "are you sure?"
+    first is redundant. A bare status change (pause/resume) applies at once; every other
+    change is PREPARED as a confirm card the user applies with one click — the result tells
+    you which happened, and a prepared change is never "done" until they click.
 
     Args:
         task_id: Task to update.
@@ -309,11 +312,14 @@ def update_task(
 
 @tool
 def run_task(run_context: RunContext, task_id: str) -> str:
-    """Trigger an immediate manual run of an existing task. Use list_tasks to find
-    the ID first.
+    """Prepare an immediate manual run of an existing task. Call when the user asks to
+    run, execute, or trigger a task RIGHT NOW; use list_tasks to find the ID first. The
+    run is PREPARED as a confirm card — it starts only when the user clicks Apply on it;
+    say it is ready to confirm, never that it is running. NOT for "resume" / "unpause" /
+    "turn it back on" — those put the schedule back on, which is set_tasks_status.
 
     Args:
-        task_id: Task to run now.
+        task_id: Task to run.
     """
     deps = run_context.dependencies or {}
     return _call("run_task", run_context, task_id=task_id, thread_id=deps.get("thread_id"))
@@ -390,7 +396,10 @@ def duplicate_task(run_context: RunContext, task_id: str, name: Optional[str] = 
 
 @tool
 def share_task(run_context: RunContext, task_id: str, action: str = "share") -> str:
-    """Share one of your tasks with the team, or stop sharing it.
+    """Share one of your tasks with the team, or stop sharing it. Shared tasks appear in
+    teammates' workers under "From the team" — they can copy them. The change is PREPARED
+    as a confirm card and applies only on the user's click — never say it is shared (or
+    unshared) until they have.
 
     Args:
         task_id: Task to share/unshare.
@@ -418,8 +427,10 @@ def use_task(run_context: RunContext, task_id: str) -> str:
 
 @tool
 def delete_task(run_context: RunContext, task_id: str) -> str:
-    """Permanently delete a task. Only when the user explicitly asks. Confirm the
-    task name first — this is irreversible.
+    """Permanently delete a task. Call only when the user explicitly asks to delete or
+    remove a task. Irreversible — the deletion is PREPARED as a confirm card that names
+    the task, and happens only when the user clicks Apply on it; never say it is deleted
+    until they have.
 
     Args:
         task_id: Task to delete.

@@ -6,6 +6,10 @@ import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createManualTask } from '@/lib/commitments/manual';
 
+// W0.5 TIME BUDGET: runTails reconciles membership (AI-bearing refreshEntityState) in after() —
+// the platform default kills it mid-work, silently dropping the reconcile (CLAUDE.md maxDuration lesson).
+export const maxDuration = 300;
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();

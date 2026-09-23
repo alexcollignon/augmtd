@@ -27,7 +27,7 @@ import {
   executeWebSearch, executeFetchUrl,
   executeGetEmails,
   deepResearchDefinition, executeDeepResearch,
-  executeSlackListChannels, executeSlackPostMessage, executeSlackReadMessages, executeSlackListMembers,
+  executeSlackListChannels, executeSlackReadMessages, executeSlackListMembers,
   executeFindTeamWork, executeReadTeamWork,
   executeComposeEmail, getUserEmailIdentities, type EmailDraft,
   executeRunCompute, type ComputeConfig,
@@ -52,8 +52,8 @@ import { readMeetingContext } from '@/lib/tools/get-meeting-context';
 import { readCalendar } from '@/lib/tools/check-calendar';
 import {
   executeSupplyRunInput,
-  executeListTasks, executeCreateTask, executeGetTask, executeUpdateTask, executeDuplicateTask, executeDeleteTask, executeRunTask,
-  executeShareTask, executeListTeamTasks, executeUseTask, executeSetTasksStatus, spokenIsResumeNotRun,
+  executeListTasks, executeCreateTask, executeGetTask, executeUpdateTask, executeDuplicateTask,
+  executeListTeamTasks, executeUseTask, executeSetTasksStatus, spokenIsResumeNotRun,
   executeListWorkerDocuments, executeGetWorkerDocument,
 } from '@/lib/tools/worker-tasks';
 import { executeListSkills, executeApplySkill } from '@/lib/tools/worker-skills';
@@ -69,6 +69,13 @@ import type { EventSpec } from '@/lib/present/event';
 // THE POINTER IS ONE SHAPE (W4-C, Sep 22): what a presented card persists as, written the same way
 // by this route, the AgentOS bridge and the Home ask door.
 import { collectionPointer, eventPointer, type CollectionTurnPointer, type EventTurnPointer } from '@/lib/present/pointer';
+// THE CONFIRM CARD (stabilization W0.3b — HUMAN IN THE LOOP): a class-A state change from this
+// tool-bearing lane is PREPARED, never applied; the user's click on /api/changes/[id]/apply runs
+// the SAME executor. ONE policy (confirmClassOf) says which tools; this route holds no list.
+import { changePointer, type ChangeSpec, type ChangeTurnPointer } from '@/lib/present/change';
+import { confirmClassOf } from '@/lib/work/confirm-policy';
+import { prepareChange } from '@/lib/work/pending-change';
+import { prepareSlackPostArgs } from '@/lib/tools/slack';
 // THE ONE COWORKER TOOL TABLE (Sep 21, CLASS 2) — the door's list is DERIVED from the capability
 // registry there, never pushed as literals here.
 import { buildCoworkerTools } from '@/lib/work/chat-tool-defs';
@@ -497,7 +504,7 @@ export async function POST(
               : '',
             routinesBrief || '',
             `[TOOLS YOU HAVE RIGHT NOW — use them, never claim otherwise]\n- web_search: search the live web for any news, data, or information. Call it immediately when the user asks about anything current.\n- fetch_url: read the full content of any URL.\n- deep_research: multi-source research synthesis for complex topics.${features.email ? "\n- get_emails: read the user's inbox." : ''}${features.meetings ? '\n- get_meeting_context: read their calendar and meetings.' : ''}${features.meetings ? '\n- check_calendar: read the calendar for a date range (busy/free per day, optional free-slot proposals) — ALWAYS call it before any claim about availability, free time or scheduling; never state availability from memory.' : ''}\nNEVER say you cannot access the web, live data, news sources, or current information. You can. Call web_search and do it.`,
-            `[TASKS]\nA task is reusable structured work you set up once. It runs on a schedule OR on demand whenever asked (run_task) — so neither of you rebuilds it each time. Offer to set one up whenever work is repeatable, even without a schedule ("want me to save this as a task you can re-run anytime?").\n- list_tasks — see what's already running\n- create_task — set up something new from a plain description\n- get_task — read the full config of a task (steps, schedule, language, instructions)\n- update_task — edit any aspect: name, schedule, output language, task instructions, step prompts, status\n\nA task can also start on EVENTS, not just a schedule: pass trigger_doors on create_task (or add_trigger_doors / remove_trigger_doors on update_task) when the user says the work should begin when an email arrives, a file lands in Knowledge, a meeting is recorded, or another named task delivers — the door verbs are additive, so doors you don't mention are kept.\n\nA task can also PIN REFERENCE MATERIAL it reads every run — a policy, template, rubric or brand guide: pass input_doc_names on create_task (or add_input_docs / remove_input_docs on update_task) with the document's name as the user says it, and input_accept_material when the work is done on something handed over at run time ("when I upload a CV"). These verbs are additive too, and get_task shows the tray as "Inputs:".\n\nA task that starts on events also has a PACE — pass daily_run_limit (on create_task, or on update_task to change it) when the user says how many a day it should handle ("at most 3 a day", "let it run more"); extra events QUEUE and run the next day, nothing is dropped, and get_task shows it as "Daily event limit:".\n- duplicate_task — copy a task (useful for variants: same pipeline, different language or audience)\n- run_task — trigger a task right now\n- set_tasks_status — pause or resume tasks BY NAME, one or many, in ONE call. Use it whenever the user speaks about more than one task at once (\"pause all my workflows\", \"pause everything\") and for a single named task (\"pause the weekly briefing\") — NEVER a chain of update_task calls. It returns a per-item ledger; report exactly what it says, naming each task, and never a number it did not give you.\n- supply_run_input — a run can STOP and ask the user for something only they have; when they hand it over ("here are the numbers", "here's the JD"), pass it straight through — the run picks up where it stopped. An attached file lands in the user's Knowledge under its own filename, so supply it by name (kb_file_name), never by re-typing its contents.\n- delete_task — remove a task permanently\n- share_task — share a task with the team so teammates can copy it (or stop sharing)\n- list_team_tasks — see tasks shared by teammates\n- use_task — copy a shared team task to your own list\n\nWhen the user asks you to change, update, fix, or adjust a task — YOU MUST COMPLETE THE FULL TOOL SEQUENCE before saying anything. Do not say "Done" or "Updated" until the final action tool has returned a result.\n\nRequired sequences (complete every step, no skipping):\n- Change language / schedule / name → list_tasks (get ID) → update_task → say one sentence confirming\n- Pause or resume ANYTHING (one task or all of them) → set_tasks_status → report its ledger verbatim in your own words\n- Change a step prompt → list_tasks (get ID) → get_task (read steps) → update_task with step_patch → confirm\n- Duplicate a task → list_tasks (get ID) → duplicate_task → confirm\n- Run a task → list_tasks (get ID) → run_task → confirm\n- Share a task → list_tasks (get ID) → share_task → confirm\n- Use a team task → list_team_tasks (get ID) → use_task → confirm\n\nNEVER report success after only calling list_tasks. list_tasks only finds the ID — the action hasn't happened yet. A colleague who said "Done, changed to Portuguese" without actually changing it would be fired. Don't be that colleague.`,
+            `[TASKS]\nA task is reusable structured work you set up once. It runs on a schedule OR on demand whenever asked (run_task) — so neither of you rebuilds it each time. Offer to set one up whenever work is repeatable, even without a schedule ("want me to save this as a task you can re-run anytime?").\n- list_tasks — see what's already running\n- create_task — set up something new from a plain description\n- get_task — read the full config of a task (steps, schedule, language, instructions)\n- update_task — edit any aspect: name, schedule, output language, task instructions, step prompts, status\n\nA task can also start on EVENTS, not just a schedule: pass trigger_doors on create_task (or add_trigger_doors / remove_trigger_doors on update_task) when the user says the work should begin when an email arrives, a file lands in Knowledge, a meeting is recorded, or another named task delivers — the door verbs are additive, so doors you don't mention are kept.\n\nA task can also PIN REFERENCE MATERIAL it reads every run — a policy, template, rubric or brand guide: pass input_doc_names on create_task (or add_input_docs / remove_input_docs on update_task) with the document's name as the user says it, and input_accept_material when the work is done on something handed over at run time ("when I upload a CV"). These verbs are additive too, and get_task shows the tray as "Inputs:".\n\nA task that starts on events also has a PACE — pass daily_run_limit (on create_task, or on update_task to change it) when the user says how many a day it should handle ("at most 3 a day", "let it run more"); extra events QUEUE and run the next day, nothing is dropped, and get_task shows it as "Daily event limit:".\n- duplicate_task — copy a task (useful for variants: same pipeline, different language or audience)\n- run_task — trigger a task right now\n- set_tasks_status — pause or resume tasks BY NAME, one or many, in ONE call. Use it whenever the user speaks about more than one task at once (\"pause all my workflows\", \"pause everything\") and for a single named task (\"pause the weekly briefing\") — NEVER a chain of update_task calls. It returns a per-item ledger; report exactly what it says, naming each task, and never a number it did not give you.\n- supply_run_input — a run can STOP and ask the user for something only they have; when they hand it over ("here are the numbers", "here's the JD"), pass it straight through — the run picks up where it stopped. An attached file lands in the user's Knowledge under its own filename, so supply it by name (kb_file_name), never by re-typing its contents.\n- delete_task — remove a task permanently\n- share_task — share a task with the team so teammates can copy it (or stop sharing)\n- list_team_tasks — see tasks shared by teammates\n- use_task — copy a shared team task to your own list\n\nWhen the user asks you to change, update, fix, or adjust a task — YOU MUST COMPLETE THE FULL TOOL SEQUENCE before saying anything. Do not say "Done" or "Updated" until the final action tool has returned a result.\n\nCONFIRM CARDS (Sep 22): changing what a task delivers or to whom (recipients, schedule, instructions, steps), deleting, sharing and running a task are PREPARED as a card the user applies — the tool result says PREPARED, NOT APPLIED. Say you've prepared it for their click; never say it is done, updated, deleted, shared or running. Pausing/resuming (set_tasks_status) still applies at once.\n\nRequired sequences (complete every step, no skipping):\n- Change language / schedule / name → list_tasks (get ID) → update_task → say it's prepared for their confirm\n- Pause or resume ANYTHING (one task or all of them) → set_tasks_status → report its ledger verbatim in your own words\n- Change a step prompt → list_tasks (get ID) → get_task (read steps) → update_task with step_patch → say it's prepared for their confirm\n- Duplicate a task → list_tasks (get ID) → duplicate_task → confirm\n- Run a task → list_tasks (get ID) → run_task → say the run is prepared for their confirm\n- Share a task → list_tasks (get ID) → share_task → say it's prepared for their confirm\n- Use a team task → list_team_tasks (get ID) → use_task → confirm\n\nNEVER report success after only calling list_tasks. list_tasks only finds the ID — the action hasn't happened yet. A colleague who said "Done, changed to Portuguese" without actually changing it would be fired. Don't be that colleague.`,
             `[YOUR DOCUMENTS]\nlist_worker_documents shows everything you've produced. get_worker_document retrieves the full content. When the user asks to see, revise, or reference something you made, call get_worker_document — don't say you can't retrieve it.`,
             `[TEAM]\nYou work alongside other coworkers. To build on a teammate's output (e.g. research another coworker did), use find_team_work to locate it (by topic, or by coworker name like "Max") and read_team_work to read it — then do your part. Don't ask the user to fetch a teammate's work; get it yourself. The user talks to whoever owns the result they want — so if they ask you for a deliverable that needs a colleague's input, pull it.`,
             ...(features.meetings ? [`[MEETINGS]\nWhen the user asks to set up, schedule or book a meeting or call, call prepare_calendar_invite — it hands them a FILLED, editable invite card (attendees and time grounded in this conversation) that they review and send themselves. You NEVER send an invite and never say one was sent; keep your reply to one short line, because the card carries the detail.`] : []),
@@ -535,12 +542,13 @@ export async function POST(
         if (skillsBlock) contextParts.push(skillsBlock);
         const integrationsBlock = await buildConnectedIntegrationsBlock(adminClient, user.id, agent.id);
         if (integrationsBlock) contextParts.push(integrationsBlock);
-        // Step 2: the user's WORLD (live initiatives + relationships needing attention) — so the coworker
-        // reasons WITH the deals/people. Same block the AgentOS bridge injects (parity). Read-only, non-fatal.
+        // ONE USER GROUNDING (W2.2): the user's world — judged work owed, promises, projects, people,
+        // calendar, deeds — is the SAME page the Home chat reads (lib/room/user-grounding.ts), so a
+        // coworker can never assert a debt the deck floored. Same block the AgentOS bridge injects.
         try {
-          const { renderWorldContext } = await import('@/lib/context/brain-context');
-          const worldBlock = await renderWorldContext(adminClient, user.id);
-          if (worldBlock) contextParts.push(worldBlock);
+          const { assembleUserGrounding } = await import('@/lib/room/user-grounding');
+          const world = await assembleUserGrounding(adminClient, user.id);
+          if (world.text) contextParts.push(`[THE USER'S WORLD — judged truth shared with the Home; reason WITH it, never restate it wholesale]\n${world.text}`);
         } catch { /* non-fatal */ }
         // THE WORKERS READ THE ONE GROUNDING (Aug 8): a message NAMING a registered project pulls
         // that project's FULL room page — the worker and the room read the same truth.
@@ -852,6 +860,8 @@ export async function POST(
       kbContext: mentionKbContext,
       agentFileIds: agentFileIds.length > 0 ? agentFileIds : undefined,
       agentId: agentId || undefined,
+      // The coworker's first name, for the confirm card's meta line ("Prepared by Clara …").
+      agentName: agent?.name ? String(agent.name).split(' ')[0] : undefined,
       isWorker,
       isTemporary: !!(thread as any).is_temporary,
       features,
@@ -889,6 +899,9 @@ export async function POST(
     // on its live state (accepted elsewhere, moved by its organizer, already passed). What persists
     // is `{id, eventId, proposal}`; the next open re-derives through `GET /api/events/[id]/card`.
     const allEventCards: EventTurnPointer[] = [];
+    // THE CONFIRM CARD — a POINTER too (`{changeId}`): `GET /api/changes/[id]` re-derives the
+    // status on the next open, so a reloaded card never offers Apply on a change already applied.
+    const allChanges: ChangeTurnPointer[] = [];
     // Accumulated across every streamed call this exchange makes (the tool loop can call the
     // model multiple times) — logged once at the end. Native-loop chat only; AgentOS-routed
     // worker chat reports no usage today (see lib/ai/log-usage.ts doc comment).
@@ -922,6 +935,14 @@ export async function POST(
           // is the card's re-read address and the address its verbs act through.
           allEventCards.push(eventPointer(spec));
           send({ type: 'event', event: { id: crypto.randomUUID(), spec } });
+        };
+
+        // …and the same seam for THE CONFIRM CARD: the live frame carries the served spec, the
+        // accumulator keeps the pointer. Nothing has applied when this frame goes out.
+        const takeChange = (spec?: ChangeSpec) => {
+          if (!spec) return;
+          allChanges.push(changePointer(spec));
+          send({ type: 'change', change: { id: spec.id, spec } });
         };
 
         // SSE heartbeat — keeps connection alive during long tool executions
@@ -1143,7 +1164,7 @@ export async function POST(
                     calledTools.add(dedupeKey);
 
                     send({ type: 'tool_start', name: tc.function.name, id: tc.id, label: toolLabel(tc.function.name) });
-                    const { result, summary, artifact, citations, clarification, stopStream, emailDraft, cardArtifact, workflowDraft, inviteCard, collection, eventCard, deed } = await executeChatTool(tc.function.name, toolInput, sources, runContext);
+                    const { result, summary, artifact, citations, clarification, stopStream, emailDraft, cardArtifact, workflowDraft, inviteCard, collection, eventCard, change, deed } = await executeChatTool(tc.function.name, toolInput, sources, runContext);
                     if (deed) deedLedger.push(deed);
                     const ok = toolResultOk(tc.function.name, result);
                     traceCalls.push({ name: tc.function.name, ok });
@@ -1158,6 +1179,7 @@ export async function POST(
                     // The DATA half rides to the kit; the model's half stays in the tool message below.
                     takeCollection(collection);
                     takeEvent(eventCard);
+                    takeChange(change);
                     toolResultMessages.push({ role: 'tool', tool_call_id: tc.id, content: result });
                     toolResultCache.set(dedupeKey, result);
                     if (stopStream) { continueLoop = false; break; }
@@ -1251,7 +1273,7 @@ export async function POST(
 
                   send({ type: 'tool_start', name: tc.function.name, id: tc.id, label: toolLabel(tc.function.name) });
 
-                  const { result, summary, artifact, citations, clarification, stopStream, retryCorrection, emailDraft, cardArtifact, workflowDraft, inviteCard, collection, eventCard, deed } = await executeChatTool(
+                  const { result, summary, artifact, citations, clarification, stopStream, retryCorrection, emailDraft, cardArtifact, workflowDraft, inviteCard, collection, eventCard, change, deed } = await executeChatTool(
                     tc.function.name,
                     toolInput,
                     sources,
@@ -1298,6 +1320,7 @@ export async function POST(
                   // The DATA half rides to the kit; the model's half stays in the tool message below.
                   takeCollection(collection);
                   takeEvent(eventCard);
+                  takeChange(change);
 
                   toolResultMessages.push({
                     role: 'tool',
@@ -1448,6 +1471,8 @@ export async function POST(
                 // A POINTER, NEVER THE SPEC: the next open re-derives through GET /api/events/[id]/card,
                 // so a reloaded card can never offer a verb the event's live state has stopped allowing.
                 ...(allEventCards.length > 0 ? { events: allEventCards } : {}),
+                // A POINTER, NEVER THE ARGUMENTS: `GET /api/changes/[id]` re-derives the status.
+                ...(allChanges.length > 0 ? { changes: allChanges } : {}),
                 ...(clarificationCall?.clarification ? { clarification: clarificationCall.clarification } : {}),
               },
             });
@@ -1549,6 +1574,8 @@ interface RunContext {
   agentFileIds?: string[];
   /** Agent ID — used to trigger memory extraction after conversation */
   agentId?: string;
+  /** The coworker's first name — the confirm card's "Prepared by" (a read, never a guess). */
+  agentName?: string;
   /** True when the agent is a worker — enables task management tools */
   isWorker?: boolean;
   isTemporary?: boolean;
@@ -1617,9 +1644,23 @@ async function executeChatTool(
    *  CODE computed for its state. `result` stays the model's line; this is never read by a model,
    *  and nothing on it has fired. */
   eventCard?: EventSpec;
+  /** THE CONFIRM CARD (stabilization W0.3b): a class-A change PREPARED for the user's click.
+   *  `result` is the model's "prepared, not applied" line; nothing has run. No `deed` rides with
+   *  it — a prepared change is not a deed, and the deed floor must not credit it as one. */
+  change?: ChangeSpec;
   /** THE DEED LEDGER (Sep 21): a MUTATING tool reports what it OBSERVED — never parsed back out of
    *  its own prose. The deed floor checks the final reply against these. */
   deed?: DeedRecord }> {
+  // THE PREPARE PATH, shared by every class-A case below. The executor is never called here; the
+  // apply door runs it with these exact arguments on the user's own click.
+  const prepareForConfirm = async (tool: string, args: Record<string, unknown>) => {
+    const out = await prepareChange(ctx.adminClient, ctx.userId, {
+      tool, args, lane: 'coworker_dm',
+      agentId: ctx.agentId ?? null, threadId: ctx.threadId, preparedBy: ctx.agentName ?? null,
+    });
+    if (!out) return { result: 'That change could not be prepared — nothing was changed. Ask the user to try again.', summary: 'Change not prepared' };
+    return { result: out.modelText, summary: 'Change prepared — awaiting your confirm', change: out.spec };
+  };
   switch (name) {
     case 'prepare_calendar_invite': {
       // PREPARE ONLY — the card is handed to the user; the Send is their click, through the one
@@ -2013,7 +2054,7 @@ async function executeChatTool(
 
     case 'update_task': {
       const taskId = typeof input.task_id === 'string' ? input.task_id : '';
-      const result = await executeUpdateTask(taskId, {
+      const fields: Parameters<typeof executeUpdateTask>[1] = {
         ...(typeof input.name === 'string' ? { name: input.name } : {}),
         ...(typeof input.description === 'string' ? { description: input.description } : {}),
         ...(input.status === 'active' || input.status === 'paused' ? { status: input.status } : {}),
@@ -2042,7 +2083,11 @@ async function executeChatTool(
         ...(Array.isArray(input.skill_names) ? { skill_names: input.skill_names as string[] } : {}),
         ...(input.step_patch && typeof input.step_patch === 'object' && typeof (input.step_patch as Record<string, unknown>).step_id === 'string' ? { step_patch: input.step_patch as { step_id: string; label?: string; prompt?: string; config?: Record<string, unknown> } } : {}),
         ...(Array.isArray(input.steps) ? { steps: input.steps as import('@/lib/workflows/types').WorkflowStep[] } : {}),
-      }, ctx.userId, ctx.adminClient);
+      };
+      // THE CONFIRM CARD: everything but a bare status flip PREPARES (recipients, schedule,
+      // instructions, steps — what the task delivers and to whom). The flip stays class B.
+      if (confirmClassOf('update_task', fields) === 'confirm') return prepareForConfirm('update_task', { task_id: taskId, ...fields });
+      const result = await executeUpdateTask(taskId, fields, ctx.userId, ctx.adminClient);
       // The executor VERIFIES AFTER WRITE, so a leading "Failed" is an observed failure, not a guess.
       const ok = !/^Failed |^Nothing to update|^Step "/.test(result);
       return {
@@ -2082,17 +2127,16 @@ async function executeChatTool(
     }
 
     case 'delete_task': {
+      // IRREVERSIBLE → the confirm card. The apply door runs executeDeleteTask on the click.
       const taskId = typeof input.task_id === 'string' ? input.task_id : '';
-      const result = await executeDeleteTask(taskId, ctx.userId, ctx.adminClient);
-      const ok = /permanently deleted/.test(result);
-      return { result, summary: ok ? 'Task deleted' : 'Task not deleted', deed: { tool: 'delete_task', kind: 'delete', ok, count: ok ? 1 : 0 } };
+      return prepareForConfirm('delete_task', { task_id: taskId });
     }
 
     case 'share_task': {
+      // WIDENS WHO CAN READ THE PIPELINE → the confirm card (both directions, one shape).
       const taskId = typeof input.task_id === 'string' ? input.task_id : '';
       const action = input.action === 'unshare' ? 'unshare' : 'share';
-      const result = await executeShareTask(taskId, action, ctx.userId, ctx.adminClient);
-      return { result, summary: action === 'share' ? 'Task shared with team' : 'Task made private' };
+      return prepareForConfirm('share_task', { task_id: taskId, action });
     }
 
     case 'list_team_tasks': {
@@ -2121,9 +2165,8 @@ async function executeChatTool(
           deed: { tool: 'update_task', kind: 'status', ok: moved, count: moved ? 1 : 0 },
         };
       }
-      const result = await executeRunTask(taskId, ctx.userId, ctx.adminClient, ctx.threadId);
-      const ok = /is now running|is already running/.test(result);
-      return { result, summary: ok ? 'Task started' : 'Task not started', deed: { tool: 'run_task', kind: 'run', ok, count: ok ? 1 : 0 } };
+      // A RUN SPENDS AND MAY DELIVER → the confirm card (injected text must never start a run).
+      return prepareForConfirm('run_task', { task_id: taskId });
     }
 
     // THE SAYABLE SUPPLY (THE WAVE): answering a parked input station in words. The executor holds
@@ -2189,13 +2232,12 @@ async function executeChatTool(
     }
 
     case 'slack_post_message': {
-      const result = await executeSlackPostMessage(input, ctx.userId, ctx.agentId, ctx.adminClient);
-      // Success strings: "Posted to Slack …" / "Sent you a Slack DM." / "Replied in thread …".
-      const summary = /^Posted/.test(result) ? 'Posted to Slack'
-        : /^Sent/.test(result) ? 'Sent a Slack DM'
-        : /^Replied/.test(result) ? 'Replied on Slack'
-        : 'Slack post failed';
-      return { result, summary };
+      // THE CONFIRM CARD (stabilization W0.3c — HUMAN IN THE LOOP, posts included): a post is
+      // PREPARED, never posted from here. The preflight resolves the target with no Slack write;
+      // the apply door runs executeSlackPostMessage with these stored args on the user's click.
+      const pre = await prepareSlackPostArgs(input, ctx.userId, ctx.agentId, ctx.adminClient);
+      if (!pre.ok) return { result: pre.result, summary: 'Slack post not prepared' };
+      return prepareForConfirm('slack_post_message', pre.args);
     }
 
     case 'slack_read_messages': {

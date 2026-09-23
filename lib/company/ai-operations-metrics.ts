@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 // ─── AI Operations dashboard — v1 metric definitions ──────────────────────────
 // There is no real token/cost or task-duration telemetry anywhere in the app yet
@@ -191,15 +192,20 @@ async function countRuns(
   const workflowIds = Array.from(workflowMeta.keys());
   if (workflowIds.length === 0) return result;
 
-  const { data } = await admin
-    .from('workflow_runs')
-    .select('workflow_id, user_id')
-    .in('workflow_id', workflowIds)
-    .eq('status', 'succeeded')
-    .gte('created_at', start.toISOString())
-    .lt('created_at', end.toISOString());
+  // NO SILENT CAPS (W1.6): an unpaged select over a period silently caps at PostgREST's 1000-row
+  // page — a large company's run count (and every count derived from it) under-reported past that.
+  const data = await fetchAllRows<{ workflow_id: string; user_id: string }>((from, to) =>
+    admin
+      .from('workflow_runs')
+      .select('workflow_id, user_id')
+      .in('workflow_id', workflowIds)
+      .eq('status', 'succeeded')
+      .gte('created_at', start.toISOString())
+      .lt('created_at', end.toISOString())
+      .order('created_at', { ascending: true })
+      .range(from, to));
 
-  for (const row of (data ?? []) as { workflow_id: string; user_id: string }[]) {
+  for (const row of data) {
     const meta = workflowMeta.get(row.workflow_id);
     if (!meta) continue;
     result.totalRuns += 1;
@@ -231,24 +237,32 @@ async function countMessagesAndTools(
   const result: MessageStats = { byAgentId: new Map() };
   if (agentIds.length === 0) return result;
 
-  const { data: threads } = await admin
-    .from('work_threads')
-    .select('id, agent_id')
-    .in('agent_id', agentIds)
-    .in('user_id', memberIds);
-  const threadToAgent = new Map((threads ?? []).map((t: { id: string; agent_id: string }) => [t.id, t.agent_id]));
+  // NO SILENT CAPS (W1.6): both reads below are paged — a company with many threads/messages was
+  // silently truncated at PostgREST's 1000-row page (the "36k/30d for the largest company" finding).
+  const threads = await fetchAllRows<{ id: string; agent_id: string }>((from, to) =>
+    admin
+      .from('work_threads')
+      .select('id, agent_id')
+      .in('agent_id', agentIds)
+      .in('user_id', memberIds)
+      .order('id', { ascending: true })
+      .range(from, to));
+  const threadToAgent = new Map(threads.map((t) => [t.id, t.agent_id]));
   const threadIds = Array.from(threadToAgent.keys());
   if (threadIds.length === 0) return result;
 
-  const { data: messages } = await admin
-    .from('work_messages')
-    .select('thread_id, metadata')
-    .in('thread_id', threadIds)
-    .eq('role', 'assistant')
-    .gte('created_at', start.toISOString())
-    .lt('created_at', end.toISOString());
+  const messages = await fetchAllRows<{ thread_id: string; metadata: Record<string, unknown> | null }>((from, to) =>
+    admin
+      .from('work_messages')
+      .select('thread_id, metadata')
+      .in('thread_id', threadIds)
+      .eq('role', 'assistant')
+      .gte('created_at', start.toISOString())
+      .lt('created_at', end.toISOString())
+      .order('created_at', { ascending: true })
+      .range(from, to), { maxRows: 50000 });
 
-  for (const msg of (messages ?? []) as { thread_id: string; metadata: Record<string, unknown> | null }[]) {
+  for (const msg of messages) {
     const agentId = threadToAgent.get(msg.thread_id);
     if (!agentId) continue;
     const bucket = result.byAgentId.get(agentId) ?? { messages: 0, toolCounts: new Map<string, number>() };
@@ -275,14 +289,18 @@ async function countEmailsSent(
 ): Promise<Map<string, number>> {
   const byAgent = new Map<string, number>();
   if (agentIds.length === 0) return byAgent;
-  const { data } = await admin
-    .from('email_sends')
-    .select('agent_id')
-    .in('agent_id', agentIds)
-    .eq('status', 'sent')
-    .gte('created_at', start.toISOString())
-    .lt('created_at', end.toISOString());
-  for (const row of (data ?? []) as { agent_id: string | null }[]) {
+  // NO SILENT CAPS (W1.6): paged so a high-send-volume company doesn't lose counts past 1000 rows.
+  const data = await fetchAllRows<{ agent_id: string | null }>((from, to) =>
+    admin
+      .from('email_sends')
+      .select('agent_id')
+      .in('agent_id', agentIds)
+      .eq('status', 'sent')
+      .gte('created_at', start.toISOString())
+      .lt('created_at', end.toISOString())
+      .order('created_at', { ascending: true })
+      .range(from, to));
+  for (const row of data) {
     if (!row.agent_id) continue;
     byAgent.set(row.agent_id, (byAgent.get(row.agent_id) ?? 0) + 1);
   }
@@ -347,19 +365,29 @@ async function countUsage(
   };
   if (memberIds.length === 0) return result;
 
-  const { data, error } = await admin
-    .from('ai_usage_events')
-    .select('agent_id, source, user_id, prompt_tokens, completion_tokens, cost_eur')
-    .in('user_id', memberIds)
-    .gte('created_at', start.toISOString())
-    .lt('created_at', end.toISOString());
+  // NO SILENT CAPS (W1.6): THE finding — ai_usage_events runs ~36k/30d for the largest company, and
+  // an unpaged select was silently truncated to PostgREST's 1000-row page, so the dashboard showed
+  // roughly 3% of real spend. Paged via fetchAllRows across the whole window.
+  let firstError: { message: string } | null = null;
+  const data = await fetchAllRows<{ agent_id: string | null; source: string | null; user_id: string; prompt_tokens: number; completion_tokens: number; cost_eur: number }>((from, to) =>
+    admin
+      .from('ai_usage_events')
+      .select('agent_id, source, user_id, prompt_tokens, completion_tokens, cost_eur')
+      .in('user_id', memberIds)
+      .gte('created_at', start.toISOString())
+      .lt('created_at', end.toISOString())
+      .order('created_at', { ascending: true })
+      .range(from, to)
+      .then((res) => { if (res.error && !firstError) firstError = res.error; return res; }),
+    { maxRows: 100000 },
+  );
 
-  if (error) {
-    console.warn('[ai-operations] ai_usage_events unavailable (migration not applied yet?):', error.message);
+  if (firstError) {
+    console.warn('[ai-operations] ai_usage_events unavailable (migration not applied yet?):', (firstError as { message: string }).message);
     return result;
   }
 
-  for (const row of (data ?? []) as { agent_id: string | null; source: string | null; user_id: string; prompt_tokens: number; completion_tokens: number; cost_eur: number }[]) {
+  for (const row of data) {
     const promptTokens = row.prompt_tokens ?? 0;
     const completionTokens = row.completion_tokens ?? 0;
     const costEur = row.cost_eur ?? 0;

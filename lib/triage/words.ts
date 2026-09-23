@@ -15,6 +15,8 @@
 
 import { clipForPrompt } from '@/lib/utils/clip-for-prompt';
 import { topMessageOf } from '@/lib/inbox/top-message';
+// THE ONE ENTITY DECODER (W5b) — a snippet-fed tail must never show `&#39;` as text.
+import { decodeEntities } from '@/lib/core/text';
 
 // ── THE VERBS (Q9v2 · owner's own mapping) ──────────────────────────────────────────────────────
 // The v1 set (→ done · ← later · ↑ now · ↓ never) asked the reader to hold four directions and two
@@ -118,11 +120,13 @@ export function threadTail(messages: ThreadDoorMessage[] | null | undefined): Tr
   return rows
     .slice(-TRIAGE_TAIL_MESSAGES)
     .map((m, i) => {
-      const raw = (typeof m.body === 'string' && m.body.trim()) ? topMessageOf(m.body) : (m.snippet ?? '');
+      // DECODED BEFORE THE QUOTE STRIP (W5b): an escaped `&gt;` quote line is still a quote line, and
+      // a snippet fallback arrives HTML-escaped from the provider.
+      const raw = (typeof m.body === 'string' && m.body.trim()) ? topMessageOf(decodeEntities(m.body)) : decodeEntities(m.snippet ?? '');
       const body = clipForPrompt(String(raw ?? '').replace(/\n{3,}/g, '\n\n').trim(), TRIAGE_MESSAGE_CHARS);
       return {
         id: String(m.id ?? `m${i}`),
-        author: m.isFromUser ? 'You' : (m.fromName?.trim() || m.from?.trim() || 'Them'),
+        author: m.isFromUser ? 'You' : (decodeEntities(m.fromName?.trim() || m.from?.trim() || '') || 'Them'),
         at: m.receivedAt ?? null,
         body,
         fromUser: !!m.isFromUser,

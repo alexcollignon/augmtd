@@ -6,6 +6,7 @@ import { subjectIsCampaignEcho } from '@/lib/inbox/campaign-echo';
 import { isOwnCoworkerSender } from '@/lib/inbox/self-echo';
 import { resolveDeixisInDescriptions } from '@/lib/inbox/deixis';
 import { seatStripsObligation, type SeatFacts } from '@/lib/inbox/recipient-role';
+import { dueDateFromSource, repairSelfParty, denotesUser, isOpenDuplicate, type UserForms } from '@/lib/commitments/extraction-truth';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
@@ -103,25 +104,62 @@ export async function writeCommitments(
   list: ExtractedCommitment[],
   // B2 (workbench): `status` — meeting-extracted commitments land as 'suggested' (a review gate:
   // meetings are noisy; the user Accepts/Rejects). Email-extracted stay 'open' (explicit written text).
-  meta: { source: 'email' | 'meeting'; sourceId: string; threadId?: string | null; counterparty?: string | null; status?: 'open' | 'suggested' },
+  meta: {
+    source: 'email' | 'meeting'; sourceId: string; threadId?: string | null; counterparty?: string | null; status?: 'open' | 'suggested';
+    /** The SOURCE's own date (email received_at / meeting start) — THE FORWARD ANCHOR for every date. */
+    anchorAt?: string | null;
+    /** The source's own words, when at hand — a stated window must be stated THERE, not only in the title. */
+    sourceText?: string | null;
+    /** The source's OTHER party (email sender/recipient, a 1:1 meeting's counterpart) — THE SELF-PARTY LAW's re-derivation. */
+    otherParty?: string | null;
+    /** The user's own name + addresses — who the user IS, beside the self person entity. */
+    user?: { name?: string | null; addresses?: Array<string | null | undefined> | null } | null;
+  },
   client: DBClient,
 ): Promise<void> {
-  const clean = (list ?? []).filter((c) => c?.description?.trim());
-  if (!clean.length) return;
+  const clean0 = (list ?? []).filter((c) => c?.description?.trim());
+  if (!clean0.length) return;
+
+  // IDENTITY first (orchestrated-loop O1b + THE SELF-PARTY LAW, W3.4): who the user is — the self
+  // person entity's name + aliases, plus the caller's name/addresses — so no row is born naming the
+  // user as their own counterparty, in the field OR in the title's "with X".
+  const { getPersonEntities, resolveIdentity } = await import('@/lib/entities/people');
+  const persons = await getPersonEntities(client as never, userId).catch(() => []);
+  const selfP = persons.find((p) => p.state?.self === true) ?? null;
+  const userForms: UserForms = {
+    name: meta.user?.name || selfP?.name || null,
+    aliases: [...(selfP?.aliases ?? []), ...(meta.user?.addresses ?? []), ...(selfP?.name ? [selfP.name] : [])],
+  };
+  const other = meta.otherParty ?? meta.counterparty ?? null;
+  const clean = clean0.map((c) => {
+    const fixed = repairSelfParty(
+      { description: c.description.trim(), counterparty: c.counterparty ?? null, direction: c.direction }, userForms,
+      other && !denotesUser(other, userForms) ? other : null,
+    );
+    return fixed.changed
+      ? { ...c, description: fixed.description, counterparty: fixed.counterparty, direction: (fixed.direction as ExtractedCommitment['direction']) ?? c.direction }
+      : c;
+  });
 
   const { data: existing } = await client.from('commitments')
     .select('description').eq('user_id', userId).eq('source_id', meta.sourceId);
   const existingDescs = (existing ?? []).map((e: { description: string }) => e.description || '');
-  // The user's OPEN commitments from OTHER sources — the cross-meeting restatement pool.
+  // The user's LIVE commitments from OTHER sources — the cross-source restatement pool. 'suggested'
+  // meeting rows are live too: a second meeting re-stating one still pending review is the same
+  // obligation (THE OPEN-DUPLICATE LAW — the census found 15 groups, 33 rows).
   const { data: openOther } = await client.from('commitments')
-    .select('description, counterparty, initiative').eq('user_id', userId).eq('status', 'open')
+    .select('description, counterparty, initiative, direction, thread_id, source_id, created_at').eq('user_id', userId)
+    .in('status', ['open', 'suggested'])
     .neq('source_id', meta.sourceId).order('created_at', { ascending: false }).limit(400);
-  const openRows = (openOther ?? []) as Array<{ description: string; counterparty: string | null; initiative: string | null }>;
+  const openRows = (openOther ?? []) as Array<{ description: string; counterparty: string | null; initiative: string | null; direction: string | null; thread_id: string | null; source_id: string | null; created_at: string | null }>;
+  const nowIso = new Date().toISOString();
 
   const accepted: ExtractedCommitment[] = [];
   for (const c of clean) {
     const desc = c.description.trim();
-    const cp = (c.counterparty || meta.counterparty || '').toString();
+    const rawCp = (c.counterparty || meta.counterparty || '').toString();
+    const cpId = rawCp ? resolveIdentity(persons, rawCp) : null;
+    const cp = cpId?.canonical ?? rawCp;
     const init = (c.initiative || '').toString().toLowerCase().trim();
     // Drop if it restates something already stored for this source, or one we've already accepted
     // from this same batch (first occurrence wins).
@@ -134,7 +172,13 @@ export async function writeCommitments(
       const sameInit = !!init && !!d.initiative && d.initiative.toLowerCase().trim() === init;
       return sameParty || sameInit;
     });
-    if (dupExisting || dupBatch || dupCross) continue;
+    // THE OPEN-DUPLICATE LAW (W3.4): same direction + the shared 0.6 bar + the same thread, or the
+    // same counterparty within 14 days — ONE predicate, shared with the merge-report sweep.
+    const dupOpen = openRows.some((d) => isOpenDuplicate(
+      { description: desc, direction: c.direction, counterparty: cp || null, thread_id: meta.threadId ?? null, source_id: meta.sourceId, created_at: nowIso },
+      d, (a, b) => isNearDuplicate(a, b),
+    ));
+    if (dupExisting || dupBatch || dupCross || dupOpen) continue;
     accepted.push(c);
   }
 
@@ -185,19 +229,21 @@ export async function writeCommitments(
   // structural impossibility with structural consequences — an "awaiting" on yourself IS your own
   // task (direction flips to you_owe), and you can never be your own counterparty (null; the display
   // layer derives a source label). Unresolved forms stay raw — honest, and future alias fodder.
-  const { getPersonEntities, resolveIdentity } = await import('@/lib/entities/people');
-  const persons = await getPersonEntities(client as never, userId).catch(() => []);
   const rows = consolidated.map((c) => {
     const rawCp = (c.counterparty || meta.counterparty || null)?.toString().slice(0, 200) ?? null;
     const id = resolveIdentity(persons, rawCp);
-    const direction = id.isSelf ? 'you_owe' : (c.direction === 'awaiting' ? 'awaiting' : 'you_owe');
-    const counterparty = id.isSelf ? null : (id.canonical ?? rawCp);
+    const isSelf = id.isSelf || (!!rawCp && denotesUser(rawCp, userForms));
+    const direction = isSelf ? 'you_owe' : (c.direction === 'awaiting' ? 'awaiting' : 'you_owe');
+    const counterparty = isSelf ? null : (id.canonical ?? rawCp);
     return {
       user_id: userId,
       direction,
       description: c.description.trim().slice(0, 500),
       counterparty,
-      due_date: validDate(c.due_date),
+      // THE STATED WINDOW (W3.4): the model's date, re-anchored forward from the SOURCE's own date,
+      // widened to the END of a window the description states (verified in the source's own words);
+      // no stated date → null. The expiry law only ever sees rows that carry a due_date.
+      due_date: validDate(dueDateFromSource({ modelDate: c.due_date, description: c.description, sourceText: meta.sourceText ?? null, anchorIso: meta.anchorAt ?? null })),
       initiative: cleanInitiative(c.initiative),
       source: meta.source,
       source_id: meta.sourceId,
@@ -276,7 +322,7 @@ export async function writeMeetingCommitments(
   userId: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   actionItems: Array<{ action?: string; assignee?: string | null; isUserTask?: boolean | null; dueDate?: string | null; due_date?: string | null }>,
-  meta: { transcriptId: string; attendees?: Array<string | null | undefined> | null; userName?: string | null },
+  meta: { transcriptId: string; attendees?: Array<string | null | undefined> | null; userName?: string | null; meetingDate?: string | null },
   client: DBClient,
 ): Promise<void> {
   // The set of "other" participants (attendee names that aren't the user). Used only to resolve a
@@ -319,7 +365,10 @@ export async function writeMeetingCommitments(
   }
   // B2: meeting follow-ups are PROPOSED, not imposed — they land 'suggested' for the user's
   // Accept/Reject (the review gate the cognitive-cost doctrine always implied for noisy extraction).
-  await writeCommitments(userId, list, { source: 'meeting', sourceId: meta.transcriptId, threadId: null, status: 'suggested' }, client);
+  await writeCommitments(userId, list, {
+    source: 'meeting', sourceId: meta.transcriptId, threadId: null, status: 'suggested',
+    anchorAt: meta.meetingDate ?? null, otherParty: soleCounterpart, user: { name: meta.userName ?? null },
+  }, client);
 }
 
 // ── THE DEIXIS SCRUBBER — MOVED (proactive-reach LAW 3, THE SERVED-WORDS LAW).
@@ -441,7 +490,11 @@ Return ONLY JSON. Empty array if there are no real commitments:
     // a lie ("tomorrow" is only true for a day) — detection is lexical, the REWRITE is reasoned
     // (one capped call, only for offenders), anchored to the email's own date.
     list = await resolveDeixisInDescriptions(client, userId, list, receivedAt ?? null);
-    await writeCommitments(userId, list, { source: 'email', sourceId, threadId, counterparty }, client);
+    await writeCommitments(userId, list, {
+      source: 'email', sourceId, threadId, counterparty,
+      anchorAt: receivedAt ?? null, sourceText: `${subject || ''}\n${text}`, otherParty: counterparty,
+      user: { name: userName || seat?.userName || null, addresses: seat?.userAddresses ?? null },
+    }, client);
     return list.length;
   } catch {
     return 0;

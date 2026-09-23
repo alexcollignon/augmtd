@@ -206,9 +206,14 @@ console.log('\nT2 · THE NO-MUTATION LAW — a served surface never changes unde
   // RE-POINTED Sep 13 (cleanup): the key was a LITERAL here and a producer in warm-room — two
   // spellings of one key, agreeing only by luck (the fake-warm drift class). The room now calls the
   // producers; the clause follows, strictly stronger — a rename can no longer pass half the codebase.
+  // ⟲ RE-POINTED (W3.5 (a), Sep 22): the rail's open fetch grew the late-brief re-check (an APPEND,
+  // never a swap), so the one-liner became a block — same law, same two moves (saveLS always;
+  // setRail only when it may paint), read line by line.
   gate('T2.4 the room holds the open fetch (saveLS always; setD/setRail only when it may paint)',
     !!room && /saveLS\(roomDetailKey\(entityId\), data\); if \(mayPaintDetail\) setD\(data\);/.test(room)
-    && /saveLS\(roomRailKey\(entityId\), data\); if \(mayPaintRail\) setRail\(data\);/.test(room));
+    && /saveLS\(roomRailKey\(entityId\), data\);\s*\n\s*if \(mayPaintRail\) setRail\(data\);/.test(room)
+    // …and the late brief lands as an append onto the painted rail, never a setRail(d2) swap
+    && /lateBrief: \{ text, at: d2\.entity\.briefAt \?\? null \}/.test(room) && !/setRail\(d2\)/.test(room));
   // RE-POINTED Sep 13 (cleanup): the `[^)]*` window assumed the key was an inline LITERAL and so
   // stopped at the first `)`. The room now calls the key PRODUCER (one author for one key — the
   // fake-warm drift class closed), which puts a paren inside the window; the law is unchanged and
@@ -679,8 +684,11 @@ console.log('\nT5 · THE LIVE CHAT SURFACE — the Home thread and the coworker 
         /THE FRESH FLOOR[\s\S]{0,900}localStorage\.removeItem\(CHAT_KEY_LS\)/],
       ['the worker-room load (the DM’s own store, never copied into room_turns)',
         /const loadWorkerRoom = async \(key: string\)/],
-      ['the sovereign intake (Clara asks on an email-off workspace)',
-        /features\.email === false && first\.toLowerCase\(\) === 'clara'/],
+      // ⟲ RE-POINTED (W4.1, SPEECH IS COMPOSED): the intake keeps its seat on an email-off
+      // workspace, keyed by ROLE (agnostic, never a first name) and rendered as chrome — a template
+      // may not wear a face. The seam (who gets the intake) is what this row pins.
+      ['the sovereign intake (the chief of staff\u2019s DM on an email-off workspace)',
+        /features\.email === false && role === 'personal_assistant'/],
       ['the coworker stream (chat-attach upload → the thread’s SSE)',
         /chat-attach`, \{ method: 'POST', body: fd \}/],
       ['the chief attach lane (extract now, index into the knowledge base)',
@@ -739,11 +747,14 @@ console.log('\nT6 · THE ROOM’S CONVERSATION — the rail, through the ONE kit
     && /stageOfArtifactKey\(mergedArt\.key\), respMoveTargetId/.test(rail)
     // …and the old seat is really gone (no second move renderer anywhere in the rail)
     && !/pinnedActions/.test(rail));
-  gate('T6.5 the pre-compose fallback rides the SAME pinned seat (no second opening anywhere)',
-    // RE-POINTED (W4-A, Sep 22): the same seat, now the same CARD — the fallback builds a
-    // `proposal` too, so neither path can grow a renderer of its own.
-    !!rail && /Pre-compose fallback/.test(rail) && /label: `Next: \$\{ent\.nextMove\}`/.test(rail)
-    && /confirmLabel: fallbackMove\.move\.label/.test(rail)
+  // ⟲ RE-POINTED (W3.5, Sep 22 — registry precedence #1: "the stitched field-assembly fallback is
+  // dead"): the pre-compose fallback no longer exists to ride any seat. The composed brief reaches
+  // the FIRST paint from the server path (briefBeforePaint); when it cannot, the seat speaks ONE
+  // voice (the item's own ask) and the stored next_move never renders as a deed. The law this gate
+  // held — no second opening anywhere — is asserted on the seat that remains.
+  gate('T6.5 NO SECOND OPENING — the stitched fallback (stored next_move card · summary line · debt lines) is dead; the pinned seat speaks one voice',
+    !!rail && !/fallbackMove/.test(rail) && !/label: `Next: \$\{ent\.nextMove\}`/.test(rail)
+    && !/secondarySummary/.test(rail) && !/owesYou/.test(rail)
     && !/AssistantRow/.test(rail));
   // ⚠️ RE-POINTED (owner walk, Sep 14: "I think I had told you to remove the chips here too" — the
   // SAME call the calm Home took on Sep 13, now applied to rooms). The claim this gate held — the
@@ -829,7 +840,9 @@ console.log('\nT6 · THE ROOM’S CONVERSATION — the rail, through the ONE kit
       ['the ephemeral scaffolding machinery (a keyed live turn that never persists, and its drop)',
         /ephemeral\?: boolean \}\): void \{[\s\S]{0,600}if \(!opts\?\.ephemeral\) persistTurn\(/],
       ['the one-navigation law (the host’s in-room opener before any push)', /const go = \(href: string\) => \{ if \(onOpenHref\?\.\(href\)\) return;/],
-      ['the placement table decides suppression, not this component', /panelPlan\(\{ hasDecision: decisionIsPrimary \}\)/],
+      // ⟲ RE-POINTED (W3.5 (b), Sep 22): the table gained one input — the rail STATES that a card
+      // for the move is mounted, the table DECIDES (registry precedence #10). Same seam, one more fact.
+      ['the placement table decides suppression, not this component', /panelPlan\(\{ hasDecision: decisionIsPrimary, moveCardMounted: !!cardForMove \}\)/],
     ];
     const broken = SEAMS.filter(([, re]) => !rail || !re.test(rail)).map(([l]) => l);
     gate('T6.15 the engine seams are untouched (persist · hydrate · steer · ingest · navigation)',
@@ -1192,10 +1205,14 @@ console.log('\nT8 · THE CALM HOME — one sentence, five whispers, one door');
     && !!home && !/calmFactsFrom|cosSentence|freeUntil/.test(home));
 
   // THE RECEIPT GRAMMAR — mapped from the row's served state; the vocabulary lives in ONE module.
+  // ⟲ RE-POINTED (stabilization W2.1, Sep 22): the mapping moved into `receiptWordOf` — the word is
+  // chosen by WHAT is prepared (THE ONE READER's lead kind: an invite says "invite prepared"), and
+  // `receiptOf` delegates to it. The law (mapped, never authored per row) is unchanged.
   gate('T8.7 receipts are MAPPED from served state (prepared-by → the word), never authored per row',
-    !!calm && /export function receiptOf\(item: DoItem\): string \| null \{\s*if \(!item\.prepared\) return null;/.test(calm)
-    && /item\.source === 'reply'\) return 'reply ready';/.test(calm)
-    && /item\.prepared === 'draft' \? 'drafted' : 'ready to send'/.test(calm)
+    !!calm && /export function receiptOf\(item: DoItem\): string \| null \{\s*return receiptWordOf\(item\.prepared \?\? null, item\.preparedKind \?\? null, item\.source\);/.test(calm)
+    && /source === 'reply'\) return 'reply ready';/.test(calm)
+    && /prepared === 'draft' \? 'drafted' : 'ready to send'/.test(calm)
+    && /case 'invite': return 'invite prepared';/.test(calm)
     // the whisper itself authors NO receipt vocabulary — it renders what the mapping handed it
     && !!home && (() => {
       const seg = home.slice(home.indexOf('function WhisperLine('), home.indexOf('function CalmDoor('));
@@ -1834,7 +1851,9 @@ console.log('\nT12 · THE COWORKER DM — the board’s pane, opening at once');
     // (the DM read moved to the /chat door — the only one that serves message metadata, i.e. the
     // conversation's cards; the ONE-FLIGHT law it asserts is unchanged)
     !!ask && /await Promise\.all\(\[\s*\n[\s\S]{0,600}?fetch\(`\/api\/work\/threads\/\$\{tid\}\/chat`\)[\s\S]{0,120}getRoster\(\),\s*\n\s*\]\)/.test(ask)
-    && /const rosterFlight = useRef<Promise<Array<\{ id: string; name: string \}>> \| null>\(null\);/.test(ask)
+    // ⟲ RE-POINTED (W4.1): the roster entry gained the ROLE KEY (the chrome first contact reads role
+    // vocab from lib/workers/roles, never a name-keyed map) — the one-flight law is unchanged.
+    && /const rosterFlight = useRef<Promise<Array<\{ id: string; name: string(; role\?: string \| null)? \}>> \| null>\(null\);/.test(ask)
     && /if \(rosterFlight\.current\) return rosterFlight\.current;/.test(ask));
   gate('T12.10 the pane takes the page ON ADDRESS, and the cold path wears a SKELETON in the thread’s shape',
     // RE-POINTED (Sep 18, THE CHAT OPENS INSTANTLY): the takeover clause gained the chat lane and
@@ -3010,8 +3029,13 @@ console.log('\nT20 · THE DEED MOVES THE BRIEF — the room never claims a deed 
     !!sendReply && /noteItemAction\(supabase, user\.id, \{ kind: 'inbox_item', id \},\s*\n?\s*\{ said:/.test(sendReply)
     && !!execute && (execute.match(/noteItemAction\(supabase, uid, \{ kind: 'inbox_item', id: eid \}/g) ?? []).length === 2
     && !!sendEmail && /noteItemAction\(adminClient, uid, \{ kind: 'inbox_item', id: li\.id \}/.test(sendEmail));
+  // ⟲ RE-POINTED (stabilization W2.1, Sep 22): the sent check moved INTO THE ONE READER
+  // (lib/prepare/read.ts preparedFromSourceData — all four source_data lanes read `sent_at`), and the
+  // grounding's board consumes the reader (`preparedStatesFor`) instead of reading source_data itself.
+  // The law is the same: the digest moves on the DEED, never on a status filter.
   gate('T20.5 THE SIG READS TRUTH, NOT A STATUS FILTER — a sent reply draft stops counting as prepared, like the invite and the forward always did',
-    !!grounding && /draft\?\.body && !draft\.sent_at/.test(grounding)
+    !!grounding && /preparedStatesFor\(client, userId/.test(grounding) && !/draft\?\.body/.test(grounding)
+    && /sd\?\.draft\?\.body && !sd\.draft\.sent_at/.test(read('lib/prepare/read.ts') ?? '')
     && !!sendReply && /draft: \{ \.\.\.sentDraft, sent_at: new Date\(\)\.toISOString\(\) \}/.test(sendReply));
   gate('T20.6 the send door that stamps `execution_status` (not `status`) still moves the brief — it used to move nothing at all',
     !!sendEmail && /execution_status: 'completed'/.test(sendEmail) && /noteItemAction/.test(sendEmail));
@@ -3041,7 +3065,9 @@ console.log('\nT20 · THE DEED MOVES THE BRIEF — the room never claims a deed 
     !!room && /window\.addEventListener\(DEED_EVENT, onPrepared\)/.test(room)
     && /window\.removeEventListener\(DEED_EVENT, onPrepared\)/.test(room)
     && !!rail && /window\.addEventListener\(DEED_EVENT, onDeed\)/.test(rail)
-    && /\}, \[roomKey, turnsNonce\]\);/.test(rail));
+    // ⟲ RE-POINTED (W3.7 ROOM SPEED): the turns fetch also waits for the view-resolved room key
+    // (`pending` in its deps — turns keyed ONCE); the deed nonce still re-runs it.
+    && /\}, \[roomKey, turnsNonce(, pending)?\]\);/.test(rail));
 
   // (c) THE SPARSE THREAD
   gate('T20.10 a short thread rests on the composer instead of leaving a void — ONE rule, no length branch',
@@ -3071,7 +3097,9 @@ console.log('\nT20 · THE DEED MOVES THE BRIEF — the room never claims a deed 
   gate('T20.13 the repair rides the ONE composer with the ask’s OWN judged facts, and the labels are never rewritten',
     !!legacy && /composeAskSpeech\(client, userId, \{/.test(legacy)
     && /labels, itemTitle: itemTitle \|\| 'this work'/.test(legacy)
-    && /\.eq\('kind', 'judgment'\)/.test(legacy));
+    // ⟲ RE-POINTED (W2.6 TYPED STORES): the ask's own judged facts are read through the typed door
+    // (readPlans(…, 'judgment', …)) instead of a raw `.eq('kind', 'judgment')` — same record, same law.
+    && /readPlans\(client, userId, 'judgment', \{ keys:/.test(legacy));
   gate('T20.13b BOUNDED AND SAFE — a capped repair, and the old words are never written back',
     !!legacy && /const REPAIR_CAP = 2;/.test(legacy) && /\.slice\(0, REPAIR_CAP\)/.test(legacy)
     && /if \(!say\?\.trim\(\) \|\| isLegacyAskSpeech\(say\)\) continue;/.test(legacy));
@@ -3117,7 +3145,9 @@ console.log('\nT21 · THE HOME PAINTS FIRST — the read path carries only the r
     && /if \(!seatInFlight\) \{/.test(seat)
     && (seat.match(/fetch\('\/api\/workers\/cos-seat'\)/g) || []).length === 1);
   gate('T21.5 NO SILENT CAPS — the open-commitments pool is explicitly bounded and says when it saturates',
-    !!route && /from\('commitments'\)\.select\('\*'\)[^\n]*\.limit\(500\)/.test(route)
+    // ⟲ RE-POINTED (Sep 22 — W0.5): the bounded read is now ORDERED soonest-due first on its own line,
+    // so a saturated pool drops the least time-critical rows, never an arbitrary set.
+    !!route && /from\('commitments'\)\.select\('\*'\)[^;]*?\.order\('due_date'[^;]*?\.limit\(500\)/.test(route)
     && /open-commitments pool SATURATED/.test(route));
   gate('T21.6 the perf watchdog stands AT THE DOOR (it measures what the reader actually waited for)',
     !!route && (() => {
@@ -3309,9 +3339,12 @@ console.log('\nT22 · THE GROUND EVIDENCE + ONE AGENDA AT THE RENDER — the roo
       const seg = rail.slice(i);
       return !/^\s*\.\.\.\(.*actions:/m.test(seg)
         && !/type: 'actor_bubble'[\s\S]{0,400}?actions:/.test(seg)
-        && (rail.match(/kind: 'proposal', id: 'move'/g) ?? []).length === 2
+        // ⟲ RE-POINTED (W3.5, Sep 22 — STRENGTHENED again): the pre-compose fallback `proposal`
+        // died with the stitched fallback (registry precedence #1), so EXACTLY ONE move renderer
+        // remains — the composed move's card.
+        && (rail.match(/kind: 'proposal', id: 'move'/g) ?? []).length === 1
         && (rail.match(/<ThreadCardView card=\{moveCard\} \/>/g) ?? []).length === 1
-        && /panelPlan\(\{ hasDecision: decisionIsPrimary \}\)/.test(rail);
+        && /panelPlan\(\{ hasDecision: decisionIsPrimary, moveCardMounted: !!cardForMove \}\)/.test(rail);
     })());
 }
 
@@ -3535,7 +3568,9 @@ console.log('\nT24 · THE CARD EDITOR — content-truth, live controls, one comp
     && !!host && /customMessage: emailBodyHTML\(text\)/.test(host)
     // the host's own local converter is gone; markup authored in the editor passes through untouched
     && !/function draftHTML\(/.test(host)
-    && /if \(BLOCK_MARKUP\.test\(v\)\) return v;/.test(mapper)
+    // ⟲ RE-POINTED (Sep 22 — stabilization W0.1 RENDER SAFETY): editor markup still passes through as
+    // markup, but through the ONE draft sanitizer (no handlers, no remote fetch) — same words, same HTML.
+    && /if \(BLOCK_MARKUP\.test\(v\)\) return sanitizeDraftHtml\(v\);/.test(mapper)
     && (() => {
       const defs = sourceFiles('components').concat(sourceFiles('lib'))
         .filter((f) => /export function emailBodyHTML\(/.test(read(f) || ''));
@@ -4032,7 +4067,10 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   gate('T26.8 THE JUDGE HOLDS THE FACT — names + gist reach the one reasoned call, with the direction',
     !!judge && /let attachFacts = '';/.test(judge)
     && /attachFacts = attachmentFactBlock\(await readItemAttachments\(client, userId, sd, String\(it\.id\)\), who\);/.test(judge)
-    && /calBlock \+ attachFacts \+/.test(judge)
+    // ⟲ RE-POINTED (W3.1 judge half): the booked-calendar block became LATER EVIDENCE and moved
+    // beside the sibling settlement fact; the attachment fact stays in the brain-neighbourhood run.
+    // ⟲ W5c: the WITHDRAWN block (hidden artifacts, never "already prepared") rides beside the pool.
+    && /poolBlock \+ (?:withdrawnBlock \+ )?attachFacts \+/.test(judge)
     && !!ctx && /sent these TO the user/.test(ctx)
     && /never propose sending the \` \+\n\s*`sender their own document back/.test(ctx));
 
@@ -4100,15 +4138,20 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     && !!sweep && /localNow\(await userTimezone\(sb, userId\)\)\.dateStr/.test(sweep)
     && !/const today = new Date\(\)\.toISOString\(\)\.slice\(0, 10\);/.test(sweep));
 
-  gate('T27.5 THE ORDER HOLDS — expiry runs BEFORE the aging surface, so a lapsed row never mints one',
-    !!sweep && sweep.indexOf('isPastDue(c, today)') < sweep.indexOf('// ── 3. Aging?')
-    && /if \(await applyExpiryVerdict\(sb, c\.user_id, c, ev\)\) \{ expired\+\+; continue; \}/.test(sweep));
+  // ⟲ RE-POINTED (W2.3 RETIRE THE MIRRORS): the aging surface is GONE — the sweep writes no inbox
+  // mirror any more (a commitment has one home). The order law survives as: the expiry verdict
+  // still short-circuits the loop, and no `inbox_items` insert exists anywhere after it.
+  gate('T27.5 THE ORDER HOLDS — expiry closes short-circuit the loop and no mirror is ever minted after them',
+    !!sweep && /if \(await applyExpiryVerdict\(sb, c\.user_id, c, ev\)\) \{ expired\+\+; continue; \}/.test(sweep)
+    && !/from\('inbox_items'\)\s*\.insert\(/.test(sweep) && /RETIRED, W2\.3/.test(sweep));
 
   gate('T27.6 BOUNDED + HONEST — a cap per sweep, the remainder counted and logged, never silent',
     !!sweep && /const EXPIRY_JUDGMENTS_PER_SWEEP = \d+;/.test(sweep)
     && /expiryLeftBehind\+\+;/.test(sweep)
     && /expiry cap reached/.test(sweep)
-    && /expiryLeftBehind \}\);/.test(sweep));
+    // ⟲ RE-POINTED (Sep 22 — W3.1): the response now also carries the evidence lanes' counts, so the
+    // expiry remainder is one field among several — still RETURNED, not only logged.
+    && /expiryLeftBehind[,\s][^\n]*\n?[^;]*evidence/.test(sweep));
 
   gate('T27.7 THE CACHE SIG CARRIES THE LAW VERSION — an older law’s verdict never satisfies this one',
     !!exp && /export const EXPIRY_LAW_VERSION = \d+;/.test(exp)
@@ -4121,18 +4164,24 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     // /api/restore's commitment branch is the flip back to open (unchanged, shared)
     && (() => /status: 'open', resolved_at: null, resolved_reason: null/.test(read('app/api/restore/route.ts') || ''))());
 
-  gate('T27.9 LAW 1’s COMMITMENT CLAUSE — the surfaced row is JUDGED before it can lead the deck',
-    !!sweep && /const \{ judgeWork \} = await import\('@\/lib\/work\/judge'\);/.test(sweep)
-    && /judgeWork\(sb, c\.user_id, \{ kind: 'commitment', id: c\.id \}\)/.test(sweep)
-    && /work_state: judgedWork !== 'unjudged' && judgedWork !== 'none' \? 'action_required' : 'noted',/.test(sweep)
-    && !/work_state: 'action_required',\n/.test(sweep));
+  // ⟲ RE-POINTED (W2.3 RETIRE THE MIRRORS): there is no surfaced row to judge — the commitment leads
+  // the deck through its OWN lane, judged natively (`judgeWork({kind:'commitment'})` from the spine's
+  // candidates). The clause holds structurally: the sweep never writes a deck row, so an unjudged
+  // hand-built row cannot lead; the spine and the brief pool exclude the historical mirrors.
+  gate('T27.9 LAW 1’s COMMITMENT CLAUSE — no hand-built deck row exists; the commitment is judged in its own lane',
+    !!sweep && !/work_state: 'action_required'/.test(sweep) && !/source: 'commitment'/.test(sweep)
+    && /kind: 'inbox' \| 'commitment'/.test(read('lib/work/judge.ts') || '')
+    && /\.neq\('source', MIRROR_SOURCE\)/.test(read('lib/work-items/model.ts') || ''));
 
   gate('T27.10 THE UNDATED CLAUSE — open age is a FACT both judges see, and a version bump rides it',
     !!exp && /export function openAgeDays\(/.test(exp)
     && !!ful && /import \{ openAgeDays \} from '@\/lib\/commitments\/expiry';/.test(ful)
-    && /const ageDays = openAgeDays\(commitment\.created_at\);/.test(ful)
+    // ⟲ RE-POINTED (Sep 22 — W3.1 EVIDENCE SETTLES): the judge now reads an OBLIGATION (commitment or
+    // actionable item) against a candidate SET; the age fact rides unchanged, and the version floor
+    // replaces the exact pin (an exact pin breaks on every lawful bump — the recorded lesson).
+    && /const ageDays = openAgeDays\((commitment|obligation)\.created_at\);/.test(ful)
     && /this obligation has been open \$\{ageDays\} day\(s\)/.test(ful)
-    && /export const FULFILLMENT_LAW_VERSION = 4;/.test(ful));
+    && (() => { const m = ful.match(/export const FULFILLMENT_LAW_VERSION = (\d+);/); return !!m && Number(m[1]) >= 4; })());
 
   gate('T27.11 THE AGNOSTIC CLAUSE — the lane names no sender, token, vendor or language',
     !!exp && !/augmtd|gmail|outlook|@[a-z0-9-]+\.(com|pt|de)/i.test(exp.replace(/@\/lib\/[a-z-/]+/g, ''))
@@ -4204,7 +4253,9 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
       const pres = read('lib/room/presentation.ts') ?? '';
       return /export function mountsEmailCard\(row: CardCandidateRow\): boolean \{/.test(pres)
         && !!room && /\.filter\(\(r\) => mountsEmailCard\(r\)\)/.test(room)
-        && /import \{ railCoversItem, moveTargetId, mountsEmailCard, boardRowItemId \} from '@\/lib\/room\/presentation'/.test(room)
+        // ⟲ RE-POINTED (stabilization W2.1, Sep 22): the same import now also carries `prepAnchorKey`
+        // (the ONE reader-side prep anchor producer) — the predicate's home is unchanged.
+        && /import \{ railCoversItem, moveTargetId, mountsEmailCard, boardRowItemId(?:, prepAnchorKey)? \} from '@\/lib\/room\/presentation'/.test(room)
         // the room no longer decides candidacy on a token string of its own (the LABEL may still
         // read `prepared`; what may not is the filter that decides whether a card mounts)
         && !/filter\([^)]*prepared === 'draft'/.test(room)
@@ -4381,7 +4432,11 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     })());
   gate('T28.28 EVERY ROW DEED ADDRESSES THE RAW ROW — the card’s id, the anchor key, and every per-item route in the room',
     !!room && /<EmailCard item=\{\{ id: boardRowItemId\(r\) \}\}/.test(room)
-    && /anchorKey: `prep:\$\{boardRowItemId\(r\)\}`/.test(room)
+    // ⟲ RE-POINTED (stabilization W2.1, Sep 22): the anchor key is the WRITER's shape (`prep:<spineId>`,
+    // lib/prepare/pass.ts) produced by `prepAnchorKey` from the raw row id — `prep:<rawId>` never
+    // matched a persisted narration, so every card appended at the stream's end. The raw-row law
+    // still holds: the helper is handed boardRowItemId(r).
+    && /anchorKey: prepAnchorKey\(.*boardRowItemId\(r\)\)/.test(room)
     && /cardRowId === boardRowItemId\(r\)/.test(room)
     // no per-item route in this room is still handed the spine key
     && !/\/api\/(?:inbox|commitments)\/\$\{w\.id\}/.test(room)
@@ -5357,10 +5412,17 @@ console.log('\nT32 · THE ONE OBJECT CARD — the ask and the thing asked about,
   // ── clause 1 · ONE READ OF THE THREAD DOOR ──
   gate('T32.4 THE DECK AND THE KIT SHARE ONE THREAD-TAIL IMPLEMENTATION — the loader lives in lib/inbox/thread-door.ts and the deck\'s inline copy is GONE',
     !!door32 && /export function loadThreadDoor/.test(door32) && /export function loadThreadTail/.test(door32)
-    && /_flight/.test(door32) && /_cache\.set\(itemId, data\)/.test(door32)
+    // ⟲ RE-POINTED (W3.7 ROOM SPEED): the door now holds ONE raw read (`_rawFlight` + `_raw`) and
+    // derives the narrowed door data from it (`_cache.set(itemId, readPayload(d …))`) — so the
+    // email room's full-payload read and the object card's narrowed read are one request.
+    && /_rawFlight/.test(door32) && /_cache\.set\(itemId, readPayload\(/.test(door32)
     && /import \{ threadTail, type TriageMessage \} from '@\/lib\/triage\/words'/.test(door32)
     // the deck imports it and keeps NO cache, NO flight map and NO fetch of the thread door
-    && /import \{ loadThreadTail, peekThreadDoor \} from '@\/lib\/inbox\/thread-door'/.test(deck32)
+    // ⟲ RE-POINTED (Sep 22, W3.6): the exact import LIST was pinned; the deck card now also warms a
+    // handed commitment's founding thread through the SAME door (`loadThreadDoor`) before mounting
+    // THE ONE OBJECT CARD. The law is that every thread read goes through the ONE door module —
+    // asserted as "imports loadThreadTail + peekThreadDoor from it", not "imports exactly those two".
+    && /import \{[^}]*\bloadThreadTail\b[^}]*\bpeekThreadDoor\b[^}]*\} from '@\/lib\/inbox\/thread-door'/.test(deck32)
     && !/_tailCache|_tailFlight/.test(deck32)
     && !/fetch\(`\/api\/inbox\/\$\{itemId\}\/thread`\)/.test(deck32));
 
@@ -5445,14 +5507,17 @@ console.log('\nT32 · THE ONE OBJECT CARD — the ask and the thing asked about,
     /prev\.type === 'actor_bubble' \|\| prev\.type === 'pinned'/.test(timeline32)
     && /prevActorId === item\.actorId/.test(timeline32));
 
-  gate('T32.13 ONE TYPE SCALE PER BUBBLE — the pinned opening speaks at one size in one muted tone (hierarchy by spacing and weight)',
+  // ⟲ RE-POINTED (W3.5 (e), Sep 22): "one muted tone" was still a SECOND tone inside one bubble —
+  // 13px text-neutral-500 lines under a 13px text-neutral-800 sentence. Clause 5 says hierarchy by
+  // spacing, never per-paragraph size/color: the pinned lines now wear the bubble's own tone.
+  gate('T32.13 ONE TYPE SCALE PER BUBBLE — the pinned opening speaks at one size in the bubble\'s own tone (hierarchy by spacing only)',
     (() => {
       const i = rail32.indexOf('const pinnedNode =');
       if (i < 0) return false;
       const seg = rail32.slice(i, rail32.indexOf('// ── THE ARTIFACT CARDS', i));
-      // no second body size, and no per-paragraph colour ladder inside the one bubble
-      return !/text-\[12\.5px\]/.test(seg) && !/text-neutral-800">\{/.test(seg)
-        && (seg.match(/text-\[13px\] leading-\[1\.5\] text-neutral-500/g) ?? []).length >= 4;
+      // no second body size, and no second colour inside the one bubble
+      return !/text-\[12\.5px\]/.test(seg) && !/text-neutral-500/.test(seg)
+        && (seg.match(/text-\[13px\] leading-\[1\.5\] text-neutral-800/g) ?? []).length >= 4;
     })());
 
   // RE-POINTED (Sep 22, T41): the filter lives in the kit's ONE `EventLine` piece now (the trace
@@ -5783,14 +5848,18 @@ console.log('\nT34 · THE EVENT CARD — one calendar event, and only the verbs 
     && /function windowFromPick\(/.test(host34)
     && /newStartISO: start\.toISOString\(\), newEndISO: end\.toISOString\(\)/.test(host34)
     // the picker starts on THE EVENT'S OWN window, never today and never a guess
-    && /function pickerDefaultsOf\(spec: EventSpec\)/.test(host34)
-    && /pickerDefaults: pickerDefaultsOf\(spec\)/.test(host34));
+    && /function pickerDefaultsOf\(spec: (EventSpec|Pick<EventSpec, 'startISO' \| 'endISO'>)\)/.test(host34)
+    // ⟲ RE-POINTED (Sep 22 — W0.4): the defaults are MEMOIZED on the event's own window (a fresh
+    // object per render reset the user's half-typed pick on every streamed token).
+    && /useMemo\(\s*\(\) => \(specId \? pickerDefaultsOf\(/.test(host34));
 
   // ── (f) THE RE-READ, THE ONE DOOR, THE GUARD ──
   gate('T34.9 A PERSISTED CARD IS A POINTER — the stored component carries `{eventId, proposal?}` and the host RE-READS the event through its own door',
     /export type EventPointer = \{ eventId: string; proposal\?: EventProposal \| null \};/.test(host34)
     && /fetch\(`\/api\/events\/\$\{id\}\/card`\)/.test(host34)
-    && /if \(spec \|\| !pointer\?\.eventId\) return;/.test(host34)
+    // ⟲ RE-POINTED (Sep 22 — W0.4): the re-read is keyed on the POINTER'S ID (a primitive), never the
+    // pointer object — a parent re-render no longer cancels and refetches the card.
+    && /pointer\?\.eventId/.test(host34) && !/\[pointer, /.test(host34)
     // the chief room's rehydrate hands over a POINTER and never a stored spec
     && /t\.component\?\.key === 'event_card'/.test(ask34)
     && (() => {
@@ -5896,6 +5965,13 @@ console.log('\nT35 · THE ASK AND THE GATE — one object, one rendering, one vo
     // for the same reason: a preview's job is to render the states a reader meets, so it composes
     // card literals on purpose. Every PRODUCT surface still mounts a host.
     'app/(main)/dev/thread-preview/preview-catalogue.tsx',
+    // ⟲ RE-POINTED Sep 22 (stabilization W0.3b, THE CONFIRM CARD — never weakened): a PREPARED
+    // STATE CHANGE (lib/work/pending-change.ts) is a different OBJECT from a run gate, with the
+    // same shape of question — apply this, or not — so its ONE host composes the kit's `approval`
+    // kind with its own words (CHANGE_WORDS) and its own doors (/api/changes/[id]/apply · dismiss).
+    // The law stands: ONE host per object. This is the change's host, not a third gate rendering;
+    // smoke-confirm-cards.ts C9 pins it as the only file that mounts the change.
+    'components/home/change-card.tsx',
   ]);
 
   // ── 1 · THE KIT EXPRESSES EVERY STATE THE COPIES EXPRESSED ────────────────────────────────────
@@ -6492,20 +6568,27 @@ console.log('\nT38 · THE PREVIEW IS THE PRODUCT — every kind the kit owns has
     orphans.length ? `no producer for: ${orphans.join(', ')}` : `${KINDS38.length} kinds, all produced`);
 
   // T38.2 · ONE SANDBOX, ONE PRIMITIVE. Converging `frame` onto the kit must not grow a second
-  // iframe: the srcdoc sandbox lives in components/frames/frame-card.tsx and nowhere else, and
-  // `allow-same-origin` (which would hand a frame OUR origin) appears in no source file at all.
+  // SCRIPT-RUNNING iframe: the srcdoc sandbox that runs code lives in components/frames/frame-card.tsx
+  // and nowhere else. ⟲ RE-POINTED (Sep 22 — stabilization W0.1, precedence ruled in the laws
+  // registry): inbound mail now renders in a second sandboxed frame with scripts OFF
+  // (components/inbox/thread-messages.tsx). The law's actual protection — never OUR origin together
+  // with running script — holds: allow-same-origin may appear only where allow-scripts never does
+  // (smoke-render-safety enforces the pair per attribute).
   {
     const withIframe = [...sourceFiles('components'), ...sourceFiles('lib'), ...sourceFiles('app')]
       .filter((f) => /<iframe/.test(read(f) ?? ''));
+    const code = (f: string) => (read(f) ?? '').replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const scripted = withIframe.filter((f) => /['"`][^'"`\n]*allow-scripts/.test(code(f)) && /sandbox=/.test(code(f)));
     const sandboxed = withIframe.filter((f) => /sandbox=/.test(read(f) ?? ''));
-    // …in a real sandbox ATTRIBUTE, never in the prose that forbids it (frame-card.tsx's own
-    // header documents the law in words, and that documentation is the point).
-    const sameOrigin = [...sourceFiles('components'), ...sourceFiles('lib'), ...sourceFiles('app')]
-      .filter((f) => /sandbox=["'{][^"'\n]*allow-same-origin/.test(read(f) ?? ''));
-    gate('T38.2 THE ONE FRAME PRIMITIVE — the sandboxed iframe lives only in components/frames/frame-card.tsx, and allow-same-origin nowhere',
-      sandboxed.length === 1 && sandboxed[0] === path.join('components', 'frames', 'frame-card.tsx')
-      && sameOrigin.length === 0,
-      `sandboxed: ${sandboxed.join(', ') || 'none'}${sameOrigin.length ? ` · allow-same-origin: ${sameOrigin.join(', ')}` : ''}`);
+    const allowedSandboxes = [path.join('components', 'frames', 'frame-card.tsx'), path.join('components', 'inbox', 'thread-messages.tsx')];
+    const emailFrame = read(path.join('components', 'inbox', 'thread-messages.tsx')) ?? '';
+    const frameCard = read(path.join('components', 'frames', 'frame-card.tsx')) ?? '';
+    gate('T38.2 THE ONE FRAME PRIMITIVE — the script-running sandbox lives only in frame-card.tsx; the only other sandbox is the scripts-off mail frame; our origin never meets running script',
+      scripted.length === 1 && scripted[0] === path.join('components', 'frames', 'frame-card.tsx')
+      && sandboxed.every((f) => allowedSandboxes.includes(f))
+      && !/allow-same-origin/.test(frameCard.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, ''))
+      && /EMAIL_FRAME_SANDBOX = '[^']*'/.test(emailFrame) && !/EMAIL_FRAME_SANDBOX = '[^']*allow-scripts/.test(emailFrame),
+      `scripted: ${scripted.join(', ') || 'none'} · sandboxed: ${sandboxed.join(', ') || 'none'}`);
   }
 
   // T38.3 · THE MOVE IS A CARD. The room's one primary deed used to be a bare ThreadAction pushed

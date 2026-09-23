@@ -433,7 +433,7 @@ export async function loadProfileIndex(
   idx.folderId = (folder as { id: string }).id;
 
   // NO SILENT CAP: PostgREST answers at most 1000 rows however the query is written, and a profile
-  // collection is exactly the kind of folder that passes 1000 (the AHK directory holds 1,002). A
+  // collection is exactly the kind of folder that passes 1000 (a real member directory held 1,002). A
   // capped read would disqualify the tail of the alphabet from every match, invisibly.
   const files = await fetchAllRows<{ id: string; filename: string; extracted_text: string | null }>(
     (from, to) => admin.from('knowledge_files')

@@ -1,5 +1,5 @@
-// Person Brain — the durable + LIVE store. Twin of lib/initiatives/state-store.ts. Persists the synthesized
-// per-person state so surfaces read instantly, and refreshes it as interactions happen. The ledger stays
+// Person Brain — the LIVE refresh of the PERSON ENTITY (work_entities kind='person'). Persists the
+// synthesized per-person state so surfaces read instantly, and refreshes it as interactions happen. The ledger stays
 // derived-on-read (brain.ts); only the synthesized bits are stored.
 //
 // LIVE mechanism: every ingestion point that touches a person (email sync, meeting insight, reply sent) calls
@@ -8,12 +8,6 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { fetchPeopleCorpus, assemblePersonLedger, synthesizePerson, resolvePersonSeed, isRealPerson, type PersonCorpus } from '@/lib/people/brain';
-
-export type StoredPersonState = {
-  person_key: string; display_name: string | null; emails: unknown; org: string | null; is_internal: boolean;
-  initiatives: unknown; state: unknown; next_touch: unknown; people: unknown; quiet_days: number | null;
-  people_sig: string | null; last_touch_at: string | null; updated_at: string;
-};
 
 // Refresh ONE person's state — WRITES THE PERSON ENTITY (One Brain demolition blocker B: person_state is
 // legacy-read-only now; the live path targets work_entities kind='person', alias-aware, so a multi-address
@@ -74,20 +68,6 @@ export async function refreshPersonStates(supabase: SupabaseClient, userId: stri
   } catch { /* non-fatal — table may not exist yet */ }
 }
 
-// Read the stored person states for a surface. Ordered by recency of last contact.
-export async function getPersonStates(supabase: SupabaseClient, userId: string): Promise<StoredPersonState[]> {
-  const { data } = await supabase.from('person_state')
-    .select('person_key, display_name, emails, org, is_internal, initiatives, state, next_touch, people, quiet_days, people_sig, last_touch_at, updated_at')
-    .eq('user_id', userId)
-    .order('last_touch_at', { ascending: false })
-    .limit(500);
-  return (data ?? []) as StoredPersonState[];
-}
-
-// Read ONE person's state (by canonical key or a raw identifier). Instant — for the deep-dive "who is this" card.
-export async function getPersonState(supabase: SupabaseClient, userId: string, personKey: string): Promise<StoredPersonState | null> {
-  const { data } = await supabase.from('person_state')
-    .select('person_key, display_name, emails, org, is_internal, initiatives, state, next_touch, people, quiet_days, people_sig, last_touch_at, updated_at')
-    .eq('user_id', userId).eq('person_key', personKey.toLowerCase()).maybeSingle();
-  return (data as StoredPersonState | null) ?? null;
-}
+// W2.6 DEMOLITION: the legacy `person_state` READERS (getPersonStates / getPersonState) are gone — the
+// table has had no writer since July (refreshPersonState above writes the person ENTITY), and its last
+// two consumers (the Home brief's relationship cue, the drafter's WHO block) now read the registry only.

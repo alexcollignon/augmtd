@@ -4,6 +4,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { userTimezone } from '@/lib/calendar/schedule-window';
+import { clipWithRule } from '@/lib/utils/pack-context';
 
 export interface GetMeetingContextConfig {
   /** Lookback window. Default: '30d' */
@@ -67,11 +68,16 @@ export type UpcomingEventRow = {
   attendeeNames: string[];
 };
 
+/** THE BLOCKS `text` is joined from (THE CONTEXT BUDGET, W2.7): one per header / meeting /
+ *  upcoming line, carrying the row id — so a budgeted reader packs BY MEETING and the card can show
+ *  exactly the meetings the model saw. `text === blocks.map(b => b.text).join('\n\n')`. */
+export type MeetingReadBlock = { kind: 'header' | 'meeting' | 'upcoming'; id: string | null; text: string };
+
 export async function readMeetingContext(
   config: Record<string, unknown>,
   userId: string,
   supabase: SupabaseClient,
-): Promise<{ text: string; meetings: MeetingRow[]; upcoming: UpcomingEventRow[]; tz: string }> {
+): Promise<{ text: string; meetings: MeetingRow[]; upcoming: UpcomingEventRow[]; tz: string; blocks: MeetingReadBlock[] }> {
   const since          = parseSince((config.since as string) || '30d');
   const include        = (config.include as string) || 'summaries';
   const withPerson     = typeof config.with_person === 'string' ? config.with_person.toLowerCase().trim() : null;
@@ -85,6 +91,8 @@ export async function readMeetingContext(
   const tz = await userTimezone(supabase, userId);
 
   const parts: string[] = [];
+  const blocks: MeetingReadBlock[] = [];
+  const push = (kind: MeetingReadBlock['kind'], id: string | null, text: string) => { parts.push(text); blocks.push({ kind, id, text }); };
 
   // ── Past processed meetings ─────────────────────────────────────────────────
   const { data: rows } = await supabase
@@ -124,11 +132,11 @@ export async function readMeetingContext(
   const upcomingRows: UpcomingEventRow[] = [];
 
   if (meetings.length === 0 && !includeUpcoming) {
-    return { text: 'No processed meetings found in the specified period.', meetings: [], upcoming: [], tz };
+    return { text: 'No processed meetings found in the specified period.', meetings: [], upcoming: [], tz, blocks: [] };
   }
 
   if (meetings.length > 0) {
-    parts.push(`## Recent meetings (${meetings.length})\n`);
+    push('header', null, `## Recent meetings (${meetings.length})\n`);
 
     for (const m of meetings) {
       const date = new Date(m.start_time).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: tz });
@@ -143,8 +151,13 @@ export async function readMeetingContext(
       const wantSummary = include === 'summaries' || include === 'both';
       const wantNotes   = include === 'notes'     || include === 'both';
 
+      // EXCERPT HONESTY (invariant 13): a raw `.slice()` here fed the model a hard cut with no
+      // marker — the same failure the law names (a normal summary ending mid-sentence read as
+      // "the meeting notes got cut off"). `clipWithRule` ends at a boundary, declares itself with
+      // EXCERPT_MARK, and carries EXCERPT_RULE inline — this tool result stands alone as a message,
+      // so the rule must ride WITH the excerpt rather than depend on a caller appending it.
       if (wantSummary && m.summary?.trim()) {
-        lines.push(`Summary: ${m.summary.trim().slice(0, 500)}`);
+        lines.push(`Summary: ${clipWithRule(m.summary.trim(), 500)}`);
       }
 
       const ns = m.notes_structured;
@@ -156,7 +169,7 @@ export async function readMeetingContext(
           lines.push(`Action items: ${actionItems.slice(0, 5).join(' · ')}`);
         }
         if (ns.live_notes?.trim()) {
-          lines.push(`Notes: ${ns.live_notes.trim().slice(0, 300)}`);
+          lines.push(`Notes: ${clipWithRule(ns.live_notes.trim(), 300)}`);
         }
       }
 
@@ -171,7 +184,7 @@ export async function readMeetingContext(
         dateLabel: date,
       });
 
-      parts.push(lines.join('\n'));
+      push('meeting', m.id, lines.join('\n'));
     }
   }
 
@@ -190,7 +203,7 @@ export async function readMeetingContext(
       .limit(10);
 
     if (upcoming && upcoming.length > 0) {
-      parts.push(`\n## Upcoming meetings (next 7 days)\n`);
+      push('header', null, `\n## Upcoming meetings (next 7 days)\n`);
       for (const ev of upcoming as Array<{ id: string; title: string; start_time: string; end_time: string; attendees?: Array<{ email: string; displayName?: string }> }>) {
         const date = new Date(ev.start_time).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: tz });
         const time = new Date(ev.start_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: tz });
@@ -204,12 +217,12 @@ export async function readMeetingContext(
           id: String(ev.id), title: ev.title, start_time: ev.start_time, end_time: ev.end_time ?? null,
           dateLabel: date, timeLabel: time, attendeeNames,
         });
-        parts.push(line);
+        push('upcoming', String(ev.id), line);
       }
     }
   }
 
-  return { text: parts.join('\n\n'), meetings: meetingRows, upcoming: upcomingRows, tz };
+  return { text: parts.join('\n\n'), meetings: meetingRows, upcoming: upcomingRows, tz, blocks };
 }
 
 export async function executeGetMeetingContext(

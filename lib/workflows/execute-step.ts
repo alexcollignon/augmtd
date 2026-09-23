@@ -438,7 +438,7 @@ async function toolReadKbFolder(
 // ── AI step ───────────────────────────────────────────────────────────────────
 
 // ── THE STRUCTURAL VERIFICATION GATE (production arc step 3) ─────────────────────────────────
-// The AHK arc's hand-built gate promoted into the engine: ONE implementation, versioned — never
+// A pilot briefing workflow's hand-built gate promoted into the engine: ONE implementation, versioned — never
 // copy-pasted into workflow prompts again. Order matters: the ARITHMETIC FLOOR runs first (code
 // recomputes the draft's computable claims; its findings become MUST-FIX lines the reasoned pass
 // cannot ignore), then one persona-free reasoned pass verifies the draft against the sources.

@@ -65,7 +65,52 @@ export function prepTurnText(title: string, when: string, brief: string | null |
 }
 
 const KIND = 'anticipation';
+/** THE PREP PROMPT'S VERSION (W2.5 — every AI cache carries a version). The meeting fire record is
+ *  an exactly-once DEED key (`meeting:<id>:<start>` — lib/home/day.ts reads it by that key), so the
+ *  version rides the record's payload, not its key: a record stamped under an older prompt counts
+ *  as not-yet-fired and the brief is re-authored once, replacing its turn in place (the dedupe key
+ *  is unchanged). Records written before the stamp read as v1. */
+export const ANTICIPATION_BRIEF_VERSION = 1;
 const RUN_TTL_MS = 6 * 60 * 60_000;
+// W0.5 TIME BUDGET: a short in-flight guard, NOT the 6h TTL — a killed invocation used to claim the
+// full 6h window up front (line below, pre-fix) and silently skip meeting pre-briefs/chases for 6h.
+// Now the claim only records a SHORT in-flight marker (concurrency guard); the real 6h TTL is stamped
+// only once the work actually completes (CLAUDE.md maxDuration lesson, generalized to a claim-after-
+// work discipline).
+const IN_FLIGHT_TTL_MS = 10 * 60_000;
+// ── W3.3 · DUE-SOON IS A WINDOW, NOT "ANYTHING DATED" (census, Sep 22): the selection was
+// "due by the cutoff, OR in the overdue bucket" — no lower bound — so 56 of the last 100 fires landed
+// AFTER the due date, 15 to 436 days late. "Due soon" is a forward-looking lane: an item more than a
+// day or two overdue belongs to the judge's anchor/expiry lanes (proactive-reach LAWS 1-2), which
+// decide whether it is still owed at all. Undated items are never "due soon".
+export const DUE_SOON_AHEAD_DAYS = 2;
+export const DUE_SOON_GRACE_DAYS = 2;
+
+const dayMs = (d: string): number => Date.parse(`${d.slice(0, 10)}T00:00:00Z`);
+
+/** Pure: is this stated due day inside the anticipation window, on the user's own calendar day? */
+export function isDueSoon(
+  explicit: string | null | undefined, todayStr: string,
+  opts: { aheadDays?: number; graceDays?: number } = {},
+): boolean {
+  if (!explicit || !/^\d{4}-\d{2}-\d{2}/.test(explicit) || !/^\d{4}-\d{2}-\d{2}$/.test(todayStr)) return false;
+  const diffDays = Math.round((dayMs(explicit) - dayMs(todayStr)) / 86_400_000);
+  return diffDays <= (opts.aheadDays ?? DUE_SOON_AHEAD_DAYS) && diffDays >= -(opts.graceDays ?? DUE_SOON_GRACE_DAYS);
+}
+
+type DueSoonItem = { id: string; state: string; actor: string; when: { explicit: string | null } };
+
+/** Pure: the due-soon selection — yours, open, dated inside the window — soonest due first. */
+export function selectDueSoon<T extends DueSoonItem>(items: T[], todayStr: string): T[] {
+  return items
+    .filter((i) => i.state === 'todo' && i.actor === 'you' && isDueSoon(i.when.explicit, todayStr))
+    .sort((a, b) => String(a.when.explicit).localeCompare(String(b.when.explicit)) || a.id.localeCompare(b.id));
+}
+
+/** The exactly-once fire key CARRIES the due day: a re-anchored due date is a new moment and may be
+ *  anticipated again; the same moment never fires twice. */
+export const dueSoonFireKey = (itemId: string, explicit: string): string => `due:${itemId}:${explicit.slice(0, 10)}`;
+
 const MAX_BRIEFS_PER_RUN = 2;
 const MAX_PREPARES_PER_RUN = 2;
 const MAX_CHASES_PER_RUN = 2;
@@ -74,11 +119,21 @@ const QUIET_DAYS = 7;
 export async function runAnticipationPass(client: DBClient, userId: string): Promise<{ briefs: number; prepared: number; chases: number } | null> {
   try {
     // Self-gate: one row read decides; every caller may invoke freely.
-    const { data: last } = await client.from('item_plans').select('updated_at')
+    const { data: last } = await client.from('item_plans').select('updated_at, tasks')
       .eq('user_id', userId).eq('kind', KIND).eq('entity_id', 'last_run').maybeSingle();
-    if (last?.updated_at && Date.now() - new Date(last.updated_at).getTime() < RUN_TTL_MS) return null;
+    const lastTasks = (last?.tasks ?? {}) as { inFlight?: boolean };
+    const ageMs = last?.updated_at ? Date.now() - new Date(last.updated_at).getTime() : Infinity;
+    if (lastTasks.inFlight) {
+      // Another invocation claimed it recently — skip. Past the short guard window, treat it as a
+      // crashed/killed run (never completed, so the 6h TTL never legitimately started) and proceed.
+      if (ageMs < IN_FLIGHT_TTL_MS) return null;
+    } else if (ageMs < RUN_TTL_MS) {
+      return null; // a completed run is still fresh
+    }
+    // THE CLAIM: a short in-flight marker only — never the long TTL. Prevents concurrent double-runs
+    // without letting a killed invocation block real work for 6h.
     await client.from('item_plans').upsert({
-      user_id: userId, kind: KIND, entity_id: 'last_run', tasks: {}, updated_at: new Date().toISOString(),
+      user_id: userId, kind: KIND, entity_id: 'last_run', tasks: { inFlight: true, startedAt: new Date().toISOString() }, updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id,kind,entity_id' });
 
     let briefs = 0;
@@ -107,9 +162,9 @@ export async function runAnticipationPass(client: DBClient, userId: string): Pro
       // a corrected brief, and the turn's UNCHANGED dedupe key below REPLACES the old prep text
       // in place (keyed dedupe updates), so the record never shows two competing briefings.
       const fireKey = `meeting:${ev.id}:${String(ev.start_time).slice(0, 16)}`;
-      const { data: fired } = await client.from('item_plans').select('id')
+      const { data: fired } = await client.from('item_plans').select('tasks')
         .eq('user_id', userId).eq('kind', KIND).eq('entity_id', fireKey).maybeSingle();
-      if (fired) continue;
+      if (fired && Number((fired.tasks as { v?: number } | null)?.v ?? 1) >= ANTICIPATION_BRIEF_VERSION) continue;
       // The meeting must belong to a ROOM — anticipation prepares WORK, it never invents projects.
       const { data: link } = await client.from('entity_links').select('entity_id')
         .eq('user_id', userId).eq('item_kind', 'calendar_event').eq('item_id', ev.id)
@@ -153,10 +208,10 @@ export async function runAnticipationPass(client: DBClient, userId: string): Pro
         if (!text) {
           // Nothing to prepare — and nothing written. The fire record still stamps, so a quiet
           // meeting is not re-judged (and re-spent) every six hours until it starts.
-          await client.from('item_plans').insert({
+          await client.from('item_plans').upsert({
             user_id: userId, kind: KIND, entity_id: fireKey,
-            tasks: { kind: 'meeting_brief', silent: true, eventId: ev.id, entityId, at: new Date().toISOString() },
-          });
+            tasks: { kind: 'meeting_brief', silent: true, eventId: ev.id, entityId, at: new Date().toISOString(), v: ANTICIPATION_BRIEF_VERSION },
+          }, { onConflict: 'user_id,kind,entity_id' });
           continue;
         }
         const { writeRoomTurn } = await import('@/lib/room/turns');
@@ -165,10 +220,10 @@ export async function runAnticipationPass(client: DBClient, userId: string): Pro
           text,
           dedupeKey: `anticipate:meeting:${ev.id}`,
         });
-        await client.from('item_plans').insert({
+        await client.from('item_plans').upsert({
           user_id: userId, kind: KIND, entity_id: fireKey,
-          tasks: { kind: 'meeting_brief', eventId: ev.id, entityId, because: `you meet at ${when}`, at: new Date().toISOString() },
-        });
+          tasks: { kind: 'meeting_brief', eventId: ev.id, entityId, because: `you meet at ${when}`, at: new Date().toISOString(), v: ANTICIPATION_BRIEF_VERSION },
+        }, { onConflict: 'user_id,kind,entity_id' });
         briefs++;
       } catch { /* one meeting failing never stops the pass */ }
     }
@@ -182,27 +237,34 @@ export async function runAnticipationPass(client: DBClient, userId: string): Pro
     } catch { /* both walks degrade to no-ops */ }
 
     // ── 2. DUE-SOON — the existing machinery runs early; anticipation only moves the clock. ──
+    // W3.3: a bounded WINDOW on the user's own day (selectDueSoon), a fire key that carries the due
+    // day, an OUTCOME on the one prep ledger (lane 'anticipation' — the result used to be discarded:
+    // 69 of 100 fires were unobservable), and a RETRY — a fire record is written only when the
+    // attempt settled something; an honest "will retry" leaves the moment open for the next run.
     try {
-      const cutoff = new Date(now.getTime() + 48 * 60 * 60_000).toISOString().slice(0, 10);
-      const dueSoon = (items as Array<{ id: string; state: string; actor: string; when: { explicit: string | null; bucket: string } }>).filter((i) =>
-        i.state === 'todo' && i.actor === 'you' &&
-        ((i.when.explicit && i.when.explicit.slice(0, 10) <= cutoff) || i.when.bucket === 'overdue'));
+      const { localNow } = await import('@/lib/utils/user-time');
+      const dueSoon = selectDueSoon(items as Array<DueSoonItem & { entityId?: string }>, localNow(tz).dateStr);
+      let attempts = 0;
       for (const w of dueSoon) {
-        if (prepared >= MAX_PREPARES_PER_RUN) break;
-        const fireKey = `due:${w.id}`;
+        if (attempts >= MAX_PREPARES_PER_RUN) break;
+        const due = String(w.when.explicit).slice(0, 10);
+        const fireKey = dueSoonFireKey(w.id, due);
         const { data: fired } = await client.from('item_plans').select('id')
           .eq('user_id', userId).eq('kind', KIND).eq('entity_id', fireKey).maybeSingle();
         if (fired) continue;
+        attempts++;
         try {
           // Judge-gated: prepareOneItem consults the one judgment — anticipation never bypasses it.
-          const { prepareOneItem } = await import('@/lib/prepare/pass');
-          await prepareOneItem(client, userId, w as never);
-          await client.from('item_plans').insert({
+          const { prepareOneItem, recordPrepOutcome, judgmentKeyOf, isRetryableOutcome } = await import('@/lib/prepare/pass');
+          const r = await prepareOneItem(client, userId, w as never);
+          await recordPrepOutcome(client, userId, judgmentKeyOf(w as never), r, 'anticipation');
+          if (isRetryableOutcome(r)) continue; // no fire record — the next run tries this moment again
+          await client.from('item_plans').upsert({
             user_id: userId, kind: KIND, entity_id: fireKey,
-            tasks: { kind: 'due_soon', itemId: w.id, because: `due ${(w as unknown as { when: { explicit: string | null } }).when.explicit?.slice(0, 10) ?? 'now'} with nothing prepared`, at: new Date().toISOString() },
-          });
-          prepared++;
-        } catch { /* one item failing never stops the pass */ }
+            tasks: { kind: 'due_soon', itemId: w.id, due, did: r.did, reason: r.reason ?? null, because: `due ${due} with nothing prepared`, at: new Date().toISOString() },
+          }, { onConflict: 'user_id,kind,entity_id' });
+          if (r.did !== 'none') prepared++;
+        } catch { /* one item failing never stops the pass — and writes no fire record, so it retries */ }
       }
     } catch { /* the meetings half already ran */ }
 
@@ -234,8 +296,10 @@ export async function runAnticipationPass(client: DBClient, userId: string): Pro
         const w = (items as Array<{ id: string }>).find((i) => i.id === `commit:${c.id}`);
         if (!w) continue;
         try {
-          const { prepareOneItem } = await import('@/lib/prepare/pass');
-          await prepareOneItem(client, userId, w as never);
+          const { prepareOneItem, recordPrepOutcome, judgmentKeyOf } = await import('@/lib/prepare/pass');
+          const r = await prepareOneItem(client, userId, w as never);
+          // W3.3: the chase attempt lands on the one prep ledger too — never an unobservable fire.
+          await recordPrepOutcome(client, userId, judgmentKeyOf(w as never), r, 'anticipation');
           const quietDays = Math.floor((Date.now() - new Date((c as unknown as { created_at: string }).created_at).getTime()) / 86_400_000);
           await client.from('item_plans').upsert({
             user_id: userId, kind: KIND, entity_id: fireKey,
@@ -247,8 +311,21 @@ export async function runAnticipationPass(client: DBClient, userId: string): Pro
       }
     } catch { /* the earlier walks already ran */ }
 
+    // THE COMPLETION STAMP: the long 6h TTL is recorded only NOW, once the work has actually run —
+    // never up front. A killed invocation never reaches here, so it never falsely claims the window.
+    await client.from('item_plans').upsert({
+      user_id: userId, kind: KIND, entity_id: 'last_run', tasks: { inFlight: false, completedAt: new Date().toISOString() }, updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,kind,entity_id' }).catch(() => {});
     return { briefs, prepared, chases };
-  } catch { return null; }
+  } catch {
+    // A crash clears the in-flight marker so the short guard window doesn't outlive the failure
+    // (the age-based check above already self-heals past IN_FLIGHT_TTL_MS regardless, but this
+    // lets a retry happen sooner rather than waiting out the guard).
+    await client.from('item_plans').upsert({
+      user_id: userId, kind: KIND, entity_id: 'last_run', tasks: { inFlight: false, failedAt: new Date().toISOString() }, updated_at: new Date(0).toISOString(),
+    }, { onConflict: 'user_id,kind,entity_id' }).catch(() => {});
+    return null;
+  }
 }
 
 // `prepReadyEvents` LIVED HERE and died Sep 13 with its only consumer. It answered one question —

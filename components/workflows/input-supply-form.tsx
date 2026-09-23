@@ -131,8 +131,10 @@ export default function InputSupplyForm({
     // callers of the same route. `resumeRun` (lib/deeds/gate-doors.ts) is the only one left, and it
     // keeps the server's own sentence, which is the honest one here (too long · not indexed yet ·
     // already moved on).
+    // A SUPPLY IS AN ANSWER, NEVER A REJECTION (W0.4): `approve:false` + material once rejected
+    // the run while the door said ok. The door now reads the payload; the form says it plainly too.
     const res = await resumeRun(runId, {
-      approve: false,
+      approve: true,
       input: { ...(said ? { text: said } : {}), ...(doc ? { kbFileId: doc.id, pin } : {}) },
     });
     setBusy(false);

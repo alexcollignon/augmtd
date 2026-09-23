@@ -78,6 +78,11 @@ export async function resolveThreadOnReply(opts: {
       const state = computeThreadReplyState(messagesForResolution(messages, cp), it.created_at ? new Date(it.created_at) : null);
       if (!state.userReplied) continue; // conservative: no clear structural reply → leave it
 
+      // THE OUTCOME LEDGER (W3.2): the user answered from their own mailbox — the most common fate
+      // of a prepared reply, and until now the ledger's loudest silence. Capture what we had
+      // prepared-and-unsent BEFORE the flip; it is stamped done_elsewhere once the flip lands.
+      const { capturePending, logPendingOutcomes } = await import('@/lib/prepare/outcome');
+      const pendingPrep = await capturePending(client, userId, { kind: 'inbox', id: it.id });
       const resolvedAt = new Date().toISOString();
       const sd = (it.source_data ?? {}) as Record<string, unknown>;
       const { error } = await client
@@ -92,6 +97,9 @@ export async function resolveThreadOnReply(opts: {
         .eq('user_id', userId)
         .eq('status', 'pending'); // guard against a concurrent flip
       if (error) continue;
+      await logPendingOutcomes(client, userId, pendingPrep, {
+        base: 'done_elsewhere', itemKind: 'inbox', itemId: it.id, door: 'reply_external', source: sd,
+      }).catch(() => 0);
 
       // Swap the mailbox label to AUGMTD/Done — the user replied from Gmail/Outlook directly, so the
       // thread is resolved and should not linger under "Needs reply". Honors auto_label, non-fatal.
@@ -151,6 +159,9 @@ export async function resolveThreadOnReply(opts: {
         if (!closed) continue; // promised/unclear — the deliverable stays on the plate
       } catch { continue; } // never close on an error path
 
+      // THE OUTCOME LEDGER (W3.2): the commitment's pooled preparations, captured before the flip.
+      const { capturePending: captureC, logPendingOutcomes: logC } = await import('@/lib/prepare/outcome');
+      const pendingC = await captureC(client, userId, { kind: 'commitment', id: c.id });
       const resolvedAt = new Date().toISOString();
       const { error } = await client
         .from('commitments')
@@ -171,6 +182,9 @@ export async function resolveThreadOnReply(opts: {
       }
 
       out.resolvedCommitments++;
+      await logC(client, userId, pendingC, {
+        base: 'done_elsewhere', itemKind: 'commitment', itemId: c.id, door: 'reply_external',
+      }).catch(() => 0);
       import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', c.id)).catch(() => {});
       // commitment_done → reversible via /api/restore (commitment → status='open'), reappears on Home.
       await logActivity(client, userId, {

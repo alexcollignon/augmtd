@@ -96,7 +96,7 @@ export async function reactivateResolvedThreadOnReply(params: ReactivateParams):
     // NOMINATE → JUDGE (Aug 2, the fulfillment law's mirror at the inbound door): the structural
     // signal (a newer inbound on a resolved thread) only NOMINATES the reopen. A pure CLOSURE —
     // "Thank you!", "perfect, all set", a confirmation asking nothing further — settles the
-    // thread; it must not resurrect the item as work (Thorsten's thank-you reopened a finished
+    // thread; it must not resurrect the item as work (a client's thank-you reopened a finished
     // investigation). One cheap reasoned pass over the message's OWN words decides; any failure
     // reopens (showing costs less than hiding — the conservative default at THIS door).
     try {

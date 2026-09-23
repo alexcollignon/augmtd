@@ -319,7 +319,7 @@ async function materialFacts(
   if (!ids.length) return out;
   try {
     const { normalizeTriggers } = await import('@/lib/workflows/trigger-sources');
-    const { INPUTS_KIND } = await import('@/lib/workflows/inputs');
+    const { readPlans } = await import('@/lib/store/item-plans');
     let rows: Array<{ id: string; steps?: unknown; trigger?: unknown; triggers?: unknown }> = [];
     const full = await client.from('workflows').select('id, steps, trigger, triggers').eq('user_id', userId).in('id', ids);
     if (full.error || !full.data) {
@@ -327,13 +327,9 @@ async function materialFacts(
       rows = (legacy.data ?? []) as typeof rows;
     } else rows = full.data as typeof rows;
 
-    const { data: trays } = await client.from('item_plans').select('entity_id, tasks')
-      .eq('user_id', userId).eq('kind', INPUTS_KIND).in('entity_id', ids);
+    const trays = await readPlans(client, userId, 'workflow_inputs', { keys: ids });
     const accepts = new Map<string, boolean>();
-    for (const t of (trays ?? []) as Array<{ entity_id: string; tasks: unknown }>) {
-      const tasks = (t.tasks ?? null) as { acceptMaterial?: unknown } | null;
-      accepts.set(String(t.entity_id), tasks?.acceptMaterial === true);
-    }
+    for (const t of trays) accepts.set(t.key, t.tasks?.acceptMaterial === true);
 
     for (const w of rows) {
       const steps = Array.isArray(w.steps) ? (w.steps as Array<{ type?: string }>) : [];

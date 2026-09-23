@@ -93,9 +93,9 @@ export interface ApprovalStep {
   instruction?: string;
 }
 
-// Verify step — THE STRUCTURAL VERIFICATION GATE (production arc step 3): the AHK arc's
-// hand-built gate promoted into the ENGINE — one implementation, versioned, never copy-pasted
-// into workflow prompts again. The step treats the PREVIOUS output as THE DRAFT and everything
+// Verify step — THE STRUCTURAL VERIFICATION GATE (production arc step 3): a pilot briefing
+// workflow's hand-built gate promoted into the ENGINE — one implementation, versioned, never
+// copy-pasted into workflow prompts again. The step treats the PREVIOUS output as THE DRAFT and everything
 // before it as SOURCE MATERIAL: the arithmetic floor recomputes the draft's computable claims
 // BY CODE first, then one persona-free reasoned pass deletes/corrects ungrounded claims, fixes
 // citations to real source URLs, keeps structure EXACTLY, and never modernizes dates. Output =
@@ -223,7 +223,7 @@ export type NotificationMode = 'inbox_card' | 'silent' | 'email_digest';
 export interface OutputConfig {
   destination: OutputDestination;
   artifact_type?: ArtifactType;
-  title_template?: string;            // e.g. "AHK Briefing — {{date}}"
+  title_template?: string;            // e.g. "Weekly Market Briefing — {{date}}"
   slack_channel?: string;             // home=slack, or document link-out target (id or #name)
   email_recipient_ids?: string[];     // home=email, or document email link-out (connected mailboxes)
   email_to?: string[];                // home=email: free-text recipient addresses (any address)

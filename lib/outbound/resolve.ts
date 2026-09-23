@@ -7,7 +7,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getOutboundCandidates } from './sent-threads';
 import { classifyOutbound, type OutboundVerdict } from './classify-outbound';
 
-const OUTBOUND_VERSION = 1; // bump to force re-classification (e.g. prompt/model change)
+export const OUTBOUND_VERSION = 1; // bump to force re-classification (e.g. prompt/model change)
 
 export type OutboundItem = {
   recipient: string;

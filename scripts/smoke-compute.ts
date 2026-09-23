@@ -324,10 +324,13 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
       return a.includes('THE ONE-GROUNDING UNIFICATION') && a.includes('assembleRoomGrounding') &&
         a.includes("g.text.replace(/\\[(?:L|F)\\d+\\]\\s?/g, '')") &&
         a.includes('the focus is an enhancement'); })());
-  check('U2: BOTH global call sites thread the question — answerHomeQuestion and the converse agent loop (with the widened slice)',
+  // Re-pointed W2.7 (THE CONTEXT BUDGET): the "widened slice" was a raw .slice(0, 7000) that the
+  // loop then tail-chopped at 4,000 behind the preamble — the focus block never reached the model.
+  // The snapshot now rides whole into the PACKED page as its own budgeted, declared section.
+  check('U2: BOTH global call sites thread the question — answerHomeQuestion and the converse agent loop (the snapshot rides the packed page)',
     src('lib/home/ask.ts').includes('buildBrainSnapshot(supabase, userId, question)') &&
     src('lib/converse/index.ts').includes('buildBrainSnapshot(client, userId, text)') &&
-    src('lib/converse/index.ts').includes('.text.slice(0, 7000)'));
+    src('lib/converse/index.ts').includes("{ id: 'grounding', label: 'the room grounding', text: grounding"));
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
     const { createClient } = await import('@supabase/supabase-js');
     const sbU = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
@@ -448,11 +451,15 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
   check('RN2: THE MISSED-PROMISE FLOOR — a PAST due_date is only advanced by a SUCCESSFUL run (the dispatcher\'s pre-advance can never hide a failing task)',
     stg.includes('fromSuccessfulRun') && stg.includes('duePast && !opts?.fromSuccessfulRun') &&
     src('lib/workflows/run-workflow.ts').includes('{ fromSuccessfulRun: true }'));
-  check('RN4: ROOM FEEDBACK MUTATES THE METHOD — chief capability, commitment-room-scoped, source-verified, dated + tail-capped; the confirmed card carries the quiet method link',
+  // ⟲ RE-POINTED (W2.4 THE MEMORY LADDER, Sep 22): the dated STANDING FEEDBACK entry now lands through
+  // lib/workflows/worker-instructions.ts (method + feedback[]; the oldest feedback FOLDS by count/age,
+  // the method is never truncated). The old `appended.length > 4000` tail cap was the bug that cut the
+  // authored method off — its absence is now the law (smoke-memory-ladder ML9/ML10/MF1).
+  check('RN4: ROOM FEEDBACK MUTATES THE METHOD — chief capability, commitment-room-scoped, source-verified, dated + folded (never tail-capped); the confirmed card carries the quiet method link',
     CAPABILITY_MAP.steer_standing_task?.built === true &&
     src('lib/converse/index.ts').includes("tool === 'steer_standing_task'") &&
     stg.includes("c.source !== 'workflow'") && stg.includes('STANDING FEEDBACK (') &&
-    stg.includes('appended.length > 4000') &&
+    stg.includes('addStandingFeedback(wf.worker_instructions') && !stg.includes('appended.length > 4000') &&
     src('components/home/item-rail.tsx').includes('/studio?workflow=${t.standingSpec.workflowId}'));
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
     const { createClient } = await import('@supabase/supabase-js');
@@ -714,7 +721,10 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     // line) is unchanged; the seam moved, so the gate follows it to the reducer's own output.
     src('components/home/home-ask.tsx').includes('setStage(st.stage)') &&
     src('components/home/ask-stream.ts').includes("case 'progress'") &&
-    src('components/home/home-ask.tsx').includes("{stage ?? 'Thinking…'}"));
+    // ⟲ RE-POINTED (W4.1, THE AVATAR STATUS GRAMMAR — "we render neither spinner-dots nor
+    // tool-call narration in the timeline"; "hover names the current step"): the stage now reaches
+    // the working face's HOVER hint, never an in-stream line.
+    src('components/home/home-ask.tsx').includes("statusHint: stage ?? 'Thinking…'"));
 
   check('F7: THE SCOPE CHIP + THE ADOPTION CASCADE — the conversation header shows its scope ("No project · Add to…" / "<Project> ✓" = the room door), settable any time via the ONE picker grammar (ProjectPickerPanel, extracted and shared with the deck door); adopting MOVES the turns into the project room (chat:* only, idempotent narration at the seam), then the panel talks IN the room: turns persist to its key, answers ground entity-scoped through the one core',
     src('components/home/home-ask.tsx').includes("hasThread ? 'No project' : 'Project'") &&
@@ -1248,7 +1258,9 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('components/home/home-ask.tsx').includes('Message Clara') === false && // dynamic, never hardcoded
     src('components/home/home-ask.tsx').includes('workerRoomRef.current ? `Message ') &&
     src('components/home/home-ask.tsx').includes('New session') &&
-    src('components/home/home-ask.tsx').includes('workerIntroFor') /* re-pointed Aug 12: the narrator line became the coworker's OWN first-person intro + example chips */);
+    /* ⟲ RE-POINTED (W4.1, SPEECH IS COMPOSED): the first-person template left the coworker's face —
+       the first contact is CHROME (faceless event line, role vocabulary from lib/workers/roles) + starters */
+    src('components/home/home-ask.tsx').includes("chrome: true") && src('lib/workers/roles.ts').includes('ROLE_STARTERS'));
 
   check('AN1: THE ANTICIPATION PASS (the initiative loop, Aug 10) — proactivity beyond arrivals: the pass walks TIME (meetings next 36h linked to a room → the prep brief EXISTS before the ask, one reasoned pass over the room page, narrated with its BECAUSE line leading; due-soon ≤48h unprepared → the SAME judge-gated prepareOneItem runs early — anticipation moves the clock, never bypasses the judge); trust rules structural: hard caps per run, 6h self-gate, exactly-once fire records, silence is a valid verdict; the "Prep ready" chip on This-week opens the room where the prep waits. E2E on the probe: brief fired + because leads + chip resolves + TTL gate + fire dedupe all held',
     src('lib/home/anticipation.ts').includes('runAnticipationPass') &&
@@ -1453,7 +1465,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('components/meetings/week-calendar.tsx').includes('runs without connected calendars') &&
     src('components/meetings/new-meeting-modal.tsx').includes('runs without connected calendars'));
 
-  check('SV5: THE MEETING ASSISTANT (auto-join bot) UI RETIRED (owner call, Aug 10 — "we no longer use it") — the Settings card is gone (component deleted), the meeting page\'s Send-assistant affordance and state chips are gone, both platform-admin toggles (per-company, per-user) and their handlers are gone. KEPT DELIBERATELY: the bot API routes and Hetzner infra stay dormant (the SAME service runs in-person recording — the product), bot_manager\'s insight generation serves the recording pipeline, and DB columns (attendee_enabled) stay for stored data',
+  check('SV5: THE MEETING ASSISTANT (auto-join bot) UI RETIRED (owner call, Aug 10 — "we no longer use it") — the Settings card is gone (component deleted), the meeting page\'s Send-assistant affordance and state chips are gone, both platform-admin toggles (per-company, per-user) and their handlers are gone. THEN REMOVED (Sep 23, W6 — owner: "we\'re only using the in-person recording action"): the bot API routes, the bot client, the Hetzner Playwright join path and the stored Google login are GONE; KEPT: the SAME service\'s /transcribe + the in-person pipeline (bot_manager\'s insight generation), and DB columns (attendee_enabled, attendee_bot_*) stay for stored data until a later drop migration',
     !fileExists('components/settings/meeting-assistant-card.tsx') &&
     !src('app/(main)/settings/page.tsx').includes('MeetingAssistantCard') &&
     !src('app/platform-admin/platform-admin-client.tsx').includes('MeetingAssistant') &&
@@ -1471,8 +1483,19 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
         return !/Send assistant|Send the assistant|MeetingAssistantCard/.test(s);
       });
     })() &&
-    // …and the recording pipeline the bot service ALSO runs stays untouched (the deliberate keep).
-    fileExists('app/api/meetings/recordings/confirm/route.ts'));
+    // ⟲ RE-POINTED (W6, Sep 23 — THE BOT REMOVAL): the gate used to assert the bot routes stayed
+    // DORMANT; the owner retired the bot outright, so it now asserts the code is GONE…
+    !fileExists('app/api/meetings/bot/adhoc/route.ts') &&
+    !fileExists('app/api/meetings/[id]/enable-bot/route.ts') &&
+    !fileExists('lib/integrations/meeting-bot/client.ts') &&
+    !fileExists('infra/meeting-bot/bot_runner.py') &&
+    !fileExists('infra/meeting-bot/google-auth.json') &&
+    !src('lib/integrations/meeting-bot/bot-manager.ts').includes('createBotsForCalendarEvents') &&
+    // …and the recording pipeline the SAME service runs stays untouched (the deliberate keep).
+    fileExists('app/api/meetings/recordings/confirm/route.ts') &&
+    fileExists('infra/meeting-bot/transcription_worker.py') &&
+    src('infra/meeting-bot/main.py').includes("@app.post('/transcribe'") &&
+    src('lib/integrations/meeting-bot/bot-manager.ts').includes('export async function storeTranscriptAndGenerateWork'));
 
   check('SV6: THE TEAM ARRIVES WITH THE MEMBERSHIP (found live: an iScore joiner had ZERO coworkers — seeding was coupled to the email bootstrap a sovereign user never triggers, and the retired /workers page had been the backstop) — (1) /api/company/join seeds the team in after() (joining IS "set up your agents"); (2) the presence route SELF-HEALS an empty roster on any authed visit (idempotent ensureWorkers; the facepile can never show a dead no-team again); (3) THE SOVEREIGN GALLERY: mailbox-READING workflow templates + their category chip hide when the email feature is off (email DELIVERY via Resend stays — the boundary is auth connections only); generate-config already excludes mailbox tools by feature. Live repair: the real iScore user seeded (Clara, Sofia, Luca, Max)',
     src('app/api/company/join/route.ts').includes('ensureWorkers') &&
@@ -1888,7 +1911,10 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/work/sweep-users.ts').includes('recentMeetings') &&
     src('lib/work/sweep-users.ts').includes('lastServed') &&
     src('app/api/cron/judgment-sweep/route.ts').includes("from '@/lib/work/sweep-users'") &&
-    src('app/api/cron/judgment-sweep/route.ts').includes("orderLeastRecentlyServed(sb, await activeUserIds(sb), 'judgment_sweep')") &&
+    // RE-POINTED (Sep 22, W3.3 REACH — the fan-out): the marker became the lane's named constant
+    // (SWEEP_MARKER.judgment === 'judgment_sweep', lib/work/sweep-fanout.ts) — same rotation, same marker.
+    src('app/api/cron/judgment-sweep/route.ts').includes("orderLeastRecentlyServed(sb, await activeUserIds(sb), SWEEP_MARKER.judgment)") &&
+    src('lib/work/sweep-fanout.ts').includes("judgment: 'judgment_sweep'") &&
     src('app/api/cron/draft-sweep/route.ts').includes('routeDeadline') &&
     src('app/api/cron/draft-sweep/route.ts').includes('usersLeftBehind') &&
     src('app/api/cron/draft-sweep/route.ts').includes('Math.min(120_000, Math.max(30_000'));

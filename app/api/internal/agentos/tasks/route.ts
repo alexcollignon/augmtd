@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { hasBearer } from '@/lib/utils/bearer-auth';
+import { getWorkspaceFeatures } from '@/lib/workspace/features';
+import { TOOL_FEATURE } from '@/lib/workspace/tool-capabilities';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import {
   executeListTasks, executeCreateTask, executeGetTask, executeUpdateTask,
-  executeRunTask, executeDuplicateTask, executeShareTask, executeListTeamTasks,
-  executeUseTask, executeDeleteTask, executeListWorkerDocuments, executeGetWorkerDocument,
+  executeDuplicateTask, executeListTeamTasks,
+  executeUseTask, executeListWorkerDocuments, executeGetWorkerDocument,
   executeSupplyRunInput, executeSetTasksStatus,
 } from '@/lib/tools/worker-tasks';
 import { executeListSkills, executeApplySkill } from '@/lib/tools/worker-skills';
@@ -11,6 +14,9 @@ import { executeListSkills, executeApplySkill } from '@/lib/tools/worker-skills'
 // back typed rows as well as its block; the rows never ride the model's context.
 import { pushDmPresent } from '@/lib/present/dm-channel';
 import type { CollectionSpec } from '@/lib/present/collection';
+import type { ChangeSpec } from '@/lib/present/change';
+import { confirmClassOf } from '@/lib/work/confirm-policy';
+import { prepareBoxChange } from '@/lib/work/pending-change';
 
 export const maxDuration = 60;
 
@@ -55,8 +61,7 @@ export async function POST(request: NextRequest) {
   if (!secret) {
     return NextResponse.json({ error: 'AGENTOS_SECRET not configured' }, { status: 500 });
   }
-  const provided = request.headers.get('authorization') ?? '';
-  if (provided !== `Bearer ${secret}`) {
+  if (!hasBearer(request, 'AGENTOS_SECRET')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -80,7 +85,29 @@ export async function POST(request: NextRequest) {
   const threadId = typeof body.thread_id === 'string' ? body.thread_id : '';
   const turnId = typeof body.turn_id === 'string' ? body.turn_id.slice(0, 64) : null;
   /** THE DATA HALF (W4-C) — never in the response body, never in the model's context. */
-  let present: { collection?: CollectionSpec } | null = null;
+  let present: { collection?: CollectionSpec; change?: ChangeSpec } | null = null;
+
+  // THE CONFIRM CARD (stabilization W0.3b — HUMAN IN THE LOOP): this lane reads untrusted content
+  // (mail, web, Slack, the KB), so a class-A change is PREPARED here and applied ONLY through
+  // /api/changes/[id]/apply on the user's own click. ONE policy decides which (confirmClassOf);
+  // the executor is untouched — the apply door runs the SAME one with the SAME arguments.
+  // The prepare itself is the ONE box-lane helper (lib/work/pending-change.ts `prepareBoxChange`),
+  // shared with the tools route — the two box routes cannot drift.
+  const prepare = async (tool: string, toolArgs: Record<string, unknown>): Promise<string> => {
+    const out = await prepareBoxChange(ac, user_id, { tool, args: toolArgs, agentId: agent_id ?? null, threadId });
+    if (out.spec) present = { change: out.spec };
+    return out.modelText;
+  };
+
+  // Feature gate (single source: tool-capabilities map) — parity with the native door and the tools
+  // route: a Studio-off workspace's coworker cannot reach task verbs through the box either.
+  const reqFeature = TOOL_FEATURE[action];
+  if (reqFeature) {
+    const features = await getWorkspaceFeatures(user_id, ac);
+    if (features[reqFeature] === false) {
+      return NextResponse.json({ result: `Unavailable — ${reqFeature} is turned off for this workspace.` });
+    }
+  }
 
   try {
     let result: string;
@@ -122,11 +149,14 @@ export async function POST(request: NextRequest) {
         break;
 
       case 'update_task':
-        result = await executeUpdateTask(String(args.task_id ?? ''), args as never, user_id, ac);
+        // A bare status flip is class B (reversible, verified after write); everything else confirms.
+        result = confirmClassOf('update_task', args) === 'confirm'
+          ? await prepare('update_task', args)
+          : await executeUpdateTask(String(args.task_id ?? ''), args as never, user_id, ac);
         break;
 
       case 'run_task':
-        result = await executeRunTask(String(args.task_id ?? ''), user_id, ac, args.thread_id as string | undefined);
+        result = await prepare('run_task', { task_id: String(args.task_id ?? '') });
         break;
 
       // THE BULK STATUS DEED (Sep 21) — the AgentOS half of the same verb, wrapping the SAME
@@ -163,7 +193,7 @@ export async function POST(request: NextRequest) {
         break;
 
       case 'share_task':
-        result = await executeShareTask(String(args.task_id ?? ''), (args.action as 'share' | 'unshare') ?? 'share', user_id, ac);
+        result = await prepare('share_task', { task_id: String(args.task_id ?? ''), action: args.action === 'unshare' ? 'unshare' : 'share' });
         break;
 
       case 'list_team_tasks':
@@ -176,7 +206,7 @@ export async function POST(request: NextRequest) {
         break;
 
       case 'delete_task':
-        result = await executeDeleteTask(String(args.task_id ?? ''), user_id, ac);
+        result = await prepare('delete_task', { task_id: String(args.task_id ?? '') });
         break;
 
       case 'list_worker_documents':

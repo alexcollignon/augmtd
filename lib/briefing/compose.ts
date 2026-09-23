@@ -63,7 +63,7 @@ export type BriefingInputs = {
 
 // Bump whenever the PROMPT changes — folded into the daySig so a prompt edit recomposes existing briefs
 // (the cached-AI-output lesson: inputs changing must not be the only invalidator).
-const BRIEFING_PROMPT_VERSION = 8; // 8: P6d — grammar-safe refs law + displayWho ref handles
+export const BRIEFING_PROMPT_VERSION = 8; // 8: P6d — grammar-safe refs law + displayWho ref handles
 
 const sigOf = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0; return String(h); };
 

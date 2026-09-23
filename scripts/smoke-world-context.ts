@@ -1,8 +1,10 @@
-// READ-ONLY cross-user smoke for the Step 2 extension — renderWorldContext (coworker chat: "your world")
-// + the brief's person-state map (does a must-respond sender resolve to a Person-Brain verdict?). No writes.
+// READ-ONLY cross-user smoke — the coworker chat's "your world" block + the brief's person-state map
+// (does a must-respond sender resolve to a Person-Brain verdict?). No writes.
+// ⟲ RE-POINTED (W2.2 ONE USER GROUNDING): `renderWorldContext` is gone — the world block every
+// user-scope consumer reads is `assembleUserGrounding` (read-only mode: no heal, no cache derive).
 import { config } from 'dotenv'; config({ path: '.env.local' });
 import { createClient } from '@supabase/supabase-js';
-import { renderWorldContext } from '../lib/context/brain-context';
+import { assembleUserGrounding } from '../lib/room/user-grounding';
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 const emailOf = (s?: string | null): string | null => String(s || '').toLowerCase().match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
 
@@ -14,10 +16,10 @@ const emailOf = (s?: string | null): string | null => String(s || '').toLowerCas
 
   for (const uid of userIds) {
     // 1) Coworker-chat "your world" block.
-    const world = await renderWorldContext(sb, uid);
+    const world = (await assembleUserGrounding(sb, uid, { readOnly: true })).text;
     if (world) {
       worldShown++;
-      if (worldShown <= 2) console.log(`\n─── user ${uid.slice(0, 8)} · renderWorldContext ───\n` + world.split('\n').slice(0, 10).map((l) => '  ' + l).join('\n'));
+      if (worldShown <= 2) console.log(`\n─── user ${uid.slice(0, 8)} · assembleUserGrounding ───\n` + world.split('\n').slice(0, 10).map((l) => '  ' + l).join('\n'));
     }
 
     // 2) Brief person-state map: recent needs-reply items → do their senders resolve to a Person-Brain verdict?
@@ -36,6 +38,6 @@ const emailOf = (s?: string | null): string | null => String(s || '').toLowerCas
   }
 
   console.log('\n════ TOTALS ════');
-  console.log(`renderWorldContext produced a block for ${worldShown}/${userIds.length} users`);
+  console.log(`assembleUserGrounding produced a block for ${worldShown}/${userIds.length} users`);
   console.log(`brief must-respond senders: ${totMustRespond}  ·  resolved to a Person-Brain verdict (angle grounded): ${totMatched} (${totMustRespond ? Math.round(100*totMatched/totMustRespond) : 0}%)`);
 })();

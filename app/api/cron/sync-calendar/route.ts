@@ -3,15 +3,17 @@ import { createClient as createServerClient } from '@supabase/supabase-js';
 import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
 import { processMeetingsForUser } from '@/lib/calendar/meeting-processor';
 import { analyzeCalendarPatterns } from '@/lib/calendar/pattern-analyzer';
-import { createBotsForCalendarEvents } from '@/lib/integrations/meeting-bot/bot-manager';
+import { hasBearer } from '@/lib/utils/bearer-auth';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 export const maxDuration = 300; // 5 minutes
+
+const CALENDAR_SYNCED_AT_KEY = 'calendar_synced_at'; // mirrors lib/calendar/sync-calendar.ts SYNCED_AT_KEY
 
 export async function GET(request: NextRequest) {
   try {
     // Verify cron secret (Vercel Cron sends this header)
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    if (!hasBearer(request, 'CRON_SECRET')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -29,19 +31,20 @@ export async function GET(request: NextRequest) {
       },
     );
 
-    // Get all active gmail/outlook connections
-    const { data: connections, error: connectionsError } = await supabase
+    // THE COVERAGE REPAIR, applied here too (stabilization W4.3): a paged, ORDERED read (no silent
+    // PostgREST 1000-row cap — invariant 10) instead of a bare `.select('*')`.
+    const allConnections = await fetchAllRows<{
+      id: string; user_id: string; provider: string; status: string; provider_account_id: string;
+      metadata: Record<string, unknown> | null;
+    }>((from, to) => supabase
       .from('connections')
-      .select('*')
+      .select('id, user_id, provider, status, provider_account_id, metadata')
       .in('provider', ['gmail', 'outlook'])
-      .eq('status', 'active');
+      .eq('status', 'active')
+      .order('id', { ascending: true })
+      .range(from, to));
 
-    if (connectionsError) {
-      console.error('[SyncCalendar] Error fetching connections:', connectionsError);
-      return NextResponse.json({ error: 'Failed to fetch connections' }, { status: 500 });
-    }
-
-    if (!connections || connections.length === 0) {
+    if (!allConnections.length) {
       console.log('[SyncCalendar] No active connections found');
       return NextResponse.json({
         success: true,
@@ -50,18 +53,40 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // LEAST-RECENTLY-SYNCED FIRST (the same self-balancing rotation as draft-sweep/label-sweep,
+    // read off this route's own stamp — `metadata.calendar_synced_at` — rather than a shared
+    // item_plans marker, since calendar sync is per-CONNECTION, not per-user). Never-synced
+    // connections (no stamp) lead by construction.
+    const connections = [...allConnections].sort((a, b) => {
+      const at = String((a.metadata as Record<string, unknown> | null)?.[CALENDAR_SYNCED_AT_KEY] ?? '');
+      const bt = String((b.metadata as Record<string, unknown> | null)?.[CALENDAR_SYNCED_AT_KEY] ?? '');
+      return at.localeCompare(bt);
+    });
+
     console.log(`[SyncCalendar] Found ${connections.length} active connections`);
+
+    // ── THE COVERAGE REPAIR (stabilization W4.3 — the draft-sweep class): this route used to walk
+    // every connection SERIALLY with no wall-clock guard. Each connection can run a calendar
+    // fetch + pattern analysis (AI) + meeting-prep generation (AI) + bot orphan-recovery — a large
+    // connection count dies mid-loop on Vercel's 300s kill and the tail connections silently never
+    // sync (the exact class the coverage repair fixed for draft-sweep and label-sweep). A wall-clock
+    // guard stops cleanly and reports what it left for the next run (least-recently-synced first
+    // self-balances the rotation). ──
+    const routeDeadline = Date.now() + 265_000; // stop cleanly before the 300s kill
+    const perConnBudgetMs = Math.min(45_000, Math.max(8_000, Math.floor(200_000 / connections.length)));
 
     let totalEventsSynced = 0;
     let totalMeetingPrep = 0;
-    let totalBotsCreated = 0;
+    let connectionsLeftBehind = 0;
     const errors: string[] = [];
 
     for (const connection of connections) {
+      if (Date.now() + perConnBudgetMs > routeDeadline) { connectionsLeftBehind++; continue; }
       console.log(`[SyncCalendar] Syncing calendar for ${connection.provider} user ${connection.user_id}...`);
 
       // Sync calendar
-      const calendarResult = await syncCalendarForConnection(connection, supabase, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- narrowed select() vs. the lib's Connection shape
+      const calendarResult = await syncCalendarForConnection(connection as any, supabase, {
         daysAhead: 14,
         daysBehind: 7,
       });
@@ -90,22 +115,18 @@ export async function GET(request: NextRequest) {
 
         console.log(`[SyncCalendar] ✓ ${calendarResult.synced} events, ${meetingResult.created} prep items`);
       }
-
-      // Always run bot scheduling — detects new meetings and recovers orphaned jobs
-      // regardless of whether new calendar events were synced this run.
-      const botResult = await createBotsForCalendarEvents(connection.user_id, supabase);
-      totalBotsCreated += botResult.created;
-      errors.push(...botResult.errors);
     }
 
-    console.log(`[SyncCalendar] Done. Events: ${totalEventsSynced}, Prep: ${totalMeetingPrep}, Bots: ${totalBotsCreated}`);
+    if (connectionsLeftBehind > 0) console.log(`[SyncCalendar] route budget spent: ${connectionsLeftBehind} connection(s) lead the next run (least-recently-synced)`);
+
+    console.log(`[SyncCalendar] Done. Events: ${totalEventsSynced}, Prep: ${totalMeetingPrep}`);
 
     return NextResponse.json({
       success: true,
       processed: connections.length,
       eventsSynced: totalEventsSynced,
       meetingPrepItems: totalMeetingPrep,
-      botsCreated: totalBotsCreated,
+      connectionsLeftBehind,
       errors: errors.length > 0 ? errors : undefined,
     });
   } catch (error) {

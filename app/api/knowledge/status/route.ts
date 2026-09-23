@@ -4,6 +4,7 @@
 // regulated-SME trust answer to "what does it have?" — status, not a file manager.
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 export async function GET() {
   try {
@@ -11,8 +12,12 @@ export async function GET() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const [{ data: files }, { data: conns }] = await Promise.all([
-      supabase.from('knowledge_files').select('origin, provider_file_id, indexed_at').eq('user_id', user.id).limit(3000),
+    // NO SILENT CAPS (W1.6): `.limit(3000)` on an UNORDERED query silently returned an arbitrary
+    // 1000-row page — THE SUM LAW (honest counts) requires every kb file actually be counted.
+    const [files, { data: conns }] = await Promise.all([
+      fetchAllRows<{ origin: { kind?: string } | null; provider_file_id: string | null; indexed_at: string | null }>((from, to) =>
+        supabase.from('knowledge_files').select('origin, provider_file_id, indexed_at')
+          .eq('user_id', user.id).order('id', { ascending: true }).range(from, to), { maxRows: 20000 }),
       supabase.from('connections').select('provider, status').eq('user_id', user.id),
     ]);
 

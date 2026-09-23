@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE WORKERS READ THE ONE GROUNDING (production-floor arc step 1, Aug 8 — the coherence law
 // extended to the last reasoner outside the tent). Until now a coworker grounded through its own
-// stack (KB search, inbox snapshot, calendar): ask the room "where does EG Bank stand?" and ask
+// stack (KB search, inbox snapshot, calendar): ask the room "where does Acme Corp stand?" and ask
 // Clara the same thing, and they were two systems that could disagree. Now, when the user's
 // message NAMES a registered project, the worker receives that project's FULL room page — the
 // SAME `assembleRoomGrounding` the room's responder, the room Q&A, and the chief's agent loop
@@ -28,8 +28,8 @@ export async function focusedProjectGrounding(
   try {
     let q = String(text ?? '').trim();
     if (q.length < 3) return null;
-    // THE ADDRESSED-NAME STRIP (found live: "Clara, report on EG Bank" matched the entity
-    // "Madalena Clara" — the coworker's own name collided with a person-named project). The
+    // THE ADDRESSED-NAME STRIP (found live: "Clara, report on Acme Corp" matched the entity
+    // "Sam Clara" — the coworker's own name collided with a person-named project). The
     // address is the ENVELOPE, never the subject — remove it before matching.
     const ex = opts?.excludeName?.trim().split(/\s+/)[0];
     if (ex && ex.length >= 3) q = q.replace(new RegExp(`\\b${ex.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi'), ' ');

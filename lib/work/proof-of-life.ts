@@ -38,6 +38,7 @@
 // account is named anywhere in this module.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { readPlans } from '@/lib/store/item-plans';
 
 /** item_plans.kind for the ask stamp — free TEXT, zero-migration (the house idiom). */
 export const PROOF_OF_LIFE_KIND = 'proof_of_life';
@@ -183,6 +184,8 @@ export type ProofOfLifeResult = {
   demoted: number;
   /** Of the demoted, how many the consequence door actually settled. */
   resolved: number;
+  /** W3.3 · Of the re-affirmed, how many were queued for the preparation pass (lib/prepare/requeue). */
+  requeued: number;
   /** Judgments that failed honestly — never counted as either verdict. */
   failed: number;
   /** Qualified items this run's cap or clock left for the next one — counted, never hidden. */
@@ -210,7 +213,7 @@ export async function runProofOfLifeLane(
   const cap = opts.cap ?? PROOF_OF_LIFE_CAP;
   const take = all.slice(0, Math.max(0, cap));
   const out: ProofOfLifeResult = {
-    eligible: all.length, checked: 0, reaffirmed: 0, demoted: 0, resolved: 0, failed: 0,
+    eligible: all.length, checked: 0, reaffirmed: 0, demoted: 0, resolved: 0, requeued: 0, failed: 0,
     leftBehind: Math.max(0, all.length - take.length),
     quietestDays: all.length ? all[0].quietDays : 0,
     dryRun: !opts.apply,
@@ -241,6 +244,15 @@ export async function runProofOfLifeLane(
       });
       // The seat contract's own field — written from the verdict, never from a second reading.
       await stampAliveOnItem(admin, userId, g.key, alive);
+      // W3.3 REACH · A PROVEN-LIVE ITEM GETS WORKED. Re-affirmed work used to be left exactly where
+      // it was — usually in the quiet tail the preparation pass excludes, so nothing was ever
+      // prepared for work the judge had just said is still owed. The lane QUEUES it (a marker, never
+      // a call: reach never drafts); the pass reads the queue as its own lane under its own budget,
+      // records a prep_outcome (lane 'proof_of_life') and clears the marker.
+      if (alive) {
+        const { requeueForPreparation } = await import('@/lib/prepare/requeue');
+        if (await requeueForPreparation(admin, userId, g.key, { by: 'proof_of_life', verdict: verdict.work })) out.requeued++;
+      }
       // THE EXISTING consequence door — an expired/answered verdict settles exactly as it does
       // everywhere else (undoable, activity-logged). The lane adds no consequence of its own.
       const cons = await applyVerdictConsequences(admin, userId, { kind, id }, verdict);
@@ -255,14 +267,10 @@ export async function runProofOfLifeLane(
 export async function readStandingVerdicts(client: SupabaseClient, userId: string): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   try {
-    const { fetchAllRows } = await import('@/lib/utils/fetch-all');
-    const rows = await fetchAllRows<{ entity_id: string; tasks: { verdict?: { work?: string } } | null }>((from, to) =>
-      client.from('item_plans').select('entity_id, tasks')
-        .eq('user_id', userId).eq('kind', 'judgment')
-        .order('entity_id', { ascending: true }).range(from, to));
+    const rows = await readPlans(client, userId, 'judgment');
     for (const r of rows) {
-      const w = r.tasks?.verdict?.work;
-      if (typeof w === 'string') out.set(String(r.entity_id), w);
+      const w = (r.tasks?.verdict as { work?: string } | undefined)?.work;
+      if (typeof w === 'string') out.set(r.key, w);
     }
   } catch { /* an unreadable cache simply means nothing qualifies this run */ }
   return out;

@@ -87,3 +87,17 @@ export function boardRowItemId(row: { id: string; rawId?: string | null }): stri
   if (row.rawId) return row.rawId;
   return (row.id ?? '').replace(SPINE_PREFIX, '');
 }
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE PREP ANCHOR KEY (stabilization W2.1 — A COMPONENT IS A TURN). The prepare pass narrates on
+// `prep:${w.id}` where w.id is the WORK-SPINE id (`inbox:<uuid>` / `commit:<uuid>`,
+// lib/work-items/model.ts). Every card reader anchored on `prep:<rawId>` — the two never matched,
+// so all 236 live prep narrations folded as orphans and every card appended at the stream's end.
+// ONE producer for the reader side; the writer's shape is the law (the persisted turns already
+// carry it). A spine id passes through unchanged; a raw id gets its kind prefix.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+export function prepAnchorKey(kind: 'inbox' | 'commitment' | 'followup' | 'email' | 'awareness', id: string): string {
+  if (SPINE_PREFIX.test(id)) return `prep:${id}`;
+  const spine = kind === 'commitment' || kind === 'followup' ? 'commit' : 'inbox';
+  return `prep:${spine}:${id}`;
+}

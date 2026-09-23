@@ -30,6 +30,9 @@ import { isCollectionKind, isCollectionSpec, type CollectionSpec } from '@/lib/p
 // way the collection card is: a live turn paints from the served spec, a reloaded one re-reads.
 import EventCard, { type EventPointer } from '@/components/home/event-card';
 import { isEventSpec, type EventProposal, type EventSpec } from '@/lib/present/event';
+// THE CONFIRM CARD (stabilization W0.3b): ONE host for a prepared state change, on every lane.
+import ChangeCard, { type ChangePointer } from '@/components/home/change-card';
+import { isChangeSpec, type ChangeSpec } from '@/lib/present/change';
 import type { BulkDeed as BulkDeedLike } from '@/lib/deeds/words';
 import type { PreparedInviteLike } from '@/lib/prepare/invite-card';
 import { ThreadShell } from '@/components/thread';
@@ -46,7 +49,7 @@ import { projectHref } from '@/lib/room/project-href';
 // lib/entities/ask.ts). A chip resolves by id here, never by its position in the served array.
 import { ASK_TAG_LETTERS, askTagRe, bracketTags, indexByTag, resolveAskRefs } from '@/lib/home/ask-refs';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
-import { ROLE_LABELS } from '@/lib/workers/roles';
+import { ROLE_LABELS, ROLE_SPECIALTIES, ROLE_STARTERS, GENERIC_STARTERS, INTAKE_STARTERS } from '@/lib/workers/roles';
 // (BriefingBlock removed from the chat — Phase 3 F2: the prose brief duplicated the deck; the
 // composeBriefing machinery survives as the deck's ordering anchor + the daily report.)
 
@@ -63,6 +66,9 @@ type WorkerCardRef =
   | { kind: 'workflow_draft'; tid: string; token: string }
   | { kind: 'invite'; tid: string; inviteId: string };
 type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
+  /** CHROME, NOT SPEECH (W4.1): an author-absent, synthesized line (the DM first contact) — renders
+   *  in the event-line grammar with no face, never persisted or cached. */
+  chrome?: boolean;
   /** THE ABSORPTION (brick 1): a coworker's own reply carries their name — the one-narrator
    *  law's attribution, now in the Home panel. */
   author?: string;
@@ -115,6 +121,11 @@ type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
    *  through the event's own door. An RSVP answered in the calendar app itself must never find a
    *  reloaded card still offering to answer it. */
   events?: Array<{ eventId: string; spec?: EventSpec; pointer?: EventPointer }>;
+  /** THE CONFIRM CARD (stabilization W0.3b) — a class-A state change PREPARED for the user's
+   *  click. Same two shapes: a LIVE turn carries the served `spec`; a REHYDRATED one carries the
+   *  POINTER (`{changeId}`) and the host re-reads through `GET /api/changes/[id]`, so a change
+   *  applied elsewhere (or expired) never finds a reloaded card still offering Apply. */
+  changes?: Array<{ changeId: string; spec?: ChangeSpec; pointer?: ChangePointer }>;
   /** THE EMAIL CARD (Sep 21) — the chief's own drafted reply, on the SAME card every other producer
    *  lands. Two shapes, one kind: `itemId` points at a matched inbox item (the card reads that
    *  item's prepared reply), `draft` carries a STANDALONE one for the first paint. Durable — it
@@ -294,6 +305,20 @@ function chatRoomKey(): string {
     return fresh;
   } catch { return `chat:${crypto.randomUUID()}`; }
 }
+// ── THE ADDRESS LAW (W4.1 — ADDRESS beats THE FRESH FLOOR, laws-registry precedence #5) ──────
+// An open conversation KEEPS its address: `/home?chat=<key>` survives refresh and deep-links. The
+// fresh floor governs only what BARE /home paints — it never rewrites an addressed thread to /home.
+// ONE writer: a conversation opening/switching sets it, a new chat's key lands once its first turn
+// persists, and only the deliberate return to bare Home (sidebar Home / New) removes it. Other
+// params (?view=) are preserved; off /home it writes nothing.
+function writeChatAddress(key: string | null) {
+  try {
+    const url = new URL(window.location.href);
+    if (url.pathname !== '/home') return;
+    if (key) url.searchParams.set('chat', key); else url.searchParams.delete('chat');
+    if (url.href !== window.location.href) window.history.replaceState(null, '', url);
+  } catch { /* no history */ }
+}
 
 // ── THE DM OPENS INSTANTLY (owner walk, Sep 7 — "takes a lot to load") ─────────────────────────
 // The instant-load doctrine, finally reaching the coworker DM. THREE caches, all stamped through
@@ -361,13 +386,13 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const homeFocusIntent = sessionStorage.getItem('aug-home-focus-intent');
       if (homeFocusIntent) sessionStorage.removeItem('aug-home-focus-intent');
       if (chatParam?.startsWith('chat:')) {
+        // THE ADDRESS LAW: the conversation keeps `?chat=` (loadRoom re-asserts it) — never
+        // rewritten to bare /home, where a refresh would hit the fresh floor and lose it.
         loadRoom(chatParam); setOpen(true);
-        try { window.history.replaceState(null, '', '/home'); } catch { /* no history */ }
       } else if (chatParam?.startsWith('worker:')) {
         // THE RETIREMENT REPOINT (slice #5): every link that used to say /workers?worker&thread
         // now opens the coworker conversation HERE — one URL form for a conversation.
         void loadWorkerRoom(chatParam); setOpen(true);
-        try { window.history.replaceState(null, '', '/home'); } catch { /* no history */ }
       } else if (scopeIntent) {
         sessionStorage.removeItem('aug-new-chat-scope');
         try {
@@ -407,7 +432,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     // because its one caller (the room's New-chat door) happened to drop the key first. The deed
     // now lives in the handler: whoever fires `aug:new-chat`, the next turn persists to a NEW room
     // and the old one stays durable.
-    const onNew = () => { try { localStorage.removeItem(CHAT_KEY_LS); } catch { /* no LS */ } setTurns([]); setTemp(false); setScope(null); setScopeHint(null); workerRoomRef.current = null; setDmActor(null); setDmLoading(false); setChatRoom(null); setChatLoading(false); setOpen(true); setTimeout(() => focusComposer(), 60); };
+    // THE ADDRESS LAW: a new chat has no address until its first turn persists (persistTurn).
+    const onNew = () => { try { localStorage.removeItem(CHAT_KEY_LS); } catch { /* no LS */ } writeChatAddress(null); setTurns([]); setTemp(false); setScope(null); setScopeHint(null); workerRoomRef.current = null; setDmActor(null); setDmLoading(false); setChatRoom(null); setChatLoading(false); setOpen(true); setTimeout(() => focusComposer(), 60); };
     const onOpen = (e: Event) => {
       const key = (e as CustomEvent).detail?.key as string | undefined;
       // THE FRESH FLOOR's rider: the cross-page intent flag is a ONE-SHOT for the case where this
@@ -431,6 +457,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       workerRoomRef.current = null; setDmActor(null); setDmLoading(false);
       setChatRoom(null); setChatLoading(false);
       try { localStorage.removeItem(CHAT_KEY_LS); } catch { /* no LS */ }
+      // THE ADDRESS LAW: the deliberate return to bare Home is the ONE place the address drops.
+      writeChatAddress(null);
       // HOME IS THE CHAT DOOR: the reset above is unchanged (the deck stays the default) — the
       // caret simply lands in the composer so the door is ready to type into. It waits for the
       // reset's own state flush to paint, so the FIRST click lands it (see focusComposerWhenSettled).
@@ -530,6 +558,12 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // item's own prepared reply — a reload never paints a draft the room has since moved on
       // from); a standalone one carries its stored payload for the first paint, and its own door
       // re-reads the row before it mails anything.
+      // …and so does THE CONFIRM CARD, as a POINTER and nothing else: the stored component carries
+      // the change's id, and the host re-reads its status through its own door — a change applied
+      // (or dismissed, or expired) elsewhere must never come back offering Apply.
+      ...(t.component?.key === 'change_card' && t.component.refId
+        ? { changes: [{ changeId: String(t.component.refId), pointer: { changeId: String(t.component.refId) } }] }
+        : {}),
       ...(t.component?.key === 'email_draft_card' && t.component.refId
         ? { emailDrafts: [{
             emailId: t.component.refId,
@@ -550,6 +584,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     // The pane is taken NOW, off the key alone (the DM door's shape): the conversation exists, the
     // reader asked for it, and the wait belongs INSIDE the room — not in front of it.
     setChatRoom(key); setChatLoading(true); setTurns([]);
+    writeChatAddress(key); // THE ADDRESS LAW: the opened conversation owns its URL
     if (key.startsWith('chat:')) {
       setScope(null); setScopeHint(null);
       // Scope is SERVER TRUTH (the binding) — per-conversation, survives devices; never a
@@ -663,48 +698,14 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // WORKER MODE: the next message continues in that SAME thread (the DM pointer re-aims), and
   // chief persistence is structurally off while the mode holds. ──
   const workerRoomRef = useRef<{ id: string; name: string } | null>(null);
-  // FIRST CONTACT: the coworker introduces THEMSELF (a self-introduction is the coworker's own
-  // honest speech — the one-narrator law guards engine narration, not greetings). Simple,
-  // benefit-led language ("what I take off your plate"), never product concepts. The team
-  // explainer appears exactly once (the flag), then a short greeting + chips.
+  // FIRST CONTACT IS CHROME, NOT SPEECH (W4.1 — docs/threads-plan.md "SPEECH IS COMPOSED, NEVER
+  // TEMPLATED": "anything that wears a face and speaks sentences is AUTHORED by the brain";
+  // deterministic text is lawful only as labels/vocabulary or as the FLOOR beneath a composed pass).
+  // The old first-person "Hi — I'm …" template spoke under the coworker's face with no composed pass
+  // above it, so it moved OUT of the voice: an author-absent event line in label vocabulary (who ·
+  // role · specialty, all read from lib/workers/roles by ROLE KEY — no second name-keyed map) + the
+  // tappable starters. The team explainer still shows exactly once (the flag).
   const TEAM_INTRO_LS = 'aug-team-intro-v1';
-  const workerIntroFor = (first: string): { helps: string; examples: Array<{ label: string; say: string }> } => {
-    const byName: Record<string, { helps: string; examples: Array<{ label: string; say: string }> }> = {
-      clara: {
-        helps: 'I take the busywork off your plate — drafts, reports, agendas, follow-ups, keeping things organized. Tell me what you need in plain words, like you would text a colleague.',
-        examples: [
-          { label: 'Draft a meeting agenda', say: 'Draft an agenda for a 30-minute kickoff meeting with a new client.' },
-          { label: 'Set up a weekly summary', say: 'Set up a weekly task: every Monday morning, summarize my open work for the week.' },
-          { label: 'Build a checklist', say: 'Make me a checklist for onboarding a new team member.' },
-        ],
-      },
-
-      max: {
-        helps: 'I do the digging — research, comparisons, data analysis — so you get the answer without the hours of reading. Attach a spreadsheet and I can work the numbers.',
-        examples: [
-          { label: 'Research a topic', say: 'Research current best practices for quarterly business reviews and give me a structured summary.' },
-          { label: 'Compare options', say: 'Compare the pros and cons of three common approaches to team performance reviews.' },
-          { label: 'Analyze attached data', say: 'I will attach a spreadsheet — analyze it and tell me the three most important patterns.' },
-        ],
-      },
-      luca: {
-        helps: 'I keep your LinkedIn active and credible — posts drafted from your real work, a sustainable cadence, and a voice that stays yours.',
-        examples: [
-          { label: 'Draft a LinkedIn post', say: 'Draft a LinkedIn post about a recent team milestone — professional but human.' },
-          { label: 'Plan a month of posts', say: 'Suggest five LinkedIn post ideas for this month based on what my company does.' },
-          { label: 'Rework my draft', say: 'I will paste a rough draft — rework it into a stronger LinkedIn post that keeps my voice.' },
-        ],
-      },
-    };
-    return byName[first.toLowerCase()] ?? {
-      helps: 'I take real work off your plate — drafts, research, recurring tasks. Tell me what you need in plain words.',
-      examples: [
-        { label: 'Draft a document', say: 'Draft a one-page document — ask me what you need to get started.' },
-        { label: 'Set up a recurring task', say: 'Set up a weekly task that summarizes my open work every Monday morning.' },
-        { label: 'Work on a file', say: 'I will attach a file — read it and tell me what you can do with it.' },
-      ],
-    };
-  };
   // Always an EXPLICIT open (THE FRESH FLOOR, Aug 11): landings never call this implicitly —
   // past conversations open only through deliberate doors (sidebar, History, ?chat=, facepile).
   const loadWorkerRoom = async (key: string) => {
@@ -712,6 +713,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     if (!tid || !agentId) return;
     setChatRoom(null); setChatLoading(false); // a coworker DM leaves the chief-chat lane
     setDmLoading(true);
+    writeChatAddress(key); // THE ADDRESS LAW: a DM is a thread too — `?chat=worker:<tid>:<agent>`
     // INSTANT PAINT (the instant-load doctrine, reaching the DM): the last conversation this
     // coworker painted goes up NOW, before the request is even sent. The load below then lands
     // behind it under the no-mutation law — the painted turns keep their seat and only genuinely
@@ -750,12 +752,14 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         invite_cards?: Array<{ id: string; invite: PreparedInviteLike }>;
         collections?: Array<{ id: string; kind: string; params?: Record<string, string | number | boolean> }>;
         events?: Array<{ eventId?: string; id?: string; proposal?: EventProposal | null }>;
+        changes?: Array<{ changeId?: string }>;
         trace?: unknown[];
       } }>)
         .filter((m) => (m.role === 'user' || m.role === 'assistant')
           && (String(m.content ?? '').trim() || m.metadata?.workflow_drafts?.length
             || m.metadata?.email_drafts?.length || m.metadata?.invite_cards?.length
-            || m.metadata?.collections?.length || m.metadata?.events?.length))
+            || m.metadata?.collections?.length || m.metadata?.events?.length
+            || m.metadata?.changes?.length))
         .map((m) => (m.role === 'user'
           ? { role: 'user' as const, text: m.content, ...(m.created_at ? { at: m.created_at } : {}) }
           : {
@@ -804,6 +808,14 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                       pointer: { eventId: e.id, ...(e.proposal ? { proposal: e.proposal } : {}) },
                     })) }
                 : {}),
+              // …and THE CONFIRM CARD, likewise a POINTER: the change's id, re-read through its
+              // own door. One host, one re-read, on both surfaces.
+              ...(m.metadata?.changes?.length
+                ? { changes: m.metadata.changes
+                    .map((c) => String(c?.changeId ?? ''))
+                    .filter(Boolean)
+                    .map((id) => ({ changeId: id, pointer: { changeId: id } })) }
+                : {}),
             }));
       // Brick 3: the thread's documents ride along — openable HERE, never a page away.
       const arts = ((d.thread as { artifacts?: Array<{ id?: string; title?: string; type?: string }> } | null)?.artifacts ?? [])
@@ -832,56 +844,33 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const synthesized = loaded.length === 0;
       if (loaded.length === 0) {
         const first = name.split(' ')[0];
-        const intro = workerIntroFor(first);
+        const role = roster.find((x) => x.id === agentId)?.role ?? presenceMate(agentId)?.worker_role ?? null;
+        const roleLabel = role ? ROLE_LABELS[role] : undefined;
+        const specialty = role ? ROLE_SPECIALTIES[role] : undefined;
         let seenIntro = true;
         try { seenIntro = localStorage.getItem(TEAM_INTRO_LS) === '1'; localStorage.setItem(TEAM_INTRO_LS, '1'); } catch { /* no LS */ }
-        // THE INTAKE (owner, Aug 14 — proactivity comes from the COWORKER, in their own voice):
-        // on an email-off workspace there is no mailbox to learn the user from, so Clara's first
-        // contact ASKS — her question is ordinary speech in her own bubble; the answer flows
-        // through the DM and the memory lane extracts it into user-level context every surface
-        // reads. Other coworkers keep their standard intros — one greeter, not four.
-        const intake = features.email === false && first.toLowerCase() === 'clara';
-        const base = seenIntro
-          ? `Hi — I'm ${first}. ${intro.helps}`
-          : `Hi — I'm ${first}, one of the AI coworkers that comes with your workspace (there's a small team of us, each with a specialty). ${intro.helps}`;
-        // The coworker speaks for themself (author set → their avatar + name on the bubble).
+        // THE INTAKE (owner, Aug 14) keeps its SEAT on an email-off workspace — the chief of staff's
+        // DM places the team and invites the day-one context the memory lane files user-level — but
+        // as chrome in the event-line grammar, never a template under the face (see above). The
+        // owner law question (restore a VOICED intake via a composed-once pass) is reported, W4.1.
+        const intake = features.email === false && role === 'personal_assistant';
+        const who = [first, roleLabel].filter(Boolean).join(' · ');
+        const lines: string[] = [];
+        lines.push(`New conversation with ${who}${specialty ? ` — ${specialty}` : ''}.`);
         if (intake) {
-          // Clara PLACES the whole team (owner, Aug 14): a corporate first contact meets
-          // everyone briefly — always in the intake flow, independent of the one-time explainer
-          // flag (a tester's LS must not mute it). Names come from the live roster; the
-          // specialty line from the seeded-name map, silently omitted for custom workers.
-          const specialty: Record<string, string> = {
-            max: 'does the research and analysis',
-            luca: 'keeps your LinkedIn active',
-          };
-          const mates = roster
-            .map((x) => x.name.split(' ')[0])
-            .filter((f) => f.toLowerCase() !== first.toLowerCase())
-            .map((f) => { const s = specialty[f.toLowerCase()]; return s ? `${f} ${s}` : f; });
-          const teamLine = mates.length
-            ? ` There's a small team of us — ${mates.length > 1 ? `${mates.slice(0, -1).join(', ')}, and ${mates[mates.length - 1]}` : mates[0]}. You can message any of us from the Home.`
-            : '';
-          // The QUESTION gets its own bubble — buried mid-paragraph it reads as boilerplate;
-          // alone it reads as a colleague actually asking. Chips ride the question turn and
-          // offer only work that needs NO ambient context (a day-one sovereign account has no
-          // mail/calendar to summarize or plan from — attach-a-file and standalone drafts do).
-          loaded.push({ role: 'assistant', author: first, authorId: agentId, text: `Hi — I'm ${first}. ${intro.helps}${teamLine}` });
-          loaded.push({
-            role: 'assistant', author: first, authorId: agentId,
-            text: `So the whole team starts with real context — what's your role, and what's the main thing on your plate this week? Anything you tell me here, we all remember. Or jump straight in:`,
-            options: [
-              { label: 'Draft a meeting agenda', say: 'Draft an agenda for a 30-minute kickoff meeting with a new client.' },
-              { label: 'Summarize a document I attach', say: 'I will attach a document — summarize it into one page of key takeaways.' },
-              { label: 'Build a checklist', say: 'Make me a checklist for onboarding a new team member.' },
-            ],
+          const mates = roster.filter((x) => x.id !== agentId).map((x) => {
+            const l = x.role ? ROLE_LABELS[x.role] : undefined;
+            return l ? `${x.name.split(' ')[0]} · ${l}` : x.name.split(' ')[0];
           });
-        } else {
-          loaded.push({
-            role: 'assistant', author: first, authorId: agentId,
-            text: `${base} A few things I can do right now:`,
-            options: intro.examples,
-          });
+          if (mates.length) lines.push(`Also on your team: ${mates.join(', ')}.`);
+          lines.push(`Your role and this week's priorities, told here, are remembered by the whole team.`);
+        } else if (!seenIntro) {
+          lines.push('One of the AI coworkers that comes with your workspace — each has a specialty.');
         }
+        loaded.push({
+          role: 'assistant', chrome: true, text: lines.join(' '),
+          options: intake ? INTAKE_STARTERS : ((role && ROLE_STARTERS[role]) || GENERIC_STARTERS),
+        });
       }
       // THE NO-MUTATION LAW AT THE HYDRATE SEAM: whatever the cache painted keeps its seat and the
       // server's tail appends behind it. A DM is an append-only log, so index-wise freezing IS the
@@ -976,12 +965,13 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     if (temp) return; // temporary: the conversation lives only in this session's memory
     if (workerRoomRef.current) return; // worker mode: the thread's own store holds the conversation
     try {
+      const roomKey = chatRoomKey();
       fetch('/api/room/turns', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           // v2 link model: turns ALWAYS live on the chat's own key — the binding, not the
           // turns' address, says which project the conversation belongs to.
-          roomKey: chatRoomKey(), role, text,
+          roomKey, role, text,
           // The tag rides into the store with the label — the client door and the server door
           // (app/api/home/ask) write the SAME shape, so which one persisted a turn can never
           // decide whether its chips resolve.
@@ -989,7 +979,11 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           ...(extra?.authorAgentId ? { authorAgentId: extra.authorAgentId } : {}),
           ...(extra?.component ? { component: extra.component } : {}),
         }),
-      }).then(() => {
+      }).then((r) => {
+        // THE ADDRESS LAW: a new chat earns its address once its first turn is durable — never
+        // before (an address to a room that holds nothing would refresh onto an empty pane).
+        // Guarded: a reader who moved to a DM or reset meanwhile keeps THEIR address.
+        if (r.ok && !workerRoomRef.current && localStorage.getItem(CHAT_KEY_LS) === roomKey) writeChatAddress(roomKey);
         // The sidebar's Recent stays live (a new conversation appears as it starts).
         if (role === 'user') window.dispatchEvent(new CustomEvent('aug:conversation-changed'));
       }).catch(() => {});
@@ -1062,20 +1056,20 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // tools, memory, skills) and STREAMS the reply into this panel with their attribution. The
   // conversation lives in the worker's own store (work_threads/work_messages — never
   // double-persisted into chat rooms); listing those conversations here is brick 2. ──
-  const rosterRef = useRef<Array<{ id: string; name: string }> | null>(null);
+  const rosterRef = useRef<Array<{ id: string; name: string; role?: string | null }> | null>(null);
   // ONE FLIGHT PER MOUNT: the roster is warmed on mount AND awaited by the open path — without an
   // in-flight promise the two race and fetch it twice (the second one landing behind the first,
   // for nothing). The promise IS the dedupe; the ref is the settled answer.
-  const rosterFlight = useRef<Promise<Array<{ id: string; name: string }>> | null>(null);
+  const rosterFlight = useRef<Promise<Array<{ id: string; name: string; role?: string | null }>> | null>(null);
   const [, rosterTick] = useState(0); // re-render once the roster lands (the @-row reads a ref)
-  const getRoster = async (): Promise<Array<{ id: string; name: string }>> => {
+  const getRoster = async (): Promise<Array<{ id: string; name: string; role?: string | null }>> => {
     if (rosterRef.current) return rosterRef.current;
     if (rosterFlight.current) return rosterFlight.current;
     rosterFlight.current = (async () => {
       try {
         const d = await fetch('/api/workers/mentions?types=coworker').then((r) => (r.ok ? r.json() : null));
-        rosterRef.current = ((d?.results ?? []) as Array<{ type: string; id: string; label: string }>)
-          .filter((x) => x.type === 'coworker').map((x) => ({ id: x.id, name: x.label }));
+        rosterRef.current = ((d?.results ?? []) as Array<{ type: string; id: string; label: string; role?: string | null }>)
+          .filter((x) => x.type === 'coworker').map((x) => ({ id: x.id, name: x.label, role: x.role ?? null }));
       } catch { rosterRef.current = []; }
       rosterFlight.current = null;
       rosterTick((t) => t + 1);
@@ -1193,6 +1187,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // …and THE EVENT CARD, on the same terms: the live spec paints at once, the pointer that
       // survives the reload lives on the message's own metadata.
       const events: NonNullable<Turn['events']> = [];
+      // …and THE CONFIRM CARD: the live spec paints at once; the pointer survives on the message.
+      const changes: NonNullable<Turn['changes']> = [];
       // THE TRACE, accumulated in EXECUTION order; `traceIds` maps a tool-call id to its slot so a
       // completion settles the line it opened (a coworker may run three calls before any returns).
       const trace: TraceEntry[] = [];
@@ -1209,7 +1205,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const setCards = () => setTurns((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
-        if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, cards: [...cards], drafts: [...drafts], workflowDrafts: [...wfDrafts], invites: [...invites], collections: [...collections], events: [...events] };
+        if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, cards: [...cards], drafts: [...drafts], workflowDrafts: [...wfDrafts], invites: [...invites], collections: [...collections], events: [...events], changes: [...changes] };
         return next;
       });
       const setTrace = () => setTurns((prev) => {
@@ -1233,6 +1229,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
               card?: { id?: string; invite?: PreparedInviteLike; spec?: EventSpec };
               collection?: { id?: string; spec?: CollectionSpec };
               event?: { id?: string; spec?: EventSpec };
+              change?: { id?: string; spec?: ChangeSpec };
             };
             if (event.type === 'text') { acc += event.delta ?? ''; patchLast(acc); }
             else if (event.type === 'text_clear') { acc = ''; patchLast(acc); }
@@ -1314,10 +1311,17 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
               events.push({ eventId: payload.id ?? payload.spec.id, spec: payload.spec });
               setCards();
             }
+            // THE CONFIRM CARD reaches this lane too, on the SAME host: a class-A change the
+            // coworker PREPARED. `isChangeSpec` guards it; nothing has applied when it arrives.
+            else if (event.type === 'change' && isChangeSpec(event.change?.spec)) {
+              const spec = event.change.spec as ChangeSpec;
+              changes.push({ changeId: spec.id, spec });
+              setCards();
+            }
           } catch { /* partial frame */ }
         }
       }
-      const made = cards.length || drafts.length || wfDrafts.length || invites.length || collections.length || events.length;
+      const made = cards.length || drafts.length || wfDrafts.length || invites.length || collections.length || events.length || changes.length;
       const said = acc.trim() || (made ? `${first} produced the work below.` : `${first} finished without a written reply.`);
       patchLast(said);
       if (made) setCards();
@@ -1459,7 +1463,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     // History excludes the just-echoed user turn (it rides as `question`). An assistant turn
     // that produced a document sends its card ref along (REVISION-IN-PLACE: "make the chart
     // blue" must resolve to THAT artifact, not mint a second one).
-    const history = turns.map((t) => {
+    // CHROME IS NOT CONVERSATION (W4.1): a faceless first-contact line was never said by anyone.
+    const history = turns.filter((t) => !t.chrome).map((t) => {
       const artCard = t.cards?.find((c) => c.art);
       return {
         // THE BRAIN READS WHAT IT WAS TOLD — the bubble's clean text is presentation; `sent`
@@ -1478,7 +1483,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
       // line speaks them), `done` carries the answer. A non-SSE response (error JSON) falls back.
       const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(sentRoomKey ? { roomKey: sentRoomKey } : {}), ...(attachments.length ? { attachments } : {}), ...(scope ? { entityId: scope.id } : {}) }) });
-      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string; type?: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string; type?: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike }; emailDraft?: { id: string; itemId?: string; draft?: StandaloneEmailDraft }; collection?: { id: string; spec: CollectionSpec }; event?: { id?: string; spec: EventSpec } } = {};
+      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string; type?: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string; type?: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike }; emailDraft?: { id: string; itemId?: string; draft?: StandaloneEmailDraft }; collection?: { id: string; spec: CollectionSpec }; event?: { id?: string; spec: EventSpec }; change?: { id: string; spec: ChangeSpec } } = {};
       // THE STREAM NEVER RETYPES: the reducer's own verdict decides whether the seated turn
       // animates — it must be the thing the component reads, not a parallel re-derivation.
       let st = initialAskStream;
@@ -1495,7 +1500,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             const line = f.split('\n').find((l) => l.startsWith('data: '));
             if (!line) continue;
             try {
-              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string; type?: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string; type?: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike }; emailDraft?: { id: string; itemId?: string; draft?: StandaloneEmailDraft }; collection?: { id: string; spec: CollectionSpec }; event?: { id?: string; spec: EventSpec } };
+              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string; type?: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string; type?: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike }; emailDraft?: { id: string; itemId?: string; draft?: StandaloneEmailDraft }; collection?: { id: string; spec: CollectionSpec }; event?: { id?: string; spec: EventSpec }; change?: { id: string; spec: ChangeSpec } };
               // THE STREAM NEVER RETYPES (Sep 21): every decision about what the user sees is the
               // PURE reducer's (components/home/ask-stream.ts) — this branch only moves its
               // output into React state. The `done` frame's authority is unchanged.
@@ -1536,7 +1541,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // A token-streamed answer already revealed itself — the typewriter must not re-type it
       // (the reducer decides; `animate:false` means the user has already read these words, so a
       // final text that differs only slightly settles in place instead of clearing and retyping).
-      setTurns((prev) => { pendingAnimate.current = st.animate ? prev.length : -1; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...(d.invite ? { invites: [{ inviteId: d.invite.id, invite: d.invite.invite }] } : {}), ...(d.bulkDeed ? { bulkDeeds: [{ deedId: d.bulkDeed.id, deed: d.bulkDeed.deed }] } : {}), ...(d.emailDraft ? { emailDrafts: [{ emailId: d.emailDraft.id, ...(d.emailDraft.itemId ? { itemId: d.emailDraft.itemId } : {}), ...(d.emailDraft.draft ? { draft: d.emailDraft.draft } : {}) }] } : {}), ...(d.collection && isCollectionSpec(d.collection.spec) ? { collections: [{ collectionId: d.collection.id, spec: d.collection.spec }] } : {}), ...(d.event && isEventSpec(d.event.spec) ? { events: [{ eventId: d.event.id ?? d.event.spec.id, spec: d.event.spec }] } : {}), ...artCard }]; });
+      setTurns((prev) => { pendingAnimate.current = st.animate ? prev.length : -1; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...(d.invite ? { invites: [{ inviteId: d.invite.id, invite: d.invite.invite }] } : {}), ...(d.bulkDeed ? { bulkDeeds: [{ deedId: d.bulkDeed.id, deed: d.bulkDeed.deed }] } : {}), ...(d.emailDraft ? { emailDrafts: [{ emailId: d.emailDraft.id, ...(d.emailDraft.itemId ? { itemId: d.emailDraft.itemId } : {}), ...(d.emailDraft.draft ? { draft: d.emailDraft.draft } : {}) }] } : {}), ...(d.collection && isCollectionSpec(d.collection.spec) ? { collections: [{ collectionId: d.collection.id, spec: d.collection.spec }] } : {}), ...(d.event && isEventSpec(d.event.spec) ? { events: [{ eventId: d.event.id ?? d.event.spec.id, spec: d.event.spec }] } : {}), ...(d.change && isChangeSpec(d.change.spec) ? { changes: [{ changeId: d.change.spec.id, spec: d.change.spec }] } : {}), ...artCard }]; });
       if (d.artifact) void openArtifact(d.artifact.threadId, d.artifact.id);
       if (d.answer && !sentRoomKey) persistTurn('system', d.answer, d.refs ?? []);
       if (d.focus && !scope && !temp) setScopeHint(d.focus);
@@ -1566,8 +1571,32 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     const seatName = cosSeat?.name ?? 'Your assistant';
     const seatLabel = cosSeat ? 'chief of staff' : undefined;
 
+    // THE SENSIBLE ASK's chips — ONE renderer for a speaking turn and a chrome line alike.
+    const optionChips = (t: Turn, i: number, key: string): ThreadCard => ({
+      kind: 'custom', id: `${key}-options`,
+      node: (
+        <span className="flex flex-wrap gap-1.5">
+          {(t.options ?? []).map((o, j) => (
+            <button key={j} disabled={busy}
+              onClick={() => {
+                setTurns((prev) => prev.map((x, ix) => (ix === i ? { ...x, options: undefined } : x)));
+                void handleSubmit(o.say, []);
+              }}
+              className="rounded-full border border-indigo-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-indigo-700 transition-colors hover:bg-indigo-50 disabled:opacity-50">
+              {o.label}
+            </button>
+          ))}
+        </span>
+      ),
+    });
     turns.forEach((t, i) => {
       const key = `t${i}`;
+      // CHROME, NOT SPEECH (W4.1): a synthesized first contact renders author-absent in the
+      // event-line grammar — no face, no name header — with its starters beneath.
+      if (t.chrome) {
+        out.push({ type: 'event_line', id: key, text: t.text, ...(t.options?.length ? { cards: [optionChips(t, i, key)] } : {}) });
+        return;
+      }
       // THE DATE DIVIDER (ONE CONTINUOUS THREAD, owner, Aug 13 — the Slack model): in a DM, time
       // is the only separator. A live-session turn carries no `at` — we never guess when it was
       // spoken, so it never earns a divider.
@@ -1704,27 +1733,22 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           />
         ),
       }));
+      // THE CONFIRM CARD — ONE host for a prepared state change, on every surface. A live turn
+      // hands over the served spec; a rehydrated one hands over the pointer and the host re-reads.
+      // Apply and Dismiss go through the change's own doors; nothing here has applied.
+      (t.changes ?? []).forEach((ch, j) => cards.push({
+        kind: 'custom', id: `${key}-change-${j}`,
+        node: (
+          <ChangeCard
+            {...(ch.spec
+              ? { spec: ch.spec, ...(ch.pointer ? { pointer: ch.pointer } : {}) }
+              : { pointer: ch.pointer ?? { changeId: ch.changeId } })}
+          />
+        ),
+      }));
       // THE SENSIBLE ASK — a tap SPEAKS its message through the composer (clicks are utterances);
       // the chips consume on tap (ephemeral scaffolding).
-      if (t.options?.length) {
-        cards.push({
-          kind: 'custom', id: `${key}-options`,
-          node: (
-            <span className="flex flex-wrap gap-1.5">
-              {t.options.map((o, j) => (
-                <button key={j} disabled={busy}
-                  onClick={() => {
-                    setTurns((prev) => prev.map((x, ix) => (ix === i ? { ...x, options: undefined } : x)));
-                    void handleSubmit(o.say, []);
-                  }}
-                  className="rounded-full border border-indigo-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-indigo-700 transition-colors hover:bg-indigo-50 disabled:opacity-50">
-                  {o.label}
-                </button>
-              ))}
-            </span>
-          ),
-        });
-      }
+      if (t.options?.length) cards.push(optionChips(t, i, key));
       // THE ANSWER STREAMS INTO THE VISIBLE BUBBLE: an addressed coworker's reply is already its
       // own turn, patched as the tokens land — while it is in flight the AVATAR carries the state.
       const inFlight = busy && i === turns.length - 1;
@@ -1749,24 +1773,25 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     });
 
     // The chief's own reply has no turn until the `done` frame lands — while it is in flight it is
-    // the seat's working bubble, carrying the live token text (or the core's stage line).
+    // the seat's working bubble, carrying the live token text.
+    // THE AVATAR STATUS GRAMMAR (docs/threads-plan.md: "The coworker face IS the status indicator …
+    // Hover names the current step in one line … We render neither spinner-dots nor tool-call
+    // narration in the timeline"): before the first token the FACE (status 'working', its ring)
+    // carries the state and the core's stage rides the hover hint ONLY — no pulsing dot, no
+    // "Writing the reply…" line in the stream. Streaming the reply itself is the allowed live append.
     const last = turns[turns.length - 1];
     if (busy && !(last && last.role === 'assistant')) {
       out.push({
         type: 'actor_bubble', id: 'streaming', actorId: seatId, actorName: seatName,
         actorRoleLabel: seatLabel, status: 'working', statusHint: stage ?? 'Thinking…',
-        cards: [{
+        cards: liveText ? [{
           kind: 'custom', id: 'streaming-body',
-          node: liveText ? (
+          node: (
             <span className="block whitespace-pre-wrap text-[13.5px] leading-relaxed text-neutral-800">
               {liveText}<span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-indigo-400 align-text-bottom" />
             </span>
-          ) : (
-            <span className="flex items-center gap-1.5 text-[13px] text-neutral-400">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-300" />{stage ?? 'Thinking…'}
-            </span>
           ),
-        }],
+        }] : [],
       });
     }
     return out;

@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
+// W0.5 TIME BUDGET: after() calls refreshEntityState (AI-bearing) — the platform default kills it
+// mid-work (CLAUDE.md maxDuration lesson).
+export const maxDuration = 300;
+
 // THE FOUNDING ADOPTION (creation-time recognition — the "first sync", confirmed in the room).
 // POST { targetId, sourceId } — a THIN wrapper over lib/entities/adopt.ts `adoptEntity` (converse
 // arc): the proposal's BUTTON and a PROSE answer in the room conversation run through the SAME

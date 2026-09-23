@@ -9,7 +9,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { resolveFileUniversal } from '@/lib/knowledge/resolve';
-import { getTodaySchedule, renderScheduleBlock } from '@/lib/calendar/today-schedule';
 // THE ONE IDENTITY PRIMITIVE — never a second generic-word list. `namesStatedIn`/`distinctiveTokens`
 // are built on GENERIC_WORK_WORDS (lib/entities/recognize), the same law the case pre-pass, the
 // workflow-scope seam and the named-subject veto speak.
@@ -20,6 +19,8 @@ import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
 import { REACH_CONTRACT } from '@/lib/converse/reach';
 // THE REF IS ITS TAG — the ONE ref grammar, shared with the renderer (lib/home/ask-refs.ts).
 import { resolveAskRefs, ASK_TAG_CAP } from '@/lib/home/ask-refs';
+import { clipWithRule } from '@/lib/utils/pack-context';
+import { clipLabel } from '@/lib/utils/clip-for-prompt';
 
 /** `tag` is the grounding id the answer placed ([E7], [R2]…) — THE identity a chip resolves by.
  *  Optional only because the type is also read back from turns stored before that law. */
@@ -117,76 +118,25 @@ export function suggestFilingFocus(question: string, ents: FocusCandidate[]): { 
 
 /** Assemble a compact, bounded snapshot of the brain — everything the answer may reason over.
  *  Exported: the converse core grounds global-scope open turns on the SAME read.
+ *
+ *  ONE USER GROUNDING (stabilization W2.2, invariant 5): the world half of this snapshot IS
+ *  `assembleUserGrounding` (lib/room/user-grounding.ts) — the user-scope twin of the room
+ *  grounding. This lane used to build a PRIVATE world here (a replies-owed block off raw `rule_type`
+ *  over the last 60 emails, commitments on its own status list), bypassing the judge, the notice
+ *  floors, the seat law and the deck's demotion set — so the chat could assert a debt the deck had
+ *  floored. There is no second assembly of the user's world in this file any more.
+ *
  *  With `focusQuery` (THE ONE-GROUNDING UNIFICATION): when the question NAMES a registered
  *  entity, that entity's FULL room grounding — the same assembled page the room itself reads —
  *  is appended as the FOCUSED WORK block, so an answer from the Home and an answer from the
  *  room structurally cannot disagree. */
 export async function buildBrainSnapshot(supabase: SupabaseClient, userId: string, focusQuery?: string): Promise<{ text: string; refs: Map<string, AskRef> }> {
-  const refs = new Map<string, AskRef>();
-  const parts: string[] = [];
-  const nowMs = Date.now();
-
-  // Active bodies of work (entities) — the spine. State + next move + who-owes + category.
-  const { data: ents } = await supabase.from('work_entities')
-    .select('id, name, aliases, state, next_move, priority, last_event_at')
-    .eq('user_id', userId).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null)
-    .order('last_event_at', { ascending: false }).limit(60);
-  const sorted = (ents ?? []).map((e) => e as Record<string, unknown>)
-    .sort((a, b) => Number((b.priority as { weight?: number } | null)?.weight ?? 0) - Number((a.priority as { weight?: number } | null)?.weight ?? 0));
-  if (sorted.length) {
-    const lines: string[] = [];
-    sorted.slice(0, 40).forEach((e, i) => {
-      const id = `E${i + 1}`; const st = (e.state ?? {}) as { summary?: string; momentum?: string; category?: string; whoOwes?: { you?: string[]; them?: string[] } };
-      const nm = (e.next_move ?? null) as { title?: string } | null;
-      const q = e.last_event_at ? Math.floor((nowMs - new Date(e.last_event_at as string).getTime()) / 86400000) : null;
-      refs.set(id, { id: e.id as string, kind: 'entity', label: e.name as string, href: entHref(e.id as string) });
-      lines.push(`[${id}] ${e.name}${st.category ? ` (${st.category})` : ''} — ${st.summary ?? ''}${st.momentum ? ` [${st.momentum}${q != null && (st.momentum === 'gone_quiet' || st.momentum === 'stalled') ? ` ${q}d` : ''}]` : ''}${st.whoOwes?.you?.length ? ` · you owe: ${st.whoOwes.you.join('; ')}` : ''}${nm?.title ? ` · next: ${nm.title}` : ''}`);
-    });
-    parts.push(`ACTIVE WORK (the user's bodies of work — reference as [E#]):\n${lines.join('\n')}`);
-  }
-
-  // People needing attention.
-  const { data: ppl } = await supabase.from('work_entities')
-    .select('name, state').eq('user_id', userId).eq('kind', 'person').eq('status', 'active').not('state', 'is', null).limit(200);
-  const attn = ((ppl ?? []) as Array<{ name: string; state: { summary?: string; momentum?: string } | null }>)
-    .filter((p) => p.state?.summary && (p.state.momentum === 'you_owe' || p.state.momentum === 'gone_quiet' || p.state.momentum === 'needs_you'))
-    .slice(0, 12);
-  if (attn.length) parts.push(`PEOPLE NEEDING ATTENTION:\n${attn.map((p) => `- ${p.name} [${p.state!.momentum}]: ${p.state!.summary}`).join('\n')}`);
-
-  // Open commitments.
-  const { data: commits } = await supabase.from('commitments')
-    .select('id, description, counterparty, direction, due_date').eq('user_id', userId).in('status', ['open', 'pending']).limit(40);
-  if ((commits ?? []).length) {
-    const lines = (commits ?? []).map((c, i) => { const id = `C${i + 1}`; const r = c as Record<string, unknown>; refs.set(id, { id: r.id as string, kind: 'commitment', label: String(r.description || '').slice(0, 60), href: `/item/${r.id}?kind=commitment` }); return `[${id}] ${String(r.direction) === 'awaiting' ? 'they owe' : 'you owe'}: ${r.description}${r.counterparty ? ` (${r.counterparty})` : ''}${r.due_date ? ` — due ${r.due_date}` : ''}`; });
-    parts.push(`OPEN COMMITMENTS (reference as [C#]):\n${lines.join('\n')}`);
-  }
-
-  // Today's schedule — THE ONE READ (single-source with the brief/report) + the NOW anchor, so the
-  // answer never lists this morning's meetings as if they were still ahead.
-  const sched = await getTodaySchedule(supabase, userId);
-  parts.push(renderScheduleBlock(sched));
-
-  // THE CALENDAR WINDOW (Wave 1, Sep 18) — today + the next 14 days, read ONCE and rendered by code.
-  // Found live on a pilot account: asked to "check my calendar", the chat answered "you're free both
-  // weeks" over twelve confirmed events and a four-day all-day block, because the only calendar in
-  // its context was TODAY. The snapshot is also converse's grounding for global-scope open turns, so
-  // this one block reaches both chat paths. Non-fatal: an unreadable calendar simply adds no block —
-  // and the prompt's reach sentence below then keeps the answer honest about not seeing it.
-  try {
-    const { getScheduleWindow, renderCalendarWindow } = await import('@/lib/calendar/schedule-window');
-    const win = await getScheduleWindow(supabase, userId, {
-      fromDayStr: sched.dayStr,
-      toDayStr: new Date(Date.parse(`${sched.dayStr}T00:00:00Z`) + 14 * 86_400_000).toISOString().slice(0, 10),
-      tz: sched.userTz,
-    });
-    parts.push(renderCalendarWindow(win, { tz: sched.userTz }));
-  } catch { /* the window is an enhancement — the today block still anchors the day */ }
-
-  // Recent replies owed.
-  const { data: items } = await supabase.from('inbox_items')
-    .select('id, work_title, source_data, rule_type, status').eq('user_id', userId).eq('source', 'email').order('created_at', { ascending: false }).limit(60);
-  const mr = ((items ?? []) as Array<Record<string, unknown>>).filter((it) => it.status !== 'completed' && it.status !== 'dismissed' && (it.rule_type === 'needs_reply' || (it.source_data as { understanding?: { relevance?: string } } | null)?.understanding?.relevance === 'reply')).slice(0, 12);
-  if (mr.length) parts.push(`REPLIES YOU OWE (reference as [R#]):\n${mr.map((it, i) => { const id = `R${i + 1}`; const sd = (it.source_data ?? {}) as { from_name?: string }; refs.set(id, { id: it.id as string, kind: 'inbox_item', label: String(it.work_title || '').slice(0, 50), href: `/item/${it.id}?kind=email` }); return `[${id}] ${sd.from_name ?? ''} · ${it.work_title}`; }).join('\n')}`);
+  const { assembleUserGrounding } = await import('@/lib/room/user-grounding');
+  const world = await assembleUserGrounding(supabase, userId);
+  const refs = new Map<string, AskRef>(world.refs);
+  const parts: string[] = [world.text];
+  // The focus candidates are the grounding's own project rows — one read, one registry.
+  const ents: FocusCandidate[] = world.facts.projects.map((p) => ({ id: p.id, name: p.name, aliases: p.aliases, tracked: p.tracked }));
 
   // ── THE ONE-GROUNDING UNIFICATION (one-surface arc, Aug 5): a question that NAMES a body of
   // work gets that entity's FULL room grounding appended — the same assembled page the room's
@@ -199,7 +149,7 @@ export async function buildBrainSnapshot(supabase: SupabaseClient, userId: strin
       // THE USER'S OWN WORDS (clause b): a pasted email repoints nothing — the grounding follows
       // what the user says this conversation is about, and degrades to the plain snapshot when the
       // evidence is only transported text.
-      const focus = findEntityFocus(focusQuery, (ents ?? []) as FocusCandidate[], { evidenceOnly: true });
+      const focus = findEntityFocus(focusQuery, ents, { evidenceOnly: true });
       if (focus) {
         const { assembleRoomGrounding } = await import('@/lib/room/grounding');
         const g = await assembleRoomGrounding(supabase, userId, { kind: 'entity', entityId: focus.id });
@@ -209,7 +159,8 @@ export async function buildBrainSnapshot(supabase: SupabaseClient, userId: strin
           `THE FOCUSED WORK — the question names "${focus.name}"${eTag ? ` (reference as [${eTag}])` : ' (reference as [E0])'}. ` +
           `This is its full current page — deeper and MORE CURRENT than its one-line summary above; ` +
           `prefer it for anything about this work:\n` +
-          g.text.replace(/\[(?:L|F)\d+\]\s?/g, '').slice(0, 3200) +
+          // THE CONTEXT BUDGET (W2.7): a declared cut with its rule, never a raw head-slice.
+          clipWithRule(g.text.replace(/\[(?:L|F)\d+\]\s?/g, ''), 3200) +
           // ONE LAW, ONE COPY (Sep 8): the focused page can carry a GROUND EVIDENCE block, and a
           // Home answer that ranked the board above the world would contradict the room's own
           // brief — "status on X?" must be the same answer from both doors, settlements included.
@@ -235,7 +186,10 @@ export async function answerHomeQuestion(
       const lines = fCands.map((c, i) => {
         const id = `F${i + 1}`;
         refs.set(id, { id, kind: 'file', label: c.filename, href: null });
-        return `[${id}] ${c.filename}${c.snippet ? ` — ${c.snippet.slice(0, 90)}` : ''}${c.source === 'gdrive' || c.source === 'onedrive' ? ` (${c.source})` : ''}`;
+        // A LABEL IS NOT AN EXCERPT (clip-for-prompt.ts): this is a one-line file preview, not a
+        // prompt-budget excerpt — `clipLabel` ends at a word boundary without a marker (a raw
+        // `.slice()` produced mid-word chrome here, the same class the report-back label bug was).
+        return `[${id}] ${c.filename}${c.snippet ? ` — ${clipLabel(c.snippet, 90)}` : ''}${c.source === 'gdrive' || c.source === 'onedrive' ? ` (${c.source})` : ''}`;
       });
       fileBlock = `\n\nFILES that may relate to the question (reference as [F#]):\n${lines.join('\n')}`;
     }
@@ -247,9 +201,11 @@ export async function answerHomeQuestion(
     // two future weeks the model, told it holds the calendar, answered from nothing and said "free".
     // A prompt that overstates its context is an instruction to confabulate. It now enumerates
     // exactly what the snapshot carries, and states the calendar's reach and its EDGE.
-    `You are the user's assistant inside their work app. The context below is what you hold: their ` +
-    `active bodies of work, the people needing attention, their open commitments, today's schedule, ` +
-    `the replies they owe — and their calendar for TODAY AND THE NEXT 14 DAYS ONLY. Answer like a sharp, ` +
+    `You are the user's assistant inside their work app. The context below is what you hold: the work ` +
+    `they owe as the app itself judges it (replies, promises, actions — the SAME rows their Home deck ` +
+    `shows; a thing not listed there is not owed as far as this app knows), what they are waiting on, ` +
+    `their projects, the people needing attention, their recent deeds, today's schedule — and their ` +
+    `calendar for TODAY AND THE NEXT 14 DAYS ONLY. Answer like a sharp, ` +
     `calm colleague who already knows their world, GROUNDED STRICTLY in that context.\n\n` +
     `THE CALENDAR RULE: availability, free time and scheduling come ONLY from the calendar block below — ` +
     `never from memory, never from what sounds likely. NEVER state or imply someone is free or busy on a ` +
@@ -279,7 +235,7 @@ export async function answerHomeQuestion(
     // enforces — a prompt-only limit is a hope. Extra tags are stripped, never shown raw.
     `- HARD LIMIT: at most ${ASK_TAG_CAP} tags total, ONE id per bracket ([E7] — NEVER [E7, E8]), placed immediately AFTER the thing it names (\"the pilot [E10]\"), never dangling at a sentence end. The app turns each into a link.\n` +
     `- Reason across items when useful (connect a deal to its commitments / its meeting / who owes what).\n` +
-    `Return ONLY JSON: {"answer":"<the answer, with [E#]/[C#]/[R#]/[F#] tags>","refs":["E1","C2","F1",...]}`;
+    `Return ONLY JSON: {"answer":"<the answer, with [E#]/[C#]/[R#]/[W#]/[F#] tags>","refs":["E1","C2","F1",...]}`;
 
   // BUDGET ROUTING (one policy, deterministic): lookups run on the CHEAP tier; only synthesis-intent
   // questions ("what did I miss", "prioritize", "should I…") escalate to deep reasoning. Typical asks

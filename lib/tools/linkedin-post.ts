@@ -5,6 +5,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { clipWithRule } from '@/lib/utils/pack-context';
 
 export interface LinkedInPostConfig {
   instructions?: string;
@@ -111,10 +112,12 @@ async function fetchVoiceExamples(
 
   if (!chunks || chunks.length === 0) return null;
 
-  return (chunks as Array<{ content: string; chunk_index: number }>)
-    .map(c => c.content)
-    .join('\n\n')
-    .slice(0, 6000);
+  // EXCERPT HONESTY (invariant 13): a raw `.slice()` on the joined voice-exemplar chunks used to
+  // hard-cut mid-sentence with no marker; `clipWithRule` ends at a boundary and declares itself.
+  return clipWithRule(
+    (chunks as Array<{ content: string; chunk_index: number }>).map(c => c.content).join('\n\n'),
+    6000,
+  );
 }
 
 async function fetchAuthorContext(

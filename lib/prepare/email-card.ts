@@ -7,8 +7,9 @@
 // second mapper is how two surfaces start disagreeing about the same drafted message (the invite
 // card's lesson, one kind over).
 //
-// CLIENT-SAFE BY CONSTRUCTION: pure, zero imports, no AI, no fetch, no Supabase (the client-safe
-// module law — a runtime import from a server module drags `fs`/`net` into the browser build).
+// CLIENT-SAFE BY CONSTRUCTION: pure, no AI, no fetch, no Supabase (the client-safe module law — a
+// runtime import from a server module drags `fs`/`net` into the browser build). Its ONE import is
+// the isomorphic render-safety sanitizer (RENDER SAFETY, Sep 22), which is browser-safe.
 //
 // TRUTH BEFORE PRESENTATION: with no recipient the card is `needs_recipient` — the host raises its
 // people editor and the card carries NO Send, because a card that cannot mail must never wear a
@@ -24,6 +25,8 @@
 //   · the TONES are a FIXED VOCABULARY (chrome, not speech — the speech-is-composed law's lawful
 //     deterministic half), applied through that same one path.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
+
+import { sanitizeDraftHtml } from '@/lib/utils/sanitize-html';
 
 /** One reply direction, as the reply-directions organ names it (label ≤5 words + an instruction). */
 export interface EmailDirection {
@@ -182,12 +185,15 @@ export const directionVariantId = (i: number): string => `dir-${i}`;
 // becomes paragraphs by the rail's own long-standing conversion. One function, one behaviour — a
 // second converter is how two surfaces start mailing different HTML for identical words.
 
+// RENDER SAFETY (Sep 22 — stabilization W0.1): markup is model/user-authored — it passes the draft
+// sanitizer (no scripts, no handlers, no forms, NO remote resources) before any card renders it or
+// any send carries it. Plain text is escaped by construction below.
 const BLOCK_MARKUP = /<(?:p|div|br|ul|ol|li|b|i|u|strong|em|a|span|h[1-6]|blockquote|table)\b[^>]*>/i;
 
 /** Markup in ⇒ markup out. Plain text in ⇒ paragraphs, exactly as the plain draft always rendered. */
 export function emailBodyHTML(value: string): string {
   const v = String(value ?? '');
-  if (BLOCK_MARKUP.test(v)) return v;
+  if (BLOCK_MARKUP.test(v)) return sanitizeDraftHtml(v);
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return v.replace(/\r\n/g, '\n').split(/\n{2,}/)
     .map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');

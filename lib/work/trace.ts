@@ -86,7 +86,8 @@ export const TRACE_WORDING: Record<string, TraceWords> = {
   read_team_work: { doing: 'Reading a teammate’s work…', done: 'Read a teammate’s work', failed: 'Couldn’t read a teammate’s work' },
   slack_list_channels: { doing: 'Checking Slack channels…', done: 'Checked Slack channels', failed: 'Couldn’t reach Slack' },
   slack_read_messages: { doing: 'Reading Slack…', done: 'Read Slack', failed: 'Couldn’t reach Slack' },
-  slack_post_message: { doing: 'Posting to Slack…', done: 'Posted to Slack', failed: 'Couldn’t post to Slack' },
+  // W0.3c: a chat lane PREPARES the post (a confirm card) — the receipt must never say "posted".
+  slack_post_message: { doing: 'Preparing the Slack post…', done: 'Prepared the Slack post', failed: 'Couldn’t prepare the Slack post' },
   slack_list_members: { doing: 'Checking Slack members…', done: 'Checked Slack members', failed: 'Couldn’t reach Slack' },
 
   // ── method ─────────────────────────────────────────────────────────────────────────────────

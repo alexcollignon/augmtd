@@ -25,7 +25,9 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createHash } from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { buildEvent, eventWindowMs, readEventRow } from '@/lib/present/event-build';
-import { sanitizeProposal, validEventVerbs, EVENT_VERB_WORDS, type EventVerb } from '@/lib/present/event';
+import {
+  sanitizeProposal, validEventVerbs, noteVerbsFor, eventDeedIdentity, EVENT_VERB_WORDS, type EventVerb,
+} from '@/lib/present/event';
 import {
   loadEventWriteTarget, isWriteTargetError, applyRsvp, applyReschedule, applyCancel,
   attendeesWithResponse, attendeeAddressesOf, type RsvpResponse,
@@ -93,16 +95,44 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }, { status: 409 });
   }
 
+  // THE NOTE IS DELIVERED OR NOT OFFERED (W0.4): a note this provider would not carry is dropped
+  // here, so nothing downstream (the ledger, the key, the log) can claim a message that never went.
+  const note = proposal.note && noteVerbsFor(row.provider).includes(proposal.verb) ? proposal.note : undefined;
+
+  // A MOVE TO WHERE IT ALREADY IS is not a deed: a stale card's second confirm would re-notify every
+  // guest with nothing changed. The truth is that it already landed.
+  if (proposal.verb === 'reschedule'
+    && Date.parse(String(proposal.newStartISO)) === Date.parse(spec.startISO)
+    && Date.parse(String(proposal.newEndISO)) === Date.parse(spec.endISO)) {
+    return NextResponse.json({ ok: true, duplicate: true, done: EVENT_VERB_WORDS.reschedule.done, spec });
+  }
+
   // ── 3: the claim, before anything leaves ──────────────────────────────────────────────────────
-  const argsDigest = createHash('sha256').update(JSON.stringify({
-    verb: proposal.verb, s: proposal.newStartISO ?? '', e: proposal.newEndISO ?? '', n: proposal.note ?? '',
-  })).digest('hex').slice(0, 16);
+  // THE DEED IDENTITY (W0.4 — a correction is a new deed, never a swallowed duplicate): the key
+  // carries the event's CURRENT state (my response for an RSVP, the window for a move/cancel), so
+  // Accept → Decline → Accept lands three times while a double-click on one state lands once.
+  const argsDigest = createHash('sha256').update(eventDeedIdentity(
+    id, { ...proposal, note },
+    { myResponse: spec.facts.myResponse, startISO: spec.startISO, endISO: spec.endISO },
+  )).digest('hex').slice(0, 16);
   const idempotencyKey = `event_deed:${id}:${proposal.verb}:${argsDigest}`;
   const claim = await claimCommit(supabase, user.id, {
     idempotencyKey, actionType: `event_${proposal.verb}`,
-    payload: { eventId: id, verb: proposal.verb, newStartISO: proposal.newStartISO ?? null, newEndISO: proposal.newEndISO ?? null },
+    payload: {
+      eventId: id, verb: proposal.verb, newStartISO: proposal.newStartISO ?? null, newEndISO: proposal.newEndISO ?? null,
+      fromResponse: spec.facts.myResponse ?? null, fromStartISO: spec.startISO, ...(note ? { note } : {}),
+    },
   });
   if (claim.status === 'duplicate') {
+    // IN FLIGHT IS NOT DONE: the first attempt holds the claim but has not recorded a result yet.
+    // Saying ok:true here would claim a deed whose outcome nobody knows — the honest word is 409.
+    if (claim.priorResult == null) {
+      return NextResponse.json({
+        error: 'in_progress',
+        reason: 'That is already on its way — give it a moment.',
+        spec,
+      }, { status: 409 });
+    }
     const fresh = await buildEvent(supabase, user.id, id, { now, tz });
     return NextResponse.json({ ok: true, duplicate: true, result: claim.priorResult, spec: fresh ?? spec });
   }
@@ -122,18 +152,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // ── the provider write ────────────────────────────────────────────────────────────────────────
   try {
     if (proposal.verb === 'reschedule') {
+      // THE WINDOW ONLY — the provider keeps its own guest list, flags and all-day shape.
       await applyReschedule(target, {
-        startISO: String(proposal.newStartISO), endISO: String(proposal.newEndISO),
-        ...(proposal.note ? { notes: proposal.note } : {}),
+        startISO: String(proposal.newStartISO), endISO: String(proposal.newEndISO), tz,
       });
     } else if (proposal.verb === 'cancel') {
-      await applyCancel(target);
+      await applyCancel(target, note ? { comment: note } : {});
     } else {
-      await applyRsvp(target, RSVP_OF[proposal.verb]!);
+      await applyRsvp(target, RSVP_OF[proposal.verb]!, note ? { comment: note } : {});
     }
   } catch (err: unknown) {
     await releaseCommitClaim(supabase, user.id, idempotencyKey);
-    const scope = (err as { code?: string })?.code === 'calendar_scope_required';
+    const code = (err as { code?: string })?.code;
+    if (code === 'recurring_series') {
+      // THE SERIES REFUSAL (W0.4): nothing fired — the row is a whole recurring series, and this
+      // door cannot yet address one occurrence of it.
+      return NextResponse.json({
+        error: 'recurring_series',
+        reason: "That's a recurring series — change it in your calendar, so only the one you mean moves.",
+        spec,
+      }, { status: 409 });
+    }
+    const scope = code === 'calendar_scope_required';
     console.error('[events/deed] provider write failed:', err);
     return NextResponse.json({
       error: scope ? 'calendar_scope_required' : 'write_failed',

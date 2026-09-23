@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { registerGmailWatch, renewGmailWatch } from '@/lib/google/gmail-watch';
 import { registerOutlookSubscription, renewOutlookSubscription } from '@/lib/microsoft/outlook-subscriptions';
+import { hasBearer } from '@/lib/utils/bearer-auth';
 
 export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
-  const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!hasBearer(request, 'CRON_SECRET')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

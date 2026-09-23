@@ -4,17 +4,15 @@ Transcription worker — runs entirely on Hetzner, no Vercel timeout risk.
 Flow:
   1. Download audio from Supabase Storage
   2. Call local Whisper (http://localhost:8000) — fast, no network hop
-  3. Pre-insert or update meeting_transcripts row with segments
+  3. Update the caller's pre-inserted meeting_transcripts row with segments
   4. Call Vercel /api/meetings/recording/{transcriptId}/generate-insights
      (fast AI call, < 30s — no Whisper involved)
 """
 
-import json
 import logging
 import os
 import subprocess
 import tempfile
-from uuid import uuid4
 
 import httpx
 
@@ -31,149 +29,27 @@ async def run_transcription(
     storage_path: str,
     calendar_event_id: str | None,
     user_id: str,
-    source: str = 'bot',
-    transcript_id: str | None = None,  # None → pre-insert new row
-    caption_file: str | None = None,   # path to /tmp/captions_{bot_id}.json, or None
+    source: str = 'recording',
+    transcript_id: str | None = None,  # required in practice — the caller pre-inserts the row
 ) -> None:
     """
-    Background task: transcribe audio and store results.
-    If transcript_id is given, updates that row (retry path).
-    Otherwise queries calendar_events and inserts a new row.
+    Background task: transcribe audio and update the caller's pre-inserted meeting_transcripts row.
     """
     logger.info(f'[Transcription] Starting — storage_path={storage_path} transcript_id={transcript_id}')
 
     try:
-        # 1. Resolve title / times (needed for insert; skip for update)
+        # 1. Times for the duration fallback (the row already carries the real ones)
         from datetime import datetime, timezone
         now_iso = datetime.now(timezone.utc).isoformat()
-        title = 'Ad-hoc meeting'
         start_time = now_iso
         end_time = now_iso
-        got_calendar_event = False
-        if not transcript_id and calendar_event_id:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(
-                    f'{SUPABASE_URL}/rest/v1/calendar_events',
-                    params={'id': f'eq.{calendar_event_id}', 'select': 'title,start_time,end_time'},
-                    headers={
-                        'Authorization': f'Bearer {SUPABASE_SERVICE_ROLE_KEY}',
-                        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-                    },
-                )
-                resp.raise_for_status()
-                rows = resp.json()
-                if rows:
-                    title = rows[0].get('title', 'Meeting')
-                    start_time = rows[0].get('start_time', '')
-                    end_time = rows[0].get('end_time', '')
-                    got_calendar_event = True
-
-        # 1b. Check for an existing text note to PATCH in-place (1-row architecture).
-        # Avoids creating a second row when the user had already taken notes for this meeting.
-        # Try two patterns:
-        #   A) Scheduled meetings: text note has calendar_event_id = calendarEventId (different id)
-        #   B) Ad-hoc meetings:   text note has id = calendarEventId (noteId was passed as calendarEventId)
-        existing_note_id: str | None = None
-        existing_live_notes: str = ''
-        if calendar_event_id and not transcript_id:
-            _sb_headers = {
-                'Authorization': f'Bearer {SUPABASE_SERVICE_ROLE_KEY}',
-                'apikey': SUPABASE_SERVICE_ROLE_KEY,
-            }
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                # Pattern A: scheduled — text note linked via calendar_event_id column
-                check_a = await client.get(
-                    f'{SUPABASE_URL}/rest/v1/meeting_transcripts',
-                    params={
-                        'calendar_event_id': f'eq.{calendar_event_id}',
-                        'source': 'eq.text',
-                        'user_id': f'eq.{user_id}',
-                        'select': 'id,transcript',
-                        'limit': '1',
-                    },
-                    headers=_sb_headers,
-                )
-                rows_a = check_a.json() if check_a.status_code == 200 else []
-                if rows_a:
-                    existing_note_id = rows_a[0]['id']
-                    existing_live_notes = rows_a[0].get('transcript', '') or ''
-
-                # Pattern B: ad-hoc — text note id == calendarEventId
-                if not existing_note_id:
-                    check_b = await client.get(
-                        f'{SUPABASE_URL}/rest/v1/meeting_transcripts',
-                        params={
-                            'id': f'eq.{calendar_event_id}',
-                            'source': 'eq.text',
-                            'user_id': f'eq.{user_id}',
-                            'select': 'id,transcript',
-                        },
-                        headers=_sb_headers,
-                    )
-                    rows_b = check_b.json() if check_b.status_code == 200 else []
-                    if rows_b:
-                        existing_note_id = rows_b[0]['id']
-                        existing_live_notes = rows_b[0].get('transcript', '') or ''
-
-        # 2. PATCH existing text note in-place OR pre-insert a new row
-        if existing_note_id:
-            # In-place update: preserve user's notes as live_notes, flip source to bot
-            transcript_id = existing_note_id
-            patch_fields: dict = {
-                'source': 'bot',
-                'recording_storage_path': storage_path,
-                'bot_state': 'processing',
-                'processed': False,
-                'notes_structured': {'live_notes': existing_live_notes},
-            }
-            # Only overwrite title/times when we have real calendar event data
-            if got_calendar_event:
-                patch_fields.update({'title': title, 'start_time': start_time, 'end_time': end_time})
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                patch_resp = await client.patch(
-                    f'{SUPABASE_URL}/rest/v1/meeting_transcripts',
-                    params={'id': f'eq.{existing_note_id}'},
-                    headers={
-                        'Authorization': f'Bearer {SUPABASE_SERVICE_ROLE_KEY}',
-                        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-                        'Content-Type': 'application/json',
-                        'Prefer': 'return=minimal',
-                    },
-                    json=patch_fields,
-                )
-                patch_resp.raise_for_status()
-            logger.info(f'[Transcription] Patched existing text note {transcript_id} → source=bot')
-        elif not transcript_id:
-            transcript_id = str(uuid4())
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                ins_resp = await client.post(
-                    f'{SUPABASE_URL}/rest/v1/meeting_transcripts',
-                    headers={
-                        'Authorization': f'Bearer {SUPABASE_SERVICE_ROLE_KEY}',
-                        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-                        'Content-Type': 'application/json',
-                        'Prefer': 'return=minimal',
-                    },
-                    json={
-                        'id': transcript_id,
-                        'user_id': user_id,
-                        'meeting_id': calendar_event_id or transcript_id,
-                        'calendar_event_id': calendar_event_id or None,
-                        'title': title,
-                        'start_time': start_time,
-                        'end_time': end_time,
-                        'duration_minutes': 0,
-                        'source': source,
-                        'recording_storage_path': storage_path,
-                        'transcript': '',
-                        'transcript_segments': [],
-                        'attendees': [],
-                        'processed': False,
-                        'bot_state': 'processing',
-                    },
-                )
-                ins_resp.raise_for_status()
-            logger.info(f'[Transcription] Pre-inserted transcript row {transcript_id}')
+        # Every live caller (the in-person /confirm route, both retry routes, the stuck-
+        # transcription sweep) pre-inserts the meeting_transcripts row and passes its id. The
+        # no-id branch (calendar lookup + text-note patch + pre-insert) served ONLY the auto-join
+        # bot, removed Sep 23 — a call without an id is refused rather than guessed at.
+        if not transcript_id:
+            logger.error(f'[Transcription] Refused — no transcript_id for storage_path={storage_path} (the bot-era insert path is retired)')
+            return
 
         # 3. Download audio from Supabase Storage
         download_url = f'{SUPABASE_URL}/storage/v1/object/meeting-recordings/{storage_path}'
@@ -293,43 +169,6 @@ async def run_transcription(
         full_text = whisper_data.get('text', '')
         if not normalized and full_text.strip():
             normalized = [{'speaker': 'Speaker', 'text': full_text.strip(), 'timestamp': 0}]
-
-        # Load caption log for speaker identification (written by bot_runner during recording)
-        caption_log = []
-        if caption_file:
-            try:
-                with open(caption_file, 'r') as f:
-                    caption_log = json.load(f)
-                logger.info(f'[Transcription] Loaded {len(caption_log)} caption entries from {caption_file}')
-            except Exception as cap_load_err:
-                logger.warning(f'[Transcription] Could not load caption file: {cap_load_err}')
-            finally:
-                try:
-                    os.unlink(caption_file)
-                except Exception:
-                    pass
-
-        # Merge caption speaker names into Whisper segments (nearest match within ±30s)
-        # Caption timestamps are Unix epoch seconds; Whisper timestamps are seconds from
-        # start of audio. Normalise by subtracting the earliest caption timestamp so both
-        # use the same relative-seconds scale.
-        if len(caption_log) > 3 and normalized:
-            logger.info('[Transcription] Merging caption speakers into Whisper segments')
-            caption_start = min(c['timestamp'] for c in caption_log)
-            for seg in normalized:
-                seg_ts = seg['timestamp']  # seconds from audio start
-                best: dict | None = None
-                best_dist = 999999
-                for cap in caption_log:
-                    cap_relative = cap['timestamp'] - caption_start  # also seconds from start
-                    dist = abs(cap_relative - seg_ts)
-                    if dist < best_dist and dist <= 30:
-                        best_dist = dist
-                        best = cap
-                if best:
-                    seg['speaker'] = best['speaker']
-            distinct = {s['speaker'] for s in normalized}
-            logger.info(f'[Transcription] Speaker merge complete — distinct speakers: {distinct}')
 
         logger.info(f'[Transcription] {len(normalized)} segments for {transcript_id}')
 

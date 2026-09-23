@@ -11,6 +11,10 @@ import { createClient } from '@/lib/supabase/server';
 // (the generalized project_locked). Busts the Home brief cache (membership feeds deck weights).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
+// W0.5 TIME BUDGET: PATCH's after() runs r.runTails (reconcile — AI-bearing refreshEntityState) —
+// the platform default kills it mid-work (CLAUDE.md maxDuration lesson).
+export const maxDuration = 300;
+
 const KINDS = ['meeting', 'inbox_item', 'commitment'] as const;
 
 export async function GET(request: NextRequest) {

@@ -1,4 +1,4 @@
-// ─── THE DATA-FACTS PASS (the data-by-code lane, Aug 11 — the EG Bank benchmark) ─────────────
+// ─── THE DATA-FACTS PASS (the data-by-code lane, Aug 11 — a CSV-to-branded-report benchmark) ─────────────
 // "PRODUCE COMPUTES BEFORE IT WRITES", applied at the DELEGATION door: when chat-borne material
 // is tabular, the statistics are computed IN THE SANDBOX before the coworker ever writes, and
 // the computed facts ride the prompt as the authoritative numbers. Runtime-independent by

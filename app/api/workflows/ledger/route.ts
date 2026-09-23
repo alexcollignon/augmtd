@@ -5,6 +5,7 @@
 // the recent run trail. Studio stays one click deep as the method editor.
 
 import { NextResponse, type NextRequest } from 'next/server';
+import { readPlans } from '@/lib/store/item-plans';
 import { createClient } from '@/lib/supabase/server';
 import { normalizeOutput } from '@/lib/workflows/types';
 import type { OutputConfig, WorkflowStep, WorkflowTrigger } from '@/lib/workflows/types';
@@ -125,9 +126,8 @@ export async function GET(request: NextRequest) {
       : Promise.resolve([]),
     // Reassign overrides (B2) — the strip must speak the CURRENT assignee.
     overrideKeys.length
-      ? supabase.from('item_plans').select('entity_id, tasks')
-          .eq('user_id', user.id).eq('kind', 'handoff_override').in('entity_id', overrideKeys)
-          .then(r => r.data ?? [])
+      ? readPlans(supabase, user.id, 'handoff_override', { keys: overrideKeys })
+          .then(rows => rows.map(r => ({ entity_id: r.key, tasks: r.tasks })))
       : Promise.resolve([]),
     // Teammates' shared workflows (read-only rows; its internal profile read rides this lane).
     (async (): Promise<Array<{ id: string; name: string; scheduleLabel: string | null; ownerName: string }>> => {
@@ -175,10 +175,8 @@ export async function GET(request: NextRequest) {
     // serves the flag per row (the tray itself lives on the deep-dive). One store read.
     (async (): Promise<Set<string>> => {
       try {
-        const { data } = await supabase.from('item_plans')
-          .select('entity_id, tasks').eq('user_id', user.id).eq('kind', 'workflow_inputs');
-        return new Set(((data ?? []) as Array<{ entity_id: string; tasks: { acceptMaterial?: boolean } | null }>)
-          .filter((r) => r.tasks?.acceptMaterial === true).map((r) => r.entity_id));
+        const rows = await readPlans(supabase, user.id, 'workflow_inputs');
+        return new Set(rows.filter((r) => r.tasks?.acceptMaterial === true).map((r) => r.key));
       } catch { return new Set(); }
     })(),
     // THE THROTTLE (relay canvas W3b) — the per-workflow daily event-run limit, batched for the

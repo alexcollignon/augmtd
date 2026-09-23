@@ -5,7 +5,9 @@ import { createClient } from '@supabase/supabase-js';
 import { recognizeItem } from '../lib/entities/recognize';
 import { shadowRecognizeTouched } from '../lib/entities/hooks';
 import { getPersonEntities, findPersonEntity } from '../lib/entities/people';
-import { renderBrainContext, renderWorldContext } from '../lib/context/brain-context';
+import { renderBrainContext } from '../lib/context/brain-context';
+// ⟲ RE-POINTED (W2.2): the world block is the ONE user grounding now, not a private render.
+import { assembleUserGrounding } from '../lib/room/user-grounding';
 import { resolveProbeUser } from './probe-user';
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 const EVAL = '08fe4449-e5eb-431d-9156-02e9324e5903';
@@ -85,8 +87,8 @@ const check = (name: string, ok: boolean, detail = '') => { out.push([name, ok, 
     check('people: multi-address human = ONE entity', !!multi && hit1?.id === multi.id && hit2?.id === multi.id, multi ? `${multi.name}: ${multi.aliases.length} aliases` : 'none');
     const block = multi ? await renderBrainContext(sb, EVAL2, { personEmail: multi.aliases.find((a) => a.includes('@')) }) : '';
     check('people: drafter context renders from entity', block.includes(multi?.name ?? '∅'));
-    const world = await renderWorldContext(sb, EVAL2);
-    check('people: world context renders', world.length > 0);
+    const world = (await assembleUserGrounding(sb, EVAL2, { readOnly: true })).text;
+    check('people: world context renders (the one user grounding)', world.length > 0);
   }
   // ── 9. UNIVERSAL MEMORY: every connected user has initiative entities + states (the demolition gate). ──
   {

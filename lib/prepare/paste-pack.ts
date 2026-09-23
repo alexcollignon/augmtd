@@ -37,6 +37,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkspaceFeatures } from '@/lib/workspace/types';
 import { TOOL_FEATURE } from '@/lib/workspace/tool-capabilities';
 import { componentForWork, WORK_COMPONENTS, CAPABILITY_MAP } from '@/lib/work/surface-registry';
+import { claimsUndoneWork, completionObjection, COMPLETION_HONESTY_RULE } from '@/lib/prepare/truth';
 
 /** The pool task_id — one home, one key. */
 export const PASTE_PACK_TASK = 'paste-pack';
@@ -118,6 +119,9 @@ export async function preparePastePack(
     /** true when the USER owes this (a reply/produce), false when they are chasing. */
     userOwes: boolean;
     freshHours?: number;
+    /** W5c: THE ONE READER hides the prior pack (a false completion claim, a superseded ground) —
+     *  a hidden pack is never "fresh", whatever its age. */
+    supersede?: boolean;
   },
 ): Promise<{ status: 'written' | 'fresh' | 'failed'; title?: string; by?: string | null }> {
   const poolKind = args.itemKind === 'commitment' ? 'commitment' : 'email';
@@ -129,10 +133,10 @@ export async function preparePastePack(
   const currentGround = await groundOf(admin, userId, { kind: args.itemKind, id: args.itemId });
   const priorMeta = (prior?.metadata ?? {}) as { prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null };
   const movedPast = !!prior && groundMoved(priorMeta.prepared_from ?? null, currentGround);
-  if (prior && !movedPast && (Date.now() - Date.parse(String(prior.created_at))) < freshMs) return { status: 'fresh' };
+  if (prior && !movedPast && !args.supersede && (Date.now() - Date.parse(String(prior.created_at))) < freshMs) return { status: 'fresh' };
 
   const { generateNudgeDraft, getDraftingAssistant } = await import('@/lib/inbox/draft-reply');
-  const body = await generateNudgeDraft(userId, {
+  const draft = (objection: string | null) => generateNudgeDraft(userId, {
     counterparty: args.counterparty,
     description: args.title,
     mirrorText: args.material ?? null,
@@ -141,18 +145,35 @@ export async function preparePastePack(
     direction: args.userOwes ? 'you' : 'them',
     instructions: [
       args.artifactTruth ?? '',
+      // THE FACTS the words must respect (W5a): the obligation is OPEN and nothing is staged with
+      // a pack — the drafter is told so, and the completion rule rides beside it.
+      args.userOwes ? `FACTS: this obligation is STILL OPEN — nothing about it has been done, sent or attached yet. ${COMPLETION_HONESTY_RULE}` : '',
       'This message will be COPIED AND PASTED by the user into wherever this work actually lives ' +
       '(a portal, a chat app, a form). Write only the message itself — no email subject line, no ' +
       'greeting chrome beyond what the channel would carry, no signature block.',
+      objection ? `REVIEWER'S OBJECTION — fix this: ${objection}` : '',
     ].filter(Boolean).join('\n'),
   }, admin).catch(() => '');
+  let body = await draft(null);
   if (!body?.trim()) return { status: 'failed' };
+  // ── THE COMPLETION FLOOR (W5a — the fabricated-deed class, found live on this exact lane): a
+  // pack carries no attachment and speaks about an OPEN obligation, so words announcing the deed
+  // done are false by construction. One regeneration with the objection; still false → REFUSE
+  // (nothing is stored — an honest absence beats a lie in the user's own voice). ──
+  const claim = claimsUndoneWork(body, { obligationOpen: args.userOwes, staged: false });
+  if (claim) {
+    body = await draft(completionObjection(claim));
+    if (!body?.trim() || claimsUndoneWork(body, { obligationOpen: args.userOwes, staged: false })) {
+      console.warn(`[paste-pack] refused: the words claimed an undone deed twice ("${claim.slice(0, 60)}") — item ${args.itemKind}:${args.itemId}`);
+      return { status: 'failed' };
+    }
+  }
 
   const pa = await getDraftingAssistant(admin, userId);
   // The superseded pack FILES into the version chain (the reader skips `version_of` rows).
-  if (movedPast && prior) {
+  if ((movedPast || args.supersede) && prior) {
     await admin.from('item_deliverables')
-      .update({ metadata: { ...priorMeta, version_of: 'superseded:ground-move' } })
+      .update({ metadata: { ...priorMeta, version_of: movedPast ? 'superseded:ground-move' : 'superseded:truth' } })
       .eq('id', prior.id).then(() => {}, () => {});
   }
   const title = `Words for — ${args.title}`.slice(0, 100);

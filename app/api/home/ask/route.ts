@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdmin } from '@supabase/supabase-js';
 import { converse, type ConverseHistoryTurn, type ConverseAttachment } from '@/lib/converse';
 import { tagOf } from '@/lib/home/ask-refs';
+import { changeTurnComponent } from '@/lib/present/change';
 
 // 180: a production hand-off (delegation runs synchronously, the artifact comes home) must
 // never be killed by the route budget — the 30s cap predates chat-borne production.
@@ -83,7 +84,13 @@ export async function POST(request: NextRequest) {
                 state: { eventId: turn.event.spec.id,
                   ...(turn.event.spec.proposal ? { proposal: turn.event.spec.proposal } : {}) } } }
             : {}),
-          ...(!turn.invite && !turn.bulkDeed && !turn.collection && !turn.event && turn.emailDraft
+          // …and THE CONFIRM CARD (stabilization W0.3b) rides as a POINTER: the change's id and
+          // nothing else. Its status moves (applied elsewhere, expired by the clock), so a reloaded
+          // card re-reads `GET /api/changes/[id]` and can never offer Apply on a change already run.
+          ...(!turn.invite && !turn.bulkDeed && !turn.collection && !turn.event && turn.change
+            ? { component: changeTurnComponent(turn.change.spec) }
+            : {}),
+          ...(!turn.invite && !turn.bulkDeed && !turn.collection && !turn.event && !turn.change && turn.emailDraft
             ? { component: { key: 'email_draft_card', refId: turn.emailDraft.id,
                 state: { ...(turn.emailDraft.itemId ? { itemId: turn.emailDraft.itemId } : {}),
                   ...(turn.emailDraft.draft ? { draft: turn.emailDraft.draft } : {}) } } }
@@ -175,6 +182,9 @@ export async function POST(request: NextRequest) {
       // THE EVENT CARD (Wave 2): one meeting rides the answer with the verbs code computed for it.
       // Nothing has fired — the card's own click is the deed.
       ...(turn.event ? { event: turn.event } : {}),
+      // THE CONFIRM CARD (stabilization W0.3b): a prepared change rides the answer and mounts
+      // inline. Nothing has applied — the card's own click is the deed.
+      ...(turn.change ? { change: turn.change } : {}),
       // The filing nudge never decorates a failed/empty answer (found live: a wrong "File it"
       // chip beside a dead reply compounds the miss).
       ...(focus && turn.say?.trim() ? { focus } : {}),

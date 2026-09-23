@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 export const maxDuration = 20;
 
@@ -35,28 +36,51 @@ export async function GET() {
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { data: ents } = await supabase.from('work_entities')
-      .select('id, name, tracked, status, state, next_move, priority, last_event_at')
-      .eq('user_id', user.id).eq('kind', 'initiative').limit(400);
-    const rows = (ents ?? []) as Array<Record<string, unknown>>;
-    // Goals/rules (Blocker D — project intent lives on the entity). Separate defensive query so the
-    // portfolio keeps working before 20260722_work_entities_goals.sql is applied.
-    const intent = new Map<string, { goals: string[]; rules: string[] }>();
+    // NO SILENT CAPS (invariant 10): every active/tracked initiative belongs on the portfolio — an
+    // unpaged `.limit(400)` silently drops whole projects off the Projects lens and the Timeline
+    // past 400 entities. Paged via `fetchAllRows`, stable `id` order. Goals/rules (Blocker D —
+    // project intent lives on the entity) now ride the SAME read instead of a second full listing
+    // that duplicated the same cap (one fewer place to drift, one fewer full-table read per load).
+    let rows: Array<Record<string, unknown>>;
     try {
-      const { data: gi } = await supabase.from('work_entities').select('id, goals, rules').eq('user_id', user.id).eq('kind', 'initiative').limit(400);
-      for (const r of (gi ?? []) as Array<{ id: string; goals: unknown; rules: unknown }>) {
-        intent.set(r.id, { goals: Array.isArray(r.goals) ? (r.goals as string[]) : [], rules: Array.isArray(r.rules) ? (r.rules as string[]) : [] });
-      }
-    } catch { /* pre-migration */ }
+      rows = await fetchAllRows<Record<string, unknown>>((from, to) =>
+        supabase.from('work_entities')
+          .select('id, name, tracked, status, state, next_move, priority, last_event_at, goals, rules')
+          .eq('user_id', user.id).eq('kind', 'initiative').order('id', { ascending: true }).range(from, to));
+    } catch {
+      // Pre-migration fallback (20260722_work_entities_goals.sql not yet applied): drop goals/rules
+      // from the select rather than fail the whole portfolio read.
+      rows = await fetchAllRows<Record<string, unknown>>((from, to) =>
+        supabase.from('work_entities')
+          .select('id, name, tracked, status, state, next_move, priority, last_event_at')
+          .eq('user_id', user.id).eq('kind', 'initiative').order('id', { ascending: true }).range(from, to));
+    }
+    const intent = new Map<string, { goals: string[]; rules: string[] }>();
+    for (const r of rows) {
+      intent.set(r.id as string, {
+        goals: Array.isArray(r.goals) ? (r.goals as string[]) : [],
+        rules: Array.isArray(r.rules) ? (r.rules as string[]) : [],
+      });
+    }
     if (!rows.length) return NextResponse.json({ hasMemory: false, entities: [], linkedItemIds: [] });
 
-    // ── Events per ACTIVE entity — batched: all links once, then one date-fetch per source table. ──
+    // ── Events per ACTIVE entity — batched: all links once, then one date-fetch per source table.
+    // NO SILENT CAPS: the old `activeIds.slice(0, 200)` + `.limit(1500)` pair silently dropped BOTH
+    // the entities past #200 (zero events, ever) AND any links past 1500 for the ones that made the
+    // cut. Paged per-entity-batch (300 ids per `.in()`, PostgREST's own comfortable ceiling) with a
+    // stable order, covering every active entity's links in full. ──
     const activeIds = rows.filter((r) => r.status === 'active').map((r) => r.id as string);
-    const { data: links } = await supabase.from('entity_links')
-      .select('entity_id, item_kind, item_id').eq('user_id', user.id)
-      .in('entity_id', activeIds.slice(0, 200)).neq('item_kind', 'email_thread').limit(1500);
+    const links: Array<{ entity_id: string; item_kind: string; item_id: string }> = [];
+    for (let k = 0; k < activeIds.length; k += 300) {
+      const batch = await fetchAllRows<{ entity_id: string; item_kind: string; item_id: string }>((from, to) =>
+        supabase.from('entity_links')
+          .select('entity_id, item_kind, item_id').eq('user_id', user.id)
+          .in('entity_id', activeIds.slice(k, k + 300)).neq('item_kind', 'email_thread')
+          .order('entity_id', { ascending: true }).range(from, to));
+      links.push(...batch);
+    }
     const byKind = new Map<string, Array<{ entityId: string; itemId: string }>>();
-    for (const l of (links ?? []) as Array<{ entity_id: string; item_kind: string; item_id: string }>) {
+    for (const l of links) {
       (byKind.get(l.item_kind) ?? byKind.set(l.item_kind, []).get(l.item_kind)!).push({ entityId: l.entity_id, itemId: l.item_id });
     }
     const events = new Map<string, Array<{ at: string; kind: string; label: string; id: string }>>();
@@ -68,11 +92,20 @@ export async function GET() {
     };
     // B6 — the earliest OPEN due date per entity: a FACT that powers the portfolio's urgency badge.
     const nextDue = new Map<string, string>();
+    // NO SILENT CAPS: `.slice(0, 400)` used to drop any linked item past the 400th, silently — a
+    // heavily-linked entity would lose its OLDEST or NEWEST events (array order is whatever the
+    // links query returned) with no signal. Chunked `.in()` batches (300 ids each) cover every
+    // linked item id in full; unordered per-chunk reads are fine here since every row is kept.
     const fetchKind = async (kind: string, table: string, select: string, at: (r: Record<string, unknown>) => string | null, label: (r: Record<string, unknown>) => string, onRow?: (entityId: string, r: Record<string, unknown>) => void) => {
       const ls = byKind.get(kind) ?? [];
       if (!ls.length) return;
-      const { data } = await supabase.from(table).select(select).in('id', ls.map((l) => l.itemId).slice(0, 400));
-      const byId = new Map(((data ?? []) as unknown as Array<Record<string, unknown>>).map((r) => [String(r.id), r]));
+      const ids = ls.map((l) => l.itemId);
+      const rowsForKind: Array<Record<string, unknown>> = [];
+      for (let k = 0; k < ids.length; k += 300) {
+        const { data } = await supabase.from(table).select(select).in('id', ids.slice(k, k + 300));
+        rowsForKind.push(...((data ?? []) as unknown as Array<Record<string, unknown>>));
+      }
+      const byId = new Map(rowsForKind.map((r) => [String(r.id), r]));
       for (const l of ls) { const r = byId.get(l.itemId); if (r) { push(l.entityId, at(r), kind, label(r), l.itemId); onRow?.(l.entityId, r); } }
     };
     await Promise.all([

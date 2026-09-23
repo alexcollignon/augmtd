@@ -20,6 +20,9 @@ export type CommitClaim =
   | { status: 'duplicate'; priorResult: string | null }
   | { status: 'unavailable' };
 
+/** Longer than any send route's maxDuration (300s) — an unrecorded claim past this is a dead attempt. */
+const STALE_CLAIM_MS = 10 * 60_000;
+
 export async function claimCommit(
   client: SupabaseClient, userId: string,
   args: { idempotencyKey: string; actionType: string; payload: Record<string, unknown> },
@@ -32,8 +35,22 @@ export async function claimCommit(
     if (!error) return { status: 'claimed' };
     // 23505 = unique violation → this commit already fired; serve the prior result.
     if (error.code === '23505') {
-      const { data } = await client.from('action_commits').select('result')
+      const { data } = await client.from('action_commits').select('result, created_at')
         .eq('user_id', userId).eq('idempotency_key', args.idempotencyKey).maybeSingle();
+      // THE STALE CLAIM (Sep 22 — stabilization W0.4): a claim with NO result older than the
+      // longest send budget is a crashed attempt, not an in-flight one — held forever it would wedge
+      // the key ("already on its way") for good. Release it and claim once more; the delete is
+      // conditional on result IS NULL, so a racer that recorded meanwhile keeps its row.
+      const age = data?.created_at ? Date.now() - new Date(data.created_at as string).getTime() : 0;
+      if (data && data.result == null && age > STALE_CLAIM_MS) {
+        await client.from('action_commits').delete()
+          .eq('user_id', userId).eq('idempotency_key', args.idempotencyKey).is('result', null);
+        const retry = await client.from('action_commits').insert({
+          user_id: userId, idempotency_key: args.idempotencyKey,
+          action_type: args.actionType, payload: args.payload,
+        });
+        if (!retry.error) return { status: 'claimed' };
+      }
       return { status: 'duplicate', priorResult: (data?.result as string) ?? null };
     }
     // 42P01 = table missing (pre-migration) — degrade to the ungated path, never block the user.

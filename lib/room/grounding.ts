@@ -11,9 +11,15 @@
 // the same page. Adding a knowledge source = one section here, visible to ALL reasoning at once.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { readPlans, asRawResult } from '@/lib/store/item-plans';
 import { assembleLedger } from '@/lib/entities/state';
 import { renderGroundEvidence } from '@/lib/room/ground-evidence';
 import { clipLedgerLine } from '@/lib/inbox/thread-now';
+import { clipForPrompt, clipLabel, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { loadEvidencePool, matchEvidence, resolveCommitmentAddresses, type Evidence, type EvidencePool } from '@/lib/work/evidence-nominator';
+import { getPersonEntities, type PersonEntity } from '@/lib/entities/people';
+import { normalizeEmail } from '@/lib/core/email';
+import { withdrawnReasonOf } from '@/lib/prepare/read';
 
 export type RoomScope =
   | { kind: 'entity'; entityId: string }
@@ -28,7 +34,13 @@ export type BoardEntry = {
   due: string | null;
   judgedWork: string | null;   // the judge's cached verb (reply/chase/…/none) — same truth the deck uses
   judgedReason: string | null;
-  prepared: string[];          // what actually exists on the item: 'reply draft' | 'invite' | 'forward'
+  prepared: string[];          // what actually exists on the item, LIVE — from THE ONE READER (W2.1)
+  /** TIME TRUTH: prepared things that are past their own time (an expired invite) — reported, never claimed. */
+  expired: string[];
+  /** W5c · A CLAIM RENDERS: prepared things THE ONE READER hides for any OTHER reason (outside the
+   *  stated window · a false completion claim · superseded) — stated WITHDRAWN on the line, never
+   *  claimed, and counted in the brief's digest so a liveness change always recomposes. */
+  withdrawn: string[];
   preparedBy: string | null;
   /** AN ITEM'S OWN DOCUMENT IS THE ITEM'S OWN CONTEXT (owner walk, Sep 10): the files that arrived
    *  WITH this item — name + a one-line gist. The brief once told the user to "send the debt notice
@@ -36,7 +48,54 @@ export type BoardEntry = {
    *  the item's title and nothing about what came with it. Names + gist only (the page is read by
    *  every reasoner in room scope; the full text belongs to the drafter's own block). */
   attachments: string[];
+  /** LATER EVIDENCE (W5a · invariant 7 reaches the room): the user's own record AFTER this item,
+   *  with its counterparty — a meeting held/booked, mail sent, a transcript — as dated facts, from
+   *  the same address-keyed nominator the judge reads (W2.5). The brief composer can never assert
+   *  "missed / not done" against a deed the calendar holds. */
+  evidence: string[];
 };
+
+// ── THE ROOM'S EVIDENCE POOL (W5a): ONE bounded pool per user, memoized briefly — the grounding is
+// assembled on warm + open + ensure*, and the pool (≤3 reads) must be paid once per burst, exactly
+// as the judge pays it (lib/work/judge.ts judgeEvidencePool). ──
+const ROOM_EVIDENCE_LOOKBACK_DAYS = 60;
+const ROOM_EVIDENCE_TTL_MS = 90_000;
+const ROOM_EVIDENCE_CAL_HORIZON_DAYS = 21;
+const ROOM_EVIDENCE_MAX_LINES = 4;
+const _roomPools = new Map<string, { at: number; p: Promise<EvidencePool> }>();
+function roomEvidencePool(client: SupabaseClient, userId: string): Promise<EvidencePool> {
+  const now = Date.now();
+  const hit = _roomPools.get(userId);
+  if (hit && now - hit.at < ROOM_EVIDENCE_TTL_MS) return hit.p;
+  if (_roomPools.size > 200) for (const [k, v] of _roomPools) if (now - v.at >= ROOM_EVIDENCE_TTL_MS) _roomPools.delete(k);
+  const p = loadEvidencePool(client, userId, new Date(now - ROOM_EVIDENCE_LOOKBACK_DAYS * 86_400_000).toISOString())
+    .catch(() => ({ emails: [], events: [], transcripts: [] } as EvidencePool));
+  _roomPools.set(userId, { at: now, p });
+  return p;
+}
+
+/** An evidence moment in the user's zone (TIME TRUTH). */
+function atLocalRoom(iso: string, tz: string): string {
+  try { return new Date(iso).toLocaleString('sv-SE', { timeZone: tz }).slice(0, 16); } catch { return iso.slice(0, 16).replace('T', ' '); }
+}
+
+/** THE EVIDENCE LINES — pure: one short dated fact per piece, newest first, bounded. Exported for
+ *  the gate. A held meeting is stated as HELD; a booked one as booked; sent mail as sent. */
+export function evidenceLinesOf(ev: Evidence[], tz: string): string[] {
+  const q = (t: string) => `"${clipLabel(String(t || 'untitled'), 60)}"`;
+  return [...ev].sort((a, b) => b.at.localeCompare(a.at)).slice(0, ROOM_EVIDENCE_MAX_LINES).map((e) => {
+    if (e.type === 'calendar') return `meeting ${q(e.title)} ${e.status === 'held' ? 'HELD' : 'BOOKED (upcoming)'} ${atLocalRoom(e.at, tz)}`;
+    if (e.type === 'transcript') return `meeting ${q(e.title)} RECORDED ${atLocalRoom(e.at, tz)}`;
+    return e.by === 'user' ? `the user SENT ${q(e.title)} ${atLocalRoom(e.at, tz)}` : `received ${q(e.title)} from them ${atLocalRoom(e.at, tz)}`;
+  });
+}
+
+/** THE EVIDENCE RULE for the board (one copy, beside the lines it governs). */
+export const BOARD_EVIDENCE_RULE =
+  'A LATER EVIDENCE line is the user\'s own record AFTER the item, with this counterparty (dated facts, ' +
+  'resolved by address): a meeting HELD or mail SENT there is a deed that HAPPENED — never say it was ' +
+  'missed, skipped or not done, never demand it again; if the item asked for that meeting or that ' +
+  'message, treat it as settled unless the evidence itself says otherwise.';
 
 export type RoomGrounding = {
   roomKey: string;
@@ -77,24 +136,31 @@ const hrefOfRef = (ref: string): string | null => {
   return null;
 };
 
-/** What is ACTUALLY prepared on an inbox item — read from the same source_data the cards render
- *  from (one truth per claim: a "nothing's prepared" sentence is impossible beside a draft). */
-function preparedOf(sd: Record<string, unknown>): { list: string[]; by: string | null } {
-  const list: string[] = [];
-  // A SENT DRAFT IS NOT PREPARED WORK (owner walk, Sep 8 — the stale room). The invite and the
-  // forward were always `sent_at`-checked; the reply draft was not, and the send door leaves it in
-  // `source_data` verbatim. Nothing broke only because the board filters `status='pending'` — i.e.
-  // the one truth about preparedness leaned on an unrelated status filter to stay honest. Now the
-  // three artifacts read the same way, so the board digest (and every claim composed from it) moves
-  // on the DEED itself, whatever any door does to the item's status.
-  const draft = sd.draft as { body?: string; sent_at?: string } | undefined;
-  if (draft?.body && !draft.sent_at) list.push('reply draft');
-  const inv = sd.prepared_invite as { sent_at?: string; startISO?: string } | undefined;
-  if (inv && !inv.sent_at) list.push(inv.startISO ? 'calendar invite' : 'calendar invite (needs a time)');
-  const fwd = sd.prepared_forward as { sent_at?: string } | undefined;
-  if (fwd && !fwd.sent_at) list.push('forward');
-  const by = (sd.prepared_by as { worker?: string } | undefined)?.worker ?? null;
-  return { list, by };
+/** THE BOARD'S PREPARED WORDS — spoken from THE ONE READER (stabilization W2.1: this file used to
+ *  read source_data alone, so a coworker's pooled deliverable, a commitment's nudge or its INVITE
+ *  were invisible to every reasoner — "nothing's prepared" beside a real card). Live artifacts
+ *  become PREPARED words; expired invites are REPORTED, never claimed (TIME TRUTH). */
+export function preparedWordsOf(st: Pick<import('@/lib/prepare/read').PreparedState, 'live' | 'expired' | 'all' | 'badge'>): { list: string[]; expired: string[]; withdrawn: string[]; by: string | null } {
+  const word = (a: import('@/lib/prepare/read').PreparedArtifact): string => {
+    if (a.decision && a.decision.options.length >= 2) return 'decision brief';
+    switch (a.kind) {
+      case 'reply_draft': return 'reply draft';
+      case 'nudge_draft': return 'follow-up nudge draft';
+      case 'invite': return a.sendReady === false ? 'calendar invite (needs a time)' : 'calendar invite';
+      case 'forward': return 'forward';
+      case 'paste_pack': return 'paste pack (words to copy)';
+      default: return a.title ? `document "${clipLabel(a.title, 60)}"` : 'document';
+    }
+  };
+  return {
+    list: st.live.map(word),
+    expired: st.expired.map((a) => `${word(a)} — proposed time already passed, NOT ready`),
+    // Everything else the reader hides (expired has its own line above). The reason is THE ONE
+    // READER's own word, so the composer states WHY the team is re-preparing it.
+    withdrawn: st.all.filter((a) => !a.expired && (a.stale || a.outsideWindow || a.falseClaim))
+      .map((a) => `${word(a)} — ${withdrawnReasonOf(a) ?? 'not ready'}`),
+    by: st.badge && st.badge !== 'draft' ? st.badge : null,
+  };
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -150,6 +216,11 @@ export async function assembleRoomGrounding(
 
   // ── The parallel reads: entity + ledger, the linked items, the room's turns, the files,
   //    the standing production (THE ENTITY EDGE reverse read — workflows scoped to this work). ──
+  // W5a: the evidence pool, the person registry and the user's zone start NOW (they need only the
+  // user) and are awaited once the board's rows are in hand — no serial round trip added.
+  const evidencePoolP = roomEvidencePool(client, userId);
+  const registryP: Promise<PersonEntity[]> = getPersonEntities(client, userId).catch(() => [] as PersonEntity[]);
+  const tzP: Promise<string> = (async () => { try { const { userTimezone } = await import('@/lib/utils/user-time'); return await userTimezone(client, userId); } catch { return 'UTC'; } })();
   const [entRes, ledgerRes, linksRes, turnsRes, filesRes, prodRes] = await Promise.all([
     entityId
       ? client.from('work_entities').select('id, name, tracked, summary, state, next_move, goals, rules, sig, people')
@@ -213,11 +284,10 @@ export async function assembleRoomGrounding(
           .order('last_activity_at', { ascending: false, nullsFirst: false })
       : Promise.resolve({ data: [] }),
     commitIds.length
-      ? client.from('commitments').select('id, description, counterparty, due_date, status').in('id', commitIds).eq('user_id', userId).eq('status', 'open')
+      ? client.from('commitments').select('id, description, counterparty, due_date, status, direction, thread_id, source, source_id, created_at').in('id', commitIds).eq('user_id', userId).eq('status', 'open')
       : Promise.resolve({ data: [] }),
     (inboxIds.length || commitIds.length)
-      ? client.from('item_plans').select('entity_id, tasks').eq('user_id', userId).eq('kind', 'judgment')
-          .in('entity_id', [...inboxIds.map((i) => `inbox:${i}`), ...commitIds.map((i) => `commitment:${i}`)])
+      ? readPlans(client, userId, 'judgment', { keys: [...inboxIds.map((i) => `inbox:${i}`), ...commitIds.map((i) => `commitment:${i}`)] }).then(asRawResult)
       : Promise.resolve({ data: [] }),
   ]);
   const judgments = new Map<string, { work?: string; reason?: string }>();
@@ -225,15 +295,64 @@ export async function assembleRoomGrounding(
     if (j.tasks?.verdict) judgments.set(j.entity_id, j.tasks.verdict);
   }
   const board: BoardEntry[] = [];
+  // ONE READER PER OBJECT (W2.1): every row's prepared state — inbox source_data AND the pool, for
+  // inbox items AND commitments — in one batched read, the same derivation the deck and the machine
+  // consume. The rows already in hand ride in (no second inbox query).
+  const { preparedStatesFor } = await import('@/lib/prepare/read');
+  const inboxRows = (inboxRes.data ?? []) as Array<Record<string, unknown>>;
+  const commitRows = (commitRes.data ?? []) as Array<Record<string, unknown>>;
+  const [prepStates, evidenceByRef] = await Promise.all([
+    preparedStatesFor(client, userId, [
+      ...inboxRows.map((it) => ({ kind: 'inbox' as const, id: String(it.id), row: { source_data: it.source_data, last_activity_at: (it.last_activity_at as string | null) ?? null } })),
+      ...commitRows.map((c) => ({ kind: 'commitment' as const, id: String(c.id) })),
+    ]),
+    // ── LATER EVIDENCE per board item (W5a): the W3.1 nominator's pure match over the per-user pool,
+    // counterparties resolved by ADDRESS (the registry · the thread's sender · the meeting's
+    // attendees — never a name guess). Bounded: one pool, one registry, ≤4 batched reads. ──
+    (async (): Promise<Map<string, string[]>> => {
+      const out = new Map<string, string[]>();
+      try {
+        const [pool, registry, tz] = await Promise.all([evidencePoolP, registryP, tzP]);
+        const nowISO = new Date().toISOString();
+        const horizon = new Date(Date.now() + ROOM_EVIDENCE_CAL_HORIZON_DAYS * 86_400_000).toISOString();
+        const bounded: EvidencePool = { ...pool, events: pool.events.filter((e) => e.at <= horizon) };
+        const addresses = commitRows.length
+          ? await resolveCommitmentAddresses(client, userId, commitRows.map((c) => ({
+              id: String(c.id), counterparty: (c.counterparty as string | null) ?? null, thread_id: (c.thread_id as string | null) ?? null,
+              source: (c.source as string | null) ?? null, source_id: (c.source_id as string | null) ?? null,
+            })), registry)
+          : new Map<string, string | null>();
+        for (const c of commitRows) {
+          const ev = matchEvidence(bounded, {
+            kind: 'commitment', id: String(c.id), afterISO: String(c.created_at ?? ''),
+            counterpartyEmail: addresses.get(String(c.id)) ?? null, threadId: (c.thread_id as string | null) ?? null,
+            fulfiller: String(c.direction ?? '') === 'awaiting' ? 'counterparty' : 'user', description: String(c.description ?? ''),
+          }, nowISO);
+          if (ev.length) out.set(`commit:${String(c.id)}`, evidenceLinesOf(ev, tz));
+        }
+        for (const it of inboxRows) {
+          const sd = (it.source_data ?? {}) as Record<string, unknown>;
+          const from = typeof sd.from_address === 'string' && sd.from_address ? normalizeEmail(sd.from_address) : null;
+          const ev = matchEvidence(bounded, {
+            kind: 'inbox', id: String(it.id), afterISO: String(it.last_activity_at ?? sd.received_at ?? ''),
+            counterpartyEmail: from, threadId: (sd.thread_id as string | null) ?? null, fulfiller: 'user',
+            description: String(it.work_title ?? sd.subject ?? ''),
+          }, nowISO);
+          if (ev.length) out.set(`inbox:${String(it.id)}`, evidenceLinesOf(ev, tz));
+        }
+      } catch { /* evidence is an enhancement of the page, never a blocker */ }
+      return out;
+    })(),
+  ]);
   // The room's threads + its people — the two handles THE GROUND EVIDENCE needs (gathered as the
   // board is built, so the evidence read costs no extra pass over the same rows).
   const threadRefs: Array<{ title: string; threadId: string | null }> = [];
   const participants: string[] = [];
-  for (const it of (inboxRes.data ?? []) as Array<Record<string, unknown>>) {
+  for (const it of inboxRows) {
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
-    const prep = preparedOf(sd);
+    const prep = preparedWordsOf(prepStates.get(`inbox:${String(it.id)}`)!);
     threadRefs.push({
-      title: String(it.work_title || sd.subject || 'this thread').slice(0, 70),
+      title: clipLabel(String(it.work_title || sd.subject || 'this thread'), 70),
       threadId: (sd.thread_id as string) ?? null,
     });
     for (const p of [sd.from_name, sd.from_address]) if (typeof p === 'string' && p.trim()) participants.push(p);
@@ -251,22 +370,27 @@ export async function assembleRoomGrounding(
     })();
     board.push({
       ref: `inbox:${String(it.id)}`, id: String(it.id), kind: 'inbox',
-      title: String(it.work_title || sd.subject || 'Email').slice(0, 90),
+      title: clipLabel(String(it.work_title || sd.subject || 'Email'), 90),
       who: (sd.from_name as string) || (sd.from_address as string) || null,
       due: ((sd.understanding as { deadline?: string } | undefined)?.deadline) ?? null,
-      judgedWork: j?.work ?? null, judgedReason: j?.reason?.slice(0, 120) ?? null,
-      prepared: prep.list, preparedBy: prep.by, attachments,
+      judgedWork: j?.work ?? null, judgedReason: j?.reason ? clipLabel(j.reason, 120) : null,
+      prepared: prep.list, expired: prep.expired, withdrawn: prep.withdrawn, preparedBy: prep.by, attachments,
+      evidence: evidenceByRef.get(`inbox:${String(it.id)}`) ?? [],
     });
   }
-  for (const c of (commitRes.data ?? []) as Array<Record<string, unknown>>) {
+  for (const c of commitRows) {
     const j = judgments.get(`commitment:${String(c.id)}`);
+    // A COMMITMENT'S PREPARED WORK LIVES IN THE POOL — the board read `[]` here for months, so a
+    // pooled nudge, deliverable or invite on a commitment was structurally invisible to reasoners.
+    const cprep = preparedWordsOf(prepStates.get(`commitment:${String(c.id)}`)!);
     board.push({
       ref: `commit:${String(c.id)}`, id: String(c.id), kind: 'commitment',
-      title: String(c.description ?? '').slice(0, 90),
+      title: clipLabel(String(c.description ?? ''), 90),
       who: (c.counterparty as string) ?? null,
       due: (c.due_date as string) ?? null,
-      judgedWork: j?.work ?? null, judgedReason: j?.reason?.slice(0, 120) ?? null,
-      prepared: [], preparedBy: null, attachments: [],
+      judgedWork: j?.work ?? null, judgedReason: j?.reason ? clipLabel(j.reason, 120) : null,
+      prepared: cprep.list, expired: cprep.expired, withdrawn: cprep.withdrawn, preparedBy: cprep.by, attachments: [],
+      evidence: evidenceByRef.get(`commit:${String(c.id)}`) ?? [],
     });
     if (typeof c.counterparty === 'string' && c.counterparty.trim()) participants.push(c.counterparty);
   }
@@ -322,9 +446,20 @@ export async function assembleRoomGrounding(
       return rows.filter(isAsk).map(askOf).reverse().slice(0, 6);
     } catch { return turns.filter(isAsk).map(askOf); }
   })();
-  const transcript = turns.slice(-8).map((t) => {
+  // W5c · THE NARRATION FOLLOWS ITS ARTIFACT, INTO THE MIND TOO: a `prep:*` narration ("Clara
+  // prepared the calendar invite — review it and approve to send") whose item holds NO live artifact
+  // on the board is a claim no card renders — the rail folds it, and the composer must not read it
+  // as the present either (found live, Sep 23: the brief said "I've prepared a calendar invite"
+  // beside a hidden out-of-window invite). The record keeps the turn; the page just doesn't speak it.
+  const unbackedPrep = (t: TurnRow): boolean => {
+    const m = /^prep:((?:commit|inbox):.+)$/.exec(String(t.key ?? ''));
+    if (!m) return false;
+    const entry = board.find((b) => b.ref === m[1]);
+    return !!entry && entry.prepared.length === 0;
+  };
+  const transcript = turns.filter((t) => !unbackedPrep(t)).slice(-8).map((t) => {
     const who = t.role === 'user' ? 'user' : t.author?.name ? t.author.name.split(' ')[0] : 'assistant';
-    return `[${who}] ${String(t.text).replace(/\s+/g, ' ').slice(0, 180)}`;
+    return `[${who}] ${clipForPrompt(String(t.text).replace(/\s+/g, ' '), 180)}`;
   }).join('\n');
 
   // ── The entity view + the ONE rendered page. ──
@@ -348,7 +483,7 @@ export async function assembleRoomGrounding(
   const ledgerRefs = new Map<string, { label: string; href: string | null }>();
   const ledgerLines = ledger.slice(0, 22).map((l, i) => {
     const id = `L${i + 1}`;
-    ledgerRefs.set(id, { label: l.text.slice(0, 60), href: hrefOfRef(l.ref) });
+    ledgerRefs.set(id, { label: clipLabel(l.text, 60), href: hrefOfRef(l.ref) });
     // THE WATERMARK SURVIVES THE CLIP (Sep 8, found on the served page as `[L8] … — NOW (20`): the
     // NOW clause is appended LAST, so a fixed head-cut ate it on the longest — most consequential —
     // lines, and every reasoner reading this page went on demanding a settled deed. ONE clipper
@@ -359,28 +494,35 @@ export async function assembleRoomGrounding(
   const fileLines = ((filesRes.data ?? []) as Array<{ id: string; filename: string; summary: string | null }>).map((f, i) => {
     const id = `F${i + 1}`;
     ledgerRefs.set(id, { label: f.filename, href: null });
-    return `[${id}] ${f.filename}${f.summary ? ` — ${String(f.summary).slice(0, 100)}` : ''}`;
+    return `[${id}] ${f.filename}${f.summary ? ` — ${clipForPrompt(String(f.summary), 100)}` : ''}`;
   });
 
   const boardLines = board.map((b) =>
     `- [${b.ref}] (${b.kind}) "${b.title}"${b.who ? ` · with ${b.who}` : ''}${b.due ? ` · due ${b.due}` : ''}` +
     `${b.judgedWork ? ` · judged: ${b.judgedWork}` : ' · not yet judged'}` +
     `${b.prepared.length ? ` · PREPARED: ${b.prepared.join(' + ')}${b.preparedBy ? ` (by ${b.preparedBy})` : ''}` : ' · nothing prepared yet'}` +
+    // TIME TRUTH: a past-time invite is stated as expired on the line itself — never "prepared".
+    `${b.expired.length ? ` · EXPIRED (not ready): ${b.expired.join(' + ')}` : ''}` +
+    // W5c: a hidden artifact is stated WITHDRAWN — the team re-prepares it; nothing about it is ready.
+    `${b.withdrawn.length ? ` · WITHDRAWN (not ready — we are re-preparing it; never say it is prepared, below, or ready): ${b.withdrawn.join(' + ')}` : ''}` +
     // The documents that came WITH the item, with their direction stated on the line itself.
-    `${b.attachments.length ? `\n  · ATTACHED TO IT (${b.who ? `${b.who} sent these TO the user` : 'sent TO the user'} — received and stored): ${b.attachments.join(' | ')}` : ''}`);
+    `${b.attachments.length ? `\n  · ATTACHED TO IT (${b.who ? `${b.who} sent these TO the user` : 'sent TO the user'} — received and stored): ${b.attachments.join(' | ')}` : ''}` +
+    // W5a: the user's own record AFTER the item, with this counterparty — on the line itself, so no
+    // reader can consume the judged verb without the deed that may have settled it.
+    `${b.evidence.length ? `\n  · LATER EVIDENCE: ${b.evidence.join(' | ')}` : ''}`);
 
-  const text = [
+  const body = [
     entity ? `THE WORK: "${entity.name}"${entity.tracked ? ' (a tracked project)' : ' (recognized, untracked)'}` : `THE WORK: a standalone item`,
     entity?.summary ? `WHERE IT STANDS: ${entity.summary}${entity.momentum ? ` [${entity.momentum}]` : ''}` : null,
     // The blocker sits with the position it belongs to — the composer speaks it INSIDE the position,
     // never as a second alarm (the standalone amber block died with the right pane).
-    entity?.blocking ? `WATCH-OUT (what is blocking this work right now): ${entity.blocking.slice(0, 300)}` : null,
+    entity?.blocking ? `WATCH-OUT (what is blocking this work right now): ${clipForPrompt(entity.blocking, 300)}` : null,
     entity?.whoOwesYou.length ? `THE USER OWES: ${entity.whoOwesYou.join('; ')}` : null,
     entity?.whoOwesThem.length ? `OWED TO THE USER: ${entity.whoOwesThem.join('; ')}` : null,
     entity?.nextMove ? `THE SYNTHESIZED NEXT MOVE: ${entity.nextMove.title}` : null,
     entity?.goals.length ? `GOALS: ${entity.goals.join(' · ')}` : null,
     entity?.rules.length ? `RULES: ${entity.rules.join(' · ')}` : null,
-    board.length ? `THE LIVE BOARD (each item: judged work + what is ACTUALLY prepared — these are the only truths about preparedness).\nA document listed as ATTACHED TO IT is IN OUR POSSESSION and was sent to the user BY the counterparty: never say it is missing or was not received, never ask for it to be resent, and never propose sending the counterparty their own document back.\n${boardLines.join('\n')}${boardOmitted ? `\n(NOTE: ~${boardOmitted} older linked item${boardOmitted === 1 ? '' : 's'} not shown — never claim this list is everything.)` : ''}` : null,
+    board.length ? `THE LIVE BOARD (each item: judged work + what is ACTUALLY prepared — these are the only truths about preparedness).\nA document listed as ATTACHED TO IT is IN OUR POSSESSION and was sent to the user BY the counterparty: never say it is missing or was not received, never ask for it to be resent, and never propose sending the counterparty their own document back.\n${board.some((b) => b.evidence.length) ? `${BOARD_EVIDENCE_RULE}\n` : ''}${boardLines.join('\n')}${boardOmitted ? `\n(NOTE: ~${boardOmitted} older linked item${boardOmitted === 1 ? '' : 's'} not shown — never claim this list is everything.)` : ''}` : null,
     // THE GROUND WINS: the world's record sits DIRECTLY UNDER the board it may contradict, so no
     // reader can consume the judged verbs without also reading what has actually happened since —
     // and so it survives every clip a consumer applies to the tail of this page.
@@ -391,6 +533,9 @@ export async function assembleRoomGrounding(
     fileLines.length ? `FILES on this work (reference as [F#]):\n${fileLines.join('\n')}` : null,
     transcript ? `THE CONVERSATION (recent turns):\n${transcript}` : null,
   ].filter(Boolean).join('\n\n');
+  // THE EXCERPT-HONESTY LAW rides the page's HEAD (W2.7): a clipped line carries the mark, and the
+  // page declares the rule ABOVE everything — so no consumer's tail-cut of this page can strip it.
+  const text = body.includes(EXCERPT_MARK) ? `(${EXCERPT_RULE})\n\n${body}` : body;
 
   return { roomKey, entity, board, asks, groundEvidence, transcript, ledgerRefs, text };
 }

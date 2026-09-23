@@ -3,6 +3,7 @@
 // version that supports mode, time window, sender, keyword, and topic filters.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { clipWithRule } from '@/lib/utils/pack-context';
 
 export interface GetEmailsConfig {
   /** 'urgent' = unread only · 'recent' = time-filtered · 'all' = no time filter */
@@ -94,7 +95,11 @@ export async function executeGetEmails(
     fromName:  (item.source_data?.from_name || item.source_data?.from || 'Unknown') as string,
     fromEmail: (item.source_data?.from_address || '') as string,
     subject:   (item.source_data?.subject || '(no subject)') as string,
-    snippet:   ((item.source_data?.snippet || item.source_data?.body || '') as string).slice(0, 300),
+    // EXCERPT HONESTY (invariant 13): a raw `.slice()` hard-cut the body/snippet with no marker —
+    // the model reading a mid-word cut as "the email got cut off" is the law's own founding
+    // incident. `clipWithRule` ends at a boundary and carries EXCERPT_RULE inline (this tool
+    // result is a standalone message back to the model, so the rule can't ride on a caller).
+    snippet:   clipWithRule((item.source_data?.snippet || item.source_data?.body || '') as string, 300),
     createdAt: item.created_at as string,
     isRead:    item.is_read !== false,
     section:   (item.visual_section || 'noted') as string,

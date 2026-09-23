@@ -105,6 +105,10 @@ export type CalendarRead = {
   /** Only when slots were asked for AND a calendar exists — an invented slot is the class this
    *  whole tool exists to end. */
   slots: Array<{ startISO: string; endISO: string }>;
+  /** THE BLOCKS `text` is joined from, by role — so a budgeted reader (THE CONTEXT BUDGET, W2.7)
+   *  can keep the verified FREE SLOTS whole and shrink event detail first, instead of a raw slice
+   *  eating whatever was appended last. `text === [window, freshness, clamp, slots].filter.join`. */
+  blocks: { window: string; freshness: string | null; clamp: string | null; slots: string | null };
 };
 
 export async function readCalendar(
@@ -141,10 +145,13 @@ export async function readCalendar(
   ]);
 
   const win = await getScheduleWindow(supabase, userId, { fromDayStr, toDayStr, tz });
-  const parts = [renderCalendarWindow(win, { tz })];
+  const windowBlock = renderCalendarWindow(win, { tz });
+  const parts = [windowBlock];
   const freshness = renderCalendarFreshness(await getCalendarFreshness(supabase, userId));
   if (freshness) parts.push(freshness);
-  if (clamped) parts.push(`(I read the first ${MAX_WINDOW_DAYS} days of the range you asked for — ask again for the rest.)`);
+  const clampLine = clamped ? `(I read the first ${MAX_WINDOW_DAYS} days of the range you asked for — ask again for the rest.)` : null;
+  if (clampLine) parts.push(clampLine);
+  const fixed = parts.length;
 
   // THE EMPTY-CALENDAR TRUTH: with no calendar synced, every "free slot" would be an invention —
   // the picker over an empty busy set proposes everything. The block above already says UNKNOWN;
@@ -176,7 +183,10 @@ export async function readCalendar(
         }).join('\n')
       : 'FREE SLOTS: none — there is no free working-hour slot of that length in this window. Say so plainly and offer a different range.');
   }
-  return { text: parts.join('\n\n'), win, tz, fromDayStr, toDayStr, slots: proposed };
+  return {
+    text: parts.join('\n\n'), win, tz, fromDayStr, toDayStr, slots: proposed,
+    blocks: { window: windowBlock, freshness: freshness || null, clamp: clampLine, slots: parts[fixed] ?? null },
+  };
 }
 
 export async function executeCheckCalendar(

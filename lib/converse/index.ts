@@ -18,8 +18,10 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { stripGroundingRefs } from '@/lib/utils/strip-grounding-refs';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
-import { clipForPrompt, clipLabel, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { clipForPrompt, clipLabel, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { clipWithRule, packContext } from '@/lib/utils/pack-context';
 import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
 import { capabilitiesFor } from '@/lib/home/capability-map';
 // THE PRESENTATION LAW (Sep 22) — the opt-IN permission to serve a tool's string as the answer
@@ -30,6 +32,11 @@ import type { CollectionSpec } from '@/lib/present/collection';
 import { isListingAsk } from '@/lib/present/listing-ask';
 // WAVE 2 — THE EVENT CARD: one calendar object, the verbs its state allows, nothing fired from here.
 import type { EventSpec } from '@/lib/present/event';
+// THE CONFIRM CARD (stabilization W0.3b — HUMAN IN THE LOOP): the Home chat reads untrusted mail
+// and the web, so a class-A change (run a task · a standing instruction · a remembered fact) is
+// PREPARED here and applied only through /api/changes/[id]/apply on the user's own click.
+import { changeSayLine, type ChangeSpec } from '@/lib/present/change';
+import { prepareChange } from '@/lib/work/pending-change';
 import { prepareEventActionDefinition, executePrepareEventAction } from '@/lib/tools/prepare-event-action';
 import {
   executeResolveInboxItem, executeResolveCommitment, executeFindFile, executeRememberFact,
@@ -47,7 +54,7 @@ import { enforceWeekdayDatePairs } from '@/lib/utils/weekday-floor';
 // coworker door calls; only the scope (agentId null = the user's whole set) and the by-name
 // resolution differ. A second implementation is how two doors start disagreeing.
 import {
-  setTasksStatusDefinition, executeSetTasksStatus, executeListTasks, executeGetTask, executeRunTask,
+  setTasksStatusDefinition, executeSetTasksStatus, executeListTasks, executeGetTask,
   resolveTaskIdByName, spokenIsResumeNotRun,
 } from '@/lib/tools/worker-tasks';
 // THE DEED FLOOR (Sep 21) — the chief's answer is held to the turn's own mutation ledger.
@@ -199,6 +206,16 @@ export type ConverseAttachment = { name: string; text: string | null; image?: { 
 // now — surfaced live over SSE so a long agent loop never reads as a dead "Thinking…". Labels
 // speak consequence in the user's words (law 4), never tool names. One map — a new chief tool
 // without a label falls back to the generic line, never to silence. ──
+/** THE CONTEXT BUDGET (W2.7): the open loop's packed page (rules + transcript + grounding) and the
+ *  loop's own honest ceiling above it (a retry prefix may ride on top of the packed page). */
+const LOOP_CONTEXT_BUDGET = 8000;
+/** A hand-back PREVIEW the user reads (and the next turn's history carries): cut at a sentence/word
+ *  boundary with a plain ellipsis — never mid-word (the T2 class: a quoted mid-word cut read back as
+ *  "the work stops at …"). The full text lives in the coworker's conversation. */
+const previewOf = (t: string, max: number): string =>
+  t.length <= max ? t : `${clipForPrompt(t, max).replace(` ${EXCERPT_MARK}`, '')}…`;
+const LOOP_CONTEXT_CEILING = 9000;
+
 const TOOL_PROGRESS: Record<string, string> = {
   find_file: 'Searching your files…',
   search_knowledge_base: 'Searching the knowledge base…',
@@ -325,6 +342,11 @@ export type ConverseTurn = {
    *  NOTHING is fired from here: the spec may carry an ARMED proposal, and the user's click is the
    *  deed (THE HUMAN-IN-THE-LOOP LAW). */
   event?: { id: string; spec: EventSpec } | null;
+  /** THE CONFIRM CARD (stabilization W0.3b): a class-A state change PREPARED for the user's click,
+   *  rendered by the kit's approval card through ONE host (components/home/change-card.tsx). `id`
+   *  is the pending-change row — the card's re-read address and the address its doors act through.
+   *  NOTHING has applied: the click on the card is the deed (THE HUMAN-IN-THE-LOOP LAW). */
+  change?: { id: string; spec: ChangeSpec } | null;
 };
 
 const linkKindOf = (s: Extract<ConverseScope, { kind: 'item' }>): 'inbox_item' | 'commitment' | 'meeting' =>
@@ -696,9 +718,12 @@ async function dispatchCommand(
       deeds.push({ tool: 'set_tasks_status', kind: 'status', ok: out.changed > 0, count: out.changed });
       return { say: out.text, refs: [] };
     }
-    const say = await executeRunTask(hit.id, userId, admin);
-    deeds.push({ tool: 'run_task', kind: 'run', ok: /is now running|is already running/.test(say), count: /is now running|is already running/.test(say) ? 1 : 0 });
-    return { say, refs: [] };
+    // A RUN SPENDS AND MAY DELIVER → THE CONFIRM CARD (stabilization W0.3b). Nothing starts here;
+    // the apply door runs executeRunTask with this exact id on the user's click. No deed is
+    // recorded — a prepared change is not a deed, and the floor must not credit it as one.
+    const prepared = await prepareChange(client, userId, { tool: 'run_task', args: { task_id: hit.id }, lane: 'home_chat', roomKey: convo.roomKey ?? null });
+    if (!prepared) return { say: `I couldn't prepare a run of "${hit.name}" just now — nothing started. Try again in a moment.`, refs: [] };
+    return { say: changeSayLine(prepared.spec), refs: [], change: { id: prepared.spec.id, spec: prepared.spec } };
   }
   if (tool === 'set_tasks_status') {
     const status = args.status === 'active' ? 'active' : 'paused';
@@ -721,9 +746,9 @@ async function dispatchCommand(
   }
   // ── THE SENSIBLE ASK: the loop's ONE decision door — malformed asks fall back to prose. ──
   if (tool === 'offer_choices') {
-    const q = String(args.question ?? '').trim().slice(0, 200);
+    const q = clipLabel(String(args.question ?? ''), 200);
     const options = (Array.isArray(args.options) ? args.options : [])
-      .map((o) => ({ label: String((o as { label?: string }).label ?? '').trim().slice(0, 40), say: String((o as { say?: string }).say ?? '').trim().slice(0, 200) }))
+      .map((o) => ({ label: String((o as { label?: string }).label ?? '').trim().slice(0, 40), say: clipLabel(String((o as { say?: string }).say ?? ''), 200) }))
       .filter((o) => o.label && o.say).slice(0, 4);
     if (!q || options.length < 2) return null;
     return { say: q, refs: [], options };
@@ -982,10 +1007,15 @@ async function dispatchCommand(
     if (scope.kind !== 'item' || linkKindOf(scope) !== 'commitment') {
       return { say: 'Say that in the standing task\'s own room and I\'ll bake it into the method.', refs: [] };
     }
-    const { executeSteerStandingTask } = await import('@/lib/workflows/standing');
-    const r = await executeSteerStandingTask(client, userId, { commitmentId: scope.itemId, instruction: String(args.instruction ?? userText) });
-    if (!r.ok) return { say: `I couldn't apply that — ${r.error}.`, refs: [] };
-    return { say: `Baked in — "${r.taskName}" carries that from the next run on.`, refs: [], applied: [{ tool, title: r.taskName }] };
+    // A PERSISTENT INSTRUCTION → THE CONFIRM CARD (stabilization W0.3b): the model-chosen
+    // `instruction` used to land in worker_instructions on the spot. It is now PREPARED, shown
+    // verbatim on the card, and applied only on the user's click (the SAME executor, at the door).
+    const prepared = await prepareChange(client, userId, {
+      tool: 'steer_standing_task', args: { commitmentId: scope.itemId, instruction: String(args.instruction ?? userText) },
+      lane: 'home_chat', roomKey: convo.roomKey ?? null,
+    });
+    if (!prepared) return { say: "I couldn't prepare that just now — nothing was changed. Try again in a moment.", refs: [] };
+    return { say: changeSayLine(prepared.spec), refs: [], change: { id: prepared.spec.id, spec: prepared.spec } };
   }
   if (tool === 'run_compute') {
     // THE SANDBOX FROM THE HOME (Aug 6): "what's 17.5% of 84,300?" computes in the locked room.
@@ -999,7 +1029,7 @@ async function dispatchCommand(
         const day = new Date().toISOString().slice(0, 10);
         const res = await aiCall<{ script?: string; skip?: string }>({
           userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: 700, source: 'task_preparation',
-          prompt: `Today is ${day}. The user asked: "${userText.slice(0, 300)}"\n` +
+          prompt: `Today is ${day}. The user asked: "${clipWithRule(userText, 300)}"\n` +
             `If this is a COMPUTATION (arithmetic, dates, data transforms), write ONE Python script that computes it ` +
             `and prints each result on a line starting "FINDINGS: " (stdlib + pandas available; NO network; no files ` +
             `unless provided). Otherwise decline.\nJSON only: {"script":"…"} OR {"skip":"<why>"}`,
@@ -1007,7 +1037,7 @@ async function dispatchCommand(
         if (res.json?.script?.trim()) cfg.script = res.json.script;
         // Data tool, data shape — even on the decline path: the loop owns every sentence this
         // branch can produce, so no half of run_compute can ever be served raw.
-        else return { modelText: `Not a computation — ${String(res.json?.skip ?? 'no numbers or file were given').slice(0, 140)}.` };
+        else return { modelText: `Not a computation — ${clipLabel(String(res.json?.skip ?? 'no numbers or file were given'), 140)}.` };
       } catch { return { modelText: 'The computation could not be set up (codegen failed). Say so plainly and ask for the concrete numbers or the file.' }; }
     }
     // THE PRESENTATION LAW: the digest is written FOR THE MODEL — it carries instructions ("do NOT
@@ -1023,10 +1053,18 @@ async function dispatchCommand(
     return { modelText: digest };
   }
   if (tool === 'remember_fact' && scope.kind !== 'global') {
-    const r = await executeRememberFact(ctx, scope.kind === 'entity'
-      ? { fact: String(args.fact ?? ''), entityId: scope.entityId }
-      : { fact: String(args.fact ?? ''), linkKind: linkKindOf(scope), itemId: scope.itemId });
-    return { say: r.ok ? `Noted${r.entityName ? ` on ${r.entityName}` : ''} — future drafts will respect it.` : "This isn't tied to a deal I can remember that on yet.", refs: [] };
+    // A PERSISTENT RULE ON MEMORY → THE CONFIRM CARD (stabilization W0.3b — the memory-poisoning
+    // class): the fact is PREPARED and shown verbatim; executeRememberFact runs only at the apply
+    // door, on the user's click.
+    const prepared = await prepareChange(client, userId, {
+      tool: 'remember_fact',
+      args: scope.kind === 'entity'
+        ? { fact: String(args.fact ?? ''), entityId: scope.entityId }
+        : { fact: String(args.fact ?? ''), linkKind: linkKindOf(scope), itemId: scope.itemId },
+      lane: 'home_chat', roomKey: convo.roomKey ?? null,
+    });
+    if (!prepared) return { say: "I couldn't prepare that note just now — nothing was remembered. Try again in a moment.", refs: [] };
+    return { say: changeSayLine(prepared.spec), refs: [], change: { id: prepared.spec.id, spec: prepared.spec } };
   }
   // MEMBERSHIP / PROJECT management (P4/S3) — the manage verbs, same executors as the click paths.
   if (tool === 'move_item_to_project') {
@@ -1082,18 +1120,24 @@ async function dispatchCommand(
   // READ tools (P7a — retrieval-capable grounding): the chief can GO LOOK like a coworker can.
   if (tool === 'get_emails') {
     const text = await executeGetEmails({ filter: args.filter, from: args.from, since: args.since ?? '30d', mode: 'search' }, userId, client).catch(() => '');
-    return { modelText: text.slice(0, 3000) || 'No matching emails found.' };
+    // THE READ BUDGET (W2.7): packed by email, cuts declared — never a raw slice mid-message.
+    const { packEmailsRead } = await import('@/lib/converse/read-budget');
+    return { modelText: (text && packEmailsRead(text)) || 'No matching emails found.' };
   }
   if (tool === 'get_meeting_context') {
     // ONE READ, TWO RENDERINGS: `readMeetingContext` returns the model's block AND the typed rows.
     const since = String(args.since ?? '30d');
     const read = await readMeetingContext({ since, include: args.include ?? 'summaries', filter: args.filter }, userId, client)
       .catch(() => null);
-    const text = (read?.text ?? '').slice(0, 3000);
+    // THE READ BUDGET (W2.7): packed BY MEETING, cuts declared — and the card shows exactly the
+    // meetings the model saw (a row it never read is a claim it cannot stand behind).
+    const { packMeetingRead } = await import('@/lib/converse/read-budget');
+    const packed = read ? packMeetingRead(read.blocks) : null;
+    const text = packed?.text ?? '';
     const { recordingSpec } = await import('@/lib/present/build');
     return {
       modelText: text || 'No matching meetings found.',
-      ...(read ? { present: recordingSpec(read.meetings, { since }) } : {}),
+      ...(read ? { present: recordingSpec(read.meetings.filter((m) => packed!.seen.has(m.id)), { since }) } : {}),
     };
   }
   // THE READ-SIDE CALENDAR VERB (Wave 1): every line it returns — busy/free, weekdays, clock times,
@@ -1112,9 +1156,13 @@ async function dispatchCommand(
     if (!read) return { modelText: "I couldn't read the calendar just now." };
     if ('refusal' in read) return { modelText: read.refusal };
     const { calendarSpec } = await import('@/lib/present/build');
+    // THE READ BUDGET (W2.7): the FREE SLOTS (the verified answer) survive first, day detail
+    // yields earliest-last, every cut declared — and the card renders the days the model saw.
+    const { packCalendarRead } = await import('@/lib/converse/read-budget');
+    const packed = packCalendarRead(read);
     return {
-      modelText: read.text.slice(0, 3000) || "I couldn't read the calendar just now.",
-      present: calendarSpec(read.win.days, {
+      modelText: packed.text || "I couldn't read the calendar just now.",
+      present: calendarSpec(read.win.days.filter((d) => packed.seenDays.has(d.dayStr)), {
         hasCalendar: read.win.hasCalendar, from: read.fromDayStr, to: read.toDayStr,
       }),
     };
@@ -1123,19 +1171,23 @@ async function dispatchCommand(
     try {
       const { buildKBContext } = await import('@/lib/knowledge/build-kb-context');
       const query = String(args.query ?? '');
-      const kb = await buildKBContext(userId, query, client, { fileLimit: 4 });
+      // THE READ BUDGET (W2.7): the context is packed BY FILE at the read's budget — so the card
+      // below can show exactly the files that reached the model, never one it never saw.
+      const { READ_BUDGET } = await import('@/lib/converse/read-budget');
+      const kb = await buildKBContext(userId, query, client, { fileLimit: 4, maxTotalChars: READ_BUDGET });
       const text = typeof kb === 'string' ? kb : ((kb as { context?: string })?.context ?? '');
       if ((text || '').trim()) {
         // ONE READ, TWO RENDERINGS: the card is built from the groups this very context was
         // rendered from — never a second search that could rank differently.
         const { documentSpec } = await import('@/lib/present/build');
-        const groups = typeof kb === 'string' ? [] : (kb.groups ?? []);
+        const seen = new Set(typeof kb === 'string' ? [] : (kb.packedFileIds ?? []));
+        const groups = typeof kb === 'string' ? [] : (kb.groups ?? []).filter((g) => seen.has(g.fileId));
         // THE FLOOR IS NOT ONLY FOR AN EMPTY SHELF (Sep 22, the kiteschool class re-manifested): a
         // populated KB always returns SOMETHING, so the nearest-neighbour files used to be served as
         // the answer and the NAMED body of work denied. The registry pointer rides a hit too.
         const mm = await registryMatches(client, userId, query, scope.kind === 'entity' ? scope.entityId : null);
         return {
-          modelText: text.slice(0, 3000) + (mm
+          modelText: text + (mm
             ? `\n\n${mm}\nNone of the files above carry the distinctive part of this query — NAME that match instead of denying you have anything on it.`
             : ''),
           ...(groups.length ? { present: documentSpec(groups, query) } : {}),
@@ -1207,7 +1259,7 @@ async function runCoworkerDelegation(
     try {
       if (tab?.text) {
         const { computeDataFacts } = await import('@/lib/compute/data-facts');
-        dataFacts = await computeDataFacts(client, userId, { request: `${task} — ${userText.slice(0, 300)}`, csvText: tab.text, filename: tab.name });
+        dataFacts = await computeDataFacts(client, userId, { request: `${task} — ${clipForPrompt(userText, 300)}`, csvText: tab.text, filename: tab.name });
         if (dataFacts) {
           material += `\n\nCOMPUTED FACTS (sandboxed code ran over ${tab.name} — these numbers are AUTHORITATIVE; use them VERBATIM and never derive your own):\n${dataFacts}`;
         }
@@ -1265,7 +1317,7 @@ async function runCoworkerDelegation(
         // THE COMPILER TIER (DH6/DH7): charts, in-place revision, and template-following compile
         // the deliverable file in the sandbox (render-verified); the template tier stays the floor.
         ...(tab?.text || revise || templateFile
-          ? { compile: { csvText: tab?.text ?? null, computedFacts: dataFacts, request: `${task} — ${userText.slice(0, 500)}` } } : {}),
+          ? { compile: { csvText: tab?.text ?? null, computedFacts: dataFacts, request: `${task} — ${clipForPrompt(userText, 500)}` } } : {}),
         ...(revise ? { revise } : {}),
         ...(templateFile ? { templateFile } : {}),
         ...(scope.kind === 'item' ? { pool: { kind: scope.itemKind, entityId: scope.itemId }, provenance: { item: task.slice(0, 80), steered: true } } : {}),
@@ -1282,7 +1334,7 @@ async function runCoworkerDelegation(
         const report = String(out.reportText || '').trim();
         if (out.artifact) {
           const say = report
-            ? `${report.slice(0, 700)}${report.length > 700 ? '…' : ''}`
+            ? `${previewOf(report, 700)}`
             : `${first} finished — the document is ready.`;
           return {
             say, refs: [], delegated: { agentName: String(worker.name), agentId: String(worker.id) },
@@ -1291,7 +1343,7 @@ async function runCoworkerDelegation(
           };
         }
         const say = report
-          ? `${report.slice(0, 700)}${report.length > 700 ? '…' : ''}\n\n(The full version is in your ${first} conversation.)`
+          ? `${previewOf(report, 700)}\n\n(The full version is in your ${first} conversation.)`
           : `${first} finished — the work is in your ${first} conversation.`;
         return { say, refs: [], delegated: { agentName: String(worker.name), agentId: String(worker.id) } };
       }
@@ -1409,11 +1461,13 @@ async function agentLoop(
       // it actually has are the same list by construction. A hand-written block would drift the
       // day a tool is added or a feature is switched off; this one cannot.
       `${renderOfferLaw(toolDefs)}\n\n` +
-      `--- CONTEXT ---\n${grounding.slice(0, 4000)}` },
+      // THE CONTEXT BUDGET (W2.7): the caller PACKS the context (preamble + grounding, by
+      // priority, cuts declared) — this is only the honest ceiling, never a silent tail-chop.
+      `--- CONTEXT ---\n${clipWithRule(grounding, LOOP_CONTEXT_CEILING)}` },
     // THE PANEL CONVERSATION as real turns (Aug 10, the amnesia class): a follow-up ("yes
     // please" · "in bullet points" · "ask Sofia to do it") resolves against what was just
     // said — before this the loop saw ONLY the newest message and asked what "it" meant.
-    ...(history ?? []).slice(-8).map((t) => ({ role: t.role, content: t.text.slice(0, 4000) })),
+    ...(history ?? []).slice(-8).map((t) => ({ role: t.role, content: clipWithRule(t.text, 4000) })),
     // THE ATTACHED MATERIAL rides as its own turn — full fidelity, never squeezed into the
     // grounding budget (the work is usually ON these files).
     ...(material ? [{ role: 'user', content: `Here is the material I attached:\n\n${material}` }] : []),
@@ -1530,7 +1584,7 @@ async function agentLoop(
       if (turn?.files) files.push(...turn.files);
       // A commit/stage/options/delegation signal ends the loop — the client (or the coworker)
       // owns the next step; the loop never talks past its own hand-off.
-      if (turn?.commit || turn?.openStage || turn?.options || turn?.delegated || turn?.invite || turn?.bulkDeed || turn?.emailDraft) return { ...turn, applied: applied.length ? applied : turn.applied };
+      if (turn?.commit || turn?.openStage || turn?.options || turn?.delegated || turn?.invite || turn?.bulkDeed || turn?.emailDraft || turn?.change) return { ...turn, applied: applied.length ? applied : turn.applied };
       // THE NULL IS NEVER SILENT (Sep 21): a dispatcher that cannot serve this scope used to hand
       // back `{error:'tool unavailable in this context'}` — five words the model improvised over
       // ("I can't prepare a forward from this view…") before re-asking its own question. The
@@ -1543,7 +1597,7 @@ async function agentLoop(
         role: 'tool', tool_call_id: call.id,
         content: isToolData(out)
           ? clipForPrompt(out.modelText, 4000)
-          : JSON.stringify(turn ?? unavailableToolResult(call.function.name, toolDefs)).slice(0, 1500),
+          : clipWithRule(JSON.stringify(turn ?? unavailableToolResult(call.function.name, toolDefs)), 1500),
       });
     }
   }
@@ -1572,7 +1626,7 @@ async function viewingExcerpt(client: SupabaseClient, userId: string, scope: Con
       return c ? `THE COMMITMENT THE USER IS VIEWING: ${c.description}${c.counterparty ? ` (with ${c.counterparty})` : ''}${c.due_date ? ` due ${c.due_date}` : ''}` : '';
     }
     const { data: m } = await client.from('meeting_transcripts').select('title, summary').eq('id', scope.itemId).eq('user_id', userId).maybeSingle();
-    return m ? `THE MEETING THE USER IS VIEWING: ${m.title}\n${String(m.summary || '').slice(0, 700)}` : '';
+    return m ? `THE MEETING THE USER IS VIEWING: ${m.title}\n${clipWithRule(String(m.summary || ''), 700)}` : '';
   } catch { return ''; }
 }
 
@@ -1614,6 +1668,8 @@ const GROUNDING_TAG_RE = /\s?\[(?:[EFLCRKW]\d+)\](?!\()/g;
 //     bracket `[F3](…)` is PARKED across the strip and put back — a link is never notation.
 const MARKDOWN_TAG_RE = /\[[EFLCRKW]\d+(?:\s*,\s*[EFLCRKW]\d+)*\]\(/g;
 function stripGroundingNotation(say: string, refs: ConverseTurn['refs']): string {
+  // THE DEED-REF FLOOR (Sep 22 — W3.4a): board refs like `[commit:<uuid>]` never reach prose.
+  say = stripGroundingRefs(say);
   if (!refs?.some((r) => r.tag)) return say.replace(GROUNDING_TAG_RE, '');
   const parked: string[] = [];
   const guarded = say.replace(MARKDOWN_TAG_RE, (m) => { parked.push(m); return `«md${parked.length - 1}»`; });
@@ -1699,7 +1755,7 @@ async function redraftItemDraft(
     }).catch(() => ({ verdict: 'pass' as const, objection: null }));
     await client.from('item_deliverables').insert({
       user_id: userId, kind: 'commitment', entity_id: scope.itemId, type: 'draft',
-      title: `Nudge — ${String(c.counterparty ?? '').split('<')[0].trim() || 'follow-up'}`.slice(0, 100),
+      title: clipLabel(`Nudge — ${String(c.counterparty ?? '').split('<')[0].trim() || 'follow-up'}`, 100),
       content: body, ref: null, metadata: { steered: true, ...(review.verdict !== 'pass' ? { review } : {}) },
     }).then(() => {}, () => {});
     return body;
@@ -1752,7 +1808,7 @@ async function converseInner(
   // delegation prompt). Full fidelity where it matters; the classifier only needs the names.
   const material = (opts.attachments ?? [])
     .filter((a) => a.text?.trim())
-    .map((a) => `[ATTACHED FILE: ${a.name}]\n${a.text!.slice(0, 15000)}`)
+    .map((a) => `[ATTACHED FILE: ${a.name}]\n${clipWithRule(a.text!, 15000)}`)
     .join('\n\n');
   const materialNames = (opts.attachments ?? []).map((a) => a.name).join(', ');
 
@@ -1829,7 +1885,7 @@ async function converseInner(
             }
             return { say: `I couldn't complete that merge — try the button on the proposal, and I'll look into why.`, refs: [] };
           }
-          if (res.json.unclear) return { say: String(res.json.unclear).slice(0, 200), refs: [] };
+          if (res.json.unclear) return { say: clipLabel(String(res.json.unclear), 200), refs: [] };
         }
         if (p.type === 'ask' && res.json.go_ahead === true) {
           // The SAME lifecycle the go-ahead button stamps: proceeded on the turn, the visible
@@ -1857,7 +1913,7 @@ async function converseInner(
             return { say: "Going ahead with what's available — I'll work around the gaps and note them honestly.", refs: [], applied: [{ tool: 'proceed_ask', title: 'go-ahead' }] };
           }
         }
-        if (res.json.unclear) return { say: String(res.json.unclear).slice(0, 200), refs: [] };
+        if (res.json.unclear) return { say: clipLabel(String(res.json.unclear), 200), refs: [] };
       }
     } catch { /* the pending read is a refinement — the normal flow below still sees the transcript */ }
   }
@@ -2037,7 +2093,7 @@ async function converseInner(
         const { aiCall } = await import('@/lib/ai/call');
         const res = await aiCall<{ answer?: string }>({
           userId, supabase: client, shape: { output: 'json' }, maxTokens: 300, temperature: 0.2, source: 'brain_synthesis',
-          prompt: `Answer STRICTLY from this context — plainly, a couple of sentences; if it doesn't cover the question, say so. PLAIN PROSE.\n${dialogueBlock ? `${dialogueBlock}\n` : ''}${viewing ? `${viewing}\n` : ''}--- CONTEXT ---\n${(ctx?.text || '').slice(0, 3000)}\n--- QUESTION ---\n${text}\n${REACH_CONTRACT}\nReturn ONLY JSON: {"answer":"..."}`,
+          prompt: `Answer STRICTLY from this context — plainly, a couple of sentences; if it doesn't cover the question, say so. PLAIN PROSE.\n${dialogueBlock ? `${dialogueBlock}\n` : ''}${viewing ? `${viewing}\n` : ''}--- CONTEXT ---\n${clipWithRule(ctx?.text || '', 3000)}\n--- QUESTION ---\n${text}\n${REACH_CONTRACT}\nReturn ONLY JSON: {"answer":"..."}`,
         });
         const answer = String(res.json?.answer || "I don't have enough on that here.");
         if (needsReach(answer)) escalateToReach = true;
@@ -2082,19 +2138,19 @@ async function converseInner(
       const { assembleRoomGrounding } = await import('@/lib/room/grounding');
       const g = await assembleRoomGrounding(client, userId,
         entityId ? { kind: 'entity', entityId } : { kind: 'item', itemKind: linkKindOf(scope as Extract<ConverseScope, { kind: 'item' }>) === 'inbox_item' ? 'inbox' : linkKindOf(scope as Extract<ConverseScope, { kind: 'item' }>) === 'commitment' ? 'commitment' : 'meeting', itemId: (scope as Extract<ConverseScope, { kind: 'item' }>).itemId });
-      grounding = g.text.slice(0, 4500);
+      grounding = g.text;
     } catch { /* fall through to the item/global fallbacks below */ }
   }
   if (!grounding && scope.kind === 'item') {
     const { buildItemContext } = await import('@/lib/home/item-context');
     const ctx = await buildItemContext(client, userId, scope.itemKind, scope.itemId);
-    grounding = (ctx?.text || '').slice(0, 3500);
+    grounding = ctx?.text || '';
   } else if (scope.kind === 'global') {
     // Global open turns hold the SAME brain snapshot the Home ask answers from (one read, one
     // truth) — WITH the one-grounding focus (Aug 5): the question threads through, so a named
     // entity's full room page rides along; the wider slice keeps the appended focus block alive.
     const { buildBrainSnapshot } = await import('@/lib/home/ask');
-    grounding = (await buildBrainSnapshot(client, userId, text)).text.slice(0, 7000);
+    grounding = (await buildBrainSnapshot(client, userId, text)).text;
   }
   // The agent loop sees the conversation + registry matches too (one law, every path), under the
   // same honesty floor.
@@ -2132,16 +2188,28 @@ async function converseInner(
       `Do NOT answer from the context alone, do NOT say you cannot see something a tool can fetch, ` +
       `and do NOT offer to check: checking is what you are doing.`
     : '';
-  const preamble = [
-    ANSWER_HONESTY_RULE, reachNote,
+  // THE CONTEXT BUDGET (W2.7, found by reading the seam): the loop used to receive
+  // `preamble + grounding` and tail-chop the concatenation at 4,000 chars — so a long room
+  // transcript silently ate the whole grounding (the "wider 7,000-char" snapshot never reached the
+  // model at all). The page is PACKED now: the rules and the reach note stand whole, registry
+  // matches and the viewed item next, the grounding after them, and the room transcript yields
+  // first — from its OLDEST end (keepTail: latest last). Every cut and drop declares itself.
+  const [transcriptHead, ...transcriptBody] = String(dlg.transcript || '').split('\n');
+  const packedContext = packContext([
+    { id: 'honesty', text: ANSWER_HONESTY_RULE, priority: 1000 },
+    { id: 'reach', text: reachNote, priority: 1000 },
     // THE FORWARD-MOTION LAW as the mind reads it — the agreement IS the instruction.
-    answeringAnOffer ? FORWARD_MOTION_DIRECTIVE : '',
-    dlg.transcript, matches, viewing,
-  ].filter(Boolean).join('\n\n');
+    { id: 'forward', text: answeringAnOffer ? FORWARD_MOTION_DIRECTIVE : '', priority: 1000 },
+    { id: 'transcript-head', text: transcriptHead ?? '', priority: 900 },
+    { id: 'transcript', label: 'the older room transcript', text: transcriptBody.join('\n'), glue: '\n', priority: 100, keepTail: true, minChars: 600 },
+    { id: 'matches', text: matches, priority: 800 },
+    { id: 'viewing', text: viewing, priority: 700 },
+    { id: 'grounding', label: 'the room grounding', text: grounding, priority: 500, minChars: 1500 },
+  ], LOOP_CONTEXT_BUDGET).text;
   // The PANEL conversation rides as REAL messages (not a squeezed grounding block) — a follow-up
   // operates on the prior answer at full fidelity, the way any chat model expects. The room
   // narration transcript stays in the preamble (room callers don't always carry panel history).
-  let loopTurn = await agentLoop(client, userId, scope, text, preamble ? `${preamble}\n\n${grounding}` : grounding,
+  let loopTurn = await agentLoop(client, userId, scope, text, packedContext,
     opts.history, opts.onProgress, material, opts.onToken, { transcript, roomKey: dlg.roomKey });
   // NEVER RE-ASK WHAT YOU JUST ASKED (Sep 21) — the prompt directive above carries the law; this is
   // the deterministic floor under it, because a law is only alive while something enforces it. If an
@@ -2152,7 +2220,7 @@ async function converseInner(
     const retry = await agentLoop(client, userId, scope, text,
       `${FORWARD_MOTION_DIRECTIVE}\nYOU HAVE ALREADY RE-ASKED THIS QUESTION ONCE. Do not ask it again — ` +
       `act on what the conversation already states, or say in one sentence what you cannot do and what ` +
-      `you are doing instead.\n\n${preamble ? `${preamble}\n\n${grounding}` : grounding}`,
+      `you are doing instead.\n\n${packedContext}`,
       opts.history, opts.onProgress, material, undefined, { transcript, roomKey: dlg.roomKey })
       .catch(() => null);
     if (retry?.say && !repeatsTheQuestion(lastAssistant, retry.say)) loopTurn = retry;

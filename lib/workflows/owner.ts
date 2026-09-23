@@ -22,6 +22,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { readPlansByKeysAnyUser } from '@/lib/store/item-plans';
 
 export const OWNER_KIND = 'workflow_owner';
 
@@ -61,12 +62,13 @@ export async function ownersFor(
   const ids = workflows.map((w) => w.id);
   if (!ids.length) return out;
   try {
-    const { data } = await admin.from('item_plans').select('entity_id, tasks')
-      .eq('kind', OWNER_KIND).in('entity_id', ids).limit(ids.length * 2);
-    for (const r of (data ?? []) as Array<{ entity_id: string; tasks: OwnerRow | null }>) {
-      const t = r.tasks;
-      if (!t?.ownerUserId || !out.has(r.entity_id)) continue;
-      out.set(r.entity_id, { userId: t.ownerUserId, name: t.ownerName ?? null, explicit: true });
+    // Chunked + paged through the typed door (W2.6): the hourly standing sync now hands in EVERY
+    // workflow, so one giant `in()` + a `.limit()` would silently drop owners past the cap.
+    const rows = await readPlansByKeysAnyUser(admin, 'workflow_owner', ids);
+    for (const r of rows) {
+      const t = r.tasks as OwnerRow | null;
+      if (!t?.ownerUserId || !out.has(r.key)) continue;
+      out.set(r.key, { userId: t.ownerUserId, name: t.ownerName ?? null, explicit: true });
     }
   } catch { /* every workflow already carries its creator-fallback */ }
   return out;

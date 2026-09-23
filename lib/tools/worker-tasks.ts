@@ -118,7 +118,7 @@ export const getTaskDefinition = {
 
 export const updateTaskDefinition = {
   name: 'update_task',
-  description: "Edit any aspect of an existing task in response to user feedback. Use for: renaming, changing schedule, output settings, task instructions (tone/persona), status (pause/resume), or updating step content when the user gives feedback. Always call get_task first to read the current config. Use step_patch to edit a single step by its id — identify the right step from the labels and prompts you read. Act immediately — do not ask the user to confirm first.",
+  description: "Edit any aspect of an existing task in response to user feedback. Use for: renaming, changing schedule, output settings, task instructions (tone/persona), status (pause/resume), or updating step content when the user gives feedback. Always call get_task first to read the current config. Use step_patch to edit a single step by its id — identify the right step from the labels and prompts you read. Call it directly — do not ask the user to confirm in words first: a status change applies at once, and every other change is PREPARED as a confirm card the user applies with one click (the result tells you which happened; never say a prepared change is done).",
   input_schema: {
     type: 'object',
     properties: {
@@ -178,7 +178,7 @@ export const updateTaskDefinition = {
       output_language: { type: 'string', description: 'BCP-47 language code for output. Examples: "de" (German), "pt" (Portuguese), "fr" (French), "es" (Spanish)' },
       output_destination: { type: 'string', enum: ['message', 'document', 'slack', 'email'], description: "The deliverable's single home. message = a message in the run thread; document = a saved document in Documents/Drive; slack = posted to a Slack channel; email = emailed. The app always keeps a record regardless." },
       output_artifact_type: { type: 'string', enum: ['document', 'spreadsheet', 'presentation', 'email', 'frame'], description: 'Document type — only when output_destination is document. frame = a live interactive dashboard that updates in place with every run (versions kept).' },
-      output_title: { type: 'string', description: 'Title template for a document. Use {{date}} for the run date, {{week_of}} for the week. Example: "AHK Briefing — {{week_of}}"' },
+      output_title: { type: 'string', description: 'Title template for a document. Use {{date}} for the run date, {{week_of}} for the week. Example: "Weekly Market Briefing — {{week_of}}"' },
       output_slack_channel: { type: 'string', description: 'Slack channel (#name or id) when output_destination=slack, or "@me" to DM the user privately. For a document, the channel to also drop a link in. Resolve names via slack_list_channels.' },
       output_report_mode: { type: 'string', enum: ['each_run', 'digest', 'silent'], description: 'How proactively you report back after a run. each_run = message the user after every run (default); digest = periodic summary; silent = no report.' },
       output_email_to: { type: 'string', description: 'When output_destination=email: comma-separated recipient address(es) to send the deliverable to (any address — no inbox connection needed). Leave/clear to email the user themselves.' },
@@ -222,7 +222,7 @@ export const updateTaskDefinition = {
 
 export const runTaskDefinition = {
   name: 'run_task',
-  description: 'Trigger an immediate manual run of an existing task. Call when the user asks to run, execute, or trigger a task RIGHT NOW. Use list_tasks to find the task ID first. NOT for "resume" / "unpause" / "turn it back on" — those mean the schedule goes back on, which is set_tasks_status.',
+  description: 'Prepare an immediate manual run of an existing task. Call when the user asks to run, execute, or trigger a task RIGHT NOW. Use list_tasks to find the task ID first. The run is PREPARED as a confirm card — it starts only when the user clicks Apply on it; say it is ready to confirm, never that it is running. NOT for "resume" / "unpause" / "turn it back on" — those mean the schedule goes back on, which is set_tasks_status.',
   input_schema: {
     type: 'object',
     properties: {
@@ -247,7 +247,7 @@ export const duplicateTaskDefinition = {
 
 export const shareTaskDefinition = {
   name: 'share_task',
-  description: "Share one of your tasks with your team (or stop sharing it). Shared tasks appear in teammates' workers under 'From the team' — they can copy them. Call when the user says 'share this task', 'let the team use it', 'make it available', or 'stop sharing'.",
+  description: "Share one of your tasks with your team (or stop sharing it). Shared tasks appear in teammates' workers under 'From the team' — they can copy them. Call when the user says 'share this task', 'let the team use it', 'make it available', or 'stop sharing'. The change is PREPARED as a confirm card and applies only on the user's click — never say it is shared until they have.",
   input_schema: {
     type: 'object',
     properties: {
@@ -319,7 +319,7 @@ export const setTasksStatusDefinition = {
 
 export const deleteTaskDefinition = {
   name: 'delete_task',
-  description: 'Permanently delete a task. Call only when the user explicitly asks to delete or remove a task. Irreversible — confirm the task name before proceeding.',
+  description: 'Permanently delete a task. Call only when the user explicitly asks to delete or remove a task. Irreversible — the deletion is PREPARED as a confirm card and happens only when the user clicks Apply on it; never say it is deleted until they have.',
   input_schema: {
     type: 'object',
     properties: {

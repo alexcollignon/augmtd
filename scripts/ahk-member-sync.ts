@@ -31,12 +31,18 @@ import { resolveProbeUser } from './probe-user';
 import {
   fetchMemberDirectory, deriveMemberFacts, renderMemberProfileDoc, memberDocFilename,
   buildManifest, cacheFromManifest, readMemberManifest, writeMemberManifest,
-  selectDepartures, memberDocPrefix, profileManifestFrom,
-  MEMBER_FOLDER_NAME, type PortalMember,
+  selectDepartures, memberDocPrefix, profileManifestFrom, type PortalMember,
 } from '../lib/tenders/member-directory';
 import { readEnrichmentStore, websiteNotesOf } from '../lib/tenders/enrich-members';
 import { writeProfileDoc, KB_BUCKET } from '../lib/tenders/write-profile-doc';
 import { writeProfileManifest } from '../lib/matching/manifest';
+
+// THE AGNOSTIC CLAUSE (stabilization plan W4.4): the lib module is generic now — this ops script
+// is where the LIVE CLIENT's folder name + doc source label live. A different chamber running this
+// same script would set its own values here (or the platform-native scheduled-workflow version
+// reads them off the step config); the lib default is a generic fallback, not this.
+const MEMBER_FOLDER_NAME = 'AHK Member companies';
+const MEMBER_SOURCE_LABEL = 'AHK-Mitgliederverzeichnis (Portal)';
 // The CLIENT accounts. This script never runs against them — EXCEPT the one narrow, deliberate
 // escape below. The default set is both clients; a provisioning run releases AT MOST one of them.
 const DEFAULT_FORBIDDEN = new Set(['9d3921b2', 'de4e8824']);
@@ -119,7 +125,7 @@ async function ensureFolder(userId: string): Promise<string | null> {
   if (!APPLY) {
     const sample = members[0];
     console.log('\n── sample profile doc ──\n');
-    console.log(renderMemberProfileDoc(sample, derived[String(sample.id)]));
+    console.log(renderMemberProfileDoc(sample, derived[String(sample.id)], { sourceLabel: MEMBER_SOURCE_LABEL }));
     console.log('── dry run: nothing written ──\n');
     return;
   }
@@ -141,7 +147,7 @@ async function ensureFolder(userId: string): Promise<string | null> {
   await Promise.all(Array.from({ length: Math.min(LANES, queue.length) }, async () => {
     for (let m = queue.shift(); m; m = queue.shift()) {
       const doc = renderMemberProfileDoc(m, derived[String(m.id)], {
-        syncedAt, website: websiteNotes[String(m.id)] ?? null,
+        syncedAt, website: websiteNotes[String(m.id)] ?? null, sourceLabel: MEMBER_SOURCE_LABEL,
       });
       const r = await writeProfileDoc(sb, userId, folderId, memberDocFilename(m), doc);
       if (r === 'wrote') wrote++; else if (r === 'skipped') skipped++; else failed++;

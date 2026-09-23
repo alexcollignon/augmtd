@@ -13,6 +13,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 
+/** The bundle-naming prompt's version — rides the `home_brief.bundleNames.sig` (W2.6: the sig was the
+ *  bare bundle-key set, so a prompt change never re-named an unchanged set). BUMP on prompt change. */
+export const BUNDLE_NAMES_VERSION = 1;
+
 export type BundleNameInput = {
   key: string;
   kind: 'initiative' | 'meeting' | 'thread';

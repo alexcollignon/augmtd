@@ -25,6 +25,7 @@ import Link from 'next/link';
 import { ThreadMessages, type ThreadMessage } from '@/components/inbox/thread-messages';
 import { RoomShell } from '@/components/room/room-shell';
 import { projectHref } from '@/lib/room/project-href';
+import { prepAnchorKey } from '@/lib/room/presentation';
 // THE ONE ROOM GRAMMAR (threads Phase 3, owner walk Sep 7 — "the room isn't the same across items
 // and projects"): the loose item room wears the project room's own chrome — the 52px header line,
 // the FacePile, the Filed handle, the summoned drawer. Same parts, same file, never a lookalike.
@@ -42,6 +43,8 @@ import KbFilePicker from '@/components/inbox/kb-file-picker';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 // THE NO-MUTATION LAW — the one mechanism a loader consults before replacing what is painted.
 import { mayReplaceInPlace, ROOM_CACHE_MAX_AGE_MS, type ArrivalReason } from '@/lib/room/no-mutation';
+import { fetchItemView, itemViewKey } from '@/lib/room/warm-client';
+import { loadThreadRaw } from '@/lib/inbox/thread-door';
 import { fmtMonthDay, fmtDateTime, fmtWeekdayDate } from '@/lib/utils/format-date';
 import AddToProjectControl from '@/components/entities/add-to-work-control';
 import { ItemRail, pushDealTurn, type RailView } from '@/components/home/item-rail';
@@ -355,7 +358,14 @@ function ComposePanel({ kind, entityId, onSent }: { kind: ComposeKind; entityId:
     try {
       const res = await fetch('/api/compose/send', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: toList, cc: cc.split(',').map((s) => s.trim()).filter(Boolean), subject: subject.trim(), bodyHTML: html }),
+        body: JSON.stringify({
+          to: toList, cc: cc.split(',').map((s) => s.trim()).filter(Boolean), subject: subject.trim(), bodyHTML: html,
+          // THE OUTCOME LEDGER (W3.2): what the drafter prepared, so the send door can measure the
+          // fate of prepared work (accepted / edited + share). A blank seed prepared nothing.
+          prepared: initialHTML && initialHTML !== '<p></p>'
+            ? { itemKind: kind === 'email' || kind === 'awareness' ? 'inbox' : kind, itemId: entityId, bodyHTML: initialHTML }
+            : null,
+        }),
       });
       if (res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -733,6 +743,10 @@ type ItemViewData = {
     /** Q8 · THE PASTE PACK: where these words go (served, never composed here). */
     note?: string | null;
     decision?: { options: Array<{ label: string; tradeoff?: string | null }>; recommendation: string | null; why: string | null } | null;
+    /** The Aug 13 sweep: false = staged but the send door would refuse it (a timeless invite). */
+    sendReady?: boolean;
+    /** W2.1: an invite's STORED proposed time — the card mounts from it, never from a live re-grounding. */
+    invite?: { title: string | null; startISO: string | null; proposed: boolean } | null;
   }>;
   gap: string | null;
   inviteTaskId: string | null;
@@ -750,6 +764,13 @@ type ItemViewData = {
   /** THE MACHINE'S ONE WORD (experience-spec Part "THE MACHINE") — absent on meetings and on any
    *  view cached before the field existed. */
   machineState?: { state: string; word: string | null } | null;
+  briefAt?: string | null;
+  /** W3.5 (a): the server's compose outran its paint budget — one re-check appends the arrival. */
+  briefPending?: boolean;
+  briefStaleVersion?: boolean;
+  lateBrief?: { text: string; at: string | null } | null;
+  /** W3.5 (d): asks the machine read as moot — the room hides the same turns the header ignored. */
+  mootAskKeys?: string[];
 };
 
 // The word renders QUIET in the header's meta line — no chrome, no affordance (the stage already
@@ -955,8 +976,15 @@ function commonRoomTabs(
   return tabs;
 }
 
+// W3.5 (a) → W3.7: the ONE late re-check. The server's paint budget is now 1.2s (lib/room/brief
+// BRIEF_PAINT_BUDGET_MS); a compose that overran it finishes ≈3–6s after the request began, so the
+// re-check lands just past that — the appended brief arrives while the reader is still reading.
+const LATE_BRIEF_RECHECK_MS = 5_500;
+
 function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'awareness', id: string): { view: ItemViewData | null; refresh: () => void } {
-  const key = `aug-item-view-${kind}-${id}`;
+  // THE ONE KEY, THE ONE FLIGHT (W3.7 ROOM SPEED): the hover warm (lib/room/warm-client) fills this
+  // exact key, and an open that lands while that warm is still in flight JOINS it — one request.
+  const key = itemViewKey(kind, id);
   // SSR-safe instant-load: state starts COLD (matching the server render exactly); the cache hydrates
   // in a layout effect (client-only, pre-paint) — the documented rule for any SSR'd route, or the
   // warm-cache first paint diverges from the server and React throws a hydration mismatch.
@@ -972,11 +1000,16 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
     if (cached) { paintedRef.current = true; setView((prev) => prev ?? cached); }
   }, [key]);
   const recheckedRef = useRef(false);
+  const lateCheckedRef = useRef(false);
   // `reason`: 'user' for a deed the reader just performed (the law's own exception), 'open' for the
   // mount's own read — which yields to whatever the open already painted.
   const refresh = useCallback((reason: ArrivalReason = 'user') => {
-    fetch(`/api/items/view?kind=${kind}&id=${id}`)
-      .then((r) => (r.ok ? r.json() : null))
+    // The open joins a hover warm still in flight; a USER refresh (their own deed just changed the
+    // room) must read the post-deed world, so it never joins a flight that started before the deed.
+    const landing = reason === 'open'
+      ? fetchItemView(kind, id)
+      : fetch(`/api/items/view?kind=${kind}&id=${id}`).then((r) => (r.ok ? r.json() : null));
+    landing
       .then((d) => {
         if (!d || d.error) return;
         saveLS(key, d);
@@ -993,6 +1026,25 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
               .then((d2) => { if (d2 && !d2.error && d2.entity) { setView(d2); saveLS(key, d2); } })
               .catch(() => {});
           }, 6000);
+        }
+        // THE LATE BRIEF IS AN APPEND (W3.5 (a); registry precedence #1): the compose outran the
+        // server's paint budget. ONE re-check; whatever composed lands as `lateBrief` — a new
+        // message beneath the opening the reader met — never a swap of the painted opening.
+        const paintedBrief = !!(d.brief || d.entity?.brief);
+        if (d.briefPending && !paintedBrief && !lateCheckedRef.current) {
+          lateCheckedRef.current = true;
+          setTimeout(() => {
+            fetch(`/api/items/view?kind=${kind}&id=${id}`)
+              .then((r) => (r.ok ? r.json() : null))
+              .then((d2: ItemViewData | null) => {
+                if (!d2 || (d2 as { error?: unknown }).error) return;
+                saveLS(key, d2); // the next open's first paint
+                const text = d2.brief ?? d2.entity?.brief ?? null;
+                if (!text) return;
+                setView((prev) => (prev ? { ...prev, lateBrief: { text, at: d2.briefAt ?? d2.entity?.briefAt ?? null } } : prev));
+              })
+              .catch(() => {});
+          }, LATE_BRIEF_RECHECK_MS);
         }
       })
       .catch(() => {});
@@ -1330,6 +1382,10 @@ function EmailActionPalette({
 // (ReplyDirections live ON THE EMAIL CARD (Sep 8) — the /api/items/reply-directions organ serves
 // the card's top-edge tabs, and the stage stays purely read/edit/send for the deep 20%.)
 
+// How old a shared thread read may be and still serve the email room's open (the hover warm and the
+// object card both land within seconds of the click; anything older is re-read).
+const THREAD_FRESH_MS = 20_000;
+
 function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, hideArtifactCards = false, onDecision, injectedDraft }: { id: string; angle?: string | null; embedded?: boolean; initialStage?: 'reply' | 'forward' | 'invite'; stageSignal?: number; hideArtifactCards?: boolean; onDecision?: (d: ReportedDecision | null) => void; injectedDraft?: { body: string; v: number } | null }) {
   const router = useRouter();
   // Instant-load: hydrate the thread from the last-known localStorage snapshot (no skeleton flash on a
@@ -1423,10 +1479,14 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
   const [forwarding, setForwarding] = useState(false); // the item-level forward card is open
 
   // Load the thread + the prepared draft in parallel — same endpoints the Home uses.
+  // ONE THREAD READ PER OPEN (W3.7 ROOM SPEED): the room's object card reads the SAME door
+  // (lib/inbox/thread-door) — this joins its flight (or the hover warm's) instead of fetching the
+  // same thread a second time. The freshness demand keeps it an action surface: a read older than
+  // THREAD_FRESH_MS is never served here (this is the thread the reader replies to).
   useEffect(() => {
     let alive = true;
-    fetch(`/api/inbox/${id}/thread`)
-      .then(r => (r.ok ? r.json() : Promise.reject()))
+    loadThreadRaw(id, { maxAgeMs: THREAD_FRESH_MS })
+      .then((raw) => (raw && !raw.error ? raw as ThreadData : Promise.reject()))
       .then((d: ThreadData) => {
         if (!alive) return;
         setThread(d);
@@ -1480,7 +1540,9 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     try {
       const res = await fetch(`/api/inbox/${id}/send-reply`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customMessage: html, attachments: atts.attachments }),
+        // THE OUTCOME LEDGER (W3.2): the seeded draft rides as `aiDraft` — the door measures the sent
+        // words against what we prepared (else it falls back to the stored unsent draft).
+        body: JSON.stringify({ customMessage: html, attachments: atts.attachments, ...(draft ? { aiDraft: draftToHTML(draft) } : {}) }),
       });
       if (res.ok) {
         setSent(true);
@@ -1699,7 +1761,8 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     ...(!sent && !!draft && verdict?.work !== 'decide' && objectKind === 'email_thread' ? [{
       key: 'reply', label: 'Reply drafted — ready to review',
       by: view?.prepared?.find((p) => p.kind === 'reply_draft')?.by ?? null,
-      onOpen: openComposer, anchorKey: `prep:${id}`,
+      // THE PREP ANCHOR KEY (W2.1): the writer's own shape (`prep:inbox:<id>`) — `prep:<id>` never matched.
+      onOpen: openComposer, anchorKey: prepAnchorKey('inbox', id),
       // THE CARD CONTRACT: the reply arrives AS its card, in the thread — filled, editable, its
       // grounded direction-variants on its own top edge, one Send — instead of a row that has to
       // be opened before anything can be read. `Thread →` RETURNED (Sep 9): the thread stopped
@@ -1721,11 +1784,18 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
         onSent={() => { setTimeout(() => router.back(), 900); }}
       />,
     }] : []),
-    ...((view?.inviteTaskId || verdict?.work === 'schedule') ? [{
+    // W5c · A CLAIM RENDERS: the artifact card mounts from a LIVE prepared invite (THE ONE READER's
+    // served list) ONLY — never from the bare `schedule` verdict nor a plan step (a PLAN, not prepared
+    // work: re-walk, Sep 23, the step outlived a schedule→decide re-judgment), which mounted an empty
+    // shell under a "prepared" label whenever the stored invite was hidden (or never landed). The
+    // re-prepare lands as the card on the next open; the summoned stage (the user's own door) keeps
+    // its on-demand build.
+    ...(view?.prepared?.some((p) => p.kind === 'invite') ? [{
       key: 'invite',
       // TRUTH BEFORE PRESENTATION: an invite without a grounded time never claims "prepared".
       label: view?.inviteHasTime === false ? 'Invite drafted — needs a time from you' : 'Calendar invite prepared — review & approve',
       onOpen: () => { setInviteOpen(true); setComposerOpen(false); setForwarding(false); },
+      anchorKey: prepAnchorKey('inbox', id),
       // THE CARD CONTRACT: the invite arrives AS its card, in the thread — filled, editable, one
       // commit — instead of a row that has to be opened before anything can be seen.
       node: <InviteCard kind="email" entityId={id} taskId={view?.inviteTaskId ?? undefined}
@@ -1733,7 +1803,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     }] : []),
     ...(verdict?.work === 'forward' ? [{
       key: 'forward', label: 'Forward prepared — review & approve', by: null,
-      onOpen: openForward, anchorKey: `prep:${id}`,
+      onOpen: openForward, anchorKey: prepAnchorKey('inbox', id),
       // THE CARD CONTRACT REACHES THE LAST PREPARED VERB (W3-C, Sep 22 — component-map §2 item 8):
       // forward arrived as a bare "Open →" row beside a reply and an invite that both arrived AS
       // themselves. It arrives as itself now — same host, same two doors, same armed commit.
@@ -1969,7 +2039,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
         {/* PREPARED INVITE / FORWARD moved to the RAIL's artifact cards + SUMMONED STAGES (Aug 4 —
             the words and the deed are one element; the truth pane offers nothing). The in-stage
             review affordances survive ONLY when embedded in the entity room (no own rail). */}
-        {embedded && !itemDismissed && (view?.inviteTaskId || verdict?.work === 'schedule') && !inviteOpen && (
+        {embedded && !itemDismissed && view?.prepared?.some((p) => p.kind === 'invite') && !inviteOpen && (
           <button
             onClick={() => setInviteOpen(true)}
             className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/50 px-3.5 py-1.5 text-[12.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
@@ -1977,7 +2047,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
             <CalendarDaysIcon className="w-3.5 h-3.5" />Review invite
           </button>
         )}
-        {embedded && inviteOpen && (view?.inviteTaskId || verdict?.work === 'schedule') && (
+        {embedded && inviteOpen && (view?.inviteTaskId || view?.prepared?.some((p) => p.kind === 'invite') || verdict?.work === 'schedule') && (
           <InviteCard
             kind="email"
             entityId={id}
@@ -2096,7 +2166,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
       )}
 
       {/* THE SUMMONED INVITE STAGE — the artifact card's Open raises the approve-gated review. */}
-      {!embedded && inviteOpen && (view?.inviteTaskId || verdict?.work === 'schedule') && (
+      {!embedded && inviteOpen && (view?.inviteTaskId || view?.prepared?.some((p) => p.kind === 'invite') || verdict?.work === 'schedule') && (
         <StageOverlay title="Review the invite" onClose={() => setInviteOpen(false)}>
           <InviteCard
             kind="email"
@@ -2513,7 +2583,8 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   // composer directly (the message is the work; no "Draft email →" button gate). The user's own
   // toggle always wins after first touch.
   const composingTouchedRef = useRef(false);
-  const [verdict, setVerdict] = useState<{ work: string; reason: string } | null>(null);
+  const [verdict, setVerdict] = useState<{ work: string; reason: string; options?: Array<{ label: string }> } | null>(null);
+  const [decisionCleared, setDecisionCleared] = useState(false);
   useEffect(() => {
     let alive = true;
     fetch(`/api/items/judge?kind=commitment&id=${id}`)
@@ -2596,6 +2667,68 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   const stageOpen = sourceOpen || composeRaised || inviteOpen || gateStanding;
   const lowerStage = () => { setSourceOpen(false); setComposeRaised(false); setInviteOpen(false); };
 
+  // ── A CLAIM RENDERS (stabilization W2.1): the commitment room MOUNTS its prepared artifacts —
+  // the rail took none here while the deck chip said "ready to send" (70 pooled commitment
+  // artifacts had no surface). ONE derivation from the served LIVE list (THE ONE READER filtered
+  // stale/expired at the door): the invite arrives AS its card from the pool row's STORED time
+  // (+ the schedule verdict's live fallback, as EmailDetail does); a nudge opens the composer,
+  // which now reads the pooled draft; documents/paste packs/decision briefs ride the PreparedLead
+  // card. Anchored on the writer's own key so the pass's narration BECOMES the card.
+  const prepArts = view?.prepared ?? [];
+  const inviteArt = prepArts.find((p) => p.kind === 'invite') ?? null;
+  const nudgeArt = prepArts.find((p) => p.kind === 'nudge_draft' || p.kind === 'reply_draft') ?? null;
+  const leadArts = prepArts.filter((p) => (p.kind === 'deliverable' || p.kind === 'paste_pack') && p.content && !p.decision);
+  const commitAnchor = prepAnchorKey('commitment', id);
+  // ── THE DECISION, ON THE COMMITMENT DOOR TOO (W5c re-walk): a `decide` verdict + THE DECISION
+  // BRIEF the pass prepared rendered NOWHERE here — the lead strip filters decision artifacts (the
+  // decision's ONE surface is the DecisionCard) and this door never handed its rail a decision.
+  // Same derivation as EmailDetail's: the brief's options (with trade-offs) supersede the judge's
+  // bare labels; the object resolves from this door's own prepared artifacts.
+  const decisionBriefC = prepArts.find((p) => p.decision && p.decision.options.length >= 2) ?? null;
+  const commitDecision: ReportedDecision | null =
+    !done && !isHandoff && !decisionCleared && verdict?.work === 'decide'
+      && ((decisionBriefC?.decision?.options.length ?? 0) >= 2 || (verdict.options?.length ?? 0) >= 2)
+      ? {
+        itemKind: 'commitment' as const,
+        itemId: id,
+        title: verdict.reason || null,
+        options: (decisionBriefC?.decision?.options.length ?? 0) >= 2 ? decisionBriefC!.decision!.options : verdict.options!,
+        recommendation: decisionBriefC?.decision?.recommendation
+          ? { label: decisionBriefC.decision.recommendation, why: decisionBriefC.decision.why }
+          : null,
+        object: resolveDecisionObject(view?.prepared ?? null),
+      }
+      : null;
+  const commitArtifacts = (isHandoff || done) ? [] : [
+    // W5c: mounts from the LIVE invite ONLY (see EmailDetail's twin) — never hollow. A plan step
+    // ("Send calendar invite to X") is a PLAN, not prepared work: it mounted an empty card under a
+    // "prepared" label after the verdict had moved on (re-walk, Sep 23: the step outlived a
+    // schedule→decide re-judgment). The step still rides the card's prepare hint when a live one mounts.
+    ...(inviteArt ? [{
+      key: 'invite',
+      // TRUTH BEFORE PRESENTATION: a timeless invite never claims "prepared".
+      label: inviteArt?.sendReady === false ? 'Invite drafted — needs a time from you' : 'Calendar invite prepared — review & approve',
+      by: inviteArt?.by ?? null,
+      onOpen: () => { setInviteOpen(true); setComposeRaised(false); setSourceOpen(false); },
+      anchorKey: commitAnchor,
+      node: <InviteCard kind="commitment" entityId={id} taskId={view?.inviteTaskId ?? undefined}
+        verdictLevel={!view?.inviteTaskId} onSent={() => { setInviteOpen(false); setReload((n) => n + 1); }} />,
+    }] : []),
+    ...(nudgeArt ? [{
+      key: 'nudge', label: nudgeArt.kind === 'nudge_draft' ? 'Follow-up drafted — ready to review' : 'Email drafted — ready to review',
+      by: nudgeArt.by ?? null,
+      onOpen: () => { composingTouchedRef.current = true; setComposing(true); setComposeRaised(true); setInviteOpen(false); },
+      anchorKey: commitAnchor,
+    }] : []),
+    ...(leadArts.length ? [{
+      key: 'lead', label: leadArts[0].kind === 'paste_pack' ? 'Words ready — copy them where this lives' : `Prepared — "${(leadArts[0].title ?? 'document').slice(0, 52)}"`,
+      by: leadArts[0].by ?? null,
+      onOpen: () => setSourceOpen(true),
+      anchorKey: commitAnchor,
+      node: <PreparedLead prepared={leadArts} />,
+    }] : []),
+  ];
+
   // THE RECORD LEAVES THE STREAM (Sep 14) — the rail reports this room's past, the ONE drawer
   // files it. Same seam, same renderer, same section id as the project door.
   const [historyLines, setHistoryLines] = useState<RoomHistoryLine[]>([]);
@@ -2629,7 +2762,17 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   };
 
   return (
-    <DeepDiveShell embedded={embedded} room={room} rail={<ItemRail kind="commitment" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} />}>
+    <DeepDiveShell embedded={embedded} room={room} rail={<ItemRail kind="commitment" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} artifacts={commitArtifacts}
+      decision={commitDecision ? {
+        ...commitDecision,
+        // The word is the deed, and the deed is visible: the choice lands as the user's turn, the
+        // steer's answer as the response (the decision host owns the steer door itself).
+        onChosen: (label: string) => { pushDealTurn(railView?.entity?.id ?? `commitment:${id}`, label, { role: 'user' }); },
+        onResolved: (_label: string, outcome: { draft?: string | null; say: string }) => {
+          pushDealTurn(railView?.entity?.id ?? `commitment:${id}`, outcome.say, { key: `decide:${id}` });
+        },
+        onDismiss: () => setDecisionCleared(true),
+      } : null} />}>
       {/* Header — EMBEDDED only: on the loose door the ROOM header carries these facts once. */}
       {embedded && (
       <DetailHeader
@@ -2725,7 +2868,9 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
                 The prepared list is INVENTORY on the loose door — it lives in the drawer there. */}
             {embedded && <PreparedLead prepared={view?.prepared ?? null} />}
             {!railView && <GapLine text={view?.gap} />}
-            {view?.inviteTaskId && !inviteOpen && (
+            {/* W2.1: the invite lives on the RAIL's artifact card (loose door); the in-stage review
+                affordances survive ONLY when embedded in the entity room (no own rail). */}
+            {embedded && inviteArt && !inviteOpen && (
               <button
                 onClick={() => setInviteOpen(true)}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/50 px-3.5 py-1.5 text-[12.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
@@ -2733,8 +2878,8 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
                 <CalendarDaysIcon className="w-3.5 h-3.5" />Review invite
               </button>
             )}
-            {inviteOpen && view?.inviteTaskId && (
-              <InviteCard kind="commitment" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} />
+            {embedded && inviteOpen && (inviteArt || view?.inviteTaskId) && (
+              <InviteCard kind="commitment" entityId={id} taskId={view?.inviteTaskId ?? undefined} verdictLevel={!view?.inviteTaskId} onSent={() => setInviteOpen(false)} />
             )}
 
             {/* THE STEER INPUT — inline only when there's no rail (the rail's composer owns it). */}
@@ -3057,7 +3202,8 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
     try {
       const res = await fetch(`/api/commitments/${id}/nudge`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: text, attachments: atts.attachments }),
+        // THE OUTCOME LEDGER (W3.2): the seeded nudge (plain text, like the body) rides as `aiDraft`.
+        body: JSON.stringify({ body: text, attachments: atts.attachments, ...(draft ? { aiDraft: draft } : {}) }),
       });
       if (res.ok) {
         setSent(true);
@@ -3145,12 +3291,14 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
           ...(!sent && !!draft ? [{
             key: 'nudge', label: 'Follow-up drafted — ready to review',
             by: view?.prepared?.find((p) => p.kind === 'nudge_draft' || p.kind === 'deliverable')?.by ?? null,
-            onOpen: () => { setComposerOpen(true); setInviteOpen(false); }, anchorKey: `prep:${id}`, // one stage at a time
+            onOpen: () => { setComposerOpen(true); setInviteOpen(false); }, anchorKey: prepAnchorKey('commitment', id), // one stage at a time
           }] : []),
-          ...(view?.inviteTaskId ? [{
-            key: 'invite', label: 'Calendar invite prepared — review & approve',
-            onOpen: () => { setInviteOpen(true); setComposerOpen(false); },
-            node: <InviteCard kind="followup" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} />,
+          // W5c: the LIVE invite only — a plan step is not prepared work (never a hollow card).
+          ...(view?.prepared?.some((p) => p.kind === 'invite') ? [{
+            key: 'invite', label: view?.inviteHasTime === false ? 'Invite drafted — needs a time from you' : 'Calendar invite prepared — review & approve',
+            by: view?.prepared?.find((p) => p.kind === 'invite')?.by ?? null,
+            onOpen: () => { setInviteOpen(true); setComposerOpen(false); }, anchorKey: prepAnchorKey('commitment', id),
+            node: <InviteCard kind="followup" entityId={id} taskId={view?.inviteTaskId ?? undefined} verdictLevel={!view?.inviteTaskId} onSent={() => setInviteOpen(false)} />,
           }] : []),
         ]}
       />
@@ -3201,7 +3349,7 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
 
         {/* Prepared INVITE moved to the RAIL's artifact card + the summoned stage (Aug 4);
             embedded keeps the in-stage affordance (no own rail). */}
-        {embedded && view?.inviteTaskId && !inviteOpen && (
+        {embedded && view?.prepared?.some((p) => p.kind === 'invite') && !inviteOpen && (
           <button
             onClick={() => setInviteOpen(true)}
             className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/50 px-3.5 py-1.5 text-[12.5px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
@@ -3209,8 +3357,8 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
             <CalendarDaysIcon className="w-3.5 h-3.5" />Review invite
           </button>
         )}
-        {embedded && inviteOpen && view?.inviteTaskId && (
-          <InviteCard kind="followup" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} />
+        {embedded && inviteOpen && (view?.inviteTaskId || view?.prepared?.some((p) => p.kind === 'invite')) && (
+          <InviteCard kind="followup" entityId={id} taskId={view?.inviteTaskId ?? undefined} verdictLevel={!view?.inviteTaskId} onSent={() => setInviteOpen(false)} />
         )}
 
       {/* The follow-up composer moved to THE SUMMONED STAGE (Aug 3) — rendered after the scroll
@@ -3273,9 +3421,9 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
       )}
 
       {/* THE SUMMONED INVITE STAGE (follow-up door — same grammar as email). */}
-      {!embedded && inviteOpen && view?.inviteTaskId && (
+      {!embedded && inviteOpen && (view?.inviteTaskId || view?.prepared?.some((p) => p.kind === 'invite')) && (
         <StageOverlay title="Review the invite" onClose={() => setInviteOpen(false)}>
-          <InviteCard kind="followup" entityId={id} taskId={view.inviteTaskId} onSent={() => setInviteOpen(false)} />
+          <InviteCard kind="followup" entityId={id} taskId={view?.inviteTaskId ?? undefined} verdictLevel={!view?.inviteTaskId} onSent={() => setInviteOpen(false)} />
         </StageOverlay>
       )}
 

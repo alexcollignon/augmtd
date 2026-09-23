@@ -23,7 +23,6 @@ export async function POST(req: NextRequest) {
       user_id: user.id,
       meeting_id: randomUUID(),
       calendar_event_id: calendarEventId,
-      attendee_bot_id: null,
       bot_state: null,
       source: 'text',
       recording_storage_path: null,

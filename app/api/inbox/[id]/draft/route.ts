@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { readPlan } from '@/lib/store/item-plans';
 import { generateReplyDraft } from '@/lib/inbox/draft-reply';
 import { loadUserRules } from '@/lib/inbox/rules/load';
 import { setInboxRules, shouldDraftReply } from '@/lib/inbox/classify-item';
@@ -63,8 +64,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const draftSuperseded = !!sd.draft?.body
     && (groundMoved(sd.draft?.prepared_from ?? null, currentGround) || draftLawStale(sd.draft ?? null));
   if (!fresh && sd.draft?.body && !draftSuperseded) {
-    const { data: jrow } = await supabase.from('item_plans').select('tasks')
-      .eq('user_id', user.id).eq('kind', 'judgment').eq('entity_id', `inbox:${id}`).maybeSingle();
+    const jrow = await readPlan(supabase, user.id, 'judgment', `inbox:${id}`);
     const cachedWork = ((jrow?.tasks ?? null) as { verdict?: { work?: string } } | null)?.verdict?.work;
     if (cachedWork === 'reply' || cachedWork === 'send_file') {
       return NextResponse.json({ draft: sd.draft.body as string });

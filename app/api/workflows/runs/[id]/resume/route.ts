@@ -94,7 +94,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     // conditional claim that takes the run out of its park (a double-send can only win once). The
     // run then re-enters through `resumeSeeded`, which passes NO human gate — so a later approval
     // parks again by construction, never silently passed by an input answer. ──
-    if (gate.kind === 'input' && approve !== false) {
+    //
+    // THE SUPPLY IS NEVER A REJECTION (W0.4 — EXACTLY-ONCE DEEDS): the payload decides, never the
+    // `approve` bit. A body carrying `input` at an input station IS a supply whatever `approve` says
+    // (the supply form once posted `approve:false` + material and the run was REJECTED while the
+    // door answered ok). Only a body with NO material and approve !== true is the hold-back.
+    const suppliesMaterial = gate.kind === 'input' && (Boolean(body.input) || approve);
+    if (suppliesMaterial) {
       if (!body.input || (!String(body.input.text ?? '').trim() && !String(body.input.kbFileId ?? '').trim())) {
         return NextResponse.json({
           error: 'This run is waiting for something from you, not a yes or no — paste it, or pin a document.',
@@ -123,11 +129,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
 
     if (!approve) {
-      const { error: rejErr } = await admin.from('workflow_runs').update({
+      // THE CONDITIONAL CLAIM (W0.4): the hold-back lands only on a run still parked — a racer that
+      // already approved/supplied/rejected wins, and this request hears the truth (409), never a
+      // silent overwrite of a run that is already running.
+      const { data: rejected, error: rejErr } = await admin.from('workflow_runs').update({
         status: 'rejected', completed_at: new Date().toISOString(),
         error: body.note ? `Rejected by the user: ${String(body.note).slice(0, 200)}` : 'Rejected by the user',
-      }).eq('id', runId);
+      }).eq('id', runId).eq('status', 'awaiting_approval').select('id');
       if (rejErr) return NextResponse.json({ error: `could not record the rejection: ${rejErr.message}` }, { status: 500 });
+      if (!rejected || rejected.length === 0) {
+        return NextResponse.json({ error: 'This run already moved on — someone else decided it.' }, { status: 409 });
+      }
       if (wf) {
         try {
           const { data: c } = await admin.from('commitments').select('id')
@@ -155,7 +167,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     // Mark running NOW (the exactly-once claim), resume in after() — the send it was guarding
     // fires through the normal step path with the full completion machinery behind it.
-    await admin.from('workflow_runs').update({ status: 'running' }).eq('id', runId);
+    // THE CONDITIONAL CLAIM (W0.4): only the request that moves the row OUT of its park resumes it;
+    // a double-click or a concurrent approver loses the claim and hears 409 — the guarded send can
+    // never be re-entered twice.
+    const { data: claimed, error: claimErr } = await admin.from('workflow_runs')
+      .update({ status: 'running' })
+      .eq('id', runId).eq('status', 'awaiting_approval')
+      .select('id');
+    if (claimErr) return NextResponse.json({ error: `could not record the approval: ${claimErr.message}` }, { status: 500 });
+    if (!claimed || claimed.length === 0) {
+      return NextResponse.json({ error: 'This run already moved on — someone else decided it.' }, { status: 409 });
+    }
     await settle();
     after(async () => {
       try {

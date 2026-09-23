@@ -22,6 +22,8 @@ import type { WorkItem } from '@/lib/work-items/model';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { fmtMonthDay } from '@/lib/utils/format-date';
 import { AnchoredPopover } from '@/components/ui/anchored-popover';
+import { prefetchItemView, queueBriefWarm } from '@/lib/room/warm-client';
+import { loadThreadRaw } from '@/lib/inbox/thread-door';
 
 // ── A row control that SAYS WHAT IT DOES, in words (owner walk, Sep 15: "longer labels in front of
 // action buttons in home"). The label used to slide out on each control's own hover (`group/act`,
@@ -235,6 +237,9 @@ const PREFETCH_PLAN: Record<string, (id: string) => { key: string; url: string }
 const _prefetchedItems = new Set<string>();
 export function prefetchItem(href: string | null | undefined) {
   if (!href) return;
+  // W3.7 ROOM SPEED: the room's own outcome read warms too (the SAME cache key the deep-dive paints
+  // from, and a flight the open joins) — the thread alone left the room's brief and cards cold.
+  prefetchItemView(href);
   try {
     const m = href.match(/\/item\/([^/?#]+)/);
     if (!m) return;
@@ -245,7 +250,12 @@ export function prefetchItem(href: string | null | undefined) {
     _prefetchedItems.add(dedupeKey);
     const plan = (PREFETCH_PLAN[kind] ?? PREFETCH_PLAN.email)(id);
     if (loadLS(plan.key) != null) return; // already warm from a prior open
-    fetch(plan.url).then((r) => (r.ok ? r.json() : null)).then((d) => { if (d) saveLS(plan.key, d); }).catch(() => {});
+    // W3.7: the email thread warms through THE ONE THREAD READ (lib/inbox/thread-door) — the open's
+    // own read then joins this flight (or serves it, while fresh) instead of fetching it again.
+    const landing: Promise<unknown> = (kind === 'email' || !PREFETCH_PLAN[kind])
+      ? loadThreadRaw(id)
+      : fetch(plan.url).then((r) => (r.ok ? r.json() : null));
+    landing.then((d) => { if (d && !(d as { error?: unknown }).error) saveLS(plan.key, d); }).catch(() => {});
   } catch { /* non-fatal */ }
 }
 
@@ -319,6 +329,10 @@ export function useRowActions(item: DoItem, cbs: RowActionCallbacks = {}) {
   const commit = useCommitmentAct(isCommit ? item.entityId : undefined, cbs.onClearedCommitment, cbs.onUndoCommitment);
   const [acting, setActing] = useState(false);
   useEffect(() => { if (inbox.removed) cbs.onDismissInbox?.(item.entityId); }, [inbox.removed]); // eslint-disable-line react-hooks/exhaustive-deps
+  // THE BRIEF WARM (W3.7 ROOM SPEED): a row on screen is a room the reader may open next — queue its
+  // opening for the background compose (bounded: the first few rows of a render, once per window;
+  // lib/room/warm-client). Every surface that lists work through this kit warms the same way.
+  useEffect(() => { queueBriefWarm(item.href); }, [item.href]);
   const removed = isCommit ? commit.removed : inbox.removed;
   const exiting = isCommit ? commit.exiting : inbox.exiting;
 

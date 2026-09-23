@@ -389,9 +389,14 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
   }
 
   // ═══ Structural closures for the batch ═══
+  // ⟲ RE-POINTED (stabilization W2.5, Sep 23 — THE ONE SIG HELPER): the judge's key is now
+  // `${JUDGE_VERSION}:${todayStr}:${sigOf({ version, deps: { activityAt, … } })}` — the version and
+  // the USER-LOCAL day keep their positional slots (the parked serve blanks the day slot), and the
+  // activity stamp rides as a NAMED dep inside sigOf instead of a raw third segment. The law —
+  // the local day rides the cache sig, beside the version, and activity moves the sig — is unchanged.
   check('P9-12 structural · the judge carries the USER-LOCAL now + a resolution disposition; the local day rides the cache sig',
     src('lib/work/judge.ts').includes('RIGHT NOW for the user it is ${nowL.pretty}') && src('lib/work/judge.ts').includes("resolution?: 'expired' | 'answered'") &&
-    src('lib/work/judge.ts').includes('${JUDGE_VERSION}:${todayStr}:${activityAt}'));
+    /`\$\{JUDGE_VERSION\}:\$\{todayStr\}:\$\{sigOf\(\{ version: JUDGE_VERSION, deps: \{\s*activityAt,/.test(src('lib/work/judge.ts')));
   check('structural · ONE consequence module, wired at the pass AND the serving edge',
     src('lib/work/apply-verdict.ts').includes('export async function applyVerdictConsequences') &&
     src('lib/prepare/pass.ts').includes('applyVerdictConsequences') &&
@@ -608,7 +613,12 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     src('app/api/inbox/[id]/draft/route.ts').includes('resolveRequirements') &&
     src('app/api/items/judge/route.ts').includes('resolveRequirements') &&
     !src('app/api/cron/draft-sweep/route.ts').includes('generateReplyDraft') &&
-    src('app/api/cron/draft-sweep/route.ts').includes('runPreparationPass'));
+    // RE-POINTED (Sep 22, W3.3 REACH): the cron is a dispatcher; the ONE per-user body
+    // (lib/work/sweep-fanout.ts runUserSweep) is where the pass runs, for both the fan-out route and
+    // the in-process fallback. The law — the pass is the only ambient door — is unchanged.
+    !src('lib/work/sweep-fanout.ts').includes('generateReplyDraft') &&
+    src('app/api/cron/draft-sweep/route.ts').includes('runUserSweep') &&
+    src('lib/work/sweep-fanout.ts').includes('await runPreparationPass(admin, userId'));
   check('P18 · the story\'s ORDER is part of its truth (dedupe updates in place, never delete+reinsert)',
     src('lib/room/turns.ts').includes('Dedupe UPDATES IN PLACE'));
   check('P18 · ONE ask per item — the coworker\'s attempted-work ask SUPERSEDES the engine\'s provisional one (both directions)',
@@ -1952,7 +1962,15 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     check('P34 · settleAsksForItem wired at every resolution door (verdict ×2 · reply-resolve ×2 · sweep · the ONE manual resolver ×2) + the posting-side covers-merge',
       (src('lib/work/apply-verdict.ts').match(/settleAsksForItem/g) ?? []).length >= 2 &&
       (src('lib/inbox/resolve-on-reply.ts').match(/settleAsksForItem/g) ?? []).length >= 2 &&
-      src('app/api/cron/commitments-sweep/route.ts').includes('settleAsksForItem') &&
+      // ⟲ RE-POINTED (W3.1 EVIDENCE SETTLES, Sep 23): the sweep no longer closes a commitment in its
+      // own body — both of its closing doors are shared modules, and EACH settles the asks after its
+      // flip: settleCommitmentByEvidence → afterClose (evidence-settle.ts) and applyExpiryVerdict
+      // (expiry.ts). The sweep door still settles asks; only the call moved one module down.
+      /settleCommitmentByEvidence\(sb, c,/.test(src('app/api/cron/commitments-sweep/route.ts')) &&
+      /applyExpiryVerdict\(sb, c\.user_id, c, ev\)/.test(src('app/api/cron/commitments-sweep/route.ts')) &&
+      /async function afterClose[\s\S]{0,1400}settleAsksForItem/.test(src('lib/work/evidence-settle.ts')) &&
+      (src('lib/work/evidence-settle.ts').match(/await afterClose\(/g) ?? []).length >= 2 &&
+      /export async function applyExpiryVerdict[\s\S]{0,2500}settleAsksForItem/.test(src('lib/commitments/expiry.ts')) &&
       (src('lib/tools/item-actions.ts').match(/settleAsksForItem/g) ?? []).length >= 2 &&
       src('lib/prepare/requirements.ts').includes('ONE ARTIFACT = ONE ASK') &&
       src('lib/prepare/requirements.ts').includes('namesOverlap') &&
@@ -2003,7 +2021,8 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       src('lib/email-sync/sync-emails.ts').includes('attachMeta') &&
       src('lib/commitments/fulfillment.ts').includes('UNKNOWN (metadata unavailable') &&
       src('lib/inbox/resolve-on-reply.ts').includes('meta.attachments.length : null') &&
-      src('app/api/cron/commitments-sweep/route.ts').includes('meta.attachments.length : null'));
+      // W3.1: the sweep reads attachment facts through the evidence pool (one loader, same UNKNOWN-never-zero rule)
+      src('lib/work/evidence-nominator.ts').includes('Array.isArray(a) ? a.length : null'));
     check('P33 · the watermark law — the judge and the entity ledger read the thread\'s PRESENT, never only the founding snapshot',
       src('lib/work/judge.ts').includes('WHERE THE THREAD STANDS NOW') &&
       src('lib/entities/state.ts').includes('nowByThread') &&
@@ -2036,7 +2055,9 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     src('lib/commitments/fulfillment.ts').includes('dateStatedInText(body, nd)') &&
     src('lib/commitments/fulfillment.ts').includes("kind: 'fulfillment'") &&
     src('lib/inbox/resolve-on-reply.ts').includes('judgeCommitmentFulfillment') &&
-    src('app/api/cron/commitments-sweep/route.ts').includes('judgeCommitmentFulfillment') &&
+    // W3.1 EVIDENCE SETTLES: the sweep consults the judge through the evidence door (multi-candidate)
+    src('app/api/cron/commitments-sweep/route.ts').includes('settleCommitmentByEvidence') &&
+    src('lib/work/evidence-settle.ts').includes('judgeFulfillmentFromEvidence') &&
     src('scripts/sweep-false-fulfillment.ts').includes('judgeCommitmentFulfillment'));
   check('P32 · the STAMPED cache — an action surface never paints from a cache too old to trust (saveLS stamps __at; the deck + horizon demand freshness; a legacy unstamped blob never satisfies a freshness demand)',
     src('lib/utils/local-cache.ts').includes('__at') &&

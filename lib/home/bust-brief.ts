@@ -9,12 +9,16 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { mergeHomeBrief } from '@/lib/home/brief-store';
 
+// W0.5 TIME BUDGET: routed through THE ONE MERGE (brief-store.ts) — this used to read-modify-write
+// the whole blob itself, racing every other home_brief writer's own read-modify-write.
 export async function softBustBrief(supabase: SupabaseClient, userId: string): Promise<void> {
   try {
+    // Bust semantics preserved exactly: nothing cached → nothing to bust (no shell object created).
     const { data } = await supabase.from('profiles').select('home_brief').eq('id', userId).single();
     const hb = ((data?.home_brief as Record<string, unknown>) ?? null);
-    if (!hb) return; // nothing cached — nothing to bust
-    await supabase.from('profiles').update({ home_brief: { ...hb, sig: null } }).eq('id', userId).then(() => {}, () => {});
+    if (!hb) return;
+    await mergeHomeBrief(supabase, userId, { sig: null });
   } catch { /* non-fatal */ }
 }

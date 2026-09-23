@@ -17,8 +17,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveSendFrom, type SendMailbox, type StandaloneEmailDraft } from '@/lib/prepare/email-card';
 import { saveChatEmail } from '@/lib/prepare/chat-email-store';
 import { coworkerEmailForRole } from '@/lib/integrations/registry';
-
-const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+import { emailsIn } from '@/lib/core/email';
 
 /** The user's own sending mailboxes, oldest first (the deterministic default the whole product
  *  already uses for "the primary account"). */
@@ -75,7 +74,7 @@ export async function prepareStandaloneEmail(
   const rawSubject = String(args.source.subject ?? '').trim();
   const subject = rawSubject ? (/^re:/i.test(rawSubject) ? rawSubject : `Re: ${rawSubject}`) : '';
   const mailboxes = await loadSendMailboxes(client, userId);
-  const hintAddresses = [...new Set((String(args.hintText ?? '').match(EMAIL_RE) ?? []).map((a) => a.toLowerCase()))]
+  const hintAddresses = emailsIn(String(args.hintText ?? ''))
     .filter((a) => a !== sender.toLowerCase());
   const from = resolveSendFrom(mailboxes, { addresses: hintAddresses });
   const draft: StandaloneEmailDraft = {

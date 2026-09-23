@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE CASE LAYER (THE RELAY CANVAS W4 — docs/relay-canvas-plan.md, spec addendum Aug 24).
 //
-// René's step 2: "Augmtd links application to job opening." Applications arrive over days through
+// A pilot's step 2: "Augmtd links application to job opening." Applications arrive over days through
 // many doors; each run carries ONE; the comparison needs the OPENING'S ACCUMULATED candidates.
 // Cross-run state — and it needs NO new store.
 //

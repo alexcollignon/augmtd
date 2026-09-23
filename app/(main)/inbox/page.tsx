@@ -4,6 +4,7 @@ import { getSessionUser } from '@/lib/supabase/get-session-user';
 import { getMyProfile } from '@/lib/workspace/features';
 import { InboxPageClient } from '@/app/inbox/inbox-page-client';
 import { guardFeaturePage } from '@/lib/workspace/guards';
+import { withoutMirrors } from '@/lib/inbox/commitment-mirrors';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +19,8 @@ export default async function PreparedWorkPage() {
   const [profile, { data: connections }, { data: inboxItems }] = await Promise.all([
     getMyProfile(user.id),
     supabase.from('connections').select('id').eq('user_id', user.id).in('provider', ['gmail', 'outlook']).eq('status', 'active'),
-    supabase.from('inbox_items').select('*').eq('user_id', user.id).eq('status', 'pending').order('priority', { ascending: false }).order('created_at', { ascending: false }),
+    // THE MIRROR FLOOR (W2.3): historical commitment mirrors never list — a commitment lives in its own lane.
+    withoutMirrors(supabase.from('inbox_items').select('*')).eq('user_id', user.id).eq('status', 'pending').order('priority', { ascending: false }).order('created_at', { ascending: false }),
   ]);
 
   const hasConnection = (connections?.length ?? 0) > 0;

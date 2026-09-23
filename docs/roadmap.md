@@ -1,5 +1,11 @@
 # THE STANDING ORDER (Sep 20, 2026)
 
+> **Sep 22 — CURRENT PROGRAM: `docs/stabilization-plan.md`.** The stabilization program runs before
+> the main sequence below resumes. THE MAP ARC's registry deliverable (W1 here) is being delivered as
+> its wave W1.4 (`docs/laws-registry.md` + `scripts/smoke-laws.ts`); the architecture map is
+> `docs/ARCHITECTURE.md`; the doc index is `docs/README.md`. Debt items below that a stabilization
+> wave now owns are fixed there, not here.
+
 THIS IS THE INDEX, NOT A CONSTITUTION. Each arc keeps its own plan doc as its law; this file
 says what is done, what runs next, in what order, and which calls are already made so they are
 never re-litigated. There are 54 plan docs in `docs/` and until now nothing pointed at them —
@@ -147,11 +153,9 @@ THE CLOCK class reaching the meeting lane, live, client-facing) · Home-ask answ
 payload plumbing) · DM and Home-chat producer seats for the object card (their payloads carry no
 inbox id) · the held-ledger rows carry no project tag (server plumbing).
 
-**→ from THE PILOT CHAT WAVE**: the calendar cron is still DAILY (`vercel.json` `0 2 * * *`) — the
-chat lane now self-heals on read, but the deck/prep/background surfaces inherit up to 24h of
-staleness; raising it is a one-line owner/ops call · standalone Home-chat drafts render as plain
-delimited text (the chief lane has no non-send draft card; reusing EmailCard would mint a send path
-in chat) · the stream hold is a 1200ms heuristic, not a proof (a longer preamble flushes — never
+**→ from THE PILOT CHAT WAVE**: ~~the calendar cron is still DAILY~~ — corrected Sep 22: the calendar
+cron runs HOURLY (`vercel.json` `5 * * * *`) · ~~standalone Home-chat drafts render as plain
+delimited text~~ — corrected Sep 22: standalone chat drafts now render on the email card · the stream hold is a 1200ms heuristic, not a proof (a longer preamble flushes — never
 erased, but visible; the full fix is a toolless final iteration) · `draft_reply` is native-TS only
 (AgentOS Python vocabulary needs a box redeploy to say it from a coworker DM) · cross-instance
 calendar single-flight is in-process only (benign: idempotent upsert + prune) · the floor still
@@ -161,7 +165,7 @@ redundant with the shared matcher.
 **Owner calls, open**: should `awaiting` rows on a bystander seat also drop? (wider than debt — the
 seat law currently covers obligations only) · case-resolver-reads-pinned-list.
 
-**Housekeeping**: `components/workers/tabs/worker-activity-tab.tsx` is orphaned · the dev-harness
+**Housekeeping**: ~~`components/workers/tabs/worker-activity-tab.tsx` is orphaned~~ (deleted) · the dev-harness
 thread fixture is stale (Sep 5 content, predates the opening contract) · rare timing flake in the TR
 throttle-drain suite section.
 

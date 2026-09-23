@@ -77,7 +77,12 @@ import {
 } from '@/lib/triage/words';
 // THE ONE THREAD-DOOR READER (lib/inbox/thread-door.ts) — shared with the room's object card, so
 // the tail a deck warms is the tail a room shows, read once.
-import { loadThreadTail, peekThreadDoor } from '@/lib/inbox/thread-door';
+import { loadThreadTail, loadThreadDoor, peekThreadDoor } from '@/lib/inbox/thread-door';
+// THE FOUNDING CONTEXT OF A HANDED COMMITMENT (W3.6) — one batched read for the whole handed set,
+// and THE ONE OBJECT CARD for an email-sourced one (the mount reads the same thread door).
+import { loadDeckContext, peekDeckContext } from '@/lib/triage/deck-context-door';
+import type { DeckContext } from '@/lib/triage/deck-context';
+import { SourceObjectMount } from '@/components/room/source-object';
 // THE HONEST COUNTER — a stack still being extended may not state a total (lib/triage/queue.ts).
 import { queueCount } from '@/lib/triage/queue';
 
@@ -185,7 +190,36 @@ function TriageCard({ row }: { row: TriageRow }) {
     return () => { live = false; };
   }, [row.id, threaded]);
 
+  // A HANDED COMMITMENT HAS NO THREAD OF ITS OWN — its founding context comes through the deck
+  // context door (coalesced across the whole handed set), and when the obligation was born in a
+  // thread that has an inbox item, THE ONE OBJECT CARD mounts it once its door has answered (so the
+  // card never swaps a served line for an empty frame).
+  const founded = row.item.source === 'commitment';
+  const [ctx, setCtx] = useState<DeckContext | null>(() => (founded ? peekDeckContext(row.id) : null));
+  const [objectReady, setObjectReady] = useState<boolean>(() => {
+    const c = founded ? peekDeckContext(row.id) : null;
+    return !!(c?.inboxItemId && peekThreadDoor(c.inboxItemId));
+  });
+  useEffect(() => {
+    if (!founded) { setCtx(null); setObjectReady(false); return; }
+    let live = true;
+    void loadDeckContext(row.id).then((c) => {
+      if (!live) return;
+      setCtx(c);
+      if (c?.inboxItemId) {
+        if (peekThreadDoor(c.inboxItemId)) { setObjectReady(true); return; }
+        void loadThreadDoor(c.inboxItemId).then((d) => { if (live) setObjectReady(!!d && (d.tail.length > 0 || !!d.subject)); });
+      }
+    });
+    return () => { live = false; };
+  }, [row.id, founded]);
+
   const sourceWord = TRIAGE_SOURCE_WORD[row.item.source] ?? null;
+  // THE PROJECT REFERENCE — served (tracked-only), already filtered so it never repeats the title.
+  const project = (row.item.initiative ?? '').trim() || null;
+  // THE WHY-HELD CLAUSE + THE JUDGE'S REASON, one muted line (the reason is the "why this is work"
+  // the card never had; it is dropped when it restates the title).
+  const whyLine = [row.why, ctx?.reason].filter(Boolean).join(' · ');
   // THE CONTEXTUAL CHIP — the prepared state where one was served, else the held class's own word.
   // It never invents a state: a row with neither wears nothing.
   const chip = row.preparedWord ?? (row.prepared === 'reply_draft' ? 'draft ready'
@@ -199,14 +233,18 @@ function TriageCard({ row }: { row: TriageRow }) {
           labelled empty space is worse than a shorter card. */}
       <div className="flex items-center gap-2.5 px-5 pt-4">
         <span aria-hidden className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-neutral-100 text-[12px] font-medium text-neutral-500">
-          {initialOf(row.who ?? row.title)}
+          {/* THE AVATAR IS THE WHO'S — never a letter of the title; no who → the neutral glyph. */}
+          {initialOf(row.who)}
         </span>
         <div className="flex min-w-0 flex-1 flex-col">
           {row.who && <span className="truncate text-[13px] font-medium text-neutral-800">{row.who}</span>}
           <span className="flex items-center gap-1.5 text-[11px] text-neutral-400">
-            {sourceWord && <span>{sourceWord}</span>}
-            {sourceWord && row.dueDate && <span aria-hidden>·</span>}
-            {row.dueDate && <span>{whenWords(row.dueDate)}</span>}
+            {[sourceWord, project, row.dueDate ? whenWords(row.dueDate) : null].filter(Boolean).map((t, i) => (
+              <span key={i} className="flex items-center gap-1.5">
+                {i > 0 && <span aria-hidden>·</span>}
+                <span className={t === project ? 'truncate' : undefined}>{t}</span>
+              </span>
+            ))}
           </span>
         </div>
         {chip && (
@@ -216,7 +254,7 @@ function TriageCard({ row }: { row: TriageRow }) {
 
       <p className="mt-2.5 px-5 text-[15px] font-medium leading-snug text-neutral-900">{row.title}</p>
       {/* THE WHY-HELD CLAUSE — the ledger's own served sentence, not a second account of it. */}
-      {row.why && <p className="mt-1 px-5 text-[12px] text-neutral-400">{row.why}</p>}
+      {whyLine && <p className="mt-1 px-5 text-[12px] text-neutral-400">{whyLine}</p>}
 
       {/* ── MIDDLE · THE THING ITSELF ─────────────────────────────────────────────────────────────
           For a mail row the thread's tail, author-named, each message's own words clipped by the
@@ -231,6 +269,24 @@ function TriageCard({ row }: { row: TriageRow }) {
           </div>
         )) : row.excerpt ? (
           <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-neutral-500">{row.excerpt}</p>
+        ) : founded && ctx ? (
+          // THE FOUNDING CONTEXT (W3.6): the thread itself through THE ONE OBJECT CARD once its door
+          // has answered; until then (or with no inbox item) the newest message as a compact line in
+          // the tail's own grammar; a meeting-born obligation names its meeting. Absent → nothing.
+          ctx.inboxItemId && objectReady ? (
+            <SourceObjectMount itemId={ctx.inboxItemId} />
+          ) : ctx.founding ? (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[11px] font-medium text-neutral-400">
+                {[ctx.founding.who, ctx.founding.at ? whenWords(ctx.founding.at.slice(0, 10)) : null].filter(Boolean).join(' · ')}
+              </span>
+              <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-neutral-600">{ctx.founding.line}</p>
+            </div>
+          ) : ctx.meeting ? (
+            <span className="text-[12px] text-neutral-500">
+              {[`From ${ctx.meeting.title}`, ctx.meeting.date ? whenWords(ctx.meeting.date) : null].filter(Boolean).join(' · ')}
+            </span>
+          ) : null
         ) : null}
       </div>
 

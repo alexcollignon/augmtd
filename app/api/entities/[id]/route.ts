@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logActivity } from '@/lib/activity/log';
 
+// W0.5 TIME BUDGET: the merge action's after() calls refreshEntityState (AI-bearing) — the platform
+// default kills it mid-work (CLAUDE.md maxDuration lesson).
+export const maxDuration = 300;
+
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // ONE BRAIN — entity LIFECYCLE (the human's verbs over the memory). No acceptance-flows on the way IN;
 // full authority on the way OUT:

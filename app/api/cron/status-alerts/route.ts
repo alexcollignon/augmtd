@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getPlatformStatus } from '@/lib/platform/status';
+import { hasBearer } from '@/lib/utils/bearer-auth';
 
 export const maxDuration = 60;
 
@@ -13,7 +14,7 @@ export const maxDuration = 60;
 // migration) — an unchanged set of reds mails ONCE, a changed set mails again.
 
 export async function GET(request: NextRequest) {
-  if (request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!hasBearer(request, 'CRON_SECRET')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const sb = createClient(

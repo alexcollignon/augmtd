@@ -20,6 +20,7 @@
 // oldest lesson) and a saturated read SAYS SO rather than lying by omission.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { classifyItem } from '@/lib/inbox/classify-item';
+import { readPlans } from '@/lib/store/item-plans';
 import { loadUserRules } from '@/lib/inbox/rules/load';
 import { getCampaignSignature, isCampaignEcho, type CampaignSignature } from '@/lib/inbox/campaign-echo';
 import { deckEligible, fromEmailOf, type DeckFloors, type DeckItem } from '@/lib/home/deck-floors';
@@ -29,6 +30,7 @@ import {
   type AttentionRow, type HeldFacts, type HeldClassId, type HeldBandId,
 } from '@/lib/home/attention';
 import { fetchAllRows } from '@/lib/utils/fetch-all';
+import { MIRROR_SOURCE } from '@/lib/inbox/commitment-mirrors';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type DBClient = any;
@@ -78,7 +80,7 @@ export async function deriveHeld(
   // ── THE POOL — paged, stable-ordered (fetchAllRows' own contract). ─────────────────────────────
   const rows = await fetchAllRows<any>((from, to) => client.from('inbox_items')
     .select('id, user_id, work_title, work_state, rule_type, type_override, source, source_data, created_at, last_activity_at')
-    .eq('user_id', userId).eq('status', 'pending').neq('source', 'commitment')
+    .eq('user_id', userId).eq('status', 'pending').neq('source', MIRROR_SOURCE) // THE MIRROR FLOOR (W2.3)
     .order('last_activity_at', { ascending: false, nullsFirst: false }).order('id', { ascending: true })
     .range(from, to), { maxRows: HELD_POOL_MAX });
 
@@ -89,10 +91,7 @@ export async function deriveHeld(
 
   // The cached judgments, read WHOLE (paged) rather than chunked per candidate: the ledger needs the
   // disposition too ('answered' / 'expired'), which is what makes `judged_quiet` a real account.
-  const judgments = await fetchAllRows<{ entity_id: string; tasks: any }>((from, to) => client
-    .from('item_plans').select('entity_id, tasks')
-    .eq('user_id', userId).eq('kind', 'judgment').like('entity_id', 'inbox:%')
-    .order('entity_id', { ascending: true }).range(from, to), { maxRows: 20000 });
+  const judgments = (await readPlans(client, userId, 'judgment', { keyPrefix: 'inbox:' })).map((r) => ({ entity_id: r.key, tasks: r.tasks }));
   const judgedNone = new Set<string>();
   const judgedResolution = new Map<string, string | null>();
   // Q9 · THE PERSON'S OWN PARK rides the SAME read: the triage deck's ← LATER writes the judgment's

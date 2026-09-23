@@ -120,7 +120,6 @@ export async function GET(
     attendees: [],
     meeting_link: null,
     meeting_status: 'completed',
-    attendee_bot_state: (transcriptRaw as any).bot_state ?? null,
     user_id: user.id,
   } : null);
 

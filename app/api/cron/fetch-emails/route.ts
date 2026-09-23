@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
+import { hasBearer } from '@/lib/utils/bearer-auth';
 
 export const maxDuration = 800; // Pro+Fluid — pagination can pull a fuller window per run
 
@@ -14,8 +15,7 @@ export const maxDuration = 800; // Pro+Fluid — pagination can pull a fuller wi
  * Runs every 4 hours. The push webhook handles real-time delivery; this is the safety net.
  */
 export async function GET(request: NextRequest) {
-  const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!hasBearer(request, 'CRON_SECRET')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

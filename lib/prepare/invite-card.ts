@@ -33,7 +33,18 @@ export interface PreparedInviteLike {
   description?: string;
   timezone?: string;
   proposed?: boolean;
+  /** TIME TRUTH (W5a): who vouches for a proposed slot — the annotation renders from this alone. */
+  proposedFrom?: 'stated_window' | 'calendar';
   alternatives?: InviteSlot[];
+}
+
+/** THE PROPOSAL'S LABEL (W5a) — "inside what they stated" is a VERIFICATION CLAIM and renders ONLY
+ *  when the preparer stamped the slot as code-verified inside the item's stated window; a calendar
+ *  proposal says what its only evidence is; an unstamped legacy proposal claims nothing. */
+export function proposalAnnotationOf(from: PreparedInviteLike['proposedFrom']): string {
+  if (from === 'stated_window') return 'our proposal — inside what they stated';
+  if (from === 'calendar') return 'our proposal — free on your calendar';
+  return 'our proposal';
 }
 
 export interface InviteCardOption {
@@ -109,7 +120,7 @@ export function inviteCardOf(
     options.push({
       id: start,
       label: slotLabel(start, tz),
-      annotation: inv.proposed ? 'our proposal — inside what they stated' : 'filled in above',
+      annotation: inv.proposed ? proposalAnnotationOf(inv.proposedFrom) : 'filled in above',
     });
   }
   for (const alt of inv.alternatives ?? []) {
