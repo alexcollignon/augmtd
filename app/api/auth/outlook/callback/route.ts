@@ -111,20 +111,15 @@ export async function GET(request: NextRequest) {
       }
 
       // Upsert connection + profile immediately — robust even if the cookie is later lost
-      await adminSupabase.from('connections').upsert({
-        user_id: userId,
-        provider: 'outlook',
-        provider_account_id: providerAccountId,
-        status: 'active',
-        metadata: {
-          email: providerEmail,
-          name: profile.displayName,
-          picture: null,
-          tokens: encryptedTokens,
-        },
-        last_sync: null,
-        sync_status: 'pending',
-      }, { onConflict: 'user_id,provider,provider_account_id' });
+      // W11.3 · A SIGN-IN IS NOT A NEW MAILBOX — identity + tokens refresh; the sync cursor and the
+      // platform's own metadata survive (lib/connections/oauth-upsert.ts).
+      const { upsertOAuthConnection } = await import('@/lib/connections/oauth-upsert');
+      const { error: connErr } = await upsertOAuthConnection(adminSupabase, {
+        user_id: userId, provider: 'outlook', provider_account_id: providerAccountId,
+        identity: { email: providerEmail, name: profile.displayName },
+        tokens: encryptedTokens,
+      });
+      if (connErr) console.error('[OutlookCallback] connection write failed:', connErr.message);
 
       await adminSupabase.from('profiles').upsert({
         id: userId,
@@ -169,21 +164,13 @@ export async function GET(request: NextRequest) {
     // -------------------------------------------------------------------------
     const userId = stateData.userId;
 
-    const { error: insertError } = await adminSupabase
-      .from('connections')
-      .upsert({
-        user_id: userId,
-        provider: 'outlook',
-        provider_account_id: providerAccountId,
-        status: 'active',
-        metadata: {
-          email: providerEmail,
-          name: profile.displayName,
-          tokens: encryptedTokens,
-        },
-        last_sync: null,
-        sync_status: 'pending',
-      }, { onConflict: 'user_id,provider,provider_account_id' });
+    // W11.3 · A RECONNECT IS NOT A NEW MAILBOX — the cursor and the platform's metadata survive.
+    const { upsertOAuthConnection } = await import('@/lib/connections/oauth-upsert');
+    const { error: insertError } = await upsertOAuthConnection(adminSupabase, {
+      user_id: userId, provider: 'outlook', provider_account_id: providerAccountId,
+      identity: { email: providerEmail, name: profile.displayName },
+      tokens: encryptedTokens,
+    });
 
     if (insertError) {
       console.error('Error storing connection:', insertError);

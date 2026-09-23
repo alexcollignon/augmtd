@@ -48,7 +48,9 @@ const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
         conditions: [{ field: 'from', value: 'no-reply' }, { field: 'from', value: 'mailer-daemon' }],
         ai_match: null, outcome: { set_type: 'notifications' },
       } as Partial<PostureRow>);
-      return s.includes('no-reply') && s.includes('mailer-daemon') && s.includes('Notifications') && s.startsWith('Label mail from');
+      // ⟲ RE-POINTED (W11.3 — RULES SORT MAIL IN AUGMTD): the sentence speaks sorting, and a retired
+      // mailbox label (Notifications) is named as the in-app sort it is — never "Label mail …".
+      return s.includes('no-reply') && s.includes('mailer-daemon') && s.includes('a notification') && s.startsWith('Treat mail from') && !/\blabel\b/i.test(s);
     })());
   check('PS1e: a sent-trigger AI rule renders its direction and its when-clause',
     (() => {

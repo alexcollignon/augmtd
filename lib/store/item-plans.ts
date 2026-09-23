@@ -172,6 +172,15 @@ export const ITEM_PLAN_REGISTRY = {
   tender_member_manifest:   spec('record', '`me`', 'lib/tenders/member-directory.ts'),
   tender_member_enrichment: spec('record', '`me`', 'lib/tenders/enrich-members.ts'),
 
+  // ── the working circle (W11.2 — the actor ladder's teammate rung past the workspace) ──
+  working_circle:  spec('cache', '`user`', 'lib/evidence/circle.ts',
+    obj({ v: num, at: str, read: num, capped: bool, dropped: num, candidates: opt(z.array(z.unknown())) })),
+  circle_decision: spec('record', 'collaborator address (normalised)', 'lib/evidence/circle.ts',
+    obj({ state: opt(z.enum(['confirmed', 'removed'])), at: str, name: str })),
+  // "looks done — confirm": user-side evidence the judge did not close on (+ the sticky "Not yet").
+  looks_done:      spec('record', '`<kind>:<id>` (commitment | inbox)', 'lib/evidence/looks-done.ts',
+    obj({ sig: str, evidence: z.unknown().optional(), verdict: str, at: str, refusedSig: str, refusedAt: str })),
+
   // ── platform ──
   status_alert: spec('token', 'problem-set key', 'app/api/cron/status-alerts/route.ts'),
   autonomy:     spec('record', 'ledger key', 'lib/autonomy/ledger.ts (PARKED design record)'),

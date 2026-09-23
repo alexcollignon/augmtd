@@ -4,7 +4,7 @@ import { logActivity } from '@/lib/activity/log';
 import { after } from 'next/server';
 import { noteItemAction } from '@/lib/entities/on-action';
 import { settleMirrorRows } from '@/lib/inbox/commitment-mirrors';
-import { clipForPrompt } from '@/lib/utils/clip-for-prompt';
+import { clipForDisplay } from '@/lib/utils/clip-for-prompt';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 // W0.5 TIME BUDGET: PATCH's after() calls noteItemAction, which re-synthesizes the linked entity's
@@ -26,8 +26,8 @@ export const maxDuration = 300;
 //   • NOTHING IS FABRICATED — every line is the run's own bytes or the workflow's own step labels.
 //     No trigger text is invented: the run row records HOW it started (`triggered_by`), not what it
 //     was handed, so the card speaks the word the row holds and nothing more.
-//   • THE EXCERPT-HONESTY LAW — every arrived clip is cut at a whitespace boundary and DECLARES
-//     the cut with EXCERPT_MARK (clipForPrompt owns it). A silent chop reads as source truncation.
+//   • THE EXCERPT-HONESTY LAW, on a surface (W11.3) — every arrived clip is cut at a boundary and
+//     ends in "…" (clipForDisplay). EXCERPT_MARK is prompt-side only and never renders.
 // AUTHORIZATION: identical to the handoff block above — the caller's own source='handoff'
 // commitment row IS the entitlement, and only the run it points at is reachable from here.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -54,7 +54,7 @@ function arrivedText(output: unknown): string {
   let raw: string;
   if (typeof output === 'string') raw = output;
   else { try { raw = JSON.stringify(output); } catch { return ''; } }
-  return clipForPrompt(raw.trim(), ARRIVED_CLIP);
+  return clipForDisplay(raw.trim(), ARRIVED_CLIP);
 }
 
 async function inputStationContextFor(
@@ -123,18 +123,23 @@ export async function GET(
     let sourceSnippet: string | null = null;
     let sourceFrom: string | null = null;
     let sourceWhen: string | null = null;
+    let sourceEmailId: string | null = null;
+    let sourceThreadId: string | null = null;
     try {
       if (c.source === 'email' && c.source_id) {
-        const { data: email } = await supabase
-          .from('emails')
-          .select('subject, body, from_name, from_address, received_at')
-          .eq('id', c.source_id).eq('user_id', user.id).maybeSingle();
+        // W11.1 · THE ONE READ of the source MESSAGE (lib/commitments/source.ts emailSourceOf): the
+        // email the commitment was extracted from — its own words, display-clipped — never the
+        // thread's latest message. The room's source card reads the same served facts.
+        const { emailSourceOf } = await import('@/lib/commitments/source');
+        const email = await emailSourceOf(supabase, user.id, String(c.source_id));
         if (email) {
           sourceKind = 'email';
-          sourceSubject = (email.subject as string) || null;
-          sourceSnippet = typeof email.body === 'string' ? (email.body as string).replace(/\s+/g, ' ').trim().slice(0, 600) : null;
-          sourceFrom = (email.from_name as string) || (email.from_address as string) || null;
-          sourceWhen = (email.received_at as string) || null;
+          sourceSubject = email.subject;
+          sourceSnippet = email.excerpt;
+          sourceFrom = email.from;
+          sourceWhen = email.receivedAt;
+          sourceEmailId = email.id;
+          sourceThreadId = email.threadId;
         }
       } else if (c.source === 'meeting' && c.source_id) {
         const { data: mt } = await supabase
@@ -203,7 +208,7 @@ export async function GET(
       threadId: c.thread_id ?? null,
       status: c.status,
       createdAt: c.created_at ?? null,
-      sourceContext: sourceKind ? { kind: sourceKind, subject: sourceSubject, snippet: sourceSnippet, from: sourceFrom, when: sourceWhen } : null,
+      sourceContext: sourceKind ? { kind: sourceKind, subject: sourceSubject, snippet: sourceSnippet, from: sourceFrom, when: sourceWhen, ...(sourceEmailId ? { emailId: sourceEmailId, threadId: sourceThreadId } : {}) } : null,
     });
   } catch (error) {
     console.error('Commitment fetch error:', error);

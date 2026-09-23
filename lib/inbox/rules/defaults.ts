@@ -5,6 +5,13 @@
 
 import type { InboxRule } from './types';
 
+// W11.3 · WHAT A DEFAULT DOES (the screen must say it): `set_type` is an IN-APP SORT (the lane the
+// mail lands in — lib/inbox/rules/types.ts LABEL_TO_TYPE). It becomes a mailbox label only when the
+// account chose the mirror AND the posture is a live one (Needs reply · To do · Waiting on · Done).
+// `notifications` / `meeting` are NOT mailbox labels any more (retired W10) — the defaults that use
+// them sort mail into awareness as a notification / a calendar update, and their sentence says
+// exactly that (lib/postures/registry.ts SORT_PHRASE; gate smoke-screen-truth S4).
+
 // Gmail-only deterministic rules (Gmail's native category labels).
 const GMAIL_RULES: InboxRule[] = [
   {
@@ -44,7 +51,7 @@ const COMMON_RULES: InboxRule[] = [
     name: 'Urgent — needs my attention',
     enabled: true, priority: 40, trigger: 'received', match_mode: 'all', conditions: [],
     ai_match: "Time-sensitive, blocking, or requires my direct attention — escalations, urgent customer issues, deal-critical asks, anything I must personally see immediately.",
-    // W10: no `escalate` — nothing ever executed it (the rules truth audit); the label is the effect.
+    // W10: no `escalate` — nothing ever executed it (the rules truth audit); the in-app sort is the effect.
     outcome: { set_type: 'needs_reply' }, source: 'default',
   },
   {

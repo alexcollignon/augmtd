@@ -247,7 +247,9 @@ export async function writeCommitments(
     user?: { name?: string | null; addresses?: Array<string | null | undefined> | null } | null;
     /** W8.2 THE CONVERSATION DELTA: the message's OWN words (topMessageOf) + who wrote it. Absent on
      *  the meeting path — the delta reads the meeting's summary + action items itself. */
-    message?: { text?: string | null; authoredByUser?: boolean | null; subject?: string | null } | null;
+    message?: { text?: string | null; authoredByUser?: boolean | null; subject?: string | null;
+      /** W11.2 — the sender of a message the user did not write (the delta places it on the ladder). */
+      authorAddress?: string | null } | null;
     /** The delta's injectable judge/appliers (the zero-AI gates stub them; production omits it). */
     delta?: { judge?: DeltaJudge; deps?: ApplyDeps } | null;
   },
@@ -432,6 +434,7 @@ export async function writeCommitments(
       kind: meta.source, id: meta.sourceId, at: meta.anchorAt ?? null,
       text: meta.message?.text ?? (meta.source === 'email' && meta.sourceText ? topMessageOf(meta.sourceText) : null),
       authoredByUser: meta.message?.authoredByUser ?? null, subject: meta.message?.subject ?? null,
+      authorAddress: meta.message?.authorAddress ?? null,
     },
     judge: meta.delta?.judge, deps: meta.delta?.deps,
   }).catch(() => null);
@@ -748,7 +751,9 @@ export async function extractEmailCommitments(opts: {
       source: 'email', sourceId, threadId, counterparty,
       anchorAt: receivedAt ?? null, sourceText: `${subject || ''}\n${text}`, otherParty: counterparty,
       user: { name: userName || seat?.userName || null, addresses: seat?.userAddresses ?? null },
-      message: { text: topMessageOf(text), authoredByUser: isFromUser, subject: subject || null },
+      message: { text: topMessageOf(text), authoredByUser: isFromUser, subject: subject || null,
+        // W11.2: on the received path `counterparty` IS the sender — the delta asks the ladder.
+        authorAddress: isFromUser ? null : (counterparty ?? null) },
       delta: opts.delta ?? null,
     }, client);
   } catch { return 0; }

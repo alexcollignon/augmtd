@@ -18,7 +18,7 @@
 
 import { leanSelect, foldLean, foldLeanRows, hydrateBodies, isLeanSource, PREPARED_KEYS, ONE_READER_KEYS } from '@/lib/home/lean-source';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { inviteOutsideStatedWindow, claimsUndoneWork, type ProposedFrom } from '@/lib/prepare/truth';
+import { inviteOutsideStatedWindow, claimsUndoneWork, claimsUnstagedAttachment, chaseWordsIn, signsAsOtherIdentity, mailboxIdentityOf, type MailboxIdentity, type ProposedFrom } from '@/lib/prepare/truth';
 import { addresseeOfStamp, addresseeFromNudgeTitle, addresseeWithdrawn, loadUserForms, type Addressee } from '@/lib/prepare/addressee';
 import type { UserForms } from '@/lib/commitments/extraction-truth';
 import { isHandHeld, isPoolRowHandHeld, type HandKind } from '@/lib/prepare/hand';
@@ -66,6 +66,10 @@ export type PreparedArtifact = {
   /** A CLAIM RENDERS (W5a): the artifact's words claim a deed (finished/sent/attached/delivered)
    *  the facts do not support — an OPEN obligation with nothing staged. Never live. */
   falseClaim?: boolean;
+  /** W11.1 · THE MAILBOX SIGNS: a machine-written draft whose sign-off names ANOTHER of the user's
+   *  mailboxes (not the one its thread lives in). Rides `falseClaim` (never live — the re-prepare
+   *  trip re-drafts it under the scoped voice); this flag only words the reason. */
+  wrongIdentity?: boolean;
   /** TRUE ADDRESSEES (W7.3): who the words are FOR, stamped at production (a legacy nudge's title
    *  carries it). Served so a card can address its To from what the words were written for. */
   addressee?: Addressee | null;
@@ -109,6 +113,9 @@ export type ItemTruthFacts = {
   /** TRUE ADDRESSEES (W7.3): the item's CURRENT counterparty (commitments) — what an addressed draft
    *  must agree with. Absent/null = only the not-the-user floor applies. */
   counterparty?: string | null;
+  /** W11.1 · THE MAILBOX SIGNS: the mailbox this item's thread lives in and the user's OTHER
+   *  mailboxes. Absent/null = the signature floor is off (one mailbox, or nothing resolvable). */
+  mailbox?: { own: MailboxIdentity; others: MailboxIdentity[] } | null;
 };
 
 // ── THE TRUTH STAMPS (W5a) — pure, exported for the gate and the sweeps. ──
@@ -122,8 +129,70 @@ export function stampTruth<T extends PreparedArtifact>(arts: T[], facts: ItemTru
     if (a.kind === 'invite' && inviteOutsideStatedWindow(a.invite ?? null, facts.text, facts.anchorIso)) a.outsideWindow = true;
     if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft' || a.kind === 'paste_pack') && !a.hand
       && claimsUndoneWork(a.content, { obligationOpen: facts.obligationOpen, staged: !!a.attachment })) a.falseClaim = true;
+    // W11.1 · ONE COHERENT ITEM — two more claims words may not make (machine words only; the user's
+    // own edit is theirs to make, as above):
+    //   · THE ATTACHMENT CLAIM — "the attached interim report" with nothing attached. Speaks whoever
+    //     owes what: a file either rides with the message or it does not (a PASTE PACK is exempt — it
+    //     is pasted where the work lives, and its destination may carry the file).
+    //   · THE INVERTED CHASE — chase-shaped words ("just a quick nudge…") on an OPEN obligation the
+    //     USER owes: the counterparty is being chased for the user's own debt (found live, Sep 23).
+    if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft') && !a.hand
+      && claimsUnstagedAttachment(a.content, { staged: !!a.attachment })) a.falseClaim = true;
+    if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft' || a.kind === 'paste_pack') && !a.hand
+      && facts.obligationOpen && !a.attachment && chaseWordsIn(a.content)) a.falseClaim = true;
+    //   · THE MAILBOX SIGNS — a machine draft signed as another of the user's mailboxes (the pre-W11.1
+    //     global voice). Withdrawn so only THESE re-draft (no DRAFT_LAW_VERSION corpus re-draft).
+    if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft') && !a.hand && facts.mailbox
+      && signsAsOtherIdentity(a.content, facts.mailbox)) { a.falseClaim = true; a.wrongIdentity = true; }
   }
   return arts;
+}
+
+// ── W11.1 · THE MAILBOX SIGNS — the facts' loader (bounded reads, zero AI, memoized per user) ──
+/** Only a machine-written draft is ever judged by the signature floor. */
+export const needsIdentityCheck = (arts: PreparedArtifact[]): boolean =>
+  arts.some((a) => (a.kind === 'reply_draft' || a.kind === 'nudge_draft') && !a.hand && !!a.content);
+
+const mailboxesMemo = new Map<string, { at: number; p: Promise<Map<string, MailboxIdentity> | null> }>();
+/** The user's connected mailboxes (connection id → identity) — null when fewer than TWO distinct
+ *  mailboxes exist (no other identity to sign as: the floor is off and costs nothing further). */
+export function loadMailboxIdentities(client: SupabaseClient, userId: string): Promise<Map<string, MailboxIdentity> | null> {
+  const hit = mailboxesMemo.get(userId);
+  if (hit && Date.now() - hit.at < 60_000) return hit.p;
+  const p = (async () => {
+    const { data, error } = await client.from('connections').select('id, metadata, provider_account_id').eq('user_id', userId);
+    if (error || !data) return null;
+    const out = new Map<string, MailboxIdentity>();
+    for (const c of data as Array<{ id: string; metadata?: { email?: string } | null; provider_account_id?: string | null }>) {
+      const id = mailboxIdentityOf(c.metadata?.email || c.provider_account_id || null);
+      if (id) out.set(String(c.id), id);
+    }
+    return new Set([...out.values()].map((m) => m.address)).size >= 2 ? out : null;
+  })().catch(() => null);
+  mailboxesMemo.set(userId, { at: Date.now(), p });
+  return p;
+}
+
+/** The floor's facts for one thread's connection (null when unresolved — the floor stays silent). */
+export function mailboxFactsFor(connId: string | null | undefined, boxes: Map<string, MailboxIdentity> | null): ItemTruthFacts['mailbox'] {
+  if (!connId || !boxes) return null;
+  const own = boxes.get(String(connId));
+  if (!own) return null;
+  return { own, others: [...boxes.entries()].filter(([k, v]) => k !== String(connId) && v.address !== own.address).map(([, v]) => v) };
+}
+
+/** Thread ids → the connection each lives in (the newest synced message's), one bounded read. */
+async function connectionsOfThreads(client: SupabaseClient, userId: string, threadIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!threadIds.length) return out;
+  try {
+    const { fetchAllRows } = await import('@/lib/utils/fetch-all');
+    const rows = await fetchAllRows<{ thread_id: string; connection_id: string }>((from, to) => client.from('emails')
+      .select('thread_id, connection_id').eq('user_id', userId).in('thread_id', threadIds).not('connection_id', 'is', null)
+      .order('received_at', { ascending: false }).range(from, to) as unknown as PromiseLike<{ data: Array<{ thread_id: string; connection_id: string }> | null; error: unknown }>);
+    for (const r of rows) if (!out.has(String(r.thread_id))) out.set(String(r.thread_id), String(r.connection_id));
+  } catch { /* unresolved → the floor stays silent */ }
+  return out;
 }
 
 /** THE ADDRESSEE FLOOR (W7.3) — pure, in place. A send-shaped artifact (reply/nudge/paste pack) whose
@@ -224,6 +293,7 @@ export function isLiveArtifact(a: PreparedArtifact): boolean {
  *  reasoner-facing surface (the room board, the judge's pool block) speaks a withdrawn artifact in. */
 export function withdrawnReasonOf(a: PreparedArtifact): string | null {
   if (a.outsideWindow) return 'outside the window they stated';
+  if (a.wrongIdentity) return 'it was signed as another of your mailboxes';
   if (a.falseClaim) return 'its words claimed work that is not done';
   if (a.misaddressed) return 'it was addressed to the wrong person';
   if (a.expired) return 'its proposed time already passed';
@@ -497,18 +567,25 @@ export async function preparedState(
   let pool: Array<Record<string, unknown>> = [];
   // THE ITEM'S OWN FACTS (W5a) — what the truth floors judge against. One row read per kind.
   let facts: ItemTruthFacts | null = null;
+  // W11.1 · THE MAILBOX SIGNS — where the item's thread lives (inbox: its own connection column;
+  // commitment: its thread's synced mail), read only when a machine draft exists and the user has
+  // more than one mailbox.
+  let itemConnId: string | null = null;
+  let itemThreadId: string | null = null;
   try {
     if (item.kind === 'inbox_item') {
       // THE HOT-PATH LAW (event-spine P0): the one reader's declared keys + `body` (the window floor
       // reads the item's words) — never `html_body` / `thread_history`.
-      const { data: raw } = await client.from('inbox_items').select(leanSelect('work_state', { keys: ONE_READER_KEYS, withBody: true })).eq('id', item.id).eq('user_id', userId).maybeSingle();
-      const data = raw ? foldLean(raw as unknown as Record<string, unknown>, { keys: ONE_READER_KEYS, withBody: true }) as { source_data: unknown; work_state?: string | null } : null;
+      const { data: raw } = await client.from('inbox_items').select(leanSelect('work_state, connection_id', { keys: ONE_READER_KEYS, withBody: true })).eq('id', item.id).eq('user_id', userId).maybeSingle();
+      const data = raw ? foldLean(raw as unknown as Record<string, unknown>, { keys: ONE_READER_KEYS, withBody: true }) as { source_data: unknown; work_state?: string | null; connection_id?: string | null } : null;
       sd = data?.source_data as SourceData;
       facts = inboxTruthFacts(sd);
+      itemConnId = data?.connection_id ?? null;
       out.push(...await stripNoticeDrafts(preparedFromSourceData(sd), sd, data?.work_state));
     } else {
-      const { data: c } = await client.from('commitments').select('description, created_at, status, direction, counterparty').eq('id', item.id).eq('user_id', userId).maybeSingle();
+      const { data: c } = await client.from('commitments').select('description, created_at, status, direction, counterparty, thread_id').eq('id', item.id).eq('user_id', userId).maybeSingle();
       facts = commitmentTruthFacts(c as CommitFactsRow | null);
+      itemThreadId = ((c as { thread_id?: string | null } | null)?.thread_id) ?? null;
     }
     // Deliverables hang off items under the plan-kind key ('email' for inbox-backed, 'commitment' for commitments).
     const poolKind = item.kind === 'inbox_item' ? 'email' : 'commitment';
@@ -530,6 +607,13 @@ export async function preparedState(
     } catch { /* staleness is a protection, never a blocker */ }
     // TIME TRUTH + A CLAIM RENDERS (W5a): an invite outside the item's stated window and words that
     // announce an undone deed are derived FALSE here, at the one reader — never "ready" anywhere.
+    if (facts && needsIdentityCheck(out)) {
+      const boxes = await loadMailboxIdentities(client, userId);
+      if (boxes) {
+        const conn = itemConnId ?? (itemThreadId ? (await connectionsOfThreads(client, userId, [itemThreadId])).get(itemThreadId) ?? null : null);
+        facts = { ...facts, mailbox: mailboxFactsFor(conn, boxes) };
+      }
+    }
     stampTruth(out, facts);
     // TRUE ADDRESSEES (W7.3): words addressed to the user, or to someone who is not the item's
     // counterparty, are derived WRONG here — never "ready" anywhere; the re-prepare trip replaces them.
@@ -559,7 +643,7 @@ export async function preparedStatesFor(
       inboxNeedingRows.length
         // THE HOT-PATH LAW: body-free; the one floor that reads the item's words (an invite's stated
         // window) gets them below, for exactly the rows carrying an invite.
-        ? client.from('inbox_items').select(leanSelect('id, last_activity_at', { keys: PREPARED_KEYS })).eq('user_id', userId).in('id', inboxNeedingRows)
+        ? client.from('inbox_items').select(leanSelect('id, last_activity_at, connection_id', { keys: PREPARED_KEYS })).eq('user_id', userId).in('id', inboxNeedingRows)
             .then((r) => ({ data: foldLeanRows((r.data ?? []) as unknown as Array<Record<string, unknown>>, { keys: PREPARED_KEYS }) }))
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
       inboxIds.length
@@ -575,7 +659,7 @@ export async function preparedStatesFor(
       // THE ITEM'S OWN FACTS for commitments (W5a) — one batched read, so the window and the
       // completion floors hold on a whole deck exactly as they hold on the single reader.
       commitIds.length
-        ? client.from('commitments').select('id, description, created_at, status, direction, counterparty').eq('user_id', userId).in('id', commitIds)
+        ? client.from('commitments').select('id, description, created_at, status, direction, counterparty, thread_id').eq('user_id', userId).in('id', commitIds)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
     ]);
     const commitFacts = new Map<string, ItemTruthFacts | null>();
@@ -595,20 +679,48 @@ export async function preparedStatesFor(
       .filter((r) => isLeanSource(r.source_data) && preparedFromSourceData(r.source_data as SourceData).some((a) => a.kind === 'invite')));
     // TRUE ADDRESSEES (W7.3): who the user is — read ONCE for the whole batch, only when needed.
     let userForms: UserForms | null = null;
+    const artsOf = new Map<string, PreparedArtifact[]>();
     for (const item of items) {
       const row = item.row ?? rows.get(item.id);
       const sd = (row?.source_data ?? null) as SourceData;
       const pool = poolBy.get(item.id) ?? [];
-      const arts = item.kind === 'inbox'
+      artsOf.set(keyOf(item), item.kind === 'inbox'
         ? [...preparedFromSourceData(sd), ...poolRowsToArtifacts(pool, 'email')]
-        : poolRowsToArtifacts(pool, 'commitment');
+        : poolRowsToArtifacts(pool, 'commitment'));
+    }
+    // W11.1 · THE MAILBOX SIGNS — the batch's connections, read once, only for items carrying a machine
+    // draft and only for a user with more than one mailbox (else nothing further is read).
+    const connOf = new Map<string, string>();
+    const checkKeys = items.filter((i) => needsIdentityCheck(artsOf.get(keyOf(i)) ?? []));
+    const boxes = checkKeys.length ? await loadMailboxIdentities(client, userId) : null;
+    if (boxes) {
+      const inboxCheck = checkKeys.filter((i) => i.kind === 'inbox');
+      const known = (i: { id: string; row?: unknown }) => ((i.row ?? rows.get(i.id)) as { connection_id?: string | null } | undefined)?.connection_id ?? null;
+      for (const i of inboxCheck) { const c = known(i); if (c) connOf.set(keyOf(i), c); }
+      const missing = inboxCheck.filter((i) => !connOf.has(keyOf(i))).map((i) => i.id);
+      if (missing.length) {
+        const { data: cr } = await client.from('inbox_items').select('id, connection_id').eq('user_id', userId).in('id', missing);
+        for (const r of (cr ?? []) as Array<{ id: string; connection_id: string | null }>) if (r.connection_id) connOf.set(`inbox:${r.id}`, r.connection_id);
+      }
+      const commitThread = new Map<string, string>();
+      for (const r of (commitFactsRes.data ?? []) as Array<{ id: string; thread_id?: string | null }>) if (r.thread_id) commitThread.set(String(r.id), String(r.thread_id));
+      const tids = [...new Set(checkKeys.filter((i) => i.kind === 'commitment').map((i) => commitThread.get(i.id)).filter((t): t is string => !!t))];
+      const byThread = await connectionsOfThreads(client, userId, tids);
+      for (const i of checkKeys) if (i.kind === 'commitment') { const t = commitThread.get(i.id); const c = t ? byThread.get(t) : null; if (c) connOf.set(keyOf(i), c); }
+    }
+    for (const item of items) {
+      const row = item.row ?? rows.get(item.id);
+      const sd = (row?.source_data ?? null) as SourceData;
+      const pool = poolBy.get(item.id) ?? [];
+      const arts = artsOf.get(keyOf(item)) ?? [];
       // The staleness approximation (see the function doc): last_activity past the stamp.
       const lastAct = Date.parse(String(row?.last_activity_at ?? '')) || 0;
       if (lastAct) for (const a of arts) {
         const pAt = Date.parse(String(a.ground?.receivedAt ?? '')) || 0;
         if (pAt && lastAct > pAt + 5000) markGroundMoved(a);
       }
-      const facts = item.kind === 'inbox' ? inboxTruthFacts(sd) : commitFacts.get(item.id) ?? null;
+      const baseFacts = item.kind === 'inbox' ? inboxTruthFacts(sd) : commitFacts.get(item.id) ?? null;
+      const facts = baseFacts && boxes && connOf.has(keyOf(item)) ? { ...baseFacts, mailbox: mailboxFactsFor(connOf.get(keyOf(item)), boxes) } : baseFacts;
       stampTruth(arts, facts);
       if (hasAddressed(arts)) {
         userForms ??= await loadUserForms(client, userId);

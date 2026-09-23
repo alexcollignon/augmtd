@@ -147,6 +147,8 @@ export type DeckHeldRow = {
   project?: string | null;
   /** THE ONE READER's live prepared kind, as the brief served it. */
   preparedKind?: string | null;
+  /** W11.2 · ONE ROW PER CONVERSATION — the served conversation this row belongs to (the list folds by it). */
+  conversationKey?: string | null;
 };
 
 /** The item's own door — the same address every deck row opens (one fact, one home). */
@@ -220,7 +222,7 @@ function HeldFoldRows({ fold, onRestored }: {
 }) {
   const [open, setOpen] = useState(false);
   const { lead, members } = fold;
-  const more = foldCountWord(members.length);
+  const more = foldCountWord(members.length, fold.conversation === true);
   return (
     <div className="flex flex-col">
       <HeldRow item={lead.item} line={lead.line} why={lead.why} onRestored={onRestored} />
@@ -463,7 +465,7 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
   }, [handedCommitKey]);
   // ONE LIST, TWO RENDERS. `triage` is the SAME row with the card's served essentials attached —
   // the deck is handed exactly this array, in exactly this order, and sorts nothing.
-  type WaitingRow = { id: string; item: DoItem; line: string; why: string; triage: TriageRow };
+  type WaitingRow = { id: string; item: DoItem; line: string; why: string; triage: TriageRow; conversation?: string | null };
   // ONE ROW BUILDER, TWO HANDED SETS (W5b): the deck opens on the warm stack; the LIST, once the
   // ledger has landed, reads the ledger alone (lib/home/held-list.ts `listHanded`) — a warm row the
   // ledger filed elsewhere was rendered AND uncounted ("showing 92 of 91").
@@ -471,7 +473,7 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
     const handedIds = new Set(handedSet.map((d) => d.id));
     return [
     ...handedSet.map((d) => ({
-      id: d.id, item: deckItem(d), line: d.line, why: d.why,
+      id: d.id, item: deckItem(d), line: d.line, why: d.why, conversation: d.conversationKey ?? null,
       // A handed row carries what the HOME has: its counterparty, its due date, its prepared word
       // and kind, its project. Its FOUNDING CONTEXT (the thread or the meeting, the judge's reason)
       // is read by the card through the deck-context door — one batched read for the whole handed
@@ -518,7 +520,7 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
   // ONE CONVERSATION, ONE OBLIGATION on the list (W5b): same who + same subject fold under ONE row
   // with its count; every member stays one click away with its own hands. The deck is unfolded —
   // each card is its own decision.
-  const listFolds = foldHeldRows(waitingRows, (r) => ({ who: r.triage.who, subject: r.triage.title }));
+  const listFolds = foldHeldRows(waitingRows, (r) => ({ who: r.triage.who, subject: r.triage.title, conversation: r.conversation ?? null }));
   // THE FOOTER NEVER SAYS FEWER THAN IT SHOWS — every member of every fold is a shown item — and
   // (W8.3) a footer that says fewer names WHY: the band's declared bound, never a bare "N of M".
   const waitingFooter = heldFooter(waitingRows.length, waitingCount, HELD_ROWS_PER_BAND + deckHeld.length);

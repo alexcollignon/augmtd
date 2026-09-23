@@ -68,6 +68,10 @@ export async function POST(request: NextRequest) {
 
     // Resolved fields.
     let to: string[] = [];
+    // W11.1 · REPLY-ALL — the thread's other participants (lib/prepare/addressee.ts replyAllCc).
+    let cc: string[] = [];
+    // W11.1 · THE MAILBOX the words are written FROM (the thread's connection) — scopes voice + signature.
+    let mailbox: import('@/lib/inbox/draft-reply').DraftMailbox | null = null;
     let recipientName: string | null = null;
     let subject = '';
     // The prompt describing what to write + the context the model grounds on.
@@ -158,7 +162,19 @@ export async function POST(request: NextRequest) {
       const stamped = pooledAddressee?.email && !isSelf(pooledAddressee.email) ? pooledAddressee : null;
       const toList = stamped ? [stamped] : addr.recipients;
       to = toList.map((a) => a.email).filter((e): e is string => !!e && !isSelf(e)).slice(0, 20);
+      // W11.1 · REPLY-ALL: the ladder's Cc (the thread's participants minus the user, the To, and
+      // automated addresses) — never empty merely because nobody asked.
+      cc = (addr.cc ?? []).map((a) => a.email).filter((e): e is string => !!e && !isSelf(e) && !to.includes(e)).slice(0, 10);
       recipientName = addresseeLabel(stamped ?? addr.addressee);
+      {
+        const { threadMailboxOf } = await import('@/lib/inbox/draft-reply');
+        let tid = (c.thread_id as string | null) ?? null;
+        if (!tid && c.source === 'email' && c.source_id) {
+          const { data: se } = await supabase.from('emails').select('thread_id').eq('id', c.source_id).eq('user_id', user.id).maybeSingle();
+          tid = (se?.thread_id as string | null) ?? null;
+        }
+        mailbox = await threadMailboxOf(supabase, user.id, tid);
+      }
       suggestions = addr.suggestions.map((a) => ({ name: a.name, email: a.email }));
       let sourceSubject: string | null = null;
       let sourceBody: string | null = null;
@@ -207,6 +223,14 @@ export async function POST(request: NextRequest) {
       recipientName = (sd.from_name as string) || extractName(from);
       if (email && !isSelf(email)) to = [email];
       voiceRecipient = to[0] ?? null;
+      // W11.1 · REPLY-ALL on a shared thread: the message's other participants stay on Cc.
+      try {
+        const { replyAllCc, participantsOf, loadUserIdentity } = await import('@/lib/prepare/addressee');
+        const ident = await loadUserIdentity(supabase, user.id);
+        const parts = participantsOf({ from_address: email, from_name: (sd.from_name as string | null) ?? null, to_addresses: sd.to, cc_addresses: sd.cc });
+        cc = replyAllCc({ participants: parts, to: to.map((e) => ({ name: null, email: e })), user: ident.forms, userAddresses: ident.addresses })
+          .map((a) => a.email).filter((e): e is string => !!e && !isSelf(e));
+      } catch { cc = []; }
 
       const subj = String(sd.subject || item.work_title || '');
       subject = subj ? (/^re:/i.test(subj) ? subj : `Re: ${subj}`) : 'Re: your message';
@@ -233,7 +257,9 @@ export async function POST(request: NextRequest) {
     } catch (e) {
       console.error('[compose/draft] reply drafting failed:', e);
     } else if (!skipDraft) try {
-      const voiceBlock = await buildVoiceBlock(user.id, voiceRecipient, supabase).catch(() => '');
+      const voiceBlock = await buildVoiceBlock(user.id, voiceRecipient, supabase, mailbox).catch(() => '');
+      const { mailboxIdentityRule } = await import('@/lib/inbox/draft-reply');
+      const identityRule = mailboxIdentityRule(mailbox);
       const { client: ai, model } = await getAIClient(user.id, 'conversation', supabase);
       const res = await aiCreate(ai, {
         model, max_tokens: 600, temperature: 0.6,
@@ -241,6 +267,7 @@ export async function POST(request: NextRequest) {
           `${voiceBlock ? voiceBlock + '\n\n' : ''}` +
           `You are ${userName}. ${task}\n\n` +
           `Write the message in ${userName}'s voice and sign as ${userName} — NEVER sign as anyone else. ` +
+          `${identityRule ? `${identityRule} ` : ''}` +
           `Return ONLY the message body — no subject line, no preamble, no surrounding quotes. Keep it ready to send.\n\n` +
           `--- CONTEXT ---\n${context}\n\n` +
           // Language mirrors the correspondent, not the user's default. A concrete detected language wins
@@ -259,7 +286,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       to,
-      cc: [],
+      cc,
       subject,
       bodyHTML: body ? paraHTML(body) : '',
       // W7.3: the plain words too — the ONE email card authors plain text / its own editor HTML.

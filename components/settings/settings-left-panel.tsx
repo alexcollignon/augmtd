@@ -33,10 +33,13 @@ const NAV_ITEMS = [
   { id: 'memory', label: 'Memory', Icon: BrainIcon },
 ];
 
+// W11.3 · ONE HOME FOR LABELS, AND THE NAV SAYS WHERE: the mailbox-label mirror (and its cleanup)
+// lives on the Rules page beside the postures it mirrors, so Rules carries the word — "Drafting" no
+// longer promises a labels control it does not hold.
 const EMAIL_SECTIONS = [
   { id: 'connections', label: 'Connections' },
-  { id: 'rules', label: 'Rules' },
-  { id: 'drafting', label: 'Drafting & labels' },
+  { id: 'rules', label: 'Rules & labels' },
+  { id: 'drafting', label: 'Drafting' },
   { id: 'todo', label: 'To-do capture' },
 ];
 

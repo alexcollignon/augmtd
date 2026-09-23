@@ -15,8 +15,8 @@
 //
 // THREE LAWS IT CARRIES STRUCTURALLY:
 //  1. IT INVENTS NOTHING. Every string is served or composed by the host: the kit reads no clock
-//     (`when` is a rendered label), clips no text (THE ONE CLIPPER did that, with its honest
-//     excerpt marker) and formats no size (the shared chip does).
+//     (`when` is a rendered label), clips no text (the host's display clip did that — boundary + "…";
+//     the prompt-side marker never renders, W11.3) and formats no size (the shared chip does).
 //  2. ONE TYPE SCALE (clause 5). One body size, one body colour, one muted meta tone — hierarchy
 //     by SPACING and weight, never a per-paragraph colour change.
 //  3. NO LYING DOORS. The door renders only with a handler; a file chip without `onOpen` is a fact
@@ -31,6 +31,9 @@ import { cn } from '@/lib/cn';
 // ONE CHIP GRAMMAR, ONE VIEWER (T25.9c) — the chip lives with the lightbox; the HOST raises it.
 import { AttachmentChip } from '@/components/ui/attachment-lightbox';
 import type { SourceCard } from './types';
+// W11.3 · THE MARKER NEVER RENDERS — the prompt-side EXCERPT_MARK is floored to "…" here, the one
+// render path every source excerpt passes through.
+import { displayText } from '@/lib/utils/clip-for-prompt';
 
 const SHELL = 'rounded-xl border border-neutral-200/80 bg-neutral-50/60';
 const MAX_W = 'w-full max-w-[560px]';
@@ -76,13 +79,13 @@ export function SourceObjectCard({ card }: { card: SourceCard }) {
       {messages.map((m) => (
         <div key={m.id} className="flex flex-col gap-0.5">
           <span className="text-[11px] text-neutral-400">{m.author}</span>
-          <p className="whitespace-pre-wrap text-[13px] leading-[1.55] text-neutral-600">{m.body}</p>
+          <p className="whitespace-pre-wrap text-[13px] leading-[1.55] text-neutral-600">{displayText(m.body)}</p>
         </div>
       ))}
 
       {/* The single-excerpt lane (a meeting's summary, a served first-words line). */}
       {!messages.length && card.excerpt && (
-        <p className="whitespace-pre-wrap text-[13px] leading-[1.55] text-neutral-600">{card.excerpt}</p>
+        <p className="whitespace-pre-wrap text-[13px] leading-[1.55] text-neutral-600">{displayText(card.excerpt)}</p>
       )}
 
       {/* ── WHAT CAME WITH IT — the shared chip, the host's viewer. ── */}

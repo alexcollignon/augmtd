@@ -30,7 +30,9 @@ export const SELF_VOICE_RULE =
 export const RENDERED_CLAIM_RULE =
   `CLAIM ONLY WHAT RENDERS: you may say a thing is "below" / "laid out" / "ready to review" ONLY ` +
   `when the COMPONENTS list actually carries it. With nothing prepared, offer instead ("I can draft ` +
-  `a reply — say the word"); never point at something that is not on the page.`;
+  `a reply — say the word"); never point at something that is not on the page. Never say you ` +
+  `drafted, prepared, wrote or put together a THING (notes, a document, a reply, an invite) unless ` +
+  `the COMPONENTS list carries a card of THAT kind — an email draft is not "notes".`;
 
 // ── THE NAME TEST ────────────────────────────────────────────────────────────────────────────────
 // Only a STANDALONE given name is the speaker. A real counterparty can carry the same given name as
@@ -201,7 +203,59 @@ export type RenderFacts = {
   hasDecision: boolean;
   /** At least one ask card survives the editor. */
   hasAsk: boolean;
+  /** W11.1 · WHAT renders — the board's own prepared words for this page (lib/room/grounding
+   *  preparedWordsOf: "reply draft", "follow-up nudge draft", "calendar invite", "document …").
+   *  With it, a claimed prepared thing must match a rendered KIND, not merely coexist with one.
+   *  Absent → the coarse `hasPrepared` test alone (every caller before W11.1). */
+  prepared?: string[];
 };
+
+// ── A CLAIMED PREPARED THING RENDERS (stabilization W11.1 · ONE COHERENT ITEM, owner walk Sep 23) ──
+// The room's brief said "I've drafted process notes on how to make the change" — no card rendered
+// any notes; the page carried an email draft (itself withdrawn later). The pointer net above only
+// fires on "below"/"laid out"; a first-person PREPARATION claim with no pointer walked straight past
+// it, and `hasPrepared` (any card at all) would have excused it anyway. The net now reads the claim's
+// OBJECT: a sentence that says we prepared a THING of a kind the page does not render is dropped.
+/** "I've drafted / we prepared / I put together …" — a first-person preparation claim (past only;
+ *  "I can draft", "I haven't drafted", "I have not prepared" never match). */
+const PREP_CLAIM = /\b(?:I|we)(?:'ve| have)?\s+(?:now\s+|already\s+|just\s+|also\s+)?(?:drafted|prepared|written|wrote|put together|pulled together|staged|built|created|laid out|outlined|sketched|lined up)\b/i;
+type PrepKind = 'email' | 'invite' | 'forward' | 'document' | 'decision';
+/** The claimed object's KIND, read from the words after the verb — null when it names none. Email
+ *  first: "a note to Sam" is a message; "notes on the change" is a document. */
+function claimedKindOf(after: string): PrepKind | null {
+  const t = after.slice(0, 90);
+  if (/\b(?:note|line|message|email|e-mail|reply|response|answer|nudge|follow-?up|reminder)\s+(?:to|for)\s+[A-Z]/.test(t)
+    || /\b(?:reply|replies|response|email|e-mail|message|nudge|follow-?up)\b/i.test(t)) return 'email';
+  if (/\b(?:invite|invitation|calendar|meeting slot|time slots?)\b/i.test(t)) return 'invite';
+  if (/\bforward/i.test(t)) return 'forward';
+  if (/\b(?:decision|choice|options|trade-?offs)\b/i.test(t)) return 'decision';
+  if (/\b(?:notes?|document|doc|memo|summary|outline|brief(?:ing)?|deck|slides|report|plan|proposal|sheet|spreadsheet|analysis|steps|checklist|guide|write-?up|version|draft of|breakdown|agenda|words)\b/i.test(t)) return 'document';
+  return null;
+}
+/** The KINDS the board's prepared words render. A paste pack is words (email-shaped and document-
+ *  shaped alike); a decision brief is a decision and a document. */
+export function renderedKindsOf(prepared: string[]): Set<PrepKind> {
+  const out = new Set<PrepKind>();
+  for (const w of prepared.map((x) => String(x ?? '').toLowerCase())) {
+    if (/reply draft|nudge draft/.test(w)) out.add('email');
+    if (/calendar invite/.test(w)) out.add('invite');
+    if (/^forward/.test(w)) { out.add('forward'); out.add('email'); }
+    if (/paste pack/.test(w)) { out.add('email'); out.add('document'); }
+    if (/decision brief/.test(w)) { out.add('decision'); out.add('document'); }
+    if (/^document/.test(w)) out.add('document');
+  }
+  return out;
+}
+/** Does this sentence claim a prepared thing the page does not render? (null = not a claim.) */
+export function claimsUnrenderedPreparation(sentence: string, facts: Pick<RenderFacts, 'hasPrepared' | 'prepared'>): boolean | null {
+  const m = PREP_CLAIM.exec(sentence);
+  if (!m) return null;
+  const kind = claimedKindOf(sentence.slice((m.index ?? 0) + m[0].length));
+  if (!facts.prepared) return !facts.hasPrepared;
+  if (!facts.prepared.length) return true;
+  if (!kind) return false; // an object we cannot read ("I've drafted it") beside a real card stands
+  return !renderedKindsOf(facts.prepared).has(kind);
+}
 
 /** The pointer words: a sentence claiming something is ON THE PAGE. */
 const POINTS_AT_PAGE = /\b(below|beneath|laid out|shown here|attached here|right here)\b/i;
@@ -228,6 +282,9 @@ export function enforceRenderedClaims(
   const dropped: string[] = [];
   let droppedDraftClaim = false;
   for (const s of sents) {
+    // W11.1 · the claimed prepared thing must be a thing the page renders (pointer or not).
+    const unrendered = claimsUnrenderedPreparation(s, facts);
+    if (unrendered === true) { dropped.push(s.trim()); droppedDraftClaim = true; continue; }
     if (!POINTS_AT_PAGE.test(s)) { kept.push(s); continue; }
     const needsDecision = DECISION_SHAPED.test(s);
     const needsDraft = DRAFT_SHAPED.test(s);

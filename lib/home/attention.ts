@@ -28,10 +28,11 @@ import { urgencyOf, receiptWordOf } from '@/lib/home/calm';
 import { getUnderstanding } from '@/lib/inbox/item-understanding';
 import { isNoMoveNotice, rawMailKindOf, isAutomatedSenderStrong, listMailOf } from '@/lib/inbox/notice-demotion';
 import { fromEmailOf } from '@/lib/home/deck-floors';
-import { NEEDS_SHAPING_WORD } from '@/lib/work/machine';
+import { NEEDS_SHAPING_WORD, rowWordOf, LOOKS_DONE_WORD } from '@/lib/work/machine';
 // THE EXCERPT-HONESTY LAW, on a surface instead of a prompt (Q9 · the triage card shows the
 // message's own first words): the ONE clipper, word-boundary, declaring its own cut.
-import { clipForPrompt } from '@/lib/utils/clip-for-prompt';
+// W11.3 · a SURFACE clip is a display clip (boundary + "…") — EXCERPT_MARK is prompt-side only.
+import { clipForDisplay } from '@/lib/utils/clip-for-prompt';
 // THE ONE ENTITY DECODER (W5b): provider snippets arrive HTML-escaped; a plain excerpt never shows
 // `&#39;` as text.
 import { decodeEntities } from '@/lib/core/text';
@@ -47,6 +48,8 @@ import { kindFloor } from '@/lib/work/kind-floor';
 // W8.3 · THE ONE SHORT-DATE GRAMMAR — a served sentence never prints a raw ISO date.
 import { fmtMonthDay } from '@/lib/utils/format-date';
 import { HELD_BAND_ROWS_BOUND } from '@/lib/deeds/held-words-bulk';
+// W11.2 · ONE ROW PER CONVERSATION — the one fold (pure, client-safe), read by the rank below.
+import { foldByConversation, type ConversationGroup } from '@/lib/home/conversation-fold';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -88,6 +91,8 @@ export type WhyNowFacts = {
   stateWord?: string | null;
   /** A1's calendar half — this row's counterparty sits on the near calendar. */
   meeting?: CalendarAdjacency | null;
+  /** W11.2 · LOOKS DONE — the evidence line (who · what · when) the machine served with its word. */
+  evidenceLine?: string | null;
 };
 
 /** One clause, one line: the cap keeps a why-now a clause and not a paragraph. */
@@ -138,6 +143,12 @@ function whyYou(f: WhyNowFacts): string {
  * information; fourteen rows reading who is waiting and what is ready carry fourteen.
  */
 export function whyNowOf(f: WhyNowFacts, today: Date = new Date()): string {
+  // 0 · W11.2 LOOKS DONE — the evidence says it may already be finished: the clause is the machine's
+  // word and the evidence (who · what · when); no due words (an "overdue" on done work is false).
+  if ((f.stateWord ?? '').trim() === LOOKS_DONE_WORD) {
+    const line = (f.evidenceLine ?? '').trim();
+    return clipClause(line ? `${LOOKS_DONE_WORD} · ${line}` : LOOKS_DONE_WORD);
+  }
   // 1 · CALENDAR ADJACENCY — the strongest why-now the clock can give.
   if (f.meeting) {
     const who = (f.who ?? '').trim();
@@ -155,11 +166,13 @@ export function whyNowOf(f: WhyNowFacts, today: Date = new Date()): string {
   // Q4 · THE SEAT CONTRACT'S WORD sits between the ask states and the lane sentence: a row seated
   // with nothing staged says so HONESTLY, in the machine's own word, rather than borrowing the
   // "waiting on your reply" grammar of a row that actually has a reply waiting.
+  // W11.1 · THE ROW'S ONE WORD (lib/work/machine.ts rowWordOf): the machine's blocked-on-user word
+  // outranks the receipt — "ready to send · overdue" beside a room saying "needs one thing from you"
+  // was one item wearing two states (owner walk, Sep 23).
   const receipt = receiptWord(f);
   const stateWord = (f.stateWord ?? '').trim();
-  const primary = receipt
-    ?? (ASK_STATE_WORDS.has(stateWord) ? stateWord
-      : f.needsShaping ? NEEDS_SHAPING_WORD : whyYou(f));
+  const primary = (ASK_STATE_WORDS.has(stateWord) ? rowWordOf(receipt, stateWord) : receipt)
+    ?? (f.needsShaping ? NEEDS_SHAPING_WORD : whyYou(f));
   // 3 · THE DUE WORDS — beside the primary, never alone (`urgencyOf` is the ONE date vocabulary).
   const due = urgencyOf({ source: f.source, key: '', entityId: '', href: '', ask: '',
     dueDate: f.dueDate ?? null, overdue: !!f.overdue, dueToday: !!f.dueToday } as any, today);
@@ -212,6 +225,13 @@ export type AttentionRow = {
   /** THE FRESH SEAT: this work was FIRST JUDGED within the day — the deck's own "surfaced today"
    *  fact (`machine.judgedFirstAt`), never a second derivation of newness. */
   fresh?: boolean;
+  /** W11.2 · ONE ROW PER CONVERSATION — the conversation this row belongs to (lib/home/conversation-
+   *  fold.ts `conversationKeyOf`: `t:<thread>` / `m:<source message>`). Rows sharing a key take ONE
+   *  seat; absent = the row is its own conversation (the legacy behaviour, exactly). */
+  conversationKey?: string | null;
+  /** W11.2 · LOOKS DONE — the machine's `looks_done` state: user-side evidence the judge did not
+   *  close on. Seated only BELOW every row of real work (rank 6). */
+  looksDone?: boolean;
 };
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -302,6 +322,8 @@ export function provedAliveOf(sourceData: unknown): boolean | null {
  * demotes, so a caller that has not computed the day keeps the old behaviour exactly.
  */
 export function attentionRank(r: AttentionRow): number {
+  // W11.2 · a row that LOOKS DONE is a confirmation, not work — it ranks below everything real.
+  if (r.looksDone) return 6;
   if (r.calendarAdjacent && r.adjacencyToday !== false) return 0;
   if (r.fresh) return 1;
   if (r.prepared && r.overdue) return 2;
@@ -321,7 +343,14 @@ export function attentionRank(r: AttentionRow): number {
  */
 export function rankAttention(
   rows: AttentionRow[], budget: number = ATTENTION_BUDGET,
-): { served: AttentionRow[]; held: AttentionRow[]; refused: Array<{ row: AttentionRow; refusal: 'self' | 'not_alive' }> } {
+): {
+  served: AttentionRow[]; held: AttentionRow[]; refused: Array<{ row: AttentionRow; refusal: 'self' | 'not_alive' }>;
+  /** W11.2 · the conversations that fold ≥2 eligible rows under ONE seat (lead = its most urgent). */
+  conversations: ConversationGroup[];
+  /** …and every non-lead member, with the lead it rides under. Neither served nor held on its own:
+   *  its lead's row speaks for it (a held lead's members are held with it — see the caller). */
+  folded: Array<{ row: AttentionRow; into: string }>;
+} {
   const eligible: AttentionRow[] = [];
   const refused: Array<{ row: AttentionRow; refusal: 'self' | 'not_alive' }> = [];
   for (const r of rows) {
@@ -336,12 +365,21 @@ export function rankAttention(
       || (Number(rowNeedsShaping(a.r)) - Number(rowNeedsShaping(b.r)))
       || (a.i - b.i))
     .map((x) => x.r);
+  // W11.2 · ONE ROW PER CONVERSATION: AFTER the rank (so a conversation's position IS its most
+  // urgent member's), members sharing a conversation fold under that lead — one seat, never three.
+  const folds = foldByConversation(ordered, (r) => r.conversationKey ?? null);
+  const leads = folds.map((f) => f.lead);
+  const conversations: ConversationGroup[] = folds.filter((f) => f.key && f.members.length > 1)
+    .map((f) => ({ key: f.key!, lead: f.lead.entityId, memberIds: f.members.map((m) => m.entityId) }));
+  const folded = folds.flatMap((f) => f.members.slice(1).map((row) => ({ row, into: f.lead.entityId })));
   const cap = Math.max(0, budget);
   // A REFUSED ROW IS HELD, NEVER DELETED — it leads the held list so the ledger sees it first.
   return {
-    served: ordered.slice(0, cap),
-    held: [...refused.map((x) => x.row), ...ordered.slice(cap)],
+    served: leads.slice(0, cap),
+    held: [...refused.map((x) => x.row), ...leads.slice(cap)],
     refused,
+    conversations,
+    folded,
   };
 }
 
@@ -484,10 +522,12 @@ export function classifyHeld(f: HeldFacts): HeldClassId {
   // own word with the thread in view (the only way an unsolicited kind is work: the user answered).
   // Three-valued like every W8.3 fact: `undefined` = the caller computed no judgment facts (the legacy
   // law holds, the floor stays silent); `true` = the judge's current-law word stands.
-  const kf = f.judgedCurrent !== false ? { refuses: false as const }
-    : kindFloor({ kind: (sd.kind_override as string) || u?.mailKind || null, ownership: u?.ownership ?? null });
+  // W11.3 · THE PLATFORM FACET is structural (the sender, not a judgment), so it reaches EVERY
+  // verdict — current-law or not: the platform's own mail is never held as the user's work.
+  const kf = f.judgedCurrent !== false ? kindFloor({ kind: null, fromEmail: fromEmailOf(sd) })
+    : kindFloor({ kind: (sd.kind_override as string) || u?.mailKind || null, ownership: u?.ownership ?? null, fromEmail: fromEmailOf(sd) });
   const floorBulk = kf.refuses && kf.why === 'unsolicited';
-  const floorNotice = kf.refuses && kf.why === 'notice';
+  const floorNotice = kf.refuses && (kf.why === 'notice' || kf.why === 'platform');
   // A ROW NOBODY JUDGED IS NEVER BROUGHT FORWARD (W8.3): adjacency promotes something already
   // judged alive — never a row whose only evidence is a stale understanding.
   if (f.calendarAdjacent && f.budgetOverflow === true && f.neverJudged !== true && kindWord !== 'calendar' && !bulk && !noticeApartFromEcho && !kf.refuses) return 'brought_forward';
@@ -923,7 +963,7 @@ const memberOf = (cls: HeldClassId, m: HeldFacts, user: UserForms | null = null,
     dueDate: statedDueOf(m.item),
     cls,
     from: from ? decodeEntities(from) : null,
-    excerpt: body ? clipForPrompt(body, HELD_EXCERPT_CHARS) : null,
+    excerpt: body ? clipForDisplay(body, HELD_EXCERPT_CHARS) : null,
     // THE SENDER FLOOR REACHES THE RECEIPT (W5b, owner walk Sep 23 — an automated "your bot wasn't
     // admitted" notice wore "draft ready"). Noise never gets drafts; a draft that predates the
     // floor (or slipped past it) is not prepared work the reader should be offered. A row filed in

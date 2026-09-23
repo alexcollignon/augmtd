@@ -32,6 +32,7 @@ import {
 import { evidenceSource } from '@/lib/evidence/sources';
 import { actorLabel } from '@/lib/evidence/actor';
 import { judgeFulfillmentFromEvidence, applyFulfillmentVerdict, type FulfillmentCandidate, type FulfillmentVerdict } from '@/lib/commitments/fulfillment';
+import { noteLooksDone } from '@/lib/evidence/looks-done';
 
 /** `judged` = a verdict was obtained (from the store OR a fresh call); `cached` = it came from the
  *  store; `fresh` = a paid reasoned call ran. THE CAPS COUNT `fresh` ONLY (W7.1) — a cache hit is
@@ -115,6 +116,9 @@ export async function settleWorkByEvidence(
       schedulingSignal,
     }, candidates, work.fulfiller === 'user');
     const spend = { cached: verdict.cached, fresh: verdict.fresh };
+    // W11.2 "LOOKS DONE — CONFIRM": user-side evidence (the user · a teammate · the working circle)
+    // the judge did not close on is recorded for the machine to serve — never a close (lib/evidence/looks-done.ts).
+    if (verdict.verdict !== 'delivered') await noteLooksDone(client, userId, { kind: work.kind, id: work.id, fulfiller: work.fulfiller }, evidence, verdict.verdict);
     const by = verdict.by ?? null;
     const reason = by ? evidenceReason(by.type, by.role) : 'evidence:email';
     const attribution = attributionOf(by);

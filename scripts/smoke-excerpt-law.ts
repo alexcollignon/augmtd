@@ -76,32 +76,15 @@ const CLIP_WITHOUT_RULE: Record<string, string> = {
     + 'and lib/room/ground-evidence.ts, whose GROUND_EVIDENCE_RULE carries EXCERPT_RULE to every '
     + 'reasoner that reads the page (ONE constant, N importers — never N hand-copies).',
 
-  // ── USER-FACING EXCERPT PANES (the reader is a PERSON; the marker is the honesty, not a leak) ──
-  // A LABEL gets clipLabel (no marker — chrome in a title reads as a defect). A quoted EXCERPT a
-  // human reads is the other half of the same law: the marker TELLS THEM there is more, and there
-  // is no prompt here to carry a rule into. Both sites below are asserted by smoke-quality, which
-  // requires the marker — so the rule these files owe is owed to a reader, and it is paid in words.
-  'lib/home/attention.ts':
-    'NO PROMPT IS ASSEMBLED HERE: the clip is HeldBandRow.excerpt, served to the triage card and '
-    + 'rendered to a person (components/triage/triage-deck.tsx). smoke-quality gates the marker on '
-    + 'this exact call — the excerpt-honesty law here is owed to a human reader, not a model.',
-  'lib/triage/words.ts':
-    'NO PROMPT IS ASSEMBLED HERE: `threadTail` builds the card\'s own message tail, rendered to a '
-    + 'person in the triage deck. smoke-quality gates the marker on each tail body — the card must '
-    + 'not lie about its own length any more than a prompt may.',
-  'lib/triage/deck-context.ts':
-    'NO PROMPT IS ASSEMBLED HERE: `shapeDeckContext` clips a handed commitment\'s founding message '
-    + '(its thread\'s newest message, topMessageOf) into DeckContext.founding.line, rendered to a '
-    + 'person on the triage card (W3.6). smoke-deck-context gates the marker on the clip.',
-  'app/api/commitments/[id]/route.ts':
-    'NO PROMPT IS ASSEMBLED HERE: `arrivedText` clips already-arrived step outputs into the INPUT '
-    + 'STATION card\'s served context, which a person reads and scrolls (components/home/item-detail'
-    + '.tsx). The route\'s own header states the law; the marker is what tells the reader the pane '
-    + 'holds only the first 480 chars of the run\'s bytes.',
-  'lib/commitments/source.ts':
-    'NO PROMPT IS ASSEMBLED HERE: `meetingSourceOf` clips a meeting\'s summary into the SOURCE '
-    + 'OBJECT card a person reads at the head of a meeting-born commitment\'s room (W7.3, the kit\'s '
-    + '`source` kind, `excerpt` lane). smoke-one-stage gates the marker-bearing clip on this call.',
+  // ── ⟲ RE-POINTED (W11.3 · WHAT THE SCREEN SAYS IS TRUE, owner walk Sep 23) ─────────────────────
+  // The five USER-FACING excerpt panes (attention.ts HeldBandRow.excerpt · triage/words.ts threadTail ·
+  // triage/deck-context.ts founding line · commitments/[id] arrived text · commitments/source.ts
+  // meeting excerpt) used to clip with EXCERPT_MARK "to tell the reader there is more" — and the
+  // reader saw "[…clipped for length — the original continues]" printed on room and triage cards.
+  // The marker is a PROMPT-side declaration; a person reads "…" and has the card's door to the
+  // whole thing. Those producers now clip with clipForDisplay and no longer call the prompt
+  // clipper, so they leave this allowlist (a ghost here would be a hole). smoke-screen-truth S1
+  // owns the surface half of the law.
 };
 
 function walk(dir: string, out: string[] = []): string[] {

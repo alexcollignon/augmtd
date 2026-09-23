@@ -30,6 +30,45 @@ export async function getDraftingAssistant(client: DBClient, userId: string): Pr
   return pa;
 }
 
+// ── THE MAILBOX A DRAFT IS WRITTEN FROM (stabilization W11.1 · connection-scoped signature) ─────────
+// Found live (owner walk, Sep 23): a reply on a client thread was signed with the user's OTHER
+// identity — a company unrelated to the thread — because the voice exemplars (where the model copies
+// its sign-off from) were the newest sent mail of ANY connected mailbox. A draft speaks for the
+// mailbox its thread LIVES in: THE THREAD'S CONNECTION (the `connection_id` the mail synced through)
+// and that connection's own address. The voice block reads only that mailbox's sent mail
+// (lib/context/voice-context.ts voiceScopeFilter), and the prompt names the mailbox and forbids any
+// other identity's signature. Unresolvable (no thread, legacy rows) → null → the legacy unscoped read.
+export type DraftMailbox = { connectionId: string | null; address: string | null };
+
+/** The connection a thread lives in, and that mailbox's own address. Two bounded reads, zero AI. */
+export async function threadMailboxOf(client: DBClient, userId: string, threadId: string | null | undefined, connectionId?: string | null): Promise<DraftMailbox | null> {
+  try {
+    let connId = connectionId ?? null;
+    if (!connId && threadId) {
+      const { data, error } = await client.from('emails').select('connection_id')
+        .eq('user_id', userId).eq('thread_id', threadId).not('connection_id', 'is', null)
+        .order('received_at', { ascending: false }).limit(1).maybeSingle();
+      if (!error) connId = (data?.connection_id as string | null) ?? null;
+    }
+    if (!connId) return null;
+    const { data: conn, error: cErr } = await client.from('connections').select('id, metadata, provider_account_id')
+      .eq('id', connId).eq('user_id', userId).maybeSingle();
+    if (cErr) return { connectionId: connId, address: null };
+    const meta = (conn?.metadata ?? {}) as { email?: string };
+    const addr = String(meta.email || conn?.provider_account_id || '').trim().toLowerCase();
+    return { connectionId: connId, address: /@/.test(addr) ? addr : null };
+  } catch { return null; }
+}
+
+/** The prompt's identity line for a mailbox — '' when none resolved (the legacy prompt stands). Pure. */
+export function mailboxIdentityRule(mb: DraftMailbox | null | undefined): string {
+  if (!mb?.address) return '';
+  return `IDENTITY — this message is sent FROM the mailbox ${mb.address}. Sign with the name, company, ` +
+    `title and signature the user uses IN THIS MAILBOX (the example emails above were sent from it); ` +
+    `NEVER use a company, title or signature block that belongs to another of the user's mailboxes or ` +
+    `identities, and never invent one — when unsure, sign with the name alone.`;
+}
+
 async function buildAssistantSkillsBlock(client: DBClient, userId: string): Promise<string> {
   try {
     const pa = await getDraftingAssistant(client, userId);
@@ -88,8 +127,11 @@ ${clipForPrompt(body, 1200)}
   // The unified `understanding` (coerced up-front) — its `initiative` grounds the Brain-context read below.
   const understanding = coerceUnderstanding((sourceData as Record<string, unknown>).understanding);
 
+  // W11.1 · THE MAILBOX this reply is written FROM — the thread's connection (read off the thread's
+  // own synced mail), and only that mailbox's voice + signature.
+  const mailbox = await threadMailboxOf(client, userId, String(sourceData.thread_id || '') || null);
   const [voiceBlock, meetingFollowup, brainBlock, assistantSkills] = await Promise.all([
-    buildVoiceBlock(userId, from, client).catch(() => ''),
+    buildVoiceBlock(userId, from, client, mailbox).catch(() => ''),
     buildMeetingFollowupContext(userId, from, client).catch(() => ''),
     // Step 2: read the durable Person + Initiative brains — the draft reasons WITH the relationship (who
     // they are, who owes whom, how they write) + where the deal stands. Additive, non-fatal, no AI.
@@ -173,6 +215,7 @@ ${clipForPrompt(body, 1200)}
       // together like "Name CompanyRole" is a formatting artifact, not the user's style) — always
       // format the sign-off block on separate lines (name / role or company / phone / links).
       `Format the signature block on separate lines; never reproduce run-together artifacts from the examples. ` +
+      `${mailboxIdentityRule(mailbox) ? `${mailboxIdentityRule(mailbox)} ` : ''}` +
       // THE COMPLETION RULE (W5a): the reply may claim only deeds the facts above (staged
       // attachments, the artifact truth) support.
       `${COMPLETION_HONESTY_RULE} ` +
@@ -205,12 +248,15 @@ export async function generateNudgeDraft(
      *  them) or 'you' (the user owes this, and a message about their own obligation must never be
      *  written as a chase). One drafter, told the truth about the direction; every existing caller
      *  keeps its exact behaviour by omitting it. */
-    direction?: 'them' | 'you' },
+    direction?: 'them' | 'you';
+    /** W11.1 — the conversation this message belongs to: its MAILBOX scopes the voice + signature. */
+    threadId?: string | null },
   client: DBClient,
 ): Promise<string> {
   const recipientEmail = (opts.counterparty || '').match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
+  const mailbox = opts.threadId ? await threadMailboxOf(client, userId, opts.threadId) : null;
   const [voiceBlock, brainBlock, assistantSkills] = await Promise.all([
-    buildVoiceBlock(userId, recipientEmail, client).catch(() => ''),
+    buildVoiceBlock(userId, recipientEmail, client, mailbox).catch(() => ''),
     // Step 2: the nudge reasons WITH the relationship — who they are, what's actually open with them, their
     // register — so a check-in lands right instead of generic. Additive, non-fatal, no AI.
     renderBrainContext(client, userId, { personEmail: recipientEmail, personName: recipientEmail ? null : opts.counterparty }).catch(() => ''),
@@ -249,6 +295,7 @@ export async function generateNudgeDraft(
         : `Write it in the language the recipient communicates in (infer from the recipient and the ` +
           `description above); if unclear, use English. The style examples above are for tone, never language. `) +
       (opts.instructions ? `\n${opts.instructions}\n` : '') +
+      `${mailboxIdentityRule(mailbox) ? `${mailboxIdentityRule(mailbox)} ` : ''}` +
       `Return ONLY the message body — no subject line, no preamble, no surrounding quotes.` }],
   });
   return res.choices?.[0]?.message?.content?.trim() || '';

@@ -138,8 +138,9 @@ console.log('\nB · prepared words never claim an undone deed');
     /export function isLiveArtifact\(a: PreparedArtifact\): boolean \{\s*return !a\.stale && !a\.expired && !a\.outsideWindow && !a\.falseClaim && !a\.misaddressed;/.test(rd)
     && /export function stampTruth</.test(rd)
     && (rd.match(/stampTruth\(/g) ?? []).length >= 2
-    && /select\('description, created_at, status, direction, counterparty'\)/.test(rd)
-    && /select\('id, description, created_at, status, direction, counterparty'\)\.eq\('user_id', userId\)\.in\('id', commitIds\)/.test(rd));
+    // ⟲ RE-POINTED (W11.1): + `thread_id` (the signature floor finds the thread's mailbox).
+    && /select\('description, created_at, status, direction, counterparty(?:, thread_id)?'\)/.test(rd)
+    && /select\('id, description, created_at, status, direction, counterparty(?:, thread_id)?'\)\.eq\('user_id', userId\)\.in\('id', commitIds\)/.test(rd));
   const row = (over: Record<string, unknown>) => ({ id: 'r', task_id: null, type: 'draft', title: 'x', content: 'body', created_at: '2026-09-20T10:00:00Z', metadata: {}, ...over });
   const facts = commitmentTruthFacts({ description: 'Redistribute the group allocation', created_at: '2026-09-18T10:00:00Z', status: 'open', direction: 'you_owe' });
   const pack = stampTruth(poolRowsToArtifacts([row({ type: 'document', content: live, metadata: { pastePack: true, note: 'Words ready', agentName: 'Clara' } })], 'commitment'), facts);
@@ -280,7 +281,8 @@ console.log('\nF · W5c: hidden artifacts re-prepare, leave the brief, and never
     // ⟲ RE-POINTED (W7.2 ONE OBJECT, ONE DOOR): the door's own source object (`sourceItemId`) now
     // rides the mount between the artifacts and the decision — same mount, one more fact.
     // ⟲ RE-POINTED (W7.3): + the meeting source object (`sourceMeeting`) rides the same mount.
-    && /<ItemRail kind="commitment"[^>]*artifacts=\{commitArtifacts\}[\s\S]{0,400}?sourceItemId=\{view\?\.sourceItemId \?\? null\}[\s\S]{0,200}?sourceMeeting=\{view\?\.sourceMeeting \?\? null\}\s*decision=\{commitDecision \?/.test(commitSeg)
+    // ⟲ RE-POINTED (W11.1): + the commitment's OWN source message (`sourceEmail`) rides it too.
+    && /<ItemRail kind="commitment"[^>]*artifacts=\{commitArtifacts\}[\s\S]{0,400}?sourceItemId=\{view\?\.sourceItemId \?\? null\}[\s\S]{0,200}?sourceMeeting=\{view\?\.sourceMeeting \?\? null\}[\s\S]{0,600}?decision=\{commitDecision \?/.test(commitSeg)
     && /\(p\.kind === 'deliverable' \|\| p\.kind === 'paste_pack'\) && p\.content && !p\.decision/.test(commitSeg));
   const label = 'paste_pack (group allocation redistribution prepared by Clara)';
   gate('F9 MOOT BY CODE: a requires label naming OUR OWN artifact kind is never the user\'s input (rule 4) — at the render predicate AND the resolver',

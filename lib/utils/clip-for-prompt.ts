@@ -48,3 +48,41 @@ export function clipLabel(text: string, max: number): string {
   const kept = word > max * 0.5 ? cut.slice(0, word) : cut;
   return `${kept.replace(/[\s,;:—–-]+$/, '')}…`;
 }
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE MARKER NEVER RENDERS (W11.3 · WHAT THE SCREEN SAYS IS TRUE — owner walk Sep 23: room source
+// cards and the triage card printed "[…clipped for length — the original continues]"). EXCERPT_MARK
+// is a PROMPT-side declaration: it tells a MODEL that our cut is not evidence about the source.
+// A reader needs no such warning — a card clipped for display ends at a word boundary with "…" and
+// carries a door to the whole thing (the card's own "Thread →" / open verb). Two helpers, one home:
+//   · clipForDisplay — the UI clip every surface-bound excerpt is cut through (server or client);
+//   · displayText    — the render-side floor: any text that still carries the marker (a prompt
+//     clip that reached a surface through a shared producer) renders with "…" in its place.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** The UI's own clip mark — a plain ellipsis. Never EXCERPT_MARK. */
+export const DISPLAY_ELLIPSIS = '…';
+
+/** Clip text for a SURFACE: sentence boundary preferred, word boundary otherwise, "…" when anything
+ *  was removed. Newlines are kept (cards render pre-wrap). Unclipped text passes through clean. */
+export function clipForDisplay(text: string, max: number): string {
+  const t = displayText(String(text ?? '')).trim();
+  if (t.length <= max) return t;
+  let cut = t.slice(0, max);
+  const sentence = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '), cut.lastIndexOf('.\n'));
+  if (sentence > max * 0.5) cut = cut.slice(0, sentence + 1);
+  else {
+    const word = cut.search(/\s\S*$/);
+    if (word > max * 0.6) cut = cut.slice(0, word);
+  }
+  const kept = cut.replace(/[\s,;:—–-]+$/, '');
+  return /[.!?]$/.test(kept) ? `${kept} ${DISPLAY_ELLIPSIS}` : `${kept}${DISPLAY_ELLIPSIS}`;
+}
+
+/** Render-side floor: strip the prompt-side marker from any text bound for a surface. */
+export function displayText(text: string): string;
+export function displayText(text: string | null | undefined): string | null | undefined;
+export function displayText(text: string | null | undefined): string | null | undefined {
+  if (typeof text !== 'string' || !text.includes(EXCERPT_MARK)) return text;
+  return text.split(EXCERPT_MARK).map((s) => s.replace(/\s+$/, '')).join(DISPLAY_ELLIPSIS).replace(/…\s*$/, DISPLAY_ELLIPSIS);
+}

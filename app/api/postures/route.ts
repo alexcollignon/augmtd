@@ -45,7 +45,12 @@ export async function GET(request: NextRequest) {
     rows = (data ?? []) as PostureRow[];
   }
 
-  const postures = rows.map(toPosture);
+  // W11.3 · the sentence names the mailbox only when the account chose the mirror (the ONE reader).
+  const [{ getEmailSettings }, { augmtdLabelsOn }] = await Promise.all([
+    import('@/lib/inbox/email-settings'), import('@/lib/inbox/rules/label-name'),
+  ]);
+  const mirrorOn = augmtdLabelsOn(await getEmailSettings(user.id, supabase));
+  const postures = rows.map((r) => toPosture(r, { mirrorOn }));
   let receipts: Record<string, unknown> = {};
   try {
     const map = await postureReceipts(supabase, user.id, rows, { connectionId });

@@ -30,7 +30,8 @@ export const isMeetingDeed = (d: EvidenceDeed): boolean => d === 'meeting_held' 
 
 /** THE ACTOR LADDER's rungs (lib/evidence/actor.ts `actorRole` is the one function that assigns them):
  *  user (an owned address — the authorship law) · counterparty (THIS work's counterparty) ·
- *  teammate (an active member of the user's company / the user's own corporate domain) · unknown. */
+ *  teammate (an active member of the user's company / the user's own corporate domain / the user's
+ *  WORKING CIRCLE — W11.2) · unknown. */
 export type ActorRole = 'user' | 'teammate' | 'counterparty' | 'unknown';
 
 /** One party to a deed — any of the identity forms the source carries. */
@@ -100,6 +101,10 @@ export type ActorContext = {
   teammateNames?: Record<string, string>;
   /** the user's own CORPORATE domains (public mail providers excluded) — same-domain = teammate. */
   teamDomains: string[];
+  /** W11.2 THE WORKING CIRCLE — collaborators outside the workspace that COUNT as teammates (the
+   *  user confirmed them, or the inference cleared its high bar and the user never removed them —
+   *  lib/evidence/circle.ts). Absent = no circle loaded (the ladder reads members + domain only). */
+  circle?: string[];
 };
 
 /** A REGISTRY ROW — one per source. `feature` is a TOOL_FEATURE key (lib/workspace/tool-capabilities)

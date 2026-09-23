@@ -8,9 +8,12 @@
 //                      user's deed).
 //   2 · counterparty — the party IS this work's counterparty (by address or person identity). It
 //                      outranks teammate: work owed BY a colleague is settled by that colleague.
-//   3 · teammate     — an ACTIVE member of the user's company (resolved to their addresses), or an
+//   3 · teammate     — an ACTIVE member of the user's company (resolved to their addresses), an
 //                      address on the user's own CORPORATE domain (public mail providers never count —
-//                      a shared gmail.com says nothing about who is a colleague).
+//                      a shared gmail.com says nothing about who is a colleague), or a member of the
+//                      user's WORKING CIRCLE (W11.2, lib/evidence/circle.ts — collaborators outside
+//                      the workspace the user CONFIRMED, or inferred co-senders above the high bar and
+//                      never removed; a partner-firm colleague who delivers on a client thread).
 //   4 · unknown      — anyone else.
 //
 // PRECEDENCE: user > counterparty > teammate > unknown. The pool assigns the work-free rung (user /
@@ -22,6 +25,7 @@ import { ownAddressesOf, normAddress } from '@/lib/email-sync/authorship';
 import { FREE_EMAIL_DOMAINS } from '@/lib/entities/recognize';
 import { COWORKER_EMAIL_DOMAIN } from '@/lib/integrations/registry';
 import type { ActorContext, ActorRole, EvidenceParty } from './types';
+import { loadCircle } from './circle';
 
 /** The work-side identity keys the ladder (and the matcher) read. */
 export type PartyKeys = { addresses: readonly string[]; personIds: readonly string[] };
@@ -70,6 +74,7 @@ export function actorRole(
   if (keys && partyMatches(party, keys)) return 'counterparty';
   const mate = base === 'teammate' || (!!ctx && !!a && (
     ctx.teammates.some((t) => normAddress(t) === a)
+    || (ctx.circle ?? []).some((t) => normAddress(t) === a)
     || (!!d && !isPublicMailDomain(d) && ctx.teamDomains.includes(d))));
   return mate ? 'teammate' : 'unknown';
 }
@@ -80,6 +85,9 @@ export function buildActorContext(f: {
   connections?: Parameters<typeof ownAddressesOf>[0]['connections'];
   selfPersonId?: string | null;
   teammates?: Array<{ email?: string | null; name?: string | null }>;
+  /** W11.2 — the COUNTING working circle (lib/evidence/circle.ts `countingCircle`) + its names. */
+  circle?: readonly string[];
+  circleNames?: Record<string, string>;
 }): ActorContext {
   const own = [...ownAddressesOf({ profileEmail: f.profileEmail ?? null, connections: f.connections ?? [] })];
   const ownSet = new Set(own);
@@ -91,14 +99,39 @@ export function buildActorContext(f: {
     teammates.push(a);
     if (t.name) teammateNames[a] = String(t.name);
   }
-  return { own, selfPersonId: f.selfPersonId ?? null, teammates: [...new Set(teammates)].sort(), teammateNames, teamDomains: teamDomainsOf(own) };
+  const mates = new Set(teammates);
+  const circle: string[] = [];
+  for (const raw of f.circle ?? []) {
+    const a = normAddress(raw);
+    if (!a || !a.includes('@') || ownSet.has(a) || mates.has(a)) continue;
+    circle.push(a);
+    const n = f.circleNames?.[a];
+    if (n && !teammateNames[a]) teammateNames[a] = String(n);
+  }
+  return {
+    own, selfPersonId: f.selfPersonId ?? null, teammates: [...mates].sort(), teammateNames, teamDomains: teamDomainsOf(own),
+    ...(f.circle ? { circle: [...new Set(circle)].sort() } : {}),
+  };
 }
+
+/** Every address the ladder reads as a teammate by ADDRESS (members + the working circle) — the
+ *  scoped mail lane's "a teammate writing to the counterparty" filter reads this, never a copy. */
+export const teammateAddressesOf = (ctx: ActorContext): string[] => [...new Set([...ctx.teammates, ...(ctx.circle ?? [])])];
 
 /**
  * Load the actor context for one user — bounded SELECTs, non-fatal (a failed read degrades to the
  * owned addresses alone; a teammate then reads as unknown, which only NARROWS nomination).
  */
-export async function loadActorContext(client: SupabaseClient, userId: string, opts: { selfPersonId?: string | null } = {}): Promise<ActorContext> {
+export async function loadActorContext(
+  client: SupabaseClient, userId: string,
+  opts: {
+    selfPersonId?: string | null;
+    /** W11.2 — read the working circle (default true). `false` = members + domain only. */
+    circle?: boolean;
+    /** false = never persist a recomputed circle inference (censuses, gates). Default true. */
+    persistCircle?: boolean;
+  } = {},
+): Promise<ActorContext> {
   const [prof, conns, mine] = await Promise.all([
     client.from('profiles').select('email').eq('id', userId).maybeSingle(),
     client.from('connections').select('metadata, provider_account_id').eq('user_id', userId),
@@ -126,11 +159,24 @@ export async function loadActorContext(client: SupabaseClient, userId: string, o
       }
     }
   }
+  const base = buildActorContext({
+    profileEmail: prof.error ? null : ((prof.data as { email?: string | null } | null)?.email ?? null),
+    connections: conns.error ? [] : ((conns.data ?? []) as Parameters<typeof ownAddressesOf>[0]['connections']),
+    selfPersonId: opts.selfPersonId ?? null,
+    teammates,
+  });
+  if (opts.circle === false) return base;
+  // THE WORKING CIRCLE (W11.2): the stored inference (recomputed past its TTL, zero AI) + the user's
+  // decisions → the counting set. Non-fatal: a failed read leaves the members-only ladder.
+  const circle = await loadCircle(client, userId, base, { persist: opts.persistCircle !== false }).catch(() => null);
+  if (!circle) return base;
   return buildActorContext({
     profileEmail: prof.error ? null : ((prof.data as { email?: string | null } | null)?.email ?? null),
     connections: conns.error ? [] : ((conns.data ?? []) as Parameters<typeof ownAddressesOf>[0]['connections']),
     selfPersonId: opts.selfPersonId ?? null,
     teammates,
+    circle: circle.counting,
+    circleNames: circle.names,
   });
 }
 

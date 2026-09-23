@@ -81,7 +81,7 @@ function SentenceComposer({
         onChange={e => { setText(e.target.value); setUnderstood(null); setPrimitives(null); setReason(null); }}
         rows={2}
         autoFocus
-        placeholder="Say it plainly — e.g. “Label anything from our accountant as To do and file it under Finance/Accounts.”"
+        placeholder="Say it plainly — e.g. “Treat anything from our accountant as To do and file it under my label Finance/Accounts.”"
         className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-[13px] focus:border-indigo-300 focus:outline-none resize-none"
       />
       {understood && (
@@ -108,7 +108,7 @@ function SentenceComposer({
   );
 }
 
-export default function PosturesSection({ connectionId }: { connectionId: string | null }) {
+export default function PosturesSection({ connectionId, mirrorOn }: { connectionId: string | null; mirrorOn?: boolean }) {
   const [postures, setPostures] = useState<Posture[]>([]);
   const [receipts, setReceipts] = useState<Record<string, Receipt>>({});
   const [loading, setLoading] = useState(true);
@@ -123,7 +123,8 @@ export default function PosturesSection({ connectionId }: { connectionId: string
       .catch(() => {})
       .finally(() => setLoading(false));
   };
-  useEffect(load, [connectionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // W11.3 · the sentences name the mailbox only while the mirror is on — flipping it re-reads them.
+  useEffect(load, [connectionId, mirrorOn]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggle = async (p: Posture) => {
     setPostures(ps => ps.map(x => x.id === p.id ? { ...x, enabled: !x.enabled } : x));

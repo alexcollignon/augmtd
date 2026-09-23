@@ -75,7 +75,7 @@ console.log('\nA · ONE STAGE — a commitment\'s message is the ONE EmailCard i
   gate('A4 the verb "Draft an email" SUMMONS the card into the conversation (never a stage)',
     /label: data\?\.counterparty \? `Draft email → [^`]+` : 'Draft an email', onClick: \(\) => \{ setDraftSummoned\(true\); setInviteOpen\(false\); \}/.test(commitSeg));
   gate('A5 the commitment\'s SOURCE reads in the drawer (the email door\'s Thread idiom), read-only',
-    /threadLabel: 'Source',/.test(commitSeg) && /<CommitmentSourceSection src=\{src \?\? null\} meeting=\{view\?\.sourceMeeting \?\? null\} \/>/.test(commitSeg)
+    /threadLabel: 'Source',/.test(commitSeg) && /<CommitmentSourceSection src=\{src \?\? null\} meeting=\{view\?\.sourceMeeting \?\? null\}(?: laterItemId=\{view\?\.sourceItemId \?\? null\})? \/>/.test(commitSeg) /* ⟲ RE-POINTED (W11.1): the drawer carries the source message THEN the rest of the conversation (laterItemId) */
     && /drawerSignal: drawerReq,/.test(commitSeg));
   gate('A6 the EmailCard\'s COMPOSE lane: one fill read (/api/compose/draft) + one approve-before-commit send (/api/compose/send) carrying what we prepared',
     /const composeLane = !!compose && !item && !coworker && !standalone;/.test(host)
@@ -188,9 +188,10 @@ console.log('\nC · TRUE ADDRESSEES — one ladder, stamped at production, withd
 console.log('\nD · the meeting is the source object (the kit\'s existing `source` kind — no new visual language)');
 {
   const cs = src('lib/commitments/source.ts');
-  gate('D1 ONE read of the meeting source (title · date · attendees minus the user · the summary clipped by THE ONE CLIPPER · the ONE note address)',
+  // ⟲ RE-POINTED (W11.3 — THE MARKER NEVER RENDERS): the surface excerpt is a DISPLAY clip.
+  gate('D1 ONE read of the meeting source (title · date · attendees minus the user · the summary clipped for display · the ONE note address)',
     /export async function meetingSourceOf\(/.test(cs)
-    && /excerpt: summary \? clipForPrompt\(summary, MEETING_SOURCE_EXCERPT_CHARS\) : null,/.test(cs)
+    && /excerpt: summary \? clipForDisplay\(summary, MEETING_SOURCE_EXCERPT_CHARS\) : null,/.test(cs)
     && /addressId: String\(mt\.calendar_event_id \?\? mt\.id\),/.test(cs));
   gate('D2 the door serves it in the SAME flight as the rest (no new round trip) and only for a meeting-born commitment',
     /const \[room, machine, sourceItemId, sourceMeeting\] = await Promise\.all\(\[/.test(view)
@@ -227,7 +228,8 @@ console.log('\nE · an email commitment\'s source_id is an EMAILS row — every 
     && /\.eq\('source', 'email'\)\.eq\('source_id', src\.emailId\)/.test(src('lib/commitments/source.ts'))
     && /client\.from\('inbox_items'\)\.select\('id, source_id'\)\.eq\('user_id', userId\)\.in\('source_id', sourceEmailIds\)/.test(src('lib/triage/deck-context-read.ts')));
   gate('E4 the addressee ladder reads the source EMAIL by its own id (emails.id)',
-    /client\.from\('emails'\)\.select\('from_address, from_name, to_addresses, is_from_user'\)\.eq\('id', row\.source_id\)/.test(src('lib/prepare/addressee.ts')));
+    /* ⟲ RE-POINTED (W11.1): the same by-id read also carries cc_addresses + thread_id (the reply-all Cc ladder) */
+    /client\.from\('emails'\)\.select\('from_address, from_name, to_addresses, (?:cc_addresses, )?is_from_user(?:, thread_id)?'\)\.eq\('id', row\.source_id\)/.test(src('lib/prepare/addressee.ts')));
 }
 
 // ═══ F · THE CENSUS (read-only; never a gate) ═══

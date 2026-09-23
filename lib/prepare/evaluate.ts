@@ -15,6 +15,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { getPersonEntities, resolveIdentity } from '@/lib/entities/people';
 import { claimsUndoneWork, completionObjection } from '@/lib/prepare/truth';
+import { claimsUnstagedAttachment, attachmentObjection } from '@/lib/prepare/truth';
 
 export type EvalVerdict = {
   verdict: 'pass' | 'revise' | 'flag' | 'needs_input';
@@ -91,6 +92,13 @@ export async function evaluateDeliverable(admin: SupabaseClient, userId: string,
     if (args.kind !== 'deliverable' && args.obligationOpen === true) {
       const claim = claimsUndoneWork(args.content, { obligationOpen: true, staged: args.staged === true });
       if (claim) return { verdict: 'revise', objection: completionObjection(claim) };
+    }
+    // ── THE ATTACHMENT FLOOR (W11.1 — "…the attached interim report…" with nothing attached, found
+    // live Sep 23). Speaks only with its fact in hand (`staged === false`, stated by the producer):
+    // a message may never say a file rides with it when none does. ──
+    if (args.kind !== 'deliverable' && args.staged === false) {
+      const claim = claimsUnstagedAttachment(args.content, { staged: false });
+      if (claim) return { verdict: 'revise', objection: attachmentObjection(claim) };
     }
     // ── STRUCTURAL floor: an artifact addressed to the USER THEMSELF is wrong at birth (the
     // self-nudge class) — no AI needed, the registry answers. T3 adds the twin: an AUTOMATED /

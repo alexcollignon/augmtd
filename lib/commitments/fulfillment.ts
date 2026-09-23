@@ -163,7 +163,9 @@ export async function judgeFulfillmentFromEvidence(
   const evidenceLines: string[] = [];
   // THE ACTOR IS STATED (W8.1): a teammate's message is labelled as theirs — never as the user's.
   const sender = (c: FulfillmentCandidate) => c.actor?.role === 'teammate'
-    ? `a TEAMMATE of the user (${clipForPrompt(c.actor.name || 'same organisation', 60)} — same organisation, not the user)`
+    // W11.2: a teammate may be a WORKING-CIRCLE collaborator at a partner firm — "on the user's side",
+    // never claimed as "same organisation" (a served claim that is false for a circle member).
+    ? `a TEAMMATE of the user (${clipForPrompt(c.actor.name || 'a collaborator', 60)} — on the user's side, not the user)`
     : who;
   emails.forEach((c, i) => {
     const label = `E${i + 1}`; labels.set(label, c);

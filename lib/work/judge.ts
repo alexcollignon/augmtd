@@ -222,6 +222,48 @@ function fallbackVerdict(reason: string, resolution?: 'expired' | 'answered'): W
   return { work: 'none', component: 'message_only', executor: { kind: 'user' }, gate: null, reason, ...(resolution ? { resolution } : {}) };
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE DIRECTION FLOOR (stabilization W11.1 · ONE COHERENT ITEM — owner walk, Sep 23). A `chase` is a
+// nudge for something SOMEONE ELSE owes the user; it is only valid on AWAITING work. Found live: a
+// you_owe commitment ("Change '<phrase>' in the second tab", owed TO a client contact) carried a
+// prepared email that NUDGED THE CLIENT ("Just a quick nudge on the small edit we discussed …") —
+// the obligation inverted, in the user's own voice. The prompt already says so (JUDGE_VERSION 15's
+// ask-direction rule); a rule in a prompt is a wish, so the floor is CODE, applied to every verdict
+// the judge serves (computed, cached and parked alike — a cached inverted chase self-heals on its
+// first serve, with no re-judgment and no AI):
+//   · a COMMITMENT the user owes (direction you_owe) + chase → `none` (message_only, NO disposition):
+//     the debt stays open and on the desk as the user's own; nothing is prepared that speaks for it
+//     as a chase. (No send_file/produce: a chase verdict carries no inventory, so any other verb
+//     would be an invented one — CONSERVATIVE: none costs nothing, a wrong mount costs trust.)
+//   · an INBOX item whose understanding says the user owes the move (ownership you_owe) + chase →
+//     `reply` (reply_composer): the counterparty is waiting on the USER on this thread, and the one
+//     move the user owes on a thread is their reply. (`none` would demote live work off the deck.)
+// Pure — exported for the gate (scripts/smoke-item-coherence.ts) and tests/unit.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+export const DIRECTION_FLOOR_REASON = 'you owe this — a nudge to them would invert the obligation';
+export function directionFloor(
+  v: WorkVerdict,
+  facts: { kind: 'inbox' | 'commitment'; direction?: string | null; ownership?: string | null },
+): WorkVerdict {
+  if (v.work !== 'chase') return v;
+  if (facts.kind === 'commitment' && String(facts.direction ?? '') === 'you_owe') {
+    const out: WorkVerdict = {
+      work: 'none', component: 'message_only', executor: { kind: 'user' }, gate: null,
+      reason: `${DIRECTION_FLOOR_REASON}. (${clipLabel(v.reason, 110)})`,
+    };
+    return out;
+  }
+  if (facts.kind === 'inbox' && String(facts.ownership ?? '') === 'you_owe') {
+    const component = (componentForWork('reply') ?? 'reply_composer') as WorkComponentKey;
+    const out: WorkVerdict = {
+      work: 'reply', component, executor: v.executor.kind === 'coworker' ? v.executor : { kind: 'user' },
+      gate: gateOf(component), reason: `${DIRECTION_FLOOR_REASON} — the move owed is the user's reply. (${clipLabel(v.reason, 110)})`,
+    };
+    return out;
+  }
+  return v;
+}
+
 /** The user-clock context every time-law compares against (T-class: the brain reasons in the
  *  USER's day and hour, never the server's — and every time claim is checked against the item's
  *  own text, the expired_on pattern extended to hours). */
@@ -437,6 +479,9 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     // THE EVIDENCE MATCH'S INPUTS (W3.1): the moment evidence must postdate, the thread it may share,
     // and who must act — set per kind below; the counterparty ADDRESS is `whoEmail` for both kinds.
     let evAfterISO = '', evThreadId: string | null = null, evFulfiller: 'user' | 'counterparty' = 'user';
+    // THE DIRECTION FLOOR's fact (W11.1): WHO OWES — the commitment's own direction (inbox items read
+    // the understanding's ownership, `u` below). Applied to every verdict this function serves.
+    let commitDirection: string | null = null;
     if (input.kind === 'inbox') {
       const { data: it } = await client.from('inbox_items')
         .select('id, work_title, work_state, status, last_activity_at, created_at, source_data')
@@ -528,6 +573,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       } catch { whoEmail = null; }
       evAfterISO = String(c.created_at || ''); evThreadId = (c.thread_id as string) || null;
       evFulfiller = String(c.direction) === 'awaiting' ? 'counterparty' : 'user';
+      commitDirection = (c.direction as string | null) ?? null;
       activityAt = String(c.updated_at || c.created_at || '');
       dueDate = (c.due_date as string) || null;
       body = `direction: ${c.direction}${c.due_date ? ` · due ${c.due_date}` : ''}`;
@@ -614,7 +660,16 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     } })}`;
     const { hit: cached, prior, priorSig, priorEv, priorMat } = await readCache(client, userId, input, sig);
     const evSig = evidenceSig(evidence);
-    if (cached) return cached;
+    // THE DIRECTION FLOOR at the serve (W11.1): a verdict cached before the floor existed (an inverted
+    // chase on work the user owes) is coerced HERE and written back under the same sig, so every raw
+    // reader of the judgment cache (the machine, the room board, the deck) reads the corrected verb
+    // on the next read — zero AI, no re-judgment, no JUDGE_VERSION bump (the prompt is unchanged).
+    const dirFacts = { kind: input.kind, direction: commitDirection, ownership: u?.ownership ?? null } as const;
+    if (cached) {
+      const floored = directionFloor(cached, dirFacts);
+      if (floored !== cached) await writeCache(client, userId, input, sig, floored, priorEv, priorMat);
+      return floored;
+    }
     // W4 PARKED SERVE — a revisit verdict holds WITHOUT AI until its date: same item facts (only
     // the day moved) + the revisit date still ahead → re-serve the parked verdict under today's
     // sig. Parking an item costs one judgment, not one per day.
@@ -627,8 +682,9 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     // judged fresh, exactly as they always were: the park expires, it never self-renews.
     if (prior?.revisit?.after && prior.revisit.after > todayStr
       && (prior.revisit.by === 'user' || (priorSig && nonDaySig(priorSig) === nonDaySig(sig)))) {
-      await writeCache(client, userId, input, sig, prior, priorEv, priorMat);
-      return prior;
+      const parked = directionFloor(prior, dirFacts); // a parked verdict is none — the floor is a no-op
+      await writeCache(client, userId, input, sig, parked, priorEv, priorMat);
+      return parked;
     }
 
     // ── STRUCTURAL FLOORS (no AI): answered → none · the ownership notice law → none. ──
@@ -666,7 +722,8 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     // cold-outreach pitch judged `schedule` and listed as real, alive work. Structural, before AI;
     // the one escape is the user's own message in the thread (a pitch they answered is a conversation).
     if (input.kind === 'inbox') {
-      const kf = kindFloor({ kind: reasonedKind, ownership: u?.ownership ?? null, userEngaged: threadMsgs.some((m) => m.is_from_user) });
+      // W11.3 · + the platform facet (fromEmail): mail the platform itself sent is never the user's work.
+      const kf = kindFloor({ kind: reasonedKind, ownership: u?.ownership ?? null, userEngaged: threadMsgs.some((m) => m.is_from_user), fromEmail: whoEmail });
       if (kf.refuses) {
         const v = fallbackVerdict(kindFloorReason(kf.why));
         await writeCache(client, userId, input, sig, v, null, matNow);
@@ -785,7 +842,10 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         delete v.requires; delete v.options;
         v.reason = `automated sender — a reply reaches no one; the action happens outside the mailbox. (${clipLabel(v.reason, 110)})`;
       }
-      return v;
+      // THE DIRECTION FLOOR (W11.1) — a chase is only valid on AWAITING work; on work the user owes it
+      // is coerced (commitment → none · inbox → reply). After the sender floor: an automated sender
+      // has already become none, and none is never touched.
+      return directionFloor(v, dirFacts);
     };
     // THE COHERENCE FLOOR (Aug 4 — the P18 class, promoted from "logged" to law): a plain none
     // whose OWN REASON claims the window passed — with no code-verified expired_on surviving the

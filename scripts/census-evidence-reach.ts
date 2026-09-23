@@ -124,6 +124,8 @@ async function censusUser(sb: SupabaseClient, userId: string, t: Tally, isOwner:
 }
 
 async function main() {
+  // W11.2: READ-ONLY means the working circle's inference cache is never written either.
+  (await import('../lib/evidence/circle')).setCirclePersistence(false);
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) { console.error('no Supabase env'); process.exit(2); }
   const sb = createClient(url, key, { auth: { persistSession: false } });

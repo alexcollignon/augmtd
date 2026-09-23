@@ -239,7 +239,7 @@ function sq3() {
     collapseSelfVoice('Send the spec to Clara.', S) === 'Send the spec to me.');
 
   // THE NAME TEST: a counterparty who shares the given name is a DIFFERENT person.
-  const mixed = 'Madalena Clara replied on Tuesday and Clara Mendes is copied.';
+  const mixed = 'Sam Clara replied on Tuesday and Clara Jones is copied.';
   ok('a counterparty sharing the given name is left alone', collapseSelfVoice(mixed, S) === mixed);
   ok('ANOTHER coworker is still named normally',
     collapseSelfVoice('Max drafted the briefing.', S) === 'Max drafted the briefing.');
@@ -1326,8 +1326,9 @@ function sq19() {
       tail.length === TRIAGE_TAIL_MESSAGES && tail.map((m) => m.id).join(',') === 'b,c');
     ok('   …each author-named from the message itself ("You" for the user\'s own)',
       tail[0].author === 'sam@acme.test' && tail[1].author === 'You');
-    ok('   …and every body clipped by THE ONE CLIPPER, marker and all',
-      tail[0].body.endsWith(EXCERPT_MARK) && tail[0].body.length < TRIAGE_MESSAGE_CHARS + EXCERPT_MARK.length + 4);
+    // ⟲ RE-POINTED (W11.3 — THE MARKER NEVER RENDERS): a card body is a DISPLAY clip.
+    ok('   …and every body clipped for display — "…", never the prompt marker',
+      tail[0].body.endsWith('…') && !tail[0].body.includes(EXCERPT_MARK) && tail[0].body.length <= TRIAGE_MESSAGE_CHARS + 2);
     // The card reads each message's OWN words — the quoted chain beneath belongs to the messages
     // above it. (`topMessageOf`'s own conservative floor stands: a near-empty top keeps the full
     // text, because a judge — or a reader — with more context beats one with none.)

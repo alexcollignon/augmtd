@@ -38,8 +38,12 @@ function ProviderLogo({ provider, name }: { provider: string; name: string }) {
   );
 }
 
-function formatLastSync(dateStr: string | null): string {
-  if (!dateStr) return 'Never synced';
+// W11.3 · THE CARD SAYS WHAT THE ROW SAYS. It reads `connections.last_sync` (the cursor the sync
+// stamps) and keeps reading it while the page is open — the poll used to refresh only the status,
+// so a sync that completed under an open page left the stale words standing. A row with no cursor
+// that is still pending has never COMPLETED a sync; it says so, not that it never will.
+export function formatLastSync(dateStr: string | null, syncStatus?: string | null): string {
+  if (!dateStr) return syncStatus === 'failed' ? 'Last sync failed' : 'Waiting for first sync';
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'Synced just now';
@@ -61,6 +65,7 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
   const config = PROVIDER_CONFIG[provider];
   const [syncStatus, setSyncStatus] = useState(connection?.sync_status || 'ready');
   const [connectionStatus, setConnectionStatus] = useState(connection?.status || 'active');
+  const [lastSync, setLastSync] = useState<string | null>(connection?.last_sync ?? null);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [sigOpen, setSigOpen] = useState(false);
   const [sigLoaded, setSigLoaded] = useState(false);
@@ -74,12 +79,13 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
     const interval = setInterval(async () => {
       const { data } = await supabase
         .from('connections')
-        .select('sync_status, status')
+        .select('sync_status, status, last_sync')
         .eq('id', connection.id)
         .single();
       if (data) {
         setSyncStatus(data.sync_status);
         setConnectionStatus(data.status);
+        setLastSync(data.last_sync ?? null);
       }
     }, 3000);
     return () => clearInterval(interval);
@@ -173,7 +179,7 @@ export default function ConnectionCard({ provider, connection, connectUrl, disco
           <p className="text-[11px] text-neutral-400 mt-0.5" suppressHydrationWarning>
             {syncStatus === 'syncing'
               ? <span className="text-indigo-500">Syncing…</span>
-              : formatLastSync(connection.last_sync)
+              : formatLastSync(lastSync, syncStatus)
             }
           </p>
         </div>

@@ -83,6 +83,8 @@ import { loadThreadTail, loadThreadDoor, peekThreadDoor } from '@/lib/inbox/thre
 import { loadDeckContext, peekDeckContext } from '@/lib/triage/deck-context-door';
 import type { DeckContext } from '@/lib/triage/deck-context';
 import { SourceObjectMount } from '@/components/room/source-object';
+// W11.3 · THE MARKER NEVER RENDERS — every excerpt on this card passes the one UI text floor.
+import { displayText } from '@/lib/utils/clip-for-prompt';
 // THE HONEST COUNTER — a stack still being extended may not state a total (lib/triage/queue.ts).
 import { queueCount, mergeQueue, settleQueue } from '@/lib/triage/queue';
 
@@ -266,10 +268,10 @@ function TriageCard({ row }: { row: TriageRow }) {
         {threaded && tail && tail.length > 0 ? tail.map((m) => (
           <div key={m.id} className="flex flex-col gap-0.5">
             <span className="text-[11px] font-medium text-neutral-400">{m.author}</span>
-            <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-neutral-600">{m.body}</p>
+            <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-neutral-600">{displayText(m.body)}</p>
           </div>
         )) : row.excerpt ? (
-          <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-neutral-500">{row.excerpt}</p>
+          <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-neutral-500">{displayText(row.excerpt)}</p>
         ) : founded && ctx ? (
           // THE FOUNDING CONTEXT (W3.6): the thread itself through THE ONE OBJECT CARD once its door
           // has answered; until then (or with no inbox item) the newest message as a compact line in
@@ -281,7 +283,7 @@ function TriageCard({ row }: { row: TriageRow }) {
               <span className="text-[11px] font-medium text-neutral-400">
                 {[ctx.founding.who, ctx.founding.at ? whenWords(ctx.founding.at.slice(0, 10)) : null].filter(Boolean).join(' · ')}
               </span>
-              <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-neutral-600">{ctx.founding.line}</p>
+              <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-neutral-600">{displayText(ctx.founding.line)}</p>
             </div>
           ) : ctx.meeting ? (
             <span className="text-[12px] text-neutral-500">
