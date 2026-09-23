@@ -5,6 +5,8 @@ import { hasBearer } from '@/lib/utils/bearer-auth';
 
 export const maxDuration = 300;
 
+// SCHEDULE (vercel.json): `0 3 * * *`
+
 export async function GET(request: NextRequest) {
   if (!hasBearer(request, 'CRON_SECRET')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

@@ -166,19 +166,22 @@ server code for background/admin work.
 
 | Route | Schedule | Job |
 |---|---|---|
-| `/api/cron/fetch-emails` | `*/15 * * * *` | pull-fallback email sync |
+| `/api/cron/fetch-emails` | `*/15 * * * *` | pull-fallback email sync (live connections, least-recently-synced first, 8 in flight, wall clock; reports `leftBehind`/`unfinished`) |
 | `/api/cron/sync-calendar` | `5 * * * *` (hourly at :05) | calendar sync |
 | `/api/cron/workflows-dispatch` | `0 * * * *` | scheduled workflows + standing bindings + deferred drains |
 | `/api/cron/draft-sweep` | `20 */2 * * *` | preparation pass (active users, least-recently-served first) |
-| `/api/cron/label-sweep` | `40 */2 * * *` | label backstop + kind completer |
+| `/api/cron/label-sweep` | `40 */2 * * *` | label backstop + kind completer (budgeted serial walk, not a fan-out lane; reports `usersLeftBehind`/`itemsLeftBehind`) |
 | `/api/cron/judgment-sweep` | `50 */2 * * *` | judgment coverage |
 | `/api/cron/commitments-sweep` | `0 */6 * * *` | commitment fulfillment nomination |
 | `/api/cron/status-alerts` | `10 */6 * * *` | red-only status emails to superadmins |
 | `/api/cron/render-memory` | `0 3 * * *` | context-profile prose |
 | `/api/cron/renew-push-subscriptions` | `0 6 * * *` | Gmail/Outlook push renewals |
-| `/api/cron/knowledge-sync` | **not scheduled** | route exists; no cron entry |
+| `/api/cron/retention` | `30 3 * * *` | **dry-run report only** — the scheduled call passes no `?apply=1`; deleting needs `RETENTION_APPLY=true` AND `?apply=1` (owner decision) |
+| `/api/cron/knowledge-sync` | **not scheduled** (deliberate, W9.5) | the indexer's unchanged-file skip compares timestamp strings that never match, so every run would re-extract/summarize/embed every Drive file; schedule `15 2 * * *` once `lib/knowledge/indexer.ts` compares instants (route header) |
 
-Cron routes authenticate with `hasBearer(req, 'CRON_SECRET')`. The run kick
+Cron routes authenticate with `hasBearer(req, 'CRON_SECRET')`. Each route states its schedule on a
+`// SCHEDULE (vercel.json): \`<expr>\`` line (or `// SCHEDULE: NOT SCHEDULED — <reason>`);
+`scripts/smoke-clocks.ts` fails when a line, a header cadence or an unscheduled route disagrees with `vercel.json`. The run kick
 (`/api/internal/runs/kick`, `AGENTOS_SECRET` bearer) gives event-fired workflow runs seconds-latency.
 
 ---

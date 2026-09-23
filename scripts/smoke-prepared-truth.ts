@@ -217,12 +217,14 @@ console.log('\nF · W5c: hidden artifacts re-prepare, leave the brief, and never
   const pass_ = src('lib/prepare/pass.ts');
   gate('F2 every lane\'s freshness guard reads the non-live set — a young-but-hidden artifact is never "already on it" (invite ×2 · nudge ×2 · reply · delegate · paste pack)',
     /nonLive = nonLiveKindsOf\(await preparedState\(admin, userId,/.test(pass_)
-    && /if \(prior && !movedPast && !untrueInvite && /.test(pass_) && /\|\| untrueInvite\n/.test(pass_)
-    && (pass_.match(/!movedPast && !untrueNudge && /g) ?? []).length === 2
-    && /\|\| !!nonLive\?\.has\('reply_draft'\)/.test(pass_)
-    && /if \(!fresherSupply && !movedPast && !untrueDeliverable\)/.test(pass_)
+    // ⟲ RE-POINTED (W9.1 — the clock left): every lane hands the non-live set to THE ONE DECISION
+    // (lib/prepare/hand.ts decideRegeneration), where a withdrawn machine artifact regenerates.
+    && (pass_.match(/groundMoved: movedPast, nonLive: untrueInvite/g) ?? []).length === 2
+    && (pass_.match(/groundMoved: movedPast, nonLive: untrueNudge/g) ?? []).length === 2
+    && /nonLive: !!nonLive\?\.has\('reply_draft'\)/.test(pass_)
+    && /nonLive: !!untrueDeliverable/.test(pass_)
     && /supersede: nonLive\.has\('paste_pack'\)/.test(pass_)
-    && /if \(prior && !movedPast && !args\.supersede && /.test(src('lib/prepare/paste-pack.ts')));
+    && /nonLive: !!args\.supersede/.test(src('lib/prepare/paste-pack.ts')));
   const view = src('app/api/items/view/route.ts');
   gate('F3 the on-open trip covers every non-live artifact and LOGS its outcome (a no-op is never silent)',
     /preparedArts\.some\(\(a\) => !isLiveArtifact\(a\)\) && \(linkKind === 'inbox_item' \|\| linkKind === 'commitment'\)/.test(view)

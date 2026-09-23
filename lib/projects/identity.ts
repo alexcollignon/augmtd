@@ -4,10 +4,9 @@
 // Fully agnostic: no hardcoded identities; matches by structural signals (email localpart, name tokens),
 // never by a named string. When it can't confidently reduce to one person, callers treat it as unresolved.
 
-/** THE ONE ACCENT FOLD (W7.5 IDENTITY HYGIENE): diacritics never distinguish two people — "Zoé" IS
- *  "Zoe", "Léa" IS "Lea". Folded here, in the ONE normalizer every identity helper below runs
+/** THE ONE ACCENT FOLD (W7.5 IDENTITY HYGIENE): diacritics never distinguish two people — "Zoé" IS "Zoe". Folded here, in the ONE normalizer every identity helper below runs
  *  through (the tokenizer splits on [^a-z0-9], so an unfolded accent used to cut a name in two:
- *  "Léa" → ["l", "a"], a different person to every matcher on the platform). */
+ *  "Zoé" → ["zo"], a different person to every matcher on the platform). */
 export const foldAccents = (s: string): string => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
 export const norm = (s: string) => foldAccents(s).toLowerCase().replace(/\s+/g, ' ').trim();

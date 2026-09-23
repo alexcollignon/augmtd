@@ -101,7 +101,8 @@ the registry's status column is authoritative.
   `branding_expert`; legacy key `linkedin_drafter`) · Max (Research Analyst). Sofia retired Aug 14.
 - **Crons** (`vercel.json`): fetch-emails every 15 min; sync-calendar hourly at :05; draft/label/
   judgment sweeps every 2h; commitments-sweep + status-alerts every 6h; workflows-dispatch hourly;
-  knowledge-sync has a route but no schedule.
+  retention nightly as a DRY-RUN report only; knowledge-sync has a route but deliberately no schedule
+  (route header says why). `scripts/smoke-clocks.ts` holds routes, headers and vercel.json together.
 - **The auto-join meeting bot and Attendee are REMOVED** (Sep 23, owner call): no bot routes, no
   Playwright join path, no `createBotsForCalendarEvents`. The Hetzner `hetzner_meeting-bot_1` container
   (historical name) is now the transcription service for in-person recordings only (`/transcribe`,

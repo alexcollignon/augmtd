@@ -20,6 +20,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { inviteOutsideStatedWindow, claimsUndoneWork, type ProposedFrom } from '@/lib/prepare/truth';
 import { addresseeOfStamp, addresseeFromNudgeTitle, addresseeWithdrawn, loadUserForms, type Addressee } from '@/lib/prepare/addressee';
 import type { UserForms } from '@/lib/commitments/extraction-truth';
+import { isHandHeld, isPoolRowHandHeld, type HandKind } from '@/lib/prepare/hand';
 
 export type PreparedKind = 'reply_draft' | 'nudge_draft' | 'deliverable' | 'invite' | 'forward' | 'paste_pack';
 
@@ -75,7 +76,26 @@ export type PreparedArtifact = {
   invite?: { title?: string; startISO?: string; endISO?: string; attendees?: string[]; description?: string; timezone?: string; proposed?: boolean; proposedFrom?: ProposedFrom; alternatives?: Array<{ startISO: string; endISO: string; note?: string }> } | null;
   /** Where the payload lives — see PreparedPayloadRef. */
   payload?: PreparedPayloadRef;
+  /** THE USER'S HAND (W9.1): the stored content is the user's own edit (the stamp still hashes to
+   *  it). The engine never overwrites a hand-held artifact; the truth floors never withdraw the
+   *  user's own words. */
+  hand?: { editedAt: string } | null;
+  /** THE USER'S HAND vs THE GROUND LAW (W9.1): a hand-held artifact whose ground moved is NOT
+   *  superseded (it stays live — the user's words are never hidden or replaced); it is MARKED, so
+   *  the card can say "the thread moved since you edited this" and offer a fresh version. */
+  staleUnderEdit?: boolean;
 };
+
+/** THE GROUND MOVED under an artifact — the ONE place the two laws meet: machine words are
+ *  superseded (`stale`, not live); the user's words are marked (`staleUnderEdit`, still live). */
+export function markGroundMoved(a: PreparedArtifact): void {
+  if (a.hand) a.staleUnderEdit = true;
+  else a.stale = true;
+}
+
+/** The hand stamp of a stored source_data artifact → the reader's `hand` (null when not held). */
+const handOf = (kind: HandKind, stored: unknown): { editedAt: string } | null =>
+  isHandHeld(kind, stored) ? { editedAt: String((stored as { edited_by_user_at: string }).edited_by_user_at) } : null;
 
 /** THE ITEM'S OWN FACTS the truth floors judge against (W5a) — code's, read off the item row. */
 export type ItemTruthFacts = {
@@ -99,7 +119,7 @@ export function stampTruth<T extends PreparedArtifact>(arts: T[], facts: ItemTru
   if (!facts) return arts;
   for (const a of arts) {
     if (a.kind === 'invite' && inviteOutsideStatedWindow(a.invite ?? null, facts.text, facts.anchorIso)) a.outsideWindow = true;
-    if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft' || a.kind === 'paste_pack')
+    if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft' || a.kind === 'paste_pack') && !a.hand
       && claimsUndoneWork(a.content, { obligationOpen: facts.obligationOpen, staged: !!a.attachment })) a.falseClaim = true;
   }
   return arts;
@@ -238,13 +258,13 @@ export function preparedFromSourceData(sd: SourceData): PreparedArtifact[] {
       by: sd.prepared_by?.worker ?? null, at: sd.draft.generated_at ?? null,
       attachment: sd.draft.attachment ?? null, provenance: null,
       ground: groundFrom(sd.draft.prepared_from), payload: { store: 'source_data', field: 'draft' },
-      addressee: addresseeOfStamp(sd.draft.addressee),
+      addressee: addresseeOfStamp(sd.draft.addressee), hand: handOf('reply_draft', sd.draft),
     });
   }
   if (sd?.nudge_draft?.body && !sd.nudge_draft.sent_at) {
     // B3 (verb-lane sweep): the pass stamps prepared_by on the nudge lane too — reading null here
     // rendered the chase draft unattributed while every sibling lane said "by Clara".
-    out.push({ kind: 'nudge_draft', title: null, content: sd.nudge_draft.body, by: sd.prepared_by?.worker ?? null, at: sd.nudge_draft.generated_at ?? null, attachment: null, provenance: null, ground: groundFrom(sd.nudge_draft.prepared_from), payload: { store: 'source_data', field: 'nudge_draft' }, addressee: addresseeOfStamp(sd.nudge_draft.addressee) });
+    out.push({ kind: 'nudge_draft', title: null, content: sd.nudge_draft.body, by: sd.prepared_by?.worker ?? null, at: sd.nudge_draft.generated_at ?? null, attachment: null, provenance: null, ground: groundFrom(sd.nudge_draft.prepared_from), payload: { store: 'source_data', field: 'nudge_draft' }, addressee: addresseeOfStamp(sd.nudge_draft.addressee), hand: handOf('nudge_draft', sd.nudge_draft) });
   }
   if (sd?.prepared_invite && !sd.prepared_invite.sent_at) {
     const inv = sd.prepared_invite;
@@ -257,7 +277,7 @@ export function preparedFromSourceData(sd: SourceData): PreparedArtifact[] {
       sendReady: !!startISO,
       ground: groundFrom(inv.prepared_from),
       invite: { title: inv.title, startISO, endISO: inv.endISO, attendees: inv.attendees, description: inv.description, timezone: inv.timezone, proposed: inv.proposed, proposedFrom: inv.proposedFrom, alternatives: inv.alternatives },
-      payload: { store: 'source_data', field: 'prepared_invite' },
+      payload: { store: 'source_data', field: 'prepared_invite' }, hand: handOf('invite', inv),
     });
   }
   if (sd?.prepared_forward && !sd.prepared_forward.sent_at) {
@@ -267,7 +287,7 @@ export function preparedFromSourceData(sd: SourceData): PreparedArtifact[] {
       by: sd.prepared_by?.worker ?? null, at: sd.prepared_forward.generated_at ?? null, attachment: null, provenance: null,
       sendReady: (sd.prepared_forward.to ?? []).length > 0,
       ground: groundFrom(sd.prepared_forward.prepared_from),
-      payload: { store: 'source_data', field: 'prepared_forward' },
+      payload: { store: 'source_data', field: 'prepared_forward' }, hand: handOf('forward', sd.prepared_forward),
     });
   }
   return stampExpiry(out);
@@ -287,7 +307,7 @@ export function liveFromSourceData(
   const lastAct = Date.parse(String(opts.lastActivityAt ?? '')) || 0;
   if (lastAct) for (const a of arts) {
     const pAt = Date.parse(String(a.ground?.receivedAt ?? '')) || 0;
-    if (pAt && lastAct > pAt + 5000) a.stale = true;
+    if (pAt && lastAct > pAt + 5000) markGroundMoved(a);
   }
   stampTruth(arts, inboxTruthFacts(sd));
   if (opts.user && hasAddressed(arts)) stampAddressees(arts, { counterparty: null, user: opts.user });
@@ -339,6 +359,7 @@ export function poolRowsToArtifacts(rows: Array<Record<string, unknown>>, poolKi
         content: [inv.title, inv.startISO].filter(Boolean).join(' · ') || String(d.content),
         by, at, attachment: null, provenance: meta.provenance ?? null,
         sendReady: !!inv.startISO, ground: groundFrom(meta.prepared_from), invite: inv, payload,
+        hand: isPoolRowHandHeld('invite', d) ? { editedAt: String((meta as { edited_by_user_at?: string }).edited_by_user_at) } : null,
       });
       continue;
     }
@@ -349,6 +370,7 @@ export function poolRowsToArtifacts(rows: Array<Record<string, unknown>>, poolKi
         kind: 'paste_pack', title: (d.title as string) ?? null, content: String(d.content),
         by, at, attachment: null, provenance: meta.provenance ?? null, note: meta.note ?? null,
         ground: groundFrom(meta.prepared_from), payload, addressee: addresseeOfStamp(meta.addressee),
+        hand: isPoolRowHandHeld('paste_pack', d) ? { editedAt: String((meta as { edited_by_user_at?: string }).edited_by_user_at) } : null,
       });
       continue;
     }
@@ -363,6 +385,7 @@ export function poolRowsToArtifacts(rows: Array<Record<string, unknown>>, poolKi
       kind: isCommitDraft ? (String(d.title ?? '').startsWith('Nudge — ') ? 'nudge_draft' : 'reply_draft') : 'deliverable',
       title: (d.title as string) ?? null, content: String(d.content),
       ground: groundFrom(meta.prepared_from),
+      hand: isPoolRowHandHeld('deliverable', d) ? { editedAt: String((meta as { edited_by_user_at?: string }).edited_by_user_at) } : null,
       by, at, attachment: meta.attachment ?? null, provenance: meta.provenance ?? null, payload,
       // Both metadata generations parse: label strings (the first live briefs) and
       // {label, tradeoff} objects (current writes).
@@ -499,7 +522,7 @@ export async function preparedState(
     try {
       const { groundOf, groundMoved } = await import('@/lib/prepare/ground');
       const current = await groundOf(client, userId, { kind: item.kind === 'inbox_item' ? 'inbox' : 'commitment', id: item.id });
-      if (current.receivedAt) for (const a of out) { if (groundMoved(a.ground, current)) a.stale = true; }
+      if (current.receivedAt) for (const a of out) { if (groundMoved(a.ground, current)) markGroundMoved(a); }
     } catch { /* staleness is a protection, never a blocker */ }
     // TIME TRUTH + A CLAIM RENDERS (W5a): an invite outside the item's stated window and words that
     // announce an undone deed are derived FALSE here, at the one reader — never "ready" anywhere.
@@ -571,7 +594,7 @@ export async function preparedStatesFor(
       const lastAct = Date.parse(String(row?.last_activity_at ?? '')) || 0;
       if (lastAct) for (const a of arts) {
         const pAt = Date.parse(String(a.ground?.receivedAt ?? '')) || 0;
-        if (pAt && lastAct > pAt + 5000) a.stale = true;
+        if (pAt && lastAct > pAt + 5000) markGroundMoved(a);
       }
       const facts = item.kind === 'inbox' ? inboxTruthFacts(sd) : commitFacts.get(item.id) ?? null;
       stampTruth(arts, facts);

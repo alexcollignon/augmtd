@@ -69,7 +69,7 @@ export type AddresseeFacts = {
 /** Public mail providers — a shared domain here says nothing about who is a colleague. */
 const PUBLIC_DOMAINS = new Set(['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'yahoo.com', 'icloud.com', 'me.com', 'proton.me', 'protonmail.com', 'aol.com', 'gmx.com', 'gmx.de', 'mail.com']);
 
-// Diacritics ("Léa" is "Lea") are folded by THE ONE shared normalizer now (lib/projects/identity
+// Diacritics ("Zoé" is "Zoe") are folded by THE ONE shared normalizer now (lib/projects/identity
 // foldAccents, W7.5) — the local fold this law carried in W7.3 retired into it.
 
 const domainOf = (email: string): string | null => /@([^@\s>]+)$/.exec(email.trim().toLowerCase())?.[1] ?? null;

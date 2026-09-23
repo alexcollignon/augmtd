@@ -64,7 +64,9 @@ export async function stageTypedSupply(
 
 /**
  * reopenAfterSupply — an input landed, so the work prepared WITHOUT it is no longer the answer.
- * Dropping the reply draft's `generated_at` trips the pass's freshness check; the coworker lane
+ * Dropping the reply draft's `generated_at` is THE SUPPLY SIGNAL the pass's one decision reads
+ * (lib/prepare/hand.ts `decideRegeneration` · `supplyMoved` — W9.1: there is no freshness clock any
+ * more; a draft the USER EDITED is marked, never replaced, by this signal); the coworker lane
  * re-opens on the pool row itself (delegatePrepare's require:* check). Non-fatal by construction:
  * the supply is already durable, and a failed re-open costs a pass, never the user's input.
  */

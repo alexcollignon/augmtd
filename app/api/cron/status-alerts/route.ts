@@ -5,6 +5,8 @@ import { hasBearer } from '@/lib/utils/bearer-auth';
 
 export const maxDuration = 60;
 
+// SCHEDULE (vercel.json): `10 */6 * * *`
+
 // ─── STATUS ALERTS (the status board's push half, Sep 1) ────────────────────────────────
 // The status page is pull — this cron is the push: every 6h it runs the SAME probe pass
 // and, ONLY when RED warnings exist, emails every superadmin. Amber never mails (ambient

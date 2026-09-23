@@ -239,6 +239,18 @@ export async function syncCalendarForConnection(
           .then(({ settleForEvent }) => settleForEvent(supabase, connection.user_id, { type: 'calendar', eventIds: res.upsertedEventIds!, provider: connection.provider }))
           .catch(() => {});
       }
+      // PROJECTS FOLLOW THE MAIL (W9.3): the events this read upserted are RECOGNIZED into entity
+      // memory here — the hourly calendar cron never ran recognition before (only the email-sync tail
+      // and the 2-hourly sweep did), so a meeting booked with a deal's counterparty stayed off its
+      // ledger until mail happened to arrive. Awaited, self-gated, bounded (a cap + a start deadline;
+      // the remainder is reported and reached by the next sync); a new member only MARKS its entity
+      // for refresh — the next email-sync tail drains it, so this path never pays a synthesis.
+      if (res.upsertedEventIds?.length) {
+        try {
+          const { shadowRecognizeCalendarEvents } = await import('@/lib/entities/hooks');
+          await shadowRecognizeCalendarEvents(supabase, connection.user_id, { provider: connection.provider, eventIds: res.upsertedEventIds });
+        } catch { /* recognition is an enhancement — the sync result stands */ }
+      }
       return { synced: res.synced, pruned: res.pruned, errors: res.errors };
     } else {
       return { synced: 0, errors: [`Unsupported provider: ${connection.provider}`] };

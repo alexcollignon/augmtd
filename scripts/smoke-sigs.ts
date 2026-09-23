@@ -1,14 +1,14 @@
 // smoke-sigs.ts — W2.5 DEPENDENCY-KEYED CACHES gate (R4 · docs/stabilization-plan.md).
 //
 // ZERO AI, ZERO DB. The law: every AI cache key is `sigOf({version, deps})` or at least carries its
-// prompt/law `*_VERSION`; the judge's sig carries the evidence set AND the entity's own sig; the one
+// prompt/law `*_VERSION`; the judge's sig carries the evidence set AND the entity's rendered deal block (W9.3); the one
 // versions registry (lib/core/versions.ts) re-exports every `*_VERSION` in lib/.
 //   S1 PURE      — sigOf is canonical (key order, Set order, array order, null/undefined/'' distinct).
 //   S2 REGISTRY  — every `const X_VERSION =` in lib/ is re-exported from its home (allowlist w/ reason).
 //   S3 WRITES    — every item_plans cache write (payload carries `sig`, or kind ∈ CACHE_KINDS) lives
 //                  in a file that uses sigOf or references a *_VERSION (allowlist w/ reason).
 //   S4 SIG HOMES — the non-item_plans AI caches reference their version in-file.
-//   S5 THE JUDGE — sigOf-built, evidence + entity sig as deps, the commitment address resolved.
+//   S5 THE JUDGE — sigOf-built, evidence + the rendered deal block as deps, the commitment address resolved.
 //   KNOWN DEBT   — out-of-fence caches still without a version: printed, never silently accepted.
 //
 // Run: npx tsx scripts/smoke-sigs.ts
@@ -150,9 +150,14 @@ const WRITE_ALLOW: Record<string, string> = {
   check('S5.1 the judgment sig is built with sigOf, version + day slots positional',
     /const sig = `\$\{JUDGE_VERSION\}:\$\{todayStr\}:\$\{sigOf\(\{ version: JUDGE_VERSION, deps: \{/.test(j));
   check('S5.2 the evidence set rides the sig', /evidence: evidenceSig\(evidence\)/.test(j));
-  check('S5.3 the entity\'s own sig rides the sig (read BEFORE the cache check)',
-    /select\('name, state, next_move, goals, rules, sig'\)/.test(j) && /entity: ent \?/.test(j)
-    && j.indexOf("select('name, state, next_move, goals, rules, sig')") < j.indexOf('const sig = `${JUDGE_VERSION}'));
+  // ⟲ RE-POINTED (W9.3 JUDGMENTS FOLLOW WHAT MATTERS): the entity dep is the RENDERED deal block (the
+  // fields the prompt reads), no longer entity.sig — a re-synthesis that changes nothing the judge
+  // reads must not re-judge every member item. Same law (the entity the judge reads rides the sig,
+  // read BEFORE the cache check), sharper dep. Outcome proof: scripts/smoke-projects-follow.ts J1–J4.
+  check('S5.3 the entity the judge READS rides the sig as its rendered deal block (read BEFORE the cache check)',
+    /select\('name, state, next_move, goals, rules'\)/.test(j) && /entity: ent \? dealBlock : null/.test(j)
+    && /const dealBlock = dealBlockOf\(ent\)/.test(j)
+    && j.indexOf('const dealBlock = dealBlockOf(ent)') < j.indexOf('const sig = `${JUDGE_VERSION}'));
   check('S5.4 the commitment branch resolves its counterparty ADDRESS through the nominator',
     /whoEmail = await resolveCommitmentAddress\(client, userId,/.test(j));
   check('S5.5 LATER EVIDENCE replaces the inbox-only calendar block, for BOTH kinds, from the batch pool',

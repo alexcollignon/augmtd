@@ -1734,7 +1734,10 @@ async function redraftItemDraft(
       recipient: String(sd.from ?? sd.from_address ?? '') || null,
       entityId: await entityOfScope(client, userId, scope), kind: 'reply',
     }).catch(() => ({ verdict: 'pass' as const, objection: null }));
-    await client.from('inbox_items').update({ source_data: { ...sd, draft: { ...(sd.draft ?? {}), body, generated_at: new Date().toISOString(), steered: true, law_version: (await import('@/lib/inbox/attachment-context')).DRAFT_LAW_VERSION, ...(review.verdict !== 'pass' ? { review } : {}) } } }).eq('id', scope.itemId);
+    // W9.1: the prior draft (the user's own edit included) is FILED above; the new machine words
+    // never inherit its hand stamp — a stamp rides only the words the user saved.
+    const { withoutHandStamp } = await import('@/lib/prepare/hand');
+    await client.from('inbox_items').update({ source_data: { ...sd, draft: { ...withoutHandStamp(sd.draft ?? {}), body, generated_at: new Date().toISOString(), steered: true, law_version: (await import('@/lib/inbox/attachment-context')).DRAFT_LAW_VERSION, ...(review.verdict !== 'pass' ? { review } : {}) } } }).eq('id', scope.itemId);
     return body;
   }
   if (linkKindOf(scope) === 'commitment') {

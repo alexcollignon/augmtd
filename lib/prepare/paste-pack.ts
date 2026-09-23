@@ -118,7 +118,6 @@ export async function preparePastePack(
     artifactTruth?: string | null;
     /** true when the USER owes this (a reply/produce), false when they are chasing. */
     userOwes: boolean;
-    freshHours?: number;
     /** W5c: THE ONE READER hides the prior pack (a false completion claim, a superseded ground) —
      *  a hidden pack is never "fresh", whatever its age. */
     supersede?: boolean;
@@ -128,15 +127,22 @@ export async function preparePastePack(
   },
 ): Promise<{ status: 'written' | 'fresh' | 'failed'; title?: string; by?: string | null }> {
   const poolKind = args.itemKind === 'commitment' ? 'commitment' : 'email';
-  const freshMs = (args.freshHours ?? 24) * 3_600_000;
-  const { data: prior } = await admin.from('item_deliverables').select('id, created_at, metadata')
+  // W9.1 · NO CLOCK: the pack is re-written only when its ground moved or the reader withdrew it
+  // (the retired 24h clock re-bought unchanged words). A pack the USER EDITED is never
+  // re-written (THE USER'S HAND WINS) — a moved ground only marks it at THE ONE READER.
+  const { data: prior } = await admin.from('item_deliverables').select('id, created_at, content, metadata')
     .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', args.itemId).eq('task_id', PASTE_PACK_TASK)
+    .filter('metadata->>version_of', 'is', null)
     .order('created_at', { ascending: false }).limit(1).maybeSingle();
   const { groundOf, groundMoved } = await import('@/lib/prepare/ground');
   const currentGround = await groundOf(admin, userId, { kind: args.itemKind, id: args.itemId });
   const priorMeta = (prior?.metadata ?? {}) as { prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null };
   const movedPast = !!prior && groundMoved(priorMeta.prepared_from ?? null, currentGround);
-  if (prior && !movedPast && !args.supersede && (Date.now() - Date.parse(String(prior.created_at))) < freshMs) return { status: 'fresh' };
+  const { decideRegeneration, isPoolRowHandHeld } = await import('@/lib/prepare/hand');
+  const decision = decideRegeneration({
+    exists: !!prior, handHeld: isPoolRowHandHeld('paste_pack', prior), groundMoved: movedPast, nonLive: !!args.supersede,
+  });
+  if (decision.action !== 'regenerate') return { status: 'fresh' };
 
   const { generateNudgeDraft, getDraftingAssistant } = await import('@/lib/inbox/draft-reply');
   const draft = (objection: string | null) => generateNudgeDraft(userId, {

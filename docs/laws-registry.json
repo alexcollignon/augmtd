@@ -660,6 +660,15 @@
       "H10-H13"
      ],
      "note": "W8.6: the not-judged lane's per-user caps are stated and every row they leave is counted in leftBehind (and the slice's remainder joins it); a skipped lane says so"
+    },
+    {
+     "suite": "smoke-clocks",
+     "ids": [
+      "C1-C8"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W9.5 THE CLOCKS SAY WHAT THEY DO: every cron route is scheduled or documents why not (knowledge-sync: unscheduled — the indexer's unchanged-file skip never fires); header cadences parse-match vercel.json; fetch-emails pages + least-recently-synced + bounded concurrency + wall clock + leftBehind/unfinished; activeUserIds counts only live connections; label-sweep's per-user read excludes final rows and reports itemsLeftBehind; retention's scheduled run is an honest dry-run (wouldDelete, the switch named); the reply-reconcile throttle is a DB claim, not a per-instance Map"
     }
    ],
    "version_key": null,
@@ -1031,13 +1040,27 @@
      "suite": "smoke-compute",
      "kind": "outcome",
      "cost": "live-ai"
+    },
+    {
+     "suite": "smoke-draft-stability",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "C8"
+     ],
+     "note": "W9.1: no clock-only regeneration; a moved ground under an edit marks, never replaces"
     }
    ],
    "fn": "lib/prepare/ground.ts stale derivation",
    "version_key": "ROOM_BRIEF_VERSION",
    "status": "holding",
    "broken_by": null,
-   "collides_with": []
+   "collides_with": [
+    {
+     "law": "the-users-hand-wins",
+     "precedence": "a moved ground supersedes MACHINE words; under the user's hand it only marks (staleUnderEdit) — the engine never replaces an edit"
+    }
+   ]
   },
   {
    "id": "fulfillment-law",
@@ -1085,11 +1108,12 @@
     "THE CONVERSATION DELTA",
     "conversationDelta",
     "THE DUE-BEFORE-SOURCE FLOOR",
-    "THE COUNTERPARTY FOLD (foldCounterparty)"
+    "THE COUNTERPARTY FOLD (foldCounterparty)",
+    "W9.4 EXTRACTION IS REASONED, NOT KEYWORD-GATED (extractionGate)"
    ],
    "tier": 2,
    "domain": "judge-prepare-deck",
-   "statement": "When a new message or meeting lands on a conversation (an email thread; a meeting's calendar series) that already holds open commitments, extraction does not just append: ONE reasoned pass (classification tier, the message's OWN words, today injected by code, the cut declared) reads the open items against the message and returns per open item keep · update · superseded_by · delivered · moot and per candidate new · duplicate_of. Code decides what a judgment may do: every non-keep disposition quotes the message verbatim (code-checked) or it is keep; `delivered` only NOMINATES the message to the one fulfillment judge (only a judged delivery closes, and only when the debtor wrote it); superseded/moot settle through one conditional status flip with resolved_reason + a reversible activity row; an update writes only a description or a due the message states, never before the message; a duplicate is not written. Failure keeps everything; at most DELTA_MAX_OPEN items per pass, the rest reported. ONE call site: writeCommitments (mail + meeting). The writer also floors a due earlier than its own source to null (a title naming that past date is no commitment) and folds the counterparty through the person registry and the conversation's own forms (accents, short surnames, bare addresses) so one human never lands under two forms.",
+   "statement": "When a new message or meeting lands on a conversation (an email thread; a meeting's calendar series) that already holds open commitments, extraction does not just append: ONE reasoned pass (classification tier, the message's OWN words, today injected by code, the cut declared) reads the open items against the message and returns per open item keep · update · superseded_by · delivered · moot and per candidate new · duplicate_of. Code decides what a judgment may do: every non-keep disposition quotes the message verbatim (code-checked) or it is keep; `delivered` only NOMINATES the message to the one fulfillment judge (only a judged delivery closes, and only when the debtor wrote it); superseded/moot settle through one conditional status flip with resolved_reason + a reversible activity row; an update writes only a description or a due the message states, never before the message; a duplicate is not written. Failure keeps everything; at most DELTA_MAX_OPEN items per pass, the rest reported. ONE call site: writeCommitments (mail + meeting). The writer also floors a due earlier than its own source to null (a title naming that past date is no commitment) and folds the counterparty through the person registry and the conversation's own forms (accents, short surnames, bare addresses) so one human never lands under two forms. (W9.4) What reaches that pass is never keyword-gated: every email with words reaches the delta (a no-op without open work), and NEW extraction runs only on a reasoned or structural signal — a meeting source, a user-authored message, or the per-item understanding (ownership you_owe/awaiting · relevance action/reply · an ask · a stated deadline); the kind floor (newsletter · receipt · notification · cold outreach · bulk · broadcast footer) never mints; with no understanding yet, an addressed message extracts and a CC-only one consults the keyword list only as a secondary hint. The sync's triage class noise / fyi_only and the user's to-do capture switch (todo_auto → mintNew=false) stop minting only — the delta still reads the message.",
    "homes": [
     "lib/work/conversation-delta.ts",
     "lib/commitments/extract.ts",
@@ -1105,12 +1129,15 @@
       "D1-D3",
       "E1-E4",
       "H1-H3",
-      "H5-H7"
+      "H5-H7",
+      "K1-K10",
+      "K15-K19",
+      "K21"
      ],
      "kind": "pure",
      "cost": "zero-ai",
-     "fn": "quoteInText · validateDelta · judgeConversationDelta · applyDeltaPlan · conversationDelta · dueFloorAgainstSource · foldCounterparty",
-     "note": "W8.2: stubbed judge + in-memory table client — the quote law, delivered never closes without a judged delivery (promised/unclear/outage keep the row; a second apply closes nothing), supersede/moot settle through one flip with a reversible activity row, failure keeps everything, no open work makes no call, duplicate folding within one direction, the due-before-source floor, the name-variant fold"
+     "fn": "quoteInText · validateDelta · judgeConversationDelta · applyDeltaPlan · conversationDelta · dueFloorAgainstSource · foldCounterparty · extractionGate · extractEmailCommitments",
+     "note": "W8.2: stubbed judge + in-memory table client — the quote law, delivered never closes without a judged delivery (promised/unclear/outage keep the row; a second apply closes nothing), supersede/moot settle through one flip with a reversible activity row, failure keeps everything, no open work makes no call, duplicate folding within one direction, the due-before-source floor, the name-variant fold; W9.4: the reasoned gate — a keyword-free \"Done, attached.\" / German delivery reaches the delta end to end through extractEmailCommitments and settles the item; a Portuguese cancellation judged no-obligation reaches the delta without minting; the kind floor; coworker mail neither mints nor settles; the keyword list only as a CC-only secondary hint; no open work → no call (pure twin: tests/unit/extraction-gate.test.ts)"
     },
     {
      "suite": "smoke-conversation-delta",
@@ -1120,14 +1147,16 @@
       "H4",
       "H8",
       "I1-I5",
-      "J1-J2"
+      "J1-J2",
+      "K11-K14",
+      "K20"
      ],
      "kind": "source",
      "cost": "zero-ai",
-     "note": "the factory + classification tier + the one clipper; ONE call site (writeCommitments, both paths; an empty extraction still reaches it); delivered only through fulfillment.ts; every write a conditional claim; the writer floors + folds; the repair is guarded (dry-run, --apply --yes, AI only with --judge) and runs the same functions"
+     "note": "the factory + classification tier + the one clipper; ONE call site (writeCommitments, both paths; an empty extraction still reaches it); delivered only through fulfillment.ts; every write a conditional claim; the writer floors + folds; the repair is guarded (dry-run, --apply --yes, AI only with --judge) and runs the same functions; W9.4: COMMITMENT_HINT read only inside extractionGate; the gate is asked before any AI call and the entry never returns on a keyword; writeCommitments reached for every gated message; the understanding lookup is a JSON-path select fresh for this email id"
     }
    ],
-   "fn": "quoteInText · validateDelta · dueFloorAgainstSource · foldCounterparty · nameFormsAgree",
+   "fn": "quoteInText · validateDelta · dueFloorAgainstSource · foldCounterparty · nameFormsAgree · extractionGate",
    "version_key": "CONVERSATION_DELTA_VERSION",
    "status": "holding-uncommitted",
    "fixed_by": "W8.2",
@@ -1153,7 +1182,7 @@
      "precedence": "a due earlier than its own source is no deadline (null); an update's due must be stated by the message and never before it"
     }
    ],
-   "note": "Sep 23 (owner account, read-only census): one client conversation held ~20 open commitments accumulated message by message (Aug 3 → Sep 16) — one counterparty alone 7 open; another person under two name forms (full vs short surname); a third partly filed under a bare address; one commitment due two days BEFORE its source email with a null counterparty. Dry-run of scripts/repair-conversation-hoard.ts (zero AI) on that account: 74 live commitments · 12 counterparty name variants to fold · 1 due before its source · 7 thread groups with ≥2 live rows (top three: 12/8/4 live rows, 55 delta passes). Platform census (read-only): 117 thread groups with ≥2 live rows (486 rows) across 4 users → 1,031 delta passes (245 later messages left behind by the 30/group cap, reported) → the --judge repair is ≈ €4–6 for --all (≈ €0.004/pass + a fulfillment judgment per delivered nomination)."
+   "note": "Sep 23 (owner account, read-only census): one client conversation held ~20 open commitments accumulated message by message (Aug 3 → Sep 16) — one counterparty alone 7 open; another person under two name forms (full vs short surname); a third partly filed under a bare address; one commitment due two days BEFORE its source email with a null counterparty. Dry-run of scripts/repair-conversation-hoard.ts (zero AI) on that account: 74 live commitments · 12 counterparty name variants to fold · 1 due before its source · 7 thread groups with ≥2 live rows (top three: 12/8/4 live rows, 55 delta passes). Platform census (read-only): 117 thread groups with ≥2 live rows (486 rows) across 4 users → 1,031 delta passes (245 later messages left behind by the 30/group cap, reported) → the --judge repair is ≈ €4–6 for --all (≈ €0.004/pass + a fulfillment judgment per delivered nomination). W9.4 (read-only 14-day census, Sep 23): 2,342 messages (1,695 inbound, 647 outbound); 204 landed on a conversation with open work. The old keyword gate kept 20 inbound open-work messages from the delta — 3 because they carried no English keyword (fixed here), 17 because the sync call site never calls extraction for mail its triage filed as noise/FYI (lib/email-sync/sync-emails.ts `emailClass === 'process'`, outside this fence — open). Extraction calls 443 → 1,062–1,147 (every sent message now extracts: 202 → 641); delta passes 184 → 204. Cost ≈ €0.05 → €0.10/day on gpt-5-mini (standard), ≈ €0.14 → €0.29/day on Haiku 4.5 (Bedrock tiers), platform-wide. Fixed by W9.4 (uncommitted). Follow-up (mintNew + triage facts; the sync inbound site always calls the entry): extraction 441 → 1,060 calls/14d, delta 183 → 203, ≈ €0.047 → €0.095/day (gpt-5-mini), €0.14 → €0.27/day (Haiku 4.5); the triage fact alone keeps 792 noise/FYI messages/14d from minting."
   },
   {
    "id": "pinning-law",
@@ -2653,11 +2682,12 @@
     {
      "suite": "smoke-authorship",
      "ids": [
-      "A1-A11"
+      "A1-A11",
+      "A7a"
      ],
      "kind": "source",
      "cost": "zero-ai",
-     "note": "W7.6: no folder-based stamp left; every emails write reads the one stamp; the Sent pass stamps filed_in_sent; provider send-as in the owned set; no other writer; no reader tests the folder; one Outlook select carrying sender; the Gmail Sender header parsed; the repair is guarded dry-run and reopens only through the one restore flip"
+     "note": "W7.6: no folder-based stamp left; every emails write reads the one stamp; the Sent pass stamps filed_in_sent; provider send-as in the owned set; no other writer; no reader tests the folder; one Outlook select carrying sender; the Gmail Sender header parsed; the repair is guarded dry-run and reopens only through the one restore flip; ⟲ W9.2: A7 admits lib/email-sync/push-shape.ts (the watch labels/resources — a subscription shape) only while A7a proves it reads no authorship"
     },
     {
      "suite": "smoke-authorship",
@@ -2689,6 +2719,90 @@
     }
    ],
    "note": "Sep 23 (W7.5's finding): the Sent-folder sync stamped is_from_user=true on everything in Sent Items (and replaced the parser metadata with attachments alone, erasing the invite's Graph type). Census (dry-run, 20 users): 7,979 is_from_user rows across 5 users · 1 misattributed (a client-organized meeting request forwarded from the owner's Outlook, basis foreign_from — its eventMessage type had been erased by the old write) · 0 held back · 0 closes caused (its thread's needs-reply item is still pending; 125 inbox + 99 commitment closes by 'replied'/'evidence:email' checked). Repair: scripts/repair-authorship.ts (dry-run default)."
+  },
+  {
+   "id": "sent-closes",
+   "name": "WHAT YOU SEND ANYWHERE CLOSES WITHIN SECONDS",
+   "aliases": [
+    "A USER-AUTHORED MESSAGE LANDED",
+    "THE PUSH SHAPE",
+    "landUserAuthoredMessage",
+    "deed_processed_at",
+    "THE SYNC TAIL",
+    "NO BARE VOID ON A SYNC PATH",
+    "PUSH_CALENDAR_WINDOW"
+   ],
+   "tier": 2,
+   "domain": "sync",
+   "statement": "A message the user sends from Gmail/Outlook directly is a deed the product sees within one push: the Gmail watch covers INBOX + SENT (labelFilterBehavior INCLUDE; the push handler lists every messageAdded and drops drafts/spam/trash) and Outlook holds an inbox AND a Sent Items subscription (the Sent id in connections.metadata.push_sent_subscription_id); the registered shape is versioned (metadata.push_watch_shape = PUSH_WATCH_SHAPE) and the daily renew re-registers every stale connection (paged, budgeted, left-behind reported). EVERY path that stores a row whose AUTHOR is the user (the W7.6 stamp, never a folder) — the Phase-1 insert, the recovery and raced branches, the thread backfill, the Sent-folder pass, both push doors — hands it to ONE handler that runs resolve-on-reply, the mail evidence reverse door and you-owe extraction EXACTLY ONCE per message: a compare-and-swap claim on emails.metadata.deed_claimed_at, deed_processed_at stamped when every step returned, a failed step's lease expiring into a retry by the next storing pass, and every replacing metadata write carrying the marker. Every post-store side effect on a sync/push path is awaited — in the handler or the sync's drained tail (bounded, the remainder reported) — never a bare `void` a response can cut off. A push's calendar refresh covers today (daysBehind 1), so a meeting that just ended is seen at the next push.",
+   "homes": [
+    "lib/email-sync/authored-landed.ts",
+    "lib/email-sync/push-shape.ts",
+    "lib/email-sync/sync-emails.ts",
+    "lib/google/gmail-watch.ts",
+    "lib/microsoft/outlook-subscriptions.ts",
+    "app/api/webhooks/gmail/push/route.ts",
+    "app/api/webhooks/outlook/push/route.ts",
+    "app/api/cron/renew-push-subscriptions/route.ts",
+    "scripts/rewatch-sent.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-sent-closes",
+     "ids": [
+      "H1-H7",
+      "V5",
+      "P4",
+      "P7"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "authoredDeedDue · landUserAuthoredMessages · claimAuthoredDeed · carryDeedMarkers · createSyncTail · gmailPushKeeps · pushShapeStale",
+     "note": "H: an in-memory Supabase double applying the real filters — two concurrent storing paths run each step exactly once; a re-run is a no-op; a failed step's live lease blocks a concurrent claim and is retried once stale"
+    },
+    {
+     "suite": "smoke-sent-closes",
+     "ids": [
+      "P1-P3",
+      "P5-P6",
+      "P8",
+      "R1-R9",
+      "V1-V4",
+      "C1",
+      "X1-X3"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "watch shapes include Sent; every emails write in the sync routes user-authored rows to the one handler (after Phase 4, awaited); no second resolve/settle/extract for the user's mail in the sync; no bare void on the sync/push/watch files; converted sites ride the drained tail; both push doors use PUSH_CALENDAR_WINDOW; the inbound extraction entry sees every triage class after Phase 2 (W9.4 upstream); the rollout script is dry-run by default"
+    }
+   ],
+   "fn": "landUserAuthoredMessage · authoredDeedDue · claimAuthoredDeed · carryDeedMarkers · createSyncTail · gmailPushKeeps · pushShapeStale",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "fixed_by": "W9.2",
+   "collides_with": [
+    {
+     "law": "authorship-law",
+     "precedence": "the handler admits a row ONLY on is_from_user === true (the W7.6 stamp); the Sent label / Sent Items folder appears only as a SUBSCRIPTION shape in push-shape.ts (what the provider pushes), never as authorship — smoke-authorship A7 admits that file only while it reads no authorship"
+    },
+    {
+     "law": "evidence-from-everywhere",
+     "precedence": "W8.7's 'one helper, one call site, never awaited' becomes: one helper (moved to authored-landed.ts), one sync call site for INBOUND mail + one in the authored handler for the user's own mail, AWAITED inside the drained tail / the post-Phase-4 handler — still off the message loop's critical path, no longer cut off by waitUntil"
+    },
+    {
+     "law": "evidence-settles",
+     "precedence": "this law is how a user deed made outside AUGMTD reaches the nominator within one push instead of the 6h sweep; the sweep stays the floor for what a drained tail leaves running"
+    },
+    {
+     "law": "exactly-once-deeds",
+     "precedence": "the handler's steps are internal settlements (conditional claims downstream); its marker adds exactly-once at the message level — a correction is still a new deed, never a re-run of the handler"
+    },
+    {
+     "law": "sync-single-flight",
+     "precedence": "the per-connection single-flight claim keeps two syncs of one mailbox from interleaving the Sent-pass marker carry with the handler's claim; the CAS claim is what holds across connections of the same user"
+    }
+   ],
+   "note": "Sep 23 read-only audit: Gmail watch labelIds ['INBOX'] / Outlook inbox-only subscription (a direct send never pushed); sent mail first stored by the Sent pass or the thread backfill never ran resolve-on-reply / the evidence door / you-owe extraction and a later push skipped the existing row; the push calendar refresh passed daysBehind 0 (falsy → the 7-day default — an accidental week, one `??` away from 'nothing past'); fire-and-forget voids on the sync path (evidence door, extraction, learning, label write-backs, first-look fallback). Rollout for existing watches: the daily renew migrates up to 25 stale connections per run (Gmail watches also re-register on their 7-day renewal, Outlook on the 3-day one) — or scripts/rewatch-sent.ts --apply --yes (owner-gated). One-time catch-up: every user-authored row of the last 7 days without a marker runs the handler once on its next sync. Open upstream (W9.4 fence): extractEmailCommitments has no mint-only switch, so todo_auto still gates the delta too."
   },
   {
    "id": "thread-reply-state-is-structural",
@@ -5760,7 +5874,7 @@
    ],
    "tier": 2,
    "domain": "truth",
-   "statement": "Evidence sources are ROWS (lib/evidence/sources.ts: mail · calendar · transcripts · the commit-door ledger), each emitting ONE normalized EvidenceEvent {source, deed, actor, participants, objects}; adding a tool is one row + one adapter, never a matcher, judge or UI edit, and a row is gated on its DATA existing — a workspace feature gates a row only when it means the source is not collected (email off), never a UI module (the user's synced calendar and stored recordings are evidence whatever modules are shown). The ONE matcher keys on person identity (every address alias + the person id of the resolved counterparty) and object links (same thread / calendar event / house ref / entity membership), never on keywords or name similarity against free text; a bare-name meeting counterparty resolves only through that meeting's own attendee list. WHO acted comes from ONE actor ladder (user > counterparty > teammate > unknown; a public mail domain is never a team domain). A teammate's delivery on work the user owes is nominated, judged by the same fulfillment judge with the actor stated, stamped evidence:teammate and narrated with who did it; cancelled events and declined attendees never count. Every door sees the same evidence: the sync fires the reverse door for mail the user authored AND mail a teammate sent (one helper, one call site); a deed recorded at the commit door settles its matching work at once (after()); the item judge and the room grounding match with SETTLE_MATCH and state a teammate's deed as theirs.",
+   "statement": "Evidence sources are ROWS (lib/evidence/sources.ts: mail · calendar · transcripts · the commit-door ledger), each emitting ONE normalized EvidenceEvent {source, deed, actor, participants, objects}; adding a tool is one row + one adapter, never a matcher, judge or UI edit, and a row is gated on its DATA existing — a workspace feature gates a row only when it means the source is not collected (email off), never a UI module (the user's synced calendar and stored recordings are evidence whatever modules are shown). The ONE matcher keys on person identity (every address alias + the person id of the resolved counterparty) and object links (same thread / calendar event / house ref / entity membership), never on keywords or name similarity against free text; a bare-name meeting counterparty resolves only through that meeting's own attendee list. WHO acted comes from ONE actor ladder (user > counterparty > teammate > unknown; a public mail domain is never a team domain). A teammate's delivery on work the user owes is nominated, judged by the same fulfillment judge with the actor stated, stamped evidence:teammate and narrated with who did it; cancelled events and declined attendees never count. Every door sees the same evidence: the sync fires the reverse door for mail the user authored AND mail a teammate sent (one helper — W9.2: one sync call site for inbound mail, one in the authored-landed handler for the user's own mail whichever path stored it, both awaited); a deed recorded at the commit door settles its matching work at once (after()); the item judge and the room grounding match with SETTLE_MATCH and state a teammate's deed as theirs.",
    "homes": [
     "lib/evidence/sources.ts",
     "lib/evidence/types.ts",
@@ -5775,7 +5889,8 @@
     "lib/email-sync/sync-emails.ts",
     "lib/work/commit-door.ts",
     "lib/work/judge.ts",
-    "lib/room/grounding.ts"
+    "lib/room/grounding.ts",
+    "lib/email-sync/authored-landed.ts"
    ],
    "gates": [
     {
@@ -5859,6 +5974,217 @@
      "precedence": "a row is switched off by the workspace feature map ONLY when the feature means the source is not collected (email off → no mail row); a UI-module flag (meetings) never gates evidence — calendar + transcript rows are gated on their data; an unreadable map never switches a row off"
     }
    ]
+  },
+  {
+   "id": "projects-follow-the-mail",
+   "name": "PROJECTS FOLLOW THE MAIL",
+   "aliases": [
+    "THE COALESCED ENTITY REFRESH",
+    "THE SYNC-TAIL BOOTSTRAP",
+    "THE CALENDAR SYNC RECOGNIZES"
+   ],
+   "tier": 2,
+   "domain": "entities",
+   "statement": "When recognition links a NEW member (mail, commitment, calendar event, meeting transcript) to an entity, ONE sig-gated refresh of that entity's state is SCHEDULED — coalesced per entity per window (5 min), claimed exactly-once-ish through an item_plans `entity_refresh` marker (insert, or compare-and-set on the read `at`), budgeted (a per-call run cap + a start deadline); whatever a call does not run is marked DIRTY and drained by the next sync tail, reported, never floated as a bare void. Recognition does not wait for a Home load: a user with no initiative memory is bootstrapped from the email-sync tail (bootstrapMemory — chunked, idempotent, budgeted, per-process single-flight + cool-down, the remainder reported). Every calendar sync (hourly cron, push webhooks, manual) recognizes the events it upserted, bounded and reported; the calendar path only MARKS its entities for refresh (never pays a synthesis).",
+   "homes": [
+    "lib/entities/refresh-schedule.ts",
+    "lib/entities/hooks.ts",
+    "lib/entities/recognize.ts",
+    "lib/calendar/sync-calendar.ts",
+    "lib/store/item-plans.ts",
+    "app/api/home/brief/route.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-projects-follow",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "R1-R7",
+      "B2-B4",
+      "C3-C4"
+     ],
+     "note": "W9.3: through the REAL hooks on an in-memory fake client — three new members on one entity → ONE refresh; a member inside the window coalesces (dirty, no synthesis); the next tail drains it once; two concurrent schedulers claim once; an elapsed budget releases + reports; a no-memory account is bootstrapped from the sync tail and cooled down; the calendar hook maps upserted provider ids and is a no-op when the gate is closed"
+    },
+    {
+     "suite": "smoke-projects-follow",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "P1-P6",
+      "B1",
+      "C1-C2"
+     ],
+     "note": "W9.3: planEntityRefresh (fresh first, coalesce, drain, overflow reported, maxRun 0 marks only); syncBootstrapDue; isRecognizableEvent + planCalendarRecognition (soonest first, capped, remainder counted)"
+    },
+    {
+     "suite": "smoke-projects-follow",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "S1-S7"
+     ],
+     "note": "W9.3: every hook awaits the schedule (no bare void); the gate-closed branch bootstraps; the calendar sync awaits recognition; the Home brief comment tells the truth; the marker kind is registered; the claim is conditional; recognition reports `linked` only when it wrote a link"
+    }
+   ],
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W9.3",
+   "fn": "planEntityRefresh · scheduleEntityRefresh · syncBootstrapDue · isRecognizableEvent · planCalendarRecognition",
+   "note": "Sep 23 read-only audit: refreshEntityState ran only on a user action or the 2-hourly draft-sweep catch-all, never when recognition linked new mail/meetings (a Home-brief comment claimed the sync hooks refreshed it; they did not); recognition was self-gated until an initiative entity existed and bootstrapMemory ran only on a Home load / first-look; the hourly calendar cron never ran recognition. W9.3 closes all three; the 2-hourly catch-all stays as the backstop.",
+   "collides_with": [
+    {
+     "law": "no-silent-caps",
+     "precedence": "every budgeted loop here (run cap, start deadline, bootstrap cap, calendar cap) reports what it left and leaves it DIRTY/unseen for the next tail — the cap never drops work"
+    },
+    {
+     "law": "exactly-once-deeds",
+     "precedence": "a state refresh is not an external deed; the marker claim is the conditional-claim idiom only to avoid double AI spend, and the refresh itself stays sig-gated (a lost claim or a repeat is harmless)"
+    },
+    {
+     "law": "pinning-law",
+     "precedence": "a scheduled refresh is the same refreshEntityState — the tracked-entity self-heal rule applies unchanged; scheduling never archives"
+    }
+   ]
+  },
+  {
+   "id": "judgments-follow-what-matters",
+   "name": "JUDGMENTS FOLLOW WHAT MATTERS",
+   "aliases": [
+    "THE DEAL BLOCK IS THE ENTITY DEP",
+    "MATERIAL CHANGE IS NAMED",
+    "NO RE-JUDGE CASCADE"
+   ],
+   "tier": 2,
+   "domain": "judge · prepare · deck",
+   "statement": "The item judgment's cache sig keys on the entity fields the judge prompt ACTUALLY READS — the rendered deal block (name · state summary · next move · goals · rules, dealBlockOf) — never on the entity's own sig: a re-synthesis that changes nothing the judge reads re-judges nothing. Every cached verdict carries a MaterialStamp (newest inbound on the thread · the item's own deadline passed · the deal's next move); on a re-judgment a newer inbound, a deadline passing, or a changed/cleared next move is NAMED to the judge as a material change (beside new LATER EVIDENCE), while an unchanged present keeps the 'BE CONSISTENT' clause byte-identical and an unstamped prior is never guessed material.",
+   "homes": [
+    "lib/work/judge.ts",
+    "lib/core/sig.ts",
+    "lib/core/versions.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-projects-follow",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "J1-J4",
+      "M1-M6"
+     ],
+     "note": "W9.3: a re-synthesis that moves only unread fields leaves the judgment sig unchanged; a changed summary/next move/goal/rule moves it; the block is the legacy deal line byte-for-byte; materialChangesSince/materialChangeClause for each change, none, and an unstamped prior"
+    },
+    {
+     "suite": "smoke-projects-follow",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "J5-J6",
+      "M7"
+     ],
+     "note": "W9.3: the select drops sig, the dep is the rendered block built before the sig and reused by the prompt; no JUDGE_VERSION bump for this wave; the stamp is written with every verdict and read back as the prior's"
+    },
+    {
+     "suite": "smoke-sigs",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "S5.3"
+     ],
+     "note": "⟲ RE-POINTED (W9.3): the entity the judge reads rides the sig as its rendered deal block (was: entity.sig)"
+    }
+   ],
+   "version_key": "JUDGE_VERSION",
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W9.3",
+   "fn": "dealBlockOf · materialChangesSince · materialChangeClause",
+   "note": "Sep 23 read-only audit (the cost cascade): the judge sig carried entity.sig, which moves on every state re-synthesis (any ledger line, any member verdict flip) — each re-synthesis re-judged every member item that day; and same-version priors said 'BE CONSISTENT' with only new evidence flagged material. JUDGE_VERSION NOT bumped (THE RULE, lib/core/versions.ts: the block's text is unchanged and a fact rides the sig as a dep); one-time cost = an entity-linked item already judged today misses once on its next read (and a judge-parked one loses its parked serve once); tomorrow's day slot re-keys every verdict anyway.",
+   "collides_with": [
+    {
+     "law": "the-one-sig",
+     "precedence": "this law SHARPENS the one-sig rule's entity dep (the rendered read, not the upstream cache key); every other dep and the positional version/day slots are unchanged"
+    },
+    {
+     "law": "corrections-stick",
+     "precedence": "stickiness through reasoning stands — a named material change licenses re-judging the present, never overriding a human's own park (a user park still holds to its date) or correction"
+    },
+    {
+     "law": "evidence-settles",
+     "precedence": "new LATER EVIDENCE keeps its own clause and precedence; the material-change clause is additive and never disposes — the judge still decides"
+    }
+   ]
+  },
+  {
+   "id": "the-users-hand-wins",
+   "name": "THE USER'S HAND WINS",
+   "aliases": [
+    "DRAFTS CHANGE ONLY WHEN THE GROUND MOVES",
+    "NO CLOCK-ONLY REGENERATION",
+    "STALE UNDER EDIT",
+    "THE EDIT DOOR",
+    "decideRegeneration",
+    "edited_by_user_at · hand_hash"
+   ],
+   "tier": 2,
+   "domain": "judge-prepare-deck",
+   "statement": "A prepared artifact is regenerated only when its ground moved (a newer inbound than prepared_from, thread activity past it, supply after it), its drafting law aged, or THE ONE READER withdrew it — never on a clock; and an artifact the user edited (stamped edited_by_user_at + a content hash at the ONE edit door) is never overwritten by the engine: a moved ground only MARKS it (staleUnderEdit, still live) and the user picks a fresh version, which files their words into the version chain first.",
+   "homes": [
+    "lib/prepare/hand.ts",
+    "lib/prepare/hand-store.ts",
+    "lib/prepare/pass.ts",
+    "lib/prepare/paste-pack.ts",
+    "lib/prepare/read.ts",
+    "app/api/items/prepared/route.ts",
+    "app/api/inbox/[id]/draft/route.ts",
+    "app/api/commitments/[id]/nudge/route.ts",
+    "components/home/email-card.tsx",
+    "components/home/invite-card.tsx",
+    "components/home/forward-card.tsx",
+    "lib/work/apply-verdict.ts",
+    "lib/work/evidence-settle.ts",
+    "lib/inbox/conversation-identity.ts",
+    "lib/inbox/commitment-mirrors.ts",
+    "lib/home/deliverable-pool.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-draft-stability",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "E2E through the real edit door + THE ONE READER over an in-memory table fake (C6–C10); the 32-combination decision table; every lane's hand + decision wiring; census classifiers; W9.1b section E: a verdict that changes kind / a resolution / the pool's re-run dedupe FILES a hand-held artifact on every lane (E2–E8, E2E through applyVerdictConsequences + writeDeliverable), fail-closed filing (E7), no bare engine strip left in lib/** and every strip site routed (E11–E12)"
+    },
+    {
+     "suite": "smoke-prepared-truth",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "F2"
+     ],
+     "note": "⟲ re-pointed W9.1: every lane hands its non-live set to the one decision"
+    }
+   ],
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W9.1",
+   "fn": "lib/prepare/hand.ts decideRegeneration · isHandHeld · partitionStrip · isPoolRowHeldAnyKind (tests/unit/draft-stability.test.ts)",
+   "collides_with": [
+    {
+     "law": "ground-law",
+     "precedence": "the ground law decides WHEN machine words are superseded; the user's hand decides WHAT the engine may do about it — a moved ground under a hand-held artifact MARKS it (staleUnderEdit, live), it never supersedes or replaces it; machine words keep the ground law unchanged"
+    },
+    {
+     "law": "a-claim-renders",
+     "precedence": "a stale-under-edit artifact still renders (the card serves the user's words with the mark), so its claim stands; the engine never generates an unrendered 'fresh alternative' — a fresh version exists only when the user asks for one"
+    },
+    {
+     "law": "one-reader-per-object",
+     "precedence": "the hand and staleUnderEdit are derived at THE ONE READER; the edit door writes the artifact's one home in place — no mirror row, no second reader"
+    }
+   ],
+   "note": "Finding (Sep 23 audit: every prepare lane re-generated on a 24h clock (FRESH_HOURS) at the conversation tier + evaluator even on an unchanged ground; no edit was ever persisted or protected. Census (14 d, 4 accounts): 26 definite + 23 probable clock re-buys; 1 steered version later replaced by a pass draft.) Precedence ruling 8 applies: replace-in-place only as the user's own action (the edit door, ?fresh=1, a picked steer — each files the prior first); an engine-initiated change versions or marks. W9.1b closed the deletion debt: a verdict consequence (apply-verdict hygiene on a kind change + its resolution), the evidence settle, the conversation cascade, the mirror archive, the booked-meeting floor and the pool's re-run dedupe (writeDeliverable) all strip through ONE partition (lib/prepare/hand.ts partitionStrip → lib/prepare/hand-store.ts stripSourceArtifacts / fileHeldPoolRow): machine words strip as before; an unsent hand-held artifact — which has no live card under the new verdict — is FILED into the version chain (version_of, hand: true) and narrated ONCE into the item's room WITH the user's words (dedupe hand-filed:<item>:<kind>:<hash>, zero AI), so the claim renders where they can still find it; a filing that fails keeps the artifact in place (fail closed)."
   }
  ],
  "lessons": [

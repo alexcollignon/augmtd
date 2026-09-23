@@ -1757,7 +1757,10 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     src('lib/utils/user-time.ts').includes('export function timesInText') &&
     src('lib/commitments/extract.ts').includes('THE DEIXIS LAW') &&
     src('lib/commitments/extract.ts').includes('resolveDeixisInDescriptions') &&
-    (src('lib/email-sync/sync-emails.ts').match(/receivedAt: storedEmail.received_at/g)?.length ?? 0) >= 2 &&
+    // ⟲ RE-POINTED (W9.2): the user-authored extraction moved into THE ONE authored-landed handler and
+    // the inbound one runs after Phase 2 — both still anchor deixis on the email's own date.
+    src('lib/email-sync/sync-emails.ts').includes('receivedAt: _em.received_at') &&
+    src('lib/email-sync/authored-landed.ts').includes('receivedAt: row.received_at') &&
     src('lib/entities/state.ts').includes(':ev${pastEvents}') &&
     src('lib/entities/state.ts').includes('never write relative day-words'));
   {

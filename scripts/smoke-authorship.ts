@@ -65,7 +65,13 @@ const writers = [...walk(join(ROOT, 'lib')), ...walk(join(ROOT, 'app'))]
 gate('A6 no other file writes emails.is_from_user', writers.length === 0, writers.map(rel).join(', '));
 // A7 — no reader tests the folder: the SENT label / sentitems appear only where they are the fetch
 // query, a folder listing, or the helper's filed_in_sent fact.
-const FOLDER_OK = new Set(['lib/email-sync/authorship.ts', 'lib/google/gmail.ts', 'lib/microsoft/outlook.ts']);
+// ⟲ RE-POINTED (W9.2): lib/email-sync/push-shape.ts names the SENT label / Sent Items folder as a
+// SUBSCRIPTION shape (what the provider pushes) — admitted ONLY while it never reads authorship
+// (no is_from_user / filed_in_sent / authorship reference in its code), checked just below.
+const FOLDER_OK = new Set(['lib/email-sync/authorship.ts', 'lib/google/gmail.ts', 'lib/microsoft/outlook.ts', 'lib/email-sync/push-shape.ts']);
+const pushShapeCode = code('lib/email-sync/push-shape.ts');
+gate('A7a the push-shape file (watch labels/resources) never reads authorship — a subscription shape, not a reader',
+  !/is_from_user|filed_in_sent|authorship(Of|Stamp)|isAuthoredByUser/.test(pushShapeCode) && /GMAIL_WATCH_LABEL_IDS/.test(pushShapeCode));
 const folderReaders = [...walk(join(ROOT, 'lib')), ...walk(join(ROOT, 'app')), ...walk(join(ROOT, 'components'))]
   .filter((p) => !FOLDER_OK.has(rel(p)))
   .filter((p) => /(labelIds|labels)[^\n]{0,40}['"]SENT['"]|['"]SENT['"][^\n]{0,40}(labelIds|labels)|sentitems|filed_in_sent\s*[=!]==?|\.filed_in_sent\b/i.test(code(rel(p))));

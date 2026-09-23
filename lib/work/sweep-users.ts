@@ -2,9 +2,12 @@
 // THE SWEEP ROTATION — ONE implementation of the coverage-repair discipline (Aug 14), shared by
 // every per-user cron that walks accounts under a wall-clock budget:
 //   (1) ACTIVE USERS ONLY — a profile with no work signal at all has nothing to walk. Active = a
-//       mail connection OR a recent item/meeting (THE SOVEREIGN TIER has no mailbox: its work
-//       arrives from meetings/uploads/workflows, and a connections-only filter would silence those
-//       accounts entirely).
+//       LIVE connection (status 'active') OR a recent item/meeting (THE SOVEREIGN TIER has no
+//       mailbox: its work arrives from meetings/uploads/workflows, and a connections-only filter
+//       would silence those accounts entirely). W9.5 THE CLOCKS: a connection that is
+//       needs_reconnect / disconnected / revoked / error is NOT a work signal — it used to count,
+//       so an account whose only mailbox died took a sweep slot (and a fan-out dispatch) every
+//       run forever. Such an account still qualifies through its recent items/transcripts.
 //   (2) LEAST-RECENTLY-SERVED FIRST — the account longest without a pass leads, so a budget-killed
 //       run self-balances instead of starving the same tail forever.
 // The wall-clock guard and the leftBehind honesty stay with each route (they are its own budget).
@@ -18,6 +21,9 @@ import { readPlansForUsers, upsertPlan } from '@/lib/store/item-plans';
 /** The rotation-marker kinds (lib/store/item-plans registry, role 'marker'). */
 export type SweepMarkerKind = 'judgment_sweep' | 'draft_sweep' | 'label_sweep' | 'evidence_sweep';
 
+/** The one connection status that is a live work signal (sync-calendar / fetch-emails read the same). */
+export const LIVE_CONNECTION_STATUS = 'active';
+
 export async function activeUserIds(sb: SupabaseClient, opts?: { windowDays?: number }): Promise<string[]> {
   const since = new Date(Date.now() - (opts?.windowDays ?? 60) * 86_400_000).toISOString();
   // NO SILENT CAPS (W1.6): `.limit(5000)`/`.limit(2000)` on an UNORDERED query still returns
@@ -26,7 +32,8 @@ export async function activeUserIds(sb: SupabaseClient, opts?: { windowDays?: nu
   // ordered via fetchAllRows so every active user is actually counted.
   const [conns, recentItems, recentMeetings] = await Promise.all([
     fetchAllRows<{ user_id: string }>((from, to) =>
-      sb.from('connections').select('user_id').order('user_id', { ascending: true }).range(from, to)),
+      sb.from('connections').select('user_id').eq('status', LIVE_CONNECTION_STATUS)
+        .order('user_id', { ascending: true }).range(from, to)),
     fetchAllRows<{ user_id: string }>((from, to) =>
       sb.from('inbox_items').select('user_id').gte('created_at', since)
         .order('created_at', { ascending: false }).range(from, to), { maxRows: 5000 }),

@@ -3,6 +3,13 @@ import { createClient } from '@supabase/supabase-js';
 import { registerGmailWatch, renewGmailWatch } from '@/lib/google/gmail-watch';
 import { registerOutlookSubscription, renewOutlookSubscription } from '@/lib/microsoft/outlook-subscriptions';
 import { hasBearer } from '@/lib/utils/bearer-auth';
+import { fetchAllRows } from '@/lib/utils/fetch-all';
+import { pushShapeStale } from '@/lib/email-sync/push-shape';
+
+/** W9.2 — connections registered with an older push shape (INBOX-only) are re-registered here, at
+ *  most this many per run (the renew budget is 60s); the rest are REPORTED as leftBehind and taken by
+ *  the next run (no silent caps). `scripts/rewatch-sent.ts` does the same on demand, dry-run default. */
+const SHAPE_MIGRATION_PER_RUN = 25;
 
 export const maxDuration = 60;
 
@@ -50,6 +57,18 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  // W9.2 THE PUSH SHAPE — registered connections whose stamp is not the current shape (INBOX-only
+  // watches from before Sent was covered). Full listing through fetchAllRows (house rule 7).
+  const registered = await fetchAllRows<any>((from, to) => adminSupabase
+    .from('connections')
+    .select('*')
+    .in('provider', ['gmail', 'outlook'])
+    .eq('status', 'active')
+    .not('push_expires_at', 'is', null)
+    .order('id', { ascending: true })
+    .range(from, to));
+  const shapeStale = registered.filter((c) => pushShapeStale(c));
+
   // Deduplicate — a connection could appear in both expiring + unregistered lists
   const seen = new Set<string>();
   const toRenew: { connection: any; isNew: boolean }[] = [];
@@ -59,6 +78,15 @@ export async function GET(request: NextRequest) {
   for (const c of [...(unregisteredGmail ?? []), ...(unregisteredOutlook ?? [])]) {
     if (!seen.has(c.id)) { seen.add(c.id); toRenew.push({ connection: c, isNew: true }); }
   }
+
+  let shapeQueued = 0;
+  for (const c of shapeStale) {
+    if (seen.has(c.id)) continue; // already renewed above — renewal re-registers to the current shape
+    if (shapeQueued >= SHAPE_MIGRATION_PER_RUN) continue;
+    seen.add(c.id); toRenew.push({ connection: c, isNew: false }); shapeQueued++;
+  }
+  const shapeLeftBehind = shapeStale.filter((c) => !seen.has(c.id)).length;
+  if (shapeLeftBehind) console.log(`[RenewPush] push-shape migration: ${shapeLeftBehind} connection(s) left for the next run`);
 
   const results: { id: string; provider: string; ok: boolean; new?: boolean; error?: string }[] = [];
 
@@ -82,5 +110,5 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ renewed: results.length, results });
+  return NextResponse.json({ renewed: results.length, results, shapeMigration: { queued: shapeQueued, leftBehind: shapeLeftBehind } });
 }

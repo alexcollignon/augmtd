@@ -15,6 +15,7 @@
 
 import { computeThreadReplyState, type ThreadMessage } from './thread-resolution';
 import { resolveThreadOnReply } from './resolve-on-reply';
+import { insertPlan, updatePlan } from '@/lib/store/item-plans';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
@@ -22,11 +23,41 @@ type DBClient = any;
 // THE RECONCILE THROTTLE (Aug 7 — found live: reconcile burned 36-43s INSIDE every brief load,
 // and concurrent surfaces each paid it again). This is a SELF-HEAL for missed sync events, not
 // a per-read necessity — the sync-time resolver (resolve-on-reply) still fires in real time; a
-// missed one now heals within TTL instead of on every read. Per-instance in-process throttle +
-// single-flight (concurrent callers share one run).
+// missed one now heals within TTL instead of on every read.
+//
+// W9.5 THE CLOCKS — THE THROTTLE IS DB-BACKED NOW. It used to be a per-instance `Map` (last-run
+// + single-flight): on serverless, every warm instance carried its own clock, so N instances meant
+// up to N full reconciles per user per TTL (the Home brief's after(), the work-items model, a cold
+// start — each a fresh Map). The throttle is now a CONDITIONAL CLAIM on one item_plans marker row
+// (kind `reconcile_claim`, key `replied`, the claimSweepJob idiom): insert-first on the unique
+// (user, kind, key) row, else an UPDATE whose filter IS the interval — exactly one caller per user
+// per TTL wins, on any instance. The in-process Maps stay only as a FAST PATH in front of the claim
+// (an instance that just ran skips the round trip; concurrent callers on one instance share one
+// run) — never as the truth. If the store is unreachable the claim degrades to the in-process clock
+// (yesterday's behaviour), never to "reconcile on every read".
 const RECONCILE_TTL_MS = 10 * 60 * 1000;
+const RECONCILE_CLAIM_KIND = 'reconcile_claim';
+const RECONCILE_CLAIM_KEY = 'replied';
 const reconcileLastRun = new Map<string, number>();
 const reconcileInflight = new Map<string, Promise<{ resolvedThreads: number }>>();
+
+/** THE CROSS-INSTANCE CLAIM: 'won' exactly once per user per TTL across every instance; 'lost' when
+ *  another run holds the window; 'unavailable' when the store could not answer (caller degrades). */
+export async function claimReconcileWindow(
+  client: DBClient, userId: string, now: Date = new Date(),
+): Promise<'won' | 'lost' | 'unavailable'> {
+  const at = now.toISOString();
+  const cutoff = new Date(now.getTime() - RECONCILE_TTL_MS).toISOString();
+  try {
+    const ins = await insertPlan(client, userId, RECONCILE_CLAIM_KIND, RECONCILE_CLAIM_KEY, { at });
+    if (ins.inserted) return 'won';
+    const upd = await updatePlan(client, userId, RECONCILE_CLAIM_KIND, RECONCILE_CLAIM_KEY, { at }, {
+      updatedAt: at, where: (q) => q.lt('tasks->>at', cutoff),
+    });
+    if (upd.error) return 'unavailable';
+    return upd.updated > 0 ? 'won' : 'lost';
+  } catch { return 'unavailable'; }
+}
 
 export async function reconcileRepliedItems(
   client: DBClient,
@@ -34,10 +65,15 @@ export async function reconcileRepliedItems(
   opts?: { bustBriefCache?: () => Promise<void>; force?: boolean },
 ): Promise<{ resolvedThreads: number }> {
   if (!opts?.force) {
+    // Fast path (this instance ran it inside the window — the DB claim would say 'lost' anyway).
     const last = reconcileLastRun.get(userId);
     if (last && Date.now() - last < RECONCILE_TTL_MS) return { resolvedThreads: 0 };
     const inflight = reconcileInflight.get(userId);
     if (inflight) return inflight;
+    // The truth: one run per user per window across every instance.
+    const claim = await claimReconcileWindow(client, userId);
+    if (claim === 'lost') { reconcileLastRun.set(userId, Date.now()); return { resolvedThreads: 0 }; }
+    // 'unavailable' → the in-process clock above is the (degraded) throttle, as before W9.5.
   }
   const run = reconcileRepliedItemsNow(client, userId, opts);
   reconcileInflight.set(userId, run);

@@ -61,13 +61,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // a moved ground supersedes one. Without this, every draft that already claims "I did not receive
   // the attachment" would be served forever — the fix would ship and the lie would stand.
   const { draftLawStale } = await import('@/lib/inbox/attachment-context');
-  const draftSuperseded = !!sd.draft?.body
-    && (groundMoved(sd.draft?.prepared_from ?? null, currentGround) || draftLawStale(sd.draft ?? null));
+  // W9.1 · THE USER'S HAND WINS: a draft the user edited (the edit door's stamp still hashes to the
+  // stored words) is NEVER superseded here — neither a moved ground nor an older drafting law
+  // replaces their words. A moved ground MARKS it (`staleUnderEdit`: the card says "the thread moved
+  // since you edited this"); only the user's own `?fresh=1` asks for a new version, and their words
+  // file into the version chain first.
+  const { isHandHeld } = await import('@/lib/prepare/hand');
+  const handHeld = isHandHeld('reply_draft', sd.draft ?? null);
+  const groundMovedUnder = !!sd.draft?.body && groundMoved(sd.draft?.prepared_from ?? null, currentGround);
+  const draftSuperseded = !!sd.draft?.body && !handHeld
+    && (groundMovedUnder || draftLawStale(sd.draft ?? null));
+  const handFlags = handHeld ? { edited: true, ...(groundMovedUnder ? { staleUnderEdit: true } : {}) } : {};
   if (!fresh && sd.draft?.body && !draftSuperseded) {
     const jrow = await readPlan(supabase, user.id, 'judgment', `inbox:${id}`);
     const cachedWork = ((jrow?.tasks ?? null) as { verdict?: { work?: string } } | null)?.verdict?.work;
     if (cachedWork === 'reply' || cachedWork === 'send_file') {
-      return NextResponse.json({ draft: sd.draft.body as string });
+      return NextResponse.json({ draft: sd.draft.body as string, ...handFlags });
     }
     if (cachedWork && cachedWork !== 'reply' && cachedWork !== 'send_file') {
       return NextResponse.json({ draft: '', skipped: 'judged_none' });
@@ -100,7 +109,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   // Serve a previously-generated draft (sweep or earlier open) unless a fresh one is requested — only
   // reached for items that genuinely owe a reply (gated above).
-  if (!fresh && sd.draft?.body && !draftSuperseded) return NextResponse.json({ draft: sd.draft.body as string });
+  if (!fresh && sd.draft?.body && !draftSuperseded) return NextResponse.json({ draft: sd.draft.body as string, ...handFlags });
 
   try {
     // Fix 3 — draft ↔ plan coherence: pass the item's LIVE Identified-tasks step summaries so the reply
@@ -108,6 +117,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // the same commitment as its task, not a duplicate). The inbox-item deep-dive plans under kind 'email'.
     const planSteps = await loadPlanStepSummaries(supabase, user.id, 'email', id).catch(() => []);
     const draft = await generateReplyDraft(user.id, sd, supabase, artifactTruth, planSteps);
+    // The user asked for a fresh version over their own edit: their words FILE first (version_of),
+    // so nothing they wrote is lost — replace-in-place only as the user's own action (ruling 8).
+    if (handHeld && sd.draft?.body) {
+      const { fileHandVersion } = await import('@/lib/prepare/hand-store');
+      await fileHandVersion(supabase, user.id, { poolKind: 'email', itemId: id, kind: 'reply_draft', content: String(sd.draft.body), editedAt: (sd.draft as { edited_by_user_at?: string }).edited_by_user_at ?? null });
+    }
     await supabase.from('inbox_items')
       .update({ source_data: { ...sd, draft: { body: draft, generated_at: new Date().toISOString(), prepared_from: currentGround, law_version: DRAFT_LAW_VERSION } } })
       .eq('id', id).eq('user_id', user.id);

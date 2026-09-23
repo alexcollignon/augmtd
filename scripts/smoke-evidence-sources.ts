@@ -250,15 +250,24 @@ async function main() {
   // ── W · W8.7 THE REMAINING HOOKS ──
   console.log('\nW · W8.7 THE REMAINING HOOKS');
   const sync = src('lib/email-sync/sync-emails.ts');
+  // ⟲ RE-POINTED (W9.2 WHAT YOU SEND ANYWHERE CLOSES): the door moved into lib/email-sync/authored-landed.ts
+  // (awaited — no bare void a response can cut off). Still ONE helper, ONE settleForEvent; the sync keeps
+  // ONE call site (INBOUND mail — the teammate ladder, in its drained tail) and the user's own mail reaches
+  // the door through THE ONE authored-landed handler (its `door` step, after the resolve step) — so BOTH
+  // authors still pass through the one helper, now whichever path stored the row.
+  const landed = src('lib/email-sync/authored-landed.ts');
   const callSites = (sync.match(/\bopenMailEvidenceDoor\(adminSupabase/g) ?? []).length;
-  ok('W1 sync: ONE shared helper, ONE call site on the sync path, for BOTH authors (placed after the user branch\'s resolve-on-reply, before its skip); the only settleForEvent in the file is inside it',
-    /function openMailEvidenceDoor\(/.test(sync) && callSites === 1 && (sync.match(/settleForEvent\(/g) ?? []).length === 1
-    && sync.indexOf('openMailEvidenceDoor(adminSupabase') > sync.indexOf('resolveThreadOnReply({')
-    && sync.indexOf('openMailEvidenceDoor(adminSupabase') < sync.indexOf('skipping inbox item (sent email)'),
-    `call sites ${callSites}`);
-  ok('W2 sync: the helper asks THE ONE ladder (mailOpensReverseDoor → mailEventOf → actorRole) — the sync never re-derives a role; the actor context loads once per sync, lazily',
-    /mailOpensReverseDoor\(storedEmail, ctx\)/.test(sync) && !/actorRole\(|teamDomains|\.teammates\b/.test(sync)
-    && /_actorsP \?\?= import\('@\/lib\/evidence\/actor'\)/.test(sync) && /void \(storedEmail\.is_from_user \? Promise\.resolve\(null\) : actors\(\)\)/.test(sync));
+  ok('W1 ONE shared helper (authored-landed.ts), ONE call site on the sync path for INBOUND mail (drained tail) + ONE in the authored handler for the user\'s own mail (after its resolve step); the only settleForEvent in either file is inside the helper',
+    /export async function openMailEvidenceDoor\(/.test(landed) && !/function openMailEvidenceDoor\(/.test(sync)
+    && callSites === 1 && /if \(!storedEmail\.is_from_user\) \{\s*_tail\.add\('evidence-door', openMailEvidenceDoor\(adminSupabase/.test(sync)
+    && (sync.match(/settleForEvent\(/g) ?? []).length === 0 && (landed.match(/settleForEvent\(/g) ?? []).length === 1
+    && (landed.match(/openMailEvidenceDoor\(client/g) ?? []).length === 1
+    && landed.indexOf('door: (client, userId, row) => openMailEvidenceDoor(client') > landed.indexOf('resolve: async (client, userId, row)'),
+    `sync call sites ${callSites}`);
+  ok('W2 the helper asks THE ONE ladder (mailOpensReverseDoor → mailEventOf → actorRole) — neither file re-derives a role; the actor context loads once per sync, lazily; the door is AWAITED end to end',
+    /mailOpensReverseDoor\(storedEmail, ctx\)/.test(landed) && !/actorRole\(|teamDomains|\.teammates\b/.test(sync + landed)
+    && /_actorsP \?\?= import\('@\/lib\/evidence\/actor'\)/.test(sync) && /const ctx = storedEmail\.is_from_user \? null : await actors\(\)/.test(landed)
+    && /await settleForEvent\(client, userId, \{ type: 'email'/.test(landed) && !/\bvoid [A-Za-z_(]/.test(landed.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, '')));
   const inbound = (over: Record<string, unknown>) => ({ id: 'e-new', received_at: day(0, -5), subject: 'Re: the changes', from_address: MATE, to_addresses: [CP], cc_addresses: [ME], thread_id: 'tClient', metadata: {}, is_from_user: false, ...over });
   ok('W3 outcome: a recent TEAMMATE inbound opens the door; the counterparty\'s inbound, an unknown sender and old mail do not; user-authored mail does',
     mailOpensReverseDoor(inbound({}), actors) === 'teammate' && mailOpensReverseDoor(inbound({ from_address: CP }), actors) === null

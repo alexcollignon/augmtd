@@ -159,11 +159,20 @@ ok('the entity ledger treats evidence:* as a machine stamp (never quoted as the 
 
 console.log('\nTHE HOOKS (fire-and-forget, never awaited on the sync path):');
 const hookRe = (s: string, type: string) => new RegExp(`void import\\('@/lib/work/evidence-settle'\\)[\\s\\S]{0,400}settleForEvent\\([^)]*type: '${type}'`).test(s);
-ok('sync-emails: a user-sent email fires the reverse door (void, .catch, recent-only)', hookRe(sync, 'email') && sync.includes('7 * 86_400_000'));
+// ⟲ RE-POINTED (W9.2 WHAT YOU SEND ANYWHERE CLOSES): the mail door moved to lib/email-sync/authored-landed.ts
+// and is AWAITED — inside the sync's drained tail (inbound) or THE ONE authored-landed handler (the user's
+// own mail, whichever path stored it). Precedence: W9.2 "no bare void on a sync path" wins over the old
+// "never awaited" wording FOR MAIL — the door still never blocks the message loop (it runs in the tail /
+// after Phase 4), but it can no longer be cut off when the push's waitUntil resolves.
+const landedDoor = src('lib/email-sync/authored-landed.ts');
+ok('sync-emails: a user-sent email fires the reverse door (awaited in the authored handler / drained tail, non-fatal, recent-only)',
+  /await settleForEvent\(client, userId, \{ type: 'email'/.test(landedDoor) && landedDoor.includes('7 * 86_400_000')
+  && /_tail\.add\('evidence-door', openMailEvidenceDoor\(adminSupabase/.test(sync) && /door: \(client, userId, row\) => openMailEvidenceDoor\(client/.test(landedDoor));
 ok('sync-calendar: the upserted batch fires the reverse door (void, .catch) on both providers\' returns',
   hookRe(cal, 'calendar') && (cal.match(/upsertedEventIds\.push/g) ?? []).length === 2);
 ok('bot-manager: a processed transcript fires the reverse door (void, .catch)', hookRe(bot, 'transcript'));
-ok('no hook awaits the door', !/await import\('@\/lib\/work\/evidence-settle'\)[\s\S]{0,200}settleForEvent/.test(sync + cal + bot));
+ok('no hook awaits the door on its caller\'s critical path (calendar · transcript; mail: W9.2 — awaited only inside the drained tail / the post-Phase-4 handler)',
+  !/await import\('@\/lib\/work\/evidence-settle'\)[\s\S]{0,200}settleForEvent/.test(sync + cal + bot) && !/settleForEvent\(/.test(sync));
 
 // ── TIER 2b · W7.1 HEARTBEAT THROUGHPUT (the fan-out lane · the priority order · fresh-only caps ·
 // the scoped pool · the backfill) — found live Sep 23: a nominated commitment stayed open because the
@@ -225,7 +234,8 @@ console.log('\nW7.1 HEARTBEAT THROUGHPUT:');
   ok('P5 the counterparty resolver CHUNKS instead of slicing (no silent .slice(0, 300))', !/\.slice\(0, (200|300)\)/.test(nom));
   // J · the judge half
   ok('J1 the judge stamps the evidence set it judged against and relaxes the prior anchor on NEW evidence',
-    /await writeCache\(client, userId, input, sig, verdict, evSig\)/.test(judge) && /evidenceNewToPrior\(evSig, priorEv\)/.test(judge)
+    // ⟲ RE-POINTED (W9.3): the final write also stamps the MaterialStamp (`matNow`) beside the evidence set.
+    /await writeCache\(client, userId, input, sig, verdict, evSig(?:, matNow)?\)/.test(judge) && /evidenceNewToPrior\(evSig, priorEv\)/.test(judge)
     && /priorEv = typeof t!\.ev === 'string'/.test(judge));
   // B · the backfill
   ok('B1 the backfill is DRY-RUN by default and refuses an unscoped --apply',

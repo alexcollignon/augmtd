@@ -556,8 +556,13 @@ export async function cascadeConversationSettlement(
           const { capturePending, logPendingOutcomes } = await import('@/lib/prepare/outcome');
           const pendingPrep = await capturePending(client, userId, { kind: 'inbox', id: String(it.id) });
           const now = new Date().toISOString();
-          const sd = { ...((it.source_data ?? {}) as Record<string, unknown>) };
-          delete sd.draft; delete sd.nudge_draft; delete sd.prepared_by;
+          // THE ONE ENGINE STRIP (W9.1b): machine words strip; the user's hand is FILED, never deleted.
+          const { stripSourceArtifacts } = await import('@/lib/prepare/hand-store');
+          const strip = await stripSourceArtifacts(client, userId, {
+            itemId: String(it.id), sd: (it.source_data ?? {}) as Record<string, unknown>, fields: ['draft', 'nudge_draft'], why: 'resolved',
+          });
+          const sd = strip.sd;
+          if (!strip.kept.length) delete sd.prepared_by;
           const { error } = await client.from('inbox_items').update({
             status: 'completed',
             source_data: { ...sd, resolved_at: now, resolved_reason: 'conversation_settled', resolution_reason: 'already_handled' },

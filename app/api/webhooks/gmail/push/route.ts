@@ -5,6 +5,7 @@ import { getGmailClient } from '@/lib/google/gmail';
 import { syncEmailsForConnection } from '@/lib/email-sync/sync-emails';
 import { syncCalendarForConnection } from '@/lib/calendar/sync-calendar';
 import { featureEnabledForUser } from '@/lib/workspace/check-by-userid';
+import { gmailPushKeeps, PUSH_CALENDAR_WINDOW } from '@/lib/email-sync/push-shape';
 
 export const maxDuration = 300;
 
@@ -13,7 +14,10 @@ const GMAIL_WEBHOOK_SECRET = process.env.GMAIL_WEBHOOK_SECRET!;
 /**
  * POST /api/webhooks/gmail/push
  *
- * Receives Pub/Sub push notifications from Google when new emails arrive.
+ * Receives Pub/Sub push notifications from Google when new emails arrive OR the user sends one (the
+ * watch covers INBOX + SENT — W9.2 THE PUSH SHAPE, lib/email-sync/push-shape.ts). Everything a push
+ * does after storage runs INSIDE the sync (its tail is drained before it returns) and the sync is
+ * awaited inside waitUntil — no side effect floats past the response.
  * Returns 200 immediately to prevent Pub/Sub retry storms, then processes async via waitUntil.
  */
 export async function POST(request: NextRequest) {
@@ -152,9 +156,13 @@ async function processGmailPush(emailAddress: string, historyId: string) {
         gmail.users.messages.get({ userId: 'me', id, format: 'full' }).then(r => r.data),
       ),
     );
+    // W9.2 — history.list takes at most one labelId, so it lists every messageAdded; the push keeps
+    // arrivals and the user's sends, never drafts/spam/trash (gmailPushKeeps). Authorship of what is
+    // kept is decided by the ONE stamp inside the sync, never by the label.
     const fetchedMessages = settled
       .filter((s): s is PromiseFulfilledResult<any> => s.status === 'fulfilled')
-      .map(s => s.value);
+      .map(s => s.value)
+      .filter((m) => gmailPushKeeps(m?.labelIds));
     const rejectedCount = settled.length - fetchedMessages.length;
     if (rejectedCount > 0) {
       console.warn(`[GmailPush] ${rejectedCount} message fetch(es) failed for ${emailAddress} — skipping those`);
@@ -170,8 +178,9 @@ async function processGmailPush(emailAddress: string, historyId: string) {
     // unstored mail. Re-fetching is idempotent (sync dedups by message_id). This is the missed-email fix.
     await adminSupabase.from('connections').update({ push_history_id: historyId }).eq('id', connection.id);
 
-    // Sync calendar — catches meeting invitations arriving via email
-    await syncCalendarForConnection(connection, adminSupabase, { daysAhead: 14, daysBehind: 0 })
+    // Sync calendar — catches meeting invitations arriving via email, and (W9.2) the window covers
+    // today, so a meeting that just ENDED is seen at this push, not the hourly cron.
+    await syncCalendarForConnection(connection, adminSupabase, { ...PUSH_CALENDAR_WINDOW })
       .catch((err) => console.warn('[GmailPush] Calendar sync failed (non-fatal):', err));
 
     console.log(`[GmailPush] ✓ Processed ${fetchedMessages.length} message(s) for ${emailAddress}`);

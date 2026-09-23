@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { announceDeed } from '@/lib/room/deed-echo';
 import { ThreadCardView, type ThreadCard } from '@/components/thread';
 import { AttendeeChips } from '@/components/home/people-chips';
@@ -8,6 +8,7 @@ import {
   inviteCardOf, INVITE_OPEN_OPTION, type InviteSlot, type PreparedInviteLike,
 } from '@/lib/prepare/invite-card';
 import type { ItemPlanKind } from '@/lib/home/item-plan';
+import { handItemKindOf } from '@/lib/prepare/hand';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE INVITE CARD'S HOST (docs/threads-plan.md — THE CARD CONTRACT, Sep 8).
@@ -80,6 +81,9 @@ export function InviteCard({ kind, entityId, taskId, verdictLevel, chat, onSent,
   // pointer, a failure), there is nothing to review — the card says so in one quiet line instead of
   // an empty shell that only reads "Type a time…" (found live, Sep 23).
   const [hollow, setHollow] = useState(false);
+  // W9.1 · THE USER'S HAND WINS: only a USER change arms the save (the pre-fill never does).
+  const touchedRef = useRef(false);
+  const touch = () => { touchedRef.current = true; };
 
   // THE CHAT LANE's pre-fill: the payload came WITH the turn (the preparer already ran when the
   // card was spoken) — seed the fields once, fetch nothing.
@@ -153,6 +157,7 @@ export function InviteCard({ kind, entityId, taskId, verdictLevel, chat, onSent,
 
   const pickOption = (id: string) => {
     setErr(null);
+    if (id !== INVITE_OPEN_OPTION) touch();
     setPicked(id);
     if (id === INVITE_OPEN_OPTION) { onSuggestAnother?.(); return; }
     const alt = alternatives.find((a) => a.startISO === id);
@@ -160,6 +165,7 @@ export function InviteCard({ kind, entityId, taskId, verdictLevel, chat, onSent,
   };
 
   const pickTime = (localValue: string) => {
+    touch();
     setCustomLocal(localValue);
     const iso = localInputToISO(localValue);
     if (!iso) return;
@@ -204,6 +210,22 @@ export function InviteCard({ kind, entityId, taskId, verdictLevel, chat, onSent,
     finally { setSending(false); }
   };
 
+  // ── THE EDIT DOOR (W9.1): the item lane's edits SAVE onto the prepared invite, stamped as the
+  // user's hand — the pass never re-prepares over them; a moved thread only marks them. The chat
+  // lane's payload lives in its own chat_invite row (never engine-re-prepared); its edits ride Send.
+  const handKind = chat ? null : handItemKindOf(kind);
+  useEffect(() => {
+    if (!touchedRef.current || sent || !handKind || !entityId) return;
+    const t = setTimeout(() => {
+      void fetch('/api/items/prepared', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemKind: handKind, itemId: entityId, kind: 'invite', invite: { title, startISO, endISO, attendees, description, timezone, proposed } }),
+      }).catch(() => { /* the fields stay in the card; the next edit retries */ });
+    }, 1200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, startISO, endISO, attendees, description, sent]);
+
   if (loading) {
     return <div className="w-full max-w-[480px] rounded-xl border border-neutral-200/80 bg-white p-4"><div className="h-24 animate-pulse rounded-lg bg-neutral-100" /></div>;
   }
@@ -226,14 +248,14 @@ export function InviteCard({ kind, entityId, taskId, verdictLevel, chat, onSent,
       onPickTime: pickTime,
       pickedTimeValue: customLocal || isoToLocalInput(startISO),
       onEdit: (field, value) => {
-        if (field === 'title') setTitle(value ?? '');
-        else if (field === 'description') setDescription(value ?? '');
+        if (field === 'title') { touch(); setTitle(value ?? ''); }
+        else if (field === 'description') { touch(); setDescription(value ?? ''); }
         else setEditingAttendees((v) => !v);
       },
       ...(editingAttendees ? {
         attendeesEditor: (
           <span className="w-full rounded-lg border border-neutral-200 px-2.5 py-1.5">
-            <AttendeeChips attendees={attendees} onChange={setAttendees} />
+            <AttendeeChips attendees={attendees} onChange={(next) => { touch(); setAttendees(next); }} />
           </span>
         ),
       } : {}),
