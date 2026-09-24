@@ -69,7 +69,7 @@ const PREGEN_MAX = 3;
 /** …and only once the card has been sitting still this long (never during the first paint). */
 const PREGEN_IDLE_MS = 1000;
 
-export function EmailCard({ item, coworker, standalone, compose, sourceFiles, onOpenThread, onSent }: {
+export function EmailCard({ item, coworker, standalone, compose, sourceFiles, onOpenThread, onSent, preparedBody }: {
   /** THE ITEM LANE — the prepared reply on a judged inbox item. `to`/`subject` come from the room
    *  when the host already serves them; otherwise the card reads the thread itself. */
   item?: { id: string; to?: string[]; subject?: string };
@@ -106,6 +106,11 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
    *  EVERY mount of a card that has a thread at all. The coworker lane has no thread to open. */
   onOpenThread?: () => void;
   onSent?: () => void;
+  /** W17 · NO WAITING (item lane only) — the prepared words the host ALREADY holds (the item view
+   *  serves THE ONE READER's live reply draft). The card paints them at once instead of a skeleton;
+   *  the draft door's answer still lands (hand flags · staged files · a correction if the door
+   *  regenerated), and never over words the user typed. Absent → the card reads for itself. */
+  preparedBody?: string | null;
 }) {
   const router = useRouter();
   // THE DOOR ALWAYS RENDERS ON THE ITEM LANE — the host's handler when it has one (it knows where
@@ -123,7 +128,8 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
   // must never render that field (the card never wears a control its send would drop).
   const itemLane = !!item && !coworker && !standalone;
   const composeLane = !!compose && !item && !coworker && !standalone;
-  const [loading, setLoading] = useState(!coworker && !standalone);
+  const seededBody = !coworker && !standalone && !!item && !!preparedBody?.trim() ? preparedBody : null;
+  const [loading, setLoading] = useState(!coworker && !standalone && !seededBody);
   // THE COMPOSE LANE's honest ask: who the ladder could not choose between (offered, never sent),
   // and the name it resolved without an address.
   const [suggestions, setSuggestions] = useState<Array<{ name: string | null; email: string | null }>>([]);
@@ -142,7 +148,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
   const [cc, setCc] = useState<string[]>(coworker?.draft.cc ?? standalone?.draft.cc ?? []);
   const [bcc, setBcc] = useState<string[]>([]);
   const [subject, setSubject] = useState(coworker?.draft.subject ?? standalone?.draft.subject ?? item?.subject ?? '');
-  const [body, setBody] = useState(coworker?.draft.body ?? standalone?.draft.body ?? '');
+  const [body, setBody] = useState(coworker?.draft.body ?? standalone?.draft.body ?? seededBody ?? '');
   // THE SENDING MAILBOX — resolved server-side by the pure ladder, the user's to change where they
   // hold more than one. Purely local until Send: the door re-validates the pick against their own
   // active connections, so a browser can never widen who a message comes from.
@@ -157,9 +163,9 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
   const viaCoworker = !!standalone && (standalone.draft.from?.viaCoworker === true || !fromId);
   const [directions, setDirections] = useState<EmailDirection[]>([]);
   const [variant, setVariant] = useState<string>(EMAIL_BASE_VARIANT);
-  const [variantBodies, setVariantBodies] = useState<Record<string, string>>({});
+  const [variantBodies, setVariantBodies] = useState<Record<string, string>>(seededBody ? { [EMAIL_BASE_VARIANT]: seededBody } : {});
   // The cache as background work reads it (no stale closures), and the in-flight preview per tab.
-  const variantBodiesRef = useRef<Record<string, string>>({});
+  const variantBodiesRef = useRef<Record<string, string>>(seededBody ? { [EMAIL_BASE_VARIANT]: seededBody } : {});
   const inFlightRef = useRef<Map<string, Promise<string | null>>>(new Map());
   const [redrafting, setRedrafting] = useState<string | null>(null);
   const [editingRecipients, setEditingRecipients] = useState(false);
@@ -176,7 +182,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
   const [err, setErr] = useState<string | null>(null);
   const typedRef = useRef(false);
   // What the machine last handed the editor — the ONE thing "did they really edit it?" compares to.
-  const servedRef = useRef(coworker?.draft.body ?? standalone?.draft.body ?? '');
+  const servedRef = useRef(coworker?.draft.body ?? standalone?.draft.body ?? seededBody ?? '');
   const dirty = userEdit !== null;
   // ── W9.1 · THE USER'S HAND WINS (docs/laws-registry.md `the-users-hand-wins`). The served words
   // may BE the user's own saved edit (`edited`), and the thread may have moved since they wrote it
@@ -312,7 +318,8 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
   useEffect(() => {
     if (coworker || !item) return;
     let alive = true;
-    setLoading(true);
+    // W17: a card seeded with the prepared words is already filled — the reads below reconcile quietly.
+    if (!seededBody) setLoading(true);
     const needThread = !item.to?.length || !item.subject;
     let preparedOut = '';
     let heldOut = false; // a held-back draft is not an unfillable card: the door answered
@@ -334,8 +341,9 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
         if (!prepared && d && !d.skipped && typeof d.withheld === 'string' && d.withheld.trim()) {
           setWithheld(d.withheld.trim()); heldOut = true;
         }
-        // A late draft never clobbers words the user already typed.
-        if (prepared && !typedRef.current) {
+        // A late draft never clobbers words the user already typed — and the same words re-served are
+        // not a re-seed (W17: the editor never remounts under a card that already shows them).
+        if (prepared && !typedRef.current && prepared !== servedRef.current) {
           setBody(prepared); setVariantBodies({ [EMAIL_BASE_VARIANT]: prepared });
           servedRef.current = prepared; setBodyRev((n) => n + 1);
           readHand(d);

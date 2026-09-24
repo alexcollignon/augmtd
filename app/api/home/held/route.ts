@@ -75,9 +75,12 @@ export async function GET(req: NextRequest) {
   const cacheable = offset === 0 && perClass === HELD_MEMBERS_PER_CLASS;
 
   const derive = async () => {
-    const derived = await deriveHeld(supabase, user.id, user.email ?? null);
+    // W17 · NO WAITING: the derivation and Q3's receipt need only the user — one wave, not a line.
     // Q3's RECEIPT — counted from the activity log's own rows, never estimated from the ledger's shape.
-    const filedThisMonth = await countGraduatedThisMonth(supabase, user.id);
+    const [derived, filedThisMonth] = await Promise.all([
+      deriveHeld(supabase, user.id, user.email ?? null),
+      countGraduatedThisMonth(supabase, user.id),
+    ]);
     // Q9 · THE DECK'S OWN DAY rides the payload: the triage deck composes its ← LATER whens from a
     // date, and a client that reads its own clock offers "tomorrow" for yesterday at 23:58 in the
     // wrong zone. `buildHeldPayload` stamps the day it was computed against.

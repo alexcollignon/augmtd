@@ -7926,6 +7926,98 @@
    "note": " W16.2 (Sep 24, follow-ups of W16.1's OPEN list): the Home row's \"Done / Not yet\" now speaks the widget's words from one home; the fallback said \"<X> is asking you to …\" on a commitment the user promised in their own sent mail — it is direction-true now; the confirm widget left the custom slot for its own kit kind (smoke-confirm-cards C9.2 and smoke-threads T37.1/T37.2 re-pointed 15 → 16 kinds, 7 → 8 stateful kinds)."
   },
   {
+   "id": "no-waiting",
+   "name": "NO WAITING — THE FIRST PAINT CARRIES WHAT IS KNOWN",
+   "aliases": [
+    "THE PERFECT APP HAS NO LOADING STATES",
+    "THE RESERVED SLOT",
+    "THE PREPARING SLOT",
+    "THE WARM IS THE WHOLE PAGE",
+    "NO WATERFALL ON OPEN"
+   ],
+   "tier": 2,
+   "domain": "surfaces · kit",
+   "statement": "First paint carries what is known; a slot still being made is reserved, never a pop. An item page's ONE action widget and the data it renders arrive WITH the one view read wherever they are known server-side: /api/items/view serves the item's CACHED judgment narrowed (lib/room/served-verdict servedVerdictOf — verb · component · executor · option labels, never the reason) beside THE ONE READER's live prepared list, so the decision's routes (decisionSpecOf — the ONE derivation both doors share), a reply/nudge body, an invite, the confirm line and a booked event all paint from that read (and from its cache on a revisit). No request on the page waits on another it does not need data from: the live judge starts beside the view as a refresh whose answer only FILLS a page that painted no verdict (otherwise it is the next open's first paint); the ONE dependent request is the email door's draft-on-open, which waits on the view only to learn whether a reply must be made; the follow-up's nudge door is asked only when the reader summons the composer without a prepared nudge. The hover warm (lib/room/warm-client) warms the WHOLE page — the view and the kind's object read in one beat, into the keys the page paints from. Where a widget is genuinely still being made on this open (a reply the judgment owes being drafted), the page RESERVES its seat with THE ONE placeholder (components/thread/preparing-slot.tsx — shape per widget kind, words in the thread voice: \"Clara is preparing a reply\", one pulse under a second, reduced-motion honoured, never a spinner) and the landing widget takes the SAME seat. Nothing is reserved for work this open is not making. The decision card shows its options alone when no object stands (no filler line) and carries a title only when it adds something the page does not already show. Every view response carries its phase marks as a Server-Timing header.",
+   "homes": [
+    "app/api/items/view/route.ts",
+    "lib/room/served-verdict.ts",
+    "lib/room/decision-object.ts",
+    "lib/room/warm-client.ts",
+    "lib/room/no-mutation.ts",
+    "components/thread/preparing-slot.tsx",
+    "components/thread/item-page.ts",
+    "components/home/item-detail.tsx",
+    "components/home/item-rail.tsx",
+    "components/home/email-card.tsx",
+    "components/home/decision-card.tsx"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-no-waiting",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "A1-A8",
+      "C1-C10",
+      "D1",
+      "D3-D4"
+     ],
+     "note": "W17: the served verdict narrows (no reason); the decision, reply, nudge, invite, confirm and event widgets resolve from the view payload alone for 9 kind × state fixtures (the owner's consent case among them); the reserved slot in the widget's shape holds the same seat the landed widget takes; every widget kind has its slot shape + words, < 1s pulse, reduced motion, no spinner; mayFillSlot agrees with mayReplaceInPlace; the decision card renders its options alone with no filler; a subject-echo title is dropped"
+    },
+    {
+     "suite": "smoke-no-waiting",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "B7-B8"
+     ],
+     "note": "W17 (stubbed fetch): a click-intent warm on every kind requests the view and the object read together (no chain) and lands the object in the key the page paints from"
+    },
+    {
+     "suite": "smoke-no-waiting",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "A9-A13",
+      "B1-B6",
+      "C11-C12",
+      "D2",
+      "E1-E3"
+     ],
+     "note": "W17: the view starts the judgment read beside wave 1, serves `verdict` and Server-Timing; both doors paint the view's verdict through decisionSpecOf; no viewSettled chain; the judge fires beside the view and fills only; the draft-on-open is the one dependent request; the follow-up nudge is lazy; the rail hands pending to the ONE slot"
+    },
+    {
+     "suite": "smoke-no-waiting-surfaces",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "NW1-NW6"
+     ],
+     "note": "W17 (the surfaces half): Home, the one-at-a-time card, the held list, chat/threads, the sidebar and All conversations — no chained read that does not need its predecessor (timed fake), Server-Timing on every surface read, visited surfaces paint from cache and merge behind the paint, intent warms the next page, no spinner for data, slow reads off the critical path"
+    }
+   ],
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W17.1",
+   "collides_with": [
+    {
+     "law": "no-mutation-and-address",
+     "precedence": "the no-mutation law WINS on painted content: a reserved slot (the preparing placeholder in the widget's own shape) may be FILLED by the widget it announced, or retired when production yields nothing — a skeleton fill with words on it (mayFillSlot); a painted widget or verdict is never swapped for a later arrival (the judge's fresh verdict, a re-served draft) — that arrival is cached as the next open's first paint"
+    },
+    {
+     "law": "the-item-page-is-a-few-widgets",
+     "precedence": "the widget table still chooses the ONE widget from the machine's state; this law adds only the reserved seat for an artifact THIS open is producing (composeItemPage `slot`/`pending`) and lets that artifact take the seat once landed — it never outranks a table pick"
+    },
+    {
+     "law": "a-claim-renders",
+     "precedence": "the preparing slot claims nothing is ready — it says work is in motion, and only while this open is actually producing it; a slot with no producer is never painted"
+    }
+   ],
+   "fn": "servedVerdictOf · relevanceOfWork · decisionSpecOf · decisionTitleOf · composeItemPage (slot → pending) · itemPageItems (pending seat) · PreparingSlot · preparingLineOf · mayFillSlot · itemObjectKey · warmItemObject",
+   "note": "W17 (Sep 24, owner report): on a transcription-consent email the decision widget arrived seconds after the page — its routes came from GET /api/items/judge, chained after the view read settled, and the judge loads the item's neighbourhood before its cache. The reply card waited on two POST /draft calls in series (the door, then the card). Fixed by W17 (uncommitted)."
+  },
+  {
    "id": "scheduled-is-not-overdue",
    "name": "SCHEDULED IS NOT OVERDUE",
    "aliases": [

@@ -48,7 +48,9 @@ import KbFilePicker from '@/components/inbox/kb-file-picker';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 // THE NO-MUTATION LAW — the one mechanism a loader consults before replacing what is painted.
 import { mayReplaceInPlace, ROOM_CACHE_MAX_AGE_MS, type ArrivalReason } from '@/lib/room/no-mutation';
-import { fetchItemView, fetchOpenObject, itemViewKey, viewSettled } from '@/lib/room/warm-client';
+import { fetchItemView, fetchOpenObject, itemViewKey, itemObjectKey } from '@/lib/room/warm-client';
+// W17 · NO WAITING — the view serves the cached judgment; the page reads it at first paint.
+import { relevanceOfWork, REPLY_WORKS, type ServedVerdict } from '@/lib/room/served-verdict';
 import { loadThreadRaw } from '@/lib/inbox/thread-door';
 import { fmtMonthDay, fmtDateTime, fmtWeekdayDate } from '@/lib/utils/format-date';
 import AddToProjectControl from '@/components/entities/add-to-work-control';
@@ -61,7 +63,7 @@ import { MeetingSourceMount, SourceObjectMount, EmailSourceMount, type MeetingSo
 // THE PREPARED FORWARD's kit card + its host (W3-C) — the local ForwardPreviewCard retired into it.
 import ForwardCard from '@/components/home/forward-card';
 import { panelPlan, applyPanelPlan } from '@/lib/room/render-plan';
-import { resolveDecisionObject, type DecisionObject } from '@/lib/room/decision-object';
+import { decisionSpecOf, type DecisionObject } from '@/lib/room/decision-object';
 // W15.2 · EVERY ITEM CAN BE CLOSED — the header's Done · Dismiss (each through its kind's own door) and
 // SCHEDULED's word. Both modules are client-safe (zero imports).
 import { ITEM_DEED_WORDS, resolveRequestOf, type ItemDeed } from '@/lib/work/item-actions';
@@ -859,6 +861,10 @@ type ItemViewData = {
   sourceItemId?: string | null;
   /** W7.3: a meeting-born commitment's source object — the meeting (title · date · attendees). */
   sourceMeeting?: MeetingSourceFacts | null;
+  /** W17 · NO WAITING — the item's CACHED judgment, narrowed (lib/room/served-verdict: verb ·
+   *  component · executor · option labels, never the reason). Absent on meetings and on any view
+   *  cached before the field existed. */
+  verdict?: ServedVerdict | null;
 };
 
 // The word renders QUIET in the header's meta line — no chrome, no affordance (the stage already
@@ -1059,7 +1065,7 @@ function commonRoomTabs(
 // is re-checked just past that — the appended brief arrives while the reader is still reading.
 const LATE_BRIEF_RECHECK_MS = 6_500;
 
-function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'awareness', id: string): { view: ItemViewData | null; refresh: () => void } {
+function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'awareness', id: string): { view: ItemViewData | null; refresh: () => void; failed: boolean } {
   // THE ONE KEY, THE ONE FLIGHT (W3.7 ROOM SPEED): the hover warm (lib/room/warm-client) fills this
   // exact key, and an open that lands while that warm is still in flight JOINS it — one request.
   const key = itemViewKey(kind, id);
@@ -1067,6 +1073,9 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
   // in a layout effect (client-only, pre-paint) — the documented rule for any SSR'd route, or the
   // warm-cache first paint diverges from the server and React throws a hydration mismatch.
   const [view, setView] = useState<ItemViewData | null>(null);
+  // W17 · the open's read answered with nothing (a dead door) — a host that waits on the view for a
+  // decision (the email door's draft-on-open) proceeds without it instead of waiting forever.
+  const [failed, setFailed] = useState(false);
   // THE NO-MUTATION LAW (docs/threads-plan.md, lib/room/no-mutation.ts): a warm cache means the
   // reader is already looking at this room's composed brief, prepared work and verdict chrome —
   // the open's own fetch is written to the cache (the next open's first paint) but never swapped
@@ -1089,7 +1098,7 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
       : fetch(`/api/items/view?kind=${kind}&id=${id}`).then((r) => (r.ok ? r.json() : null));
     landing
       .then((d) => {
-        if (!d || d.error) return;
+        if (!d || d.error) { if (reason === 'open') setFailed(true); return; }
         saveLS(key, d);
         const paint = mayReplaceInPlace(reason, paintedRef.current);
         if (paint) { paintedRef.current = true; setView(d); }
@@ -1136,7 +1145,7 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
           }, LATE_BRIEF_RECHECK_MS);
         }
       })
-      .catch(() => {});
+      .catch(() => { if (reason === 'open') setFailed(true); });
   }, [kind, id, key]);
   useEffect(() => { refresh('open'); }, [refresh]);
   // Coherence (promise fix): a membership correction anywhere (the chip's move/detach/found)
@@ -1146,7 +1155,7 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
     window.addEventListener('aug:membership-changed', onChange);
     return () => window.removeEventListener('aug:membership-changed', onChange);
   }, [id, refresh]);
-  return { view, refresh };
+  return { view, refresh, failed };
 }
 
 // ── THE GAP LINE — when preparation is incomplete, ONE plain suggestion (derived server-side from the
@@ -1480,7 +1489,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
   // Instant-load: hydrate the thread from the last-known localStorage snapshot (no skeleton flash on a
   // re-open), then refresh in the background below. Keyed per item id so each deep-dive restores its own.
   const [thread, setThread] = useState<ThreadData | null>(null);
-  useLayoutEffect(() => { const c = loadLS<ThreadData>(`aug-item-thread-${id}`); if (c) setThread((prev) => prev ?? c); }, [id]);
+  useLayoutEffect(() => { const c = loadLS<ThreadData>(itemObjectKey('email', id)); if (c) setThread((prev) => prev ?? c); }, [id]);
   // THE SEED HANDOFF (UX arc) — the clicked row's own truth (title, who), read the SSR-safe way
   // (effect, never a render-body/initializer read — the hydration-mismatch law).
   const [seed, setSeed] = useState<{ title?: string | null; who?: string | null } | null>(null);
@@ -1495,7 +1504,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
   const [copied, setCopied] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
   // The ONE outcome read (prepared + gap + entity/rail + invite affordance) — no step data on the client.
-  const { view } = useItemView('email', id);
+  const { view, failed: viewFailed } = useItemView('email', id);
   const [inviteOpen, setInviteOpen] = useState(false); // the contextual prepared-invite card
   const [draftV, setDraftV] = useState(0);             // bumps to re-seed the editor after a steer rework / late draft
   const userTypedRef = useRef(false);                  // once the user types, a late-arriving draft never clobbers
@@ -1519,46 +1528,42 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
   const composerTouchedRef = useRef(false);
   // J2 (judged room): THE ONE WORK JUDGMENT drives the surface — the verdict supersedes raw
   // relevance for the mount (decide → the DecisionCard; reply → composer open with the draft;
-  // none → message + chat, Dismiss leads). Cached server-side; cheap to fetch.
-  const [verdict, setVerdict] = useState<{ work: string; component: string; executor: { kind: string; name?: string }; options?: Array<{ label: string }>; reason: string } | null>(null);
+  // none → message + chat, Dismiss leads).
+  // W17 · NO WAITING: the verdict the page PAINTS is the one the view door serves (the cached
+  // judgment the machine state already stands on — lib/room/served-verdict), or the last verdict this
+  // browser held (the LS key below). The live judge still asks on every open — BESIDE the view read,
+  // never chained behind it — and its answer only FILLS a page that painted no verdict; otherwise it
+  // is cached for the next open (the no-mutation law). The decision's routes are never a second trip.
+  type PageVerdict = { work: string; component?: string | null; executor?: { kind: string; name?: string }; options?: Array<{ label: string }> };
+  const [verdictState, setVerdict] = useState<PageVerdict | null>(null);
+  const verdict: PageVerdict | null = verdictState ?? view?.verdict ?? null;
+  const verdictRef = useRef<PageVerdict | null>(null);
+  verdictRef.current = verdict;
   const [decisionCleared, setDecisionCleared] = useState(false);
-  // THE DECISION BRIEF artifact (trichotomy T2) — its options/trade-offs/recommendation render
-  // in the ONE DecisionCard; the prepared strip filters it out (never a second document).
-  const decisionBrief = (view?.prepared ?? []).find((p) => p.decision && p.decision.options.length >= 2) ?? null;
   // The verdict OUTRANKS the thread's raw relevance: once it has seeded the surface, a
-  // later-arriving thread load must not overwrite the judged mount (the verdict is cached and
-  // usually lands first; without this guard the slower fetch wins the race).
+  // later-arriving thread load must not overwrite the judged mount.
   const verdictSeededRef = useRef(false);
   // Instant, correct mount on reopen: hydrate the last verdict from localStorage (client-only,
-  // pre-paint) so the surface seeds right the FIRST paint; the fetch refreshes it.
+  // pre-paint) — the view's own verdict covers a first visit.
   useLayoutEffect(() => {
-    const cached = loadLS<{ work: string; component: string; executor: { kind: string; name?: string }; options?: Array<{ label: string }>; reason: string }>(`aug-item-verdict-inbox-${id}`);
-    if (!cached || verdictSeededRef.current) return;
-    setVerdict(cached);
-    verdictSeededRef.current = true;
-    if (!composerTouchedRef.current) {
-      // SUMMONED-STAGE law (Aug 3): the verdict seeds the PALETTE's lead (relevance), never an
-      // auto-raised composer — prepared work waits on the artifact card until reached for.
-      setRelevance(cached.work === 'none' ? 'awareness' : (cached.work === 'reply' || cached.work === 'send_file') ? 'reply' : 'action');
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const cached = loadLS<PageVerdict>(`aug-item-verdict-inbox-${id}`);
+    if (cached) setVerdict((prev) => prev ?? cached);
   }, [id]);
+  // SUMMONED-STAGE law (Aug 3): the verdict seeds the PALETTE's lead (relevance), never an
+  // auto-raised composer — prepared work waits on the artifact card until reached for.
+  useEffect(() => {
+    if (!verdict?.work) return;
+    verdictSeededRef.current = true;
+    if (!composerTouchedRef.current) setRelevance(relevanceOfWork(verdict.work));
+  }, [verdict?.work]);
   useEffect(() => {
     let alive = true;
-    // W11.4 · THE JUDGE IS AN AFTER-PAINT ENRICHMENT: it asks once the open's ONE view read has
-    // settled (bounded — lib/room/warm-client viewSettled), so it never competes with the first paint.
-    viewSettled('email', id).then(() => (alive ? fetch(`/api/items/judge?kind=inbox&id=${id}`) : Promise.reject())).then((r) => r.json()).then((d) => {
-      if (!alive || !d.verdict) return;
-      setVerdict(d.verdict);
-      saveLS(`aug-item-verdict-inbox-${id}`, d.verdict);
-      verdictSeededRef.current = true;
-      if (!composerTouchedRef.current) {
-        // SUMMONED-STAGE law: the verdict drives the palette lead only — the composer overlay is
-        // raised by the user (artifact Open / Reply), never on mount.
-        if (d.verdict.work === 'none') setRelevance('awareness');
-        else if (d.verdict.work === 'reply' || d.verdict.work === 'send_file') setRelevance('reply');
-        else setRelevance('action');
-      }
+    // W17 · BESIDE THE VIEW, NEVER BEHIND IT: the judge needs nothing the view returns — it starts at
+    // the open (its consequences — a moot item filed, an inventory resolved — still run on open).
+    fetch(`/api/items/judge?kind=inbox&id=${id}`).then((r) => (r.ok ? r.json() : null)).then((d) => {
+      if (!alive || !d?.verdict) return;
+      saveLS(`aug-item-verdict-inbox-${id}`, d.verdict); // the next open's first paint
+      if (!verdictRef.current) setVerdict(d.verdict);      // fills a page that painted none — never a swap
     }).catch(() => {});
     return () => { alive = false; };
   }, [id]);
@@ -1581,7 +1586,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
       .then((d: ThreadData) => {
         if (!alive) return;
         setThread(d);
-        saveLS(`aug-item-thread-${id}`, d);
+        saveLS(itemObjectKey('email', id), d);
         // Seed the primary surface from the understood relevance — but ONLY while the judged
         // verdict hasn't already seeded it (the verdict outranks raw relevance), and only until
         // the user touches the composer.
@@ -1591,21 +1596,55 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
       })
       .catch(() => { if (alive) setThreadErr(true); });
 
+    return () => { alive = false; };
+  }, [id]);
+
+  // ── W17 · THE PREPARED REPLY RIDES THE VIEW (law `no-waiting`). THE ONE READER's LIVE reply draft is
+  // already on the view payload (`prepared`) — the page seeds the reply card from it at first paint
+  // (and from the cached view on a revisit) instead of waiting on POST /draft to hand back the same
+  // words, and the card itself paints its body at once (EmailCard `preparedBody`).
+  // The draft door is asked ONLY when the view holds NO live reply and the item may owe one — i.e. only
+  // when the reply is genuinely still to be MADE on this open. That is the one request on this page
+  // that waits on another, because it needs the view's answer to know whether to buy a draft. While it
+  // drafts for a judgment that owes a reply, the page RESERVES the widget's seat (`replySlot` → the
+  // preparing slot in the email card's shape) and the card lands in that same seat.
+  const viewReply = (view?.prepared ?? []).find((p) => p.kind === 'reply_draft' && !!p.content?.trim()) ?? null;
+  useEffect(() => {
+    if (!viewReply?.content || draft !== null) return;
+    setDraft(viewReply.content); setDraftLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewReply?.content]);
+  const [replySlot, setReplySlot] = useState<{ artifact: 'reply_draft'; inFlight: boolean } | null>(null);
+  const draftAskedRef = useRef(false);
+  const viewKnown = !!view || viewFailed;
+  useEffect(() => {
+    if (!viewKnown || draftAskedRef.current) return;
+    if (viewReply?.content) { draftAskedRef.current = true; return; } // the reply is made — nothing to buy
+    // A meeting-extracted action item has no thread to answer; a judged non-reply owes no draft (the
+    // door would refuse it anyway — asking would only cost a round trip).
+    if (view?.itemSource === 'meeting') { draftAskedRef.current = true; setDraft(''); setDraftLoading(false); return; }
+    const work = view?.verdict?.work ?? null;
+    if (work && !REPLY_WORKS.has(work)) { draftAskedRef.current = true; setDraft(''); setDraftLoading(false); return; }
+    draftAskedRef.current = true;
+    // (No `alive` guard: the ask runs ONCE per open — a StrictMode re-run returns at the ref above, so a
+    // cleanup flag would drop the only answer. A landing after unmount is a no-op setState.)
+    // Reserve the seat ONLY for a judgment that owes a reply: an unknown verdict may yield nothing,
+    // and a slot promising a reply that never comes is the lie this law forbids.
+    const owed = !!work && REPLY_WORKS.has(work);
+    if (owed) setReplySlot({ artifact: 'reply_draft', inFlight: true });
     fetch(`/api/inbox/${id}/draft`, { method: 'POST' })
       .then(r => r.json())
       // An FYI/`noted` item legitimately gets NO prepared reply (skipped) — seed a blank composer, not
       // an error line. The composer is TYPABLE AT PAINT: the draft fills in when ready, and only if the
       // user hasn't started typing (their words always win over a late-arriving draft).
       .then(d => {
-        if (!alive) return;
         setDraft(d.skipped ? '' : (d.draft || ''));
         if (d.draft && !d.skipped && !userTypedRef.current) setDraftV((v) => v + 1);
       })
-      .catch(() => { if (alive) setDraft(''); })
-      .finally(() => { if (alive) setDraftLoading(false); });
-
-    return () => { alive = false; };
-  }, [id]);
+      .catch(() => { setDraft(''); })
+      .finally(() => { setDraftLoading(false); if (owed) setReplySlot({ artifact: 'reply_draft', inFlight: false }); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewKnown, id]);
 
   // ── J2 (send_file mount) — a judged doc-send arrives PREFILLED: the resolver's file (stored on
   // the prepared reply artifact) auto-attaches as the STANDARD composer chip — ✕ removes it like
@@ -1873,6 +1912,8 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
         // attachments — the drawer's Files tab reads the SAME array — so the card shows them where
         // the reply is written, opening through the one viewer. No second fetch, no second shape.
         sourceFiles={thread?.attachments ?? null}
+        // W17 · the prepared words paint WITH the card (the view already carried them) — no skeleton.
+        preparedBody={draft}
         // THE DOOR LIVES ON THE COMPONENT (owner walk, Sep 9): the card carries "Thread →", and it
         // raises the item's ONE context drawer on its Thread section — the header stopped wearing
         // a bare unexplained word for the same job.
@@ -1919,28 +1960,17 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
   // ── THE DECISION PAYLOAD, derived ONCE (the placement table: one component, one render). The
   // deep-dive hands it to its own rail below; EMBEDDED, it is REPORTED UP so the host room mounts
   // it on the room's rail — the conversation pane on every door, never the stage.
-  const decisionPayload: ReportedDecision | null =
-    !itemDismissed && !decisionCleared && verdict?.work === 'decide'
-      && ((decisionBrief?.decision?.options.length ?? 0) >= 2 || (verdict.options?.length ?? 0) >= 2)
-      ? {
-        itemKind: 'email' as const,
-        itemId: id,
-        // NO INTERNAL TEXT ON SCREEN (W7.3): the question is the DECISION BRIEF's own, else the
-        // item's own subject — never the judge's private reason.
-        title: decisionBrief?.title || subject || null,
-        // THE ONE SURFACE for the decision (owner, Aug 12): when THE DECISION BRIEF exists, its
-        // options (with trade-offs) SUPERSEDE the judge's bare labels, and its recommendation
-        // marks the pick — the brief's depth renders HERE, never as a second document.
-        options: (decisionBrief?.decision?.options.length ?? 0) >= 2 ? decisionBrief!.decision!.options : verdict.options!,
-        recommendation: decisionBrief?.decision?.recommendation
-          ? { label: decisionBrief.decision.recommendation, why: decisionBrief.decision.why }
-          : null,
-        // Q5 · THE OBJECT: resolved from the SAME `prepared` array every other card on this door
-        // reads (the one prepared reader — source_data lanes + the deliverable pool). The card
-        // renders it, or says plainly that nothing is attached and recommends nothing.
-        object: resolveDecisionObject(view?.prepared ?? null),
-      }
-      : null;
+  // W17 · FROM THE VIEW PAYLOAD ALONE (lib/room/decision-object decisionSpecOf — the ONE derivation
+  // both item doors share): the brief's options (with trade-offs) supersede the verdict's bare labels,
+  // the object resolves from the same prepared list, and the card's title is the brief's own question
+  // ONLY when it adds something — never the subject the header and the source widget already show.
+  // NO INTERNAL TEXT ON SCREEN (W7.3): never the judge's private reason (the view does not serve it).
+  const decisionSpec = !itemDismissed && !decisionCleared
+    ? decisionSpecOf({ verdict, prepared: view?.prepared ?? null }, [subject, thread?.subject, seed?.title])
+    : null;
+  const decisionPayload: ReportedDecision | null = decisionSpec
+    ? { itemKind: 'email' as const, itemId: id, ...decisionSpec }
+    : null;
   // Report the decision upward (embedded doors). Keyed on the payload's VALUE — the object is
   // rebuilt every render, so a reference dep would loop. Reports null on unmount/clear so a stale
   // card can never outlive its item (the focus changes; the room's rail must follow).
@@ -2024,6 +2054,8 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
         // W8.4 · ONE CARD, ONE DOOR: the source card's "Thread →" raises THIS drawer's thread section —
         // the same door the reply card's "Thread →" opens (never a separate item page).
         onOpenThread={() => openDrawerAt('thread')}
+        // W17 · the reply THIS open is drafting reserves the action seat (the preparing slot → the card).
+        slot={!sent && !itemDismissed && objectKind === 'email_thread' ? replySlot : null}
         decision={decisionPayload ? {
           ...decisionPayload,
           // Q5 · the object's ONE deed is REVIEW, and it reads where every prepared thing on this
@@ -2347,7 +2379,7 @@ function itemText(x: unknown): string {
 function MeetingDetail({ id, embedded = false }: { id: string; embedded?: boolean }) {
   // Instant-load: hydrate the meeting from localStorage (no skeleton flash on re-open), then refresh below.
   const [data, setData] = useState<MeetingFull | null>(null);
-  useLayoutEffect(() => { const c = loadLS<MeetingFull>(`aug-item-meeting-${id}`); if (c) setData((prev) => prev ?? c); }, [id]);
+  useLayoutEffect(() => { const c = loadLS<MeetingFull>(itemObjectKey('meeting', id)); if (c) setData((prev) => prev ?? c); }, [id]);
   const [err, setErr] = useState(false);
   const [composing, setComposing] = useState(false); // the follow-up compose panel (Draft email)
   // Per-item cleared state (Done/Dismiss) → the row fades then hides. Keyed by inbox item id.
@@ -2364,7 +2396,7 @@ function MeetingDetail({ id, embedded = false }: { id: string; embedded?: boolea
     let alive = true;
     fetch(`/api/meetings/${id}/full`)
       .then(r => (r.ok ? r.json() : Promise.reject()))
-      .then((d: MeetingFull) => { if (alive) { setData(d); saveLS(`aug-item-meeting-${id}`, d); } })
+      .then((d: MeetingFull) => { if (alive) { setData(d); saveLS(itemObjectKey('meeting', id), d); } })
       .catch(() => { if (alive) setErr(true); });
     return () => { alive = false; };
   }, [id]);
@@ -2671,7 +2703,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   const router = useRouter();
   // Instant-load: hydrate the commitment from localStorage (no skeleton flash on re-open), then refresh below.
   const [data, setData] = useState<CommitmentData | null>(null);
-  useLayoutEffect(() => { const c = loadLS<CommitmentData>(`aug-item-commitment-${id}`); if (c) setData((prev) => prev ?? c); }, [id]);
+  useLayoutEffect(() => { const c = loadLS<CommitmentData>(itemObjectKey('commitment', id)); if (c) setData((prev) => prev ?? c); }, [id]);
   const [err, setErr] = useState(false);
   const [acting, setActing] = useState(false);
   const [done, setDone] = useState<'done' | 'dismissed' | null>(null);
@@ -2686,16 +2718,20 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   // THE ONE WORK JUDGMENT — read for the decision card's options only. ⚠️ NO INTERNAL TEXT ON
   // SCREEN (W7.3): the verdict's `reason` is the brain talking to itself ("Direction 'you_owe' with
   // the item asking…") and is never rendered by any component — not as a line, not as a question.
-  const [verdict, setVerdict] = useState<{ work: string; options?: Array<{ label: string }> } | null>(null);
+  // W17 · NO WAITING: the verdict the page paints is the one the VIEW serves (the cached judgment the
+  // machine state already stands on); the live judge asks BESIDE the view, never chained behind it,
+  // and only fills a page that painted none (the no-mutation law) — the decision's routes never wait.
+  const [verdictState, setVerdict] = useState<{ work: string; options?: Array<{ label: string }> } | null>(null);
+  const verdict = verdictState ?? view?.verdict ?? null;
+  const verdictRef = useRef(verdict);
+  verdictRef.current = verdict;
   const [decisionCleared, setDecisionCleared] = useState(false);
   useEffect(() => {
     let alive = true;
-    // W11.4 · AFTER-PAINT: the judge asks once the open's view read has settled (bounded).
-    viewSettled('commitment', id)
-      .then(() => (alive ? fetch(`/api/items/judge?kind=commitment&id=${id}`) : null))
+    fetch(`/api/items/judge?kind=commitment&id=${id}`)
       .then((r) => (r && r.ok ? r.json() : null))
       .then((d) => {
-        if (!alive || !d?.verdict) return;
+        if (!alive || !d?.verdict || verdictRef.current) return;
         setVerdict({ work: String(d.verdict.work ?? ''), options: d.verdict.options });
       })
       .catch(() => {});
@@ -2709,13 +2745,13 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
     // takes its landing) — lib/room/warm-client fetchOpenObject. A reload after the reader's own
     // deed reads the post-deed world afresh (never a landing from before the deed).
     const read: Promise<CommitmentData | null> = reload === 0
-      ? (fetchOpenObject(`/api/commitments/${id}`, `aug-item-commitment-${id}`) as Promise<CommitmentData | null>)
+      ? (fetchOpenObject(`/api/commitments/${id}`, itemObjectKey('commitment', id)) as Promise<CommitmentData | null>)
       : fetch(`/api/commitments/${id}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
     read
       .then((d) => {
         if (!alive) return;
         if (!d) { setErr(true); return; }
-        setData(d); saveLS(`aug-item-commitment-${id}`, d);
+        setData(d); saveLS(itemObjectKey('commitment', id), d);
       });
     return () => { alive = false; };
   }, [id, reload]);
@@ -2808,23 +2844,15 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   // decision's ONE surface is the DecisionCard) and this door never handed its rail a decision.
   // Same derivation as EmailDetail's: the brief's options (with trade-offs) supersede the judge's
   // bare labels; the object resolves from this door's own prepared artifacts.
-  const decisionBriefC = prepArts.find((p) => p.decision && p.decision.options.length >= 2) ?? null;
-  const commitDecision: ReportedDecision | null =
-    !done && !isHandoff && !decisionCleared && verdict?.work === 'decide'
-      && ((decisionBriefC?.decision?.options.length ?? 0) >= 2 || (verdict.options?.length ?? 0) >= 2)
-      ? {
-        itemKind: 'commitment' as const,
-        itemId: id,
-        // NO INTERNAL TEXT ON SCREEN (W7.3): the question is the DECISION BRIEF's own, else the
-        // commitment's own words — never the judge's private reason.
-        title: decisionBriefC?.title || data?.description || null,
-        options: (decisionBriefC?.decision?.options.length ?? 0) >= 2 ? decisionBriefC!.decision!.options : verdict.options!,
-        recommendation: decisionBriefC?.decision?.recommendation
-          ? { label: decisionBriefC.decision.recommendation, why: decisionBriefC.decision.why }
-          : null,
-        object: resolveDecisionObject(view?.prepared ?? null),
-      }
-      : null;
+  // Same derivation as EmailDetail's (lib/room/decision-object decisionSpecOf — the view payload alone):
+  // the brief's options supersede the verdict's labels, the object resolves from this door's prepared
+  // artifacts, and the title is the brief's own question only when the header does not already say it.
+  const commitSpec = !done && !isHandoff && !decisionCleared
+    ? decisionSpecOf({ verdict, prepared: view?.prepared ?? null }, [data?.description, src?.subject])
+    : null;
+  const commitDecision: ReportedDecision | null = commitSpec
+    ? { itemKind: 'commitment' as const, itemId: id, ...commitSpec }
+    : null;
   // THE ONE EMAIL CARD for this commitment (W7.3) — mounted by a LIVE pooled draft (THE ONE READER
   // already withdrew a stale / false-claim / MISADDRESSED one) or by the person's own verb.
   const markDoneAfterSend = () => {
@@ -3288,7 +3316,7 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
   // Instant-load: hydrate the follow-up thread from localStorage (no skeleton flash on re-open), then
   // refresh in the background. Distinct key from the email deep-dive (different endpoint / same id space).
   const [thread, setThread] = useState<ThreadData | null>(null);
-  useLayoutEffect(() => { const c = loadLS<ThreadData>(`aug-item-followup-${id}`); if (c) setThread((prev) => prev ?? c); }, [id]);
+  useLayoutEffect(() => { const c = loadLS<ThreadData>(itemObjectKey('followup', id)); if (c) setThread((prev) => prev ?? c); }, [id]);
   const [threadErr, setThreadErr] = useState(false);
 
   const [draft, setDraft] = useState<string | null>(null);   // the plain-text nudge draft (seed + Copy)
@@ -3313,23 +3341,39 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
     let alive = true;
     fetch(`/api/commitments/${id}/thread`)
       .then(r => (r.ok ? r.json() : Promise.reject()))
-      .then((d: ThreadData) => { if (alive) { setThread(d); saveLS(`aug-item-followup-${id}`, d); } })
+      .then((d: ThreadData) => { if (alive) { setThread(d); saveLS(itemObjectKey('followup', id), d); } })
       .catch(() => { if (alive) setThreadErr(true); });
 
+    return () => { alive = false; };
+  }, [id]);
+
+  // W17 · NO WAITING — THE NUDGE RIDES THE VIEW. The prepared nudge (THE ONE READER's live list) is on
+  // the view payload: the summoned composer seeds from it. The nudge door — which may DRAFT (a model
+  // call) — was asked on every open for words the page did not show; it is asked now only when the
+  // reader summons the composer and no prepared nudge exists (the words are then genuinely being made).
+  const viewNudge = (view?.prepared ?? []).find((p) => (p.kind === 'nudge_draft' || p.kind === 'reply_draft') && !!p.content?.trim()) ?? null;
+  useEffect(() => {
+    if (!viewNudge?.content || draft !== null) return;
+    setDraft(viewNudge.content); setDraftLoading(false);
+    if (!userTypedRef.current) setDraftV((v) => v + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewNudge?.content]);
+  const nudgeAskedRef = useRef(false);
+  useEffect(() => {
+    if (!composerOpen || draft !== null || viewNudge?.content || nudgeAskedRef.current) return;
+    nudgeAskedRef.current = true;
     // Draft a nudge (plain text) — same endpoint the Home "Draft nudge" uses. Composer is TYPABLE AT
     // PAINT: the draft seeds the editor when ready, only while the user hasn't typed.
     fetch(`/api/commitments/${id}/nudge`, { method: 'POST' })
       .then(r => r.json())
       .then(d => {
-        if (!alive) return;
         setDraft(d.draft || '');
         if (d.draft && !userTypedRef.current) setDraftV((v) => v + 1);
       })
-      .catch(() => { if (alive) setDraft(''); })
-      .finally(() => { if (alive) setDraftLoading(false); });
-
-    return () => { alive = false; };
-  }, [id]);
+      .catch(() => { setDraft(''); })
+      .finally(() => { setDraftLoading(false); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composerOpen, draft, viewNudge?.content, id]);
 
   // The nudge PATCH expects a PLAIN-TEXT body (it sends via the mailbox reply APIs), so send the
   // editor's text, not its HTML — mirrors the Home FollowUpItem's textarea → PATCH { body }.

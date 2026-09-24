@@ -21,9 +21,12 @@
 // And the skeleton (`DecisionCardSkeleton`) IS this frame — the same class, the same box — so a
 // card whose evidence is still on its way already stands at its full height on first paint.
 //
-// Pure presentation: no fetch, no verb, no keyboard. Client-safe by construction (no imports).
+// Pure presentation: no fetch, no verb, no keyboard. Client-safe by construction (its one import is the
+// kit's presentational placeholder primitive — W17).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { ReactNode } from 'react';
+// W17 · the ONE placeholder primitive — the evidence wait and the counting frame wear its shape and pulse.
+import { PreparingShape, PREPARING_PULSE } from '@/components/thread/preparing-slot';
 
 /** THE CARD'S ONE HEIGHT. 320px = the page's top padding + the deck's header line + the stack's
  *  shoulders + the pinned action row + breathing room at the foot. Floor 240px (a phone held
@@ -57,15 +60,10 @@ export function DecisionCardFrame({ head, children, loading = false }: {
 }
 
 /** THE EVIDENCE'S OWN PLACEHOLDER — quiet bars inside the scroll region while a read is in flight. */
+//  W17 · it IS the one placeholder primitive (components/thread/preparing-slot.tsx `evidence` shape — the
+//  kit's urgent pulse, reduced motion honoured, no words: a read is not work being made).
 export function DecisionEvidenceSkeleton() {
-  return (
-    <div aria-hidden className="flex flex-col gap-2 px-5 pt-1">
-      <div className="h-2.5 w-24 rounded bg-neutral-100 motion-safe:animate-pulse" />
-      <div className="h-3 w-full rounded bg-neutral-100 motion-safe:animate-pulse" />
-      <div className="h-3 w-5/6 rounded bg-neutral-100 motion-safe:animate-pulse" />
-      <div className="h-3 w-2/3 rounded bg-neutral-100 motion-safe:animate-pulse" />
-    </div>
-  );
+  return <PreparingShape shape="evidence" className="flex flex-col gap-2 px-5 pt-1" />;
 }
 
 /** THE CARD BEFORE THERE IS A CARD — the same frame, the same height, a claim of nothing. A
@@ -74,8 +72,8 @@ export function DecisionCardSkeleton({ message }: { message?: string | null }) {
   return (
     <DecisionCardFrame loading head={
       <div className="flex items-center gap-2.5 px-5 pt-4">
-        <span aria-hidden className="h-7 w-7 flex-shrink-0 rounded-full bg-neutral-100 motion-safe:animate-pulse" />
-        <div aria-hidden className="h-3 w-28 rounded bg-neutral-100 motion-safe:animate-pulse" />
+        <span aria-hidden className={`h-7 w-7 flex-shrink-0 rounded-full bg-neutral-100 ${PREPARING_PULSE}`} />
+        <div aria-hidden className={`h-3 w-28 rounded bg-neutral-100 ${PREPARING_PULSE}`} />
       </div>
     }>
       {message

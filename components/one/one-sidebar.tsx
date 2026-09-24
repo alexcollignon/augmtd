@@ -45,6 +45,7 @@ import { projectHref } from '@/lib/room/project-href';
 import { warmEntityRoom, cancelWarmEntityRoom } from '@/lib/room/warm-room';
 import { momentumOf } from '@/lib/work-items/states';
 import { toast } from 'sonner';
+import { prefetchChatTurns } from '@/components/home/chat-turns-warm';
 
 type Conversation = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null; sub?: string };
 // `unread` — THE PROJECT RAISING ITS HAND (Sep 7): per project room key, the count of live turns
@@ -471,7 +472,12 @@ export default function OneSidebar({
               );
               const rowCls = `${item(onHome && openConvKey === c.key)} group/conv w-full text-left !flex-col !items-stretch !gap-0 cursor-pointer`;
               return manageable ? (
-                <div key={c.key} role="button" tabIndex={0} onClick={() => { if (convRenaming !== c.key) openChat(c.key); }} className={rowCls}>{inner}</div>
+                <div key={c.key} role="button" tabIndex={0} onClick={() => { if (convRenaming !== c.key) openChat(c.key); }}
+                  // W17 · HOVER WARMS THE NEXT PAGE: the conversation's turns are read (a peek — no
+                  // read marker) on intent, so the click paints them instead of the skeleton.
+                  onMouseEnter={() => prefetchChatTurns(c.key)} onFocus={() => prefetchChatTurns(c.key)}
+                  onMouseDown={() => prefetchChatTurns(c.key, { immediate: true })}
+                  className={rowCls}>{inner}</div>
               ) : (
                 <Link key={c.key} href={c.href ?? '/home'} className={rowCls}>{inner}</Link>
               );
@@ -601,7 +607,17 @@ export default function OneSidebar({
                   </div>
                 );
               })}
-              {team === null && <div className="px-3 py-2 text-[12px] text-neutral-400">Loading…</div>}
+              {/* W17 · NO SPINNER WORDS: the roster not yet read holds its place in the rows' own
+                  shape (face · name · state), pulsing, reduced-motion honoured. */}
+              {team === null && [0, 1].map((i) => (
+                <div key={i} className="flex items-center gap-2.5 px-3 py-2" aria-hidden>
+                  <span className="h-7 w-7 flex-shrink-0 rounded-full bg-neutral-100 animate-pulse motion-reduce:animate-none" />
+                  <span className="flex-1 space-y-1.5">
+                    <span className="block h-2.5 w-20 rounded bg-neutral-100 animate-pulse motion-reduce:animate-none" />
+                    <span className="block h-2 w-14 rounded bg-neutral-100 animate-pulse motion-reduce:animate-none" />
+                  </span>
+                </div>
+              ))}
               <div className="my-1 border-t border-neutral-100" />
               <Link href="/settings?tab=team" onClick={() => setTeamOpen(false)}
                 className="block px-3 py-2 text-[12px] text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800 transition-colors">

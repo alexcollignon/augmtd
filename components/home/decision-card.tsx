@@ -22,6 +22,7 @@
 //       really is closed, and we do not claim to know how.
 //   4 · IT OWNS THE RECOMMENDATION RULE. `mayRecommend` (lib/room/decision-object) is read HERE:
 //       with no object on the page nothing is marked, and the kit only prints the mark it is given.
+//       W17: and nothing is SAID about the absence — the card is its options (no filler line).
 //
 // The caller keeps what only it can do: seat the user's word as a turn (`onChosen`) and apply the
 // consequence to its own lane (`onResolved` — the fresh draft, the room's narration).
@@ -30,9 +31,7 @@
 import React from 'react';
 import { ThreadCardView } from '@/components/thread';
 import type { DecisionOption, ThreadCard } from '@/components/thread/types';
-import {
-  NO_DECISION_OBJECT_LINE, mayRecommend, type DecisionObject,
-} from '@/lib/room/decision-object';
+import { mayRecommend, type DecisionObject } from '@/lib/room/decision-object';
 
 /** THE ONE VOCABULARY of this card — no surface types a status word of its own. */
 export const DECISION_WORDS = {
@@ -173,9 +172,10 @@ export default function DecisionCard({ spec, objectNode, onChosen, onResolved, o
     ...(id ? { id } : {}),
     state: settled ? 'settled' : busy ? 'busy' : 'open',
     ...(spec.title ? { question: spec.title } : {}),
+    // W17 · NO FILLER: with no object the card is its options — never a line about what is absent.
     ...(preparedNode ? { objectNode: preparedNode }
       : objectNode ? { objectNode }
-      : { quietLine: NO_DECISION_OBJECT_LINE }),
+      : {}),
     options,
     confirmLabel: DECISION_WORDS.confirm,
     onConfirm: (label: string) => void confirm(label),

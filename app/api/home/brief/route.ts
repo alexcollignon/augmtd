@@ -20,6 +20,7 @@ import { isCalendarSystemSubject } from '@/lib/inbox/automated';
 import { computeBundles } from '@/lib/home/bundle-brief';
 import { clipAnchorTitle, writeDayAnchors } from '@/lib/home/day-anchors';
 import { fetchAllRows } from '@/lib/utils/fetch-all';
+import { phaseClock } from '@/lib/utils/server-timing';
 import { TODAY_ZONE_FEATURE } from '@/lib/home/day';
 import { CATCH_UP_THRESHOLD } from '@/lib/work/catch-up';
 import { nameBundles, BUNDLE_NAMES_VERSION, type BundleName, type BundleNameInput } from '@/lib/home/name-bundles';
@@ -155,7 +156,54 @@ export async function GET() {
   // ── P0 perf: coarse phase marks, logged as ONE line when a request runs slow (catch regressions). ──
   const t0 = Date.now();
   const marks: Array<[string, number]> = [];
-  const mark = (label: string) => { marks.push([label, Date.now() - t0]); };
+  // W17: the same marks ride home as a `Server-Timing` header (the browser's own network panel).
+  const clock = phaseClock();
+  const mark = (label: string) => { marks.push([label, Date.now() - t0]); clock.mark(label); };
+
+  // ── W17 · NO WAITING — EVERY READ THAT NEEDS ONLY THE USER STARTS NOW ─────────────────────────
+  // This route used to walk a line of round trips where most links needed nothing from the link
+  // before them: tracked projects, the user's rules, the campaign signature, the home timezone,
+  // the cleared-today counts, the bundle entities, the mailbox connections + features and the
+  // next-48h calendar all wait only on `user`. Each is STARTED here (in parallel with the profile
+  // read the hot path gates on) and AWAITED exactly where it used to be read — same query, same
+  // failure handling at its old site, so nothing it feeds changes; only the wall clock does.
+  // `.catch(() => {})` marks each flight handled while it waits, so a failure surfaces at its own
+  // await (as before) and never as an unhandled rejection in between.
+  const inFlight = <T,>(p: Promise<T>): Promise<T> => { p.catch(() => {}); return p; };
+  const trackedP = inFlight(Promise.resolve(supabase.from('work_entities').select('id, name, aliases')
+    .eq('user_id', user.id).eq('kind', 'initiative').eq('tracked', true).eq('status', 'active')
+    .order('id', { ascending: true }).limit(TRACKED_PROJECTS_LIMIT)));
+  const userRulesP = inFlight(loadUserRules(user.id, supabase));
+  const campaignSigP = inFlight(getCampaignSignature(supabase, user.id));
+  const tzRowsP = inFlight(Promise.resolve(supabase.from('calendar_events').select('timezone').eq('user_id', user.id).not('timezone', 'is', null).limit(300)));
+  const clearedP = inFlight(Promise.all([
+    // Mirrors excluded (W2.3): the repair sweep archives ~900 historical rows in one pass — a machine
+    // retirement must never read as the user's own cleared-today deeds.
+    withoutMirrors(supabase.from('inbox_items').select('id', { count: 'exact', head: true }))
+      .eq('user_id', user.id).in('status', ['completed', 'dismissed']).gte('source_data->>resolved_at', startOfDay),
+    // Count only USER-driven resolutions — exclude auto-fulfillment (`resolved_reason='fulfilled'`, the
+    // commitments-sweep detecting a commitment was met, often a phantom created + closed the same minute).
+    // "Day cleared" reflects what YOU cleared, not what the system auto-closed. User done/dismiss (reason
+    // null) + reply-resolution ('replied') still count.
+    supabase.from('commitments').select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id).in('status', ['done', 'dismissed']).gte('resolved_at', startOfDay)
+      .or('resolved_reason.is.null,resolved_reason.neq.fulfilled'),
+  ]));
+  // NO SILENT CAPS: paged, stable order (the bundle grouping's entity set — see its read below).
+  const wentsP = inFlight(fetchAllRows<Record<string, unknown>>((from, to) =>
+    supabase.from('work_entities')
+      .select('id, name, status, state, next_move, priority, last_event_at, tracked')
+      .eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null)
+      .order('id', { ascending: true }).range(from, to)));
+  const connsP = inFlight(Promise.resolve(supabase.from('connections').select('id, last_sync')
+    .eq('user_id', user.id).in('provider', ['gmail', 'outlook']).eq('status', 'active')));
+  const featsP = inFlight(import('@/lib/workspace/features').then(({ getWorkspaceFeatures }) => getWorkspaceFeatures(user.id, supabase)));
+  const soonP = inFlight(Promise.resolve(supabase.from('calendar_events')
+    .select('id, title, start_time, end_time, attendees, timezone, is_all_day')
+    .eq('user_id', user.id).eq('status', 'confirmed')
+    .gte('start_time', new Date(now.getTime() - 30 * 60_000).toISOString())
+    .lte('start_time', new Date(now.getTime() + 48 * 3_600_000).toISOString())
+    .order('start_time', { ascending: true }).limit(40)));
 
   // Profile FIRST (one cheap read): home_brief carries the last-good brief AND the `aux` side-cache
   // (reconcile stamp + clusters/outbound snapshots) that lets the hot path SKIP its expensive phases.
@@ -243,9 +291,7 @@ export async function GET() {
   // a freshly-filled project has a null state until the pass runs, and its tag must show anyway).
   const trackedNameById = new Map<string, string>();
   try {
-    const { data: tps } = await supabase.from('work_entities').select('id, name, aliases')
-      .eq('user_id', user.id).eq('kind', 'initiative').eq('tracked', true).eq('status', 'active')
-      .order('id', { ascending: true }).limit(TRACKED_PROJECTS_LIMIT);
+    const { data: tps } = await trackedP; // started with the user-only wave (W17)
     if ((tps ?? []).length >= TRACKED_PROJECTS_LIMIT) console.warn(`[home/brief] tracked-projects pool SATURATED at ${TRACKED_PROJECTS_LIMIT} — some tracked projects may not tag their rows; raise the bound`);
     trackedProjects = ((tps ?? []) as Array<{ id: string; name: string; aliases: unknown }>).map((t) => {
       trackedNameById.set(String(t.id), String(t.name));
@@ -270,7 +316,7 @@ export async function GET() {
   // Home must use the same persisted deterministic rules as Inbox. Passing them explicitly avoids
   // relying on classify-item's process-global render cache, which is not a safe source of per-user
   // configuration in a server route.
-  const userRules = await loadUserRules(user.id, supabase);
+  const userRules = await userRulesP; // started with the user-only wave (W17)
 
   // ── THE ONE SCALE (docs/attention-plan.md, A3) ────────────────────────────────────────────────
   // The Home's "Held quiet · N →" door speaks the LEDGER'S OWN number, computed by the ledger's own
@@ -431,7 +477,7 @@ export async function GET() {
   // at exactly the seam that serves the deck. One day-cached await primes it before the classify
   // pass, and the derived signature rides the deck floors explicitly below. Fails open.
   let campaignSig: import('@/lib/inbox/campaign-echo').CampaignSignature | null = null;
-  try { campaignSig = await getCampaignSignature(supabase, user.id); } catch { /* the floor goes inert, never fabricates */ }
+  try { campaignSig = await campaignSigP; } catch { /* the floor goes inert, never fabricates */ }
   const classifiedEmails = items
     .filter((it) => it.source !== 'meeting' && !isCommitmentMirror(it))
     .map((it) => ({ it, posture: classifyItem(it as never, userRules) }));
@@ -479,6 +525,9 @@ export async function GET() {
   // so we can compute the STRUCTURAL reply-state (computeThreadReplyState — direction+time only, no
   // keyword matching) per thread and feed it to the synthesis as a first-class "already handled" signal.
   const candThreadIds = [...new Set(emailCandidates.map((c) => c.it.source_data?.thread_id).filter(Boolean))] as string[];
+  // W17 · the cached-verdict read needs only the candidate ids — it no longer waits for the thread
+  // read below to land before it starts (it is consumed, unchanged, at its old site).
+  const judgedNoneP = inFlight(readJudgedNone(supabase, user.id, emailCandidates.map((c) => c.it.id)));
   let answered = new Map<string, string>();
   const threadMsgsById = new Map<string, { is_from_user: boolean; received_at: string | null }[]>();
   if (candThreadIds.length) {
@@ -548,7 +597,7 @@ export async function GET() {
   // NO SILENT CAP (found live: `.slice(0, 300)` on a 4,779-item account meant the judge's word
   // never reached the tail). `readJudgedNone` chunks the filter list instead — same query, no guess
   // about how many rows are worth asking about. Fills the Set the floors above already hold.
-  for (const id of await readJudgedNone(supabase, user.id, emailCandidates.map((c) => c.it.id))) judgedNoneIds.add(id);
+  for (const id of await judgedNoneP) judgedNoneIds.add(id); // started beside the thread read (W17)
   for (const { it, posture } of emailCandidates) {
     const sd = (it.source_data ?? {}) as Record<string, unknown>;
     const tid = sd.thread_id as string | undefined;
@@ -907,7 +956,7 @@ export async function GET() {
   // BOUNDED-EXPLICIT (invariant 10): a frequency SAMPLE, not a full listing — 300 recent calendar
   // rows are plenty to find the user's dominant (home) timezone; a truncation here just means a
   // slightly staler sample, never a wrong-by-construction answer once the user has any history.
-  const { data: tzRows } = await supabase.from('calendar_events').select('timezone').eq('user_id', user.id).not('timezone', 'is', null).limit(300);
+  const { data: tzRows } = await tzRowsP; // started with the user-only wave (W17)
   const tzFreq = new Map<string, number>();
   for (const r of (tzRows ?? []) as Array<{ timezone: string | null }>) { const t = r.timezone; if (t) tzFreq.set(t, (tzFreq.get(t) ?? 0) + 1); }
   const userTz = [...tzFreq.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'UTC';
@@ -1360,19 +1409,7 @@ export async function GET() {
   // sent-rows (observed: one "Re: …" thread stored ~110× → a 96% ring with 2 real actions) and external
   // replies to threads that were never an inbox item. The ring must reflect ITEMS the user resolved here,
   // which the Activity log mirrors — not the mailbox's raw outbound volume.
-  const [inboxClearedRes, commitClearedRes] = await Promise.all([
-    // Mirrors excluded (W2.3): the repair sweep archives ~900 historical rows in one pass — a machine
-    // retirement must never read as the user's own cleared-today deeds.
-    withoutMirrors(supabase.from('inbox_items').select('id', { count: 'exact', head: true }))
-      .eq('user_id', user.id).in('status', ['completed', 'dismissed']).gte('source_data->>resolved_at', startOfDay),
-    // Count only USER-driven resolutions — exclude auto-fulfillment (`resolved_reason='fulfilled'`, the
-    // commitments-sweep detecting a commitment was met, often a phantom created + closed the same minute).
-    // "Day cleared" reflects what YOU cleared, not what the system auto-closed. User done/dismiss (reason
-    // null) + reply-resolution ('replied') still count.
-    supabase.from('commitments').select('id', { count: 'exact', head: true })
-      .eq('user_id', user.id).in('status', ['done', 'dismissed']).gte('resolved_at', startOfDay)
-      .or('resolved_reason.is.null,resolved_reason.neq.fulfilled'),
-  ]);
+  const [inboxClearedRes, commitClearedRes] = await clearedP; // started with the user-only wave (W17)
   const clearedToday = (inboxClearedRes.count ?? 0) + (commitClearedRes.count ?? 0);
   // needYou baseline = live counts already computed above: replies you owe (mustRespondOut) +
   // non-meeting/needs-you priority cards + on-your-plate commitments still pending.
@@ -1425,11 +1462,7 @@ export async function GET() {
     // grouping) — paged, stable order. The `atomIds.slice(0, 400)` below was worse: it dropped
     // ENTITY RESOLUTION for any atom past the 400th outright — chunked `.in()` batches now cover
     // every deck atom.
-    wentsRows = await fetchAllRows<Record<string, unknown>>((from, to) =>
-      supabase.from('work_entities')
-        .select('id, name, status, state, next_move, priority, last_event_at, tracked')
-        .eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null)
-        .order('id', { ascending: true }).range(from, to));
+    wentsRows = await wentsP; // started with the user-only wave (W17)
     if (wentsRows.length >= BUNDLE_ENTITIES_LIMIT) console.warn(`[home/brief] bundle-entities read reached ${wentsRows.length} rows (named floor ${BUNDLE_ENTITIES_LIMIT}) — now fully paged, but a growing count is worth watching`);
     const atomIds = bundleAtoms.map((a) => a.id);
     if (atomIds.length >= BUNDLE_LINK_ATOMS_LIMIT) console.warn(`[home/brief] bundle atom set is ${atomIds.length} rows (named floor ${BUNDLE_LINK_ATOMS_LIMIT}) — entity-link resolution is now chunked, not truncated`);
@@ -1715,13 +1748,11 @@ export async function GET() {
   // Home, which is the opposite of what the anchor is for. A HOME IS A THING THAT EXISTS.
   let todayZoneLive = false;
   try {
-    const { data: conns } = await supabase.from('connections').select('id, last_sync')
-      .eq('user_id', user.id).in('provider', ['gmail', 'outlook']).eq('status', 'active');
+    const { data: conns } = await connsP; // started with the user-only wave (W17)
     // THE SOVEREIGN MODE bit (Aug 10 — the leak audit): a corporate workspace with the email
     // feature OFF must never be invited to connect a mailbox — the empty state pivots to the
     // agent-team CTA. One flag read; the client renders from it.
-    const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
-    const feats = await getWorkspaceFeatures(user.id, supabase);
+    const feats = await featsP; // started with the user-only wave (W17)
     mail = {
       connections: conns?.length ?? 0,
       syncing: (conns ?? []).some((c) => !c.last_sync),
@@ -1859,12 +1890,7 @@ export async function GET() {
     //    overlap this row's counterparty. Real events only; a miss is simply no adjacency.
     const adjByEmail = new Map<string, { localTime: string | null; title: string | null; eventId: string; today: boolean }>();
     try {
-      const { data: soon } = await supabase.from('calendar_events')
-        .select('id, title, start_time, end_time, attendees, timezone, is_all_day')
-        .eq('user_id', user.id).eq('status', 'confirmed')
-        .gte('start_time', new Date(now.getTime() - 30 * 60_000).toISOString())
-        .lte('start_time', new Date(now.getTime() + 48 * 3_600_000).toISOString())
-        .order('start_time', { ascending: true }).limit(40);
+      const { data: soon } = await soonP; // started with the user-only wave (W17)
       // THE DAY ANCHOR + THE FRESH SEAT (Sep 18): the fact now carries WHICH event it is and
       // WHETHER that event is today — the two things the adjacency was always about and never said.
       const localDate = (iso: string): string => {
@@ -2142,5 +2168,5 @@ export async function GET() {
   // upstream `stripDeixis` seams stay where they are (they feed the SERVER-side agenda and the
   // briefing composer's inputs, which never pass through here); this is the guarantee that no lane
   // — present or future — can serve a word that has stopped being true.
-  return NextResponse.json(guardDeckLabels({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => withAttention({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, preparedKind: preparedKindByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null, machine: machineOf(n.itemId) }, n.itemId)), mustRespond: attentionMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities.map((p) => ({ ...p, machine: p.itemId ? machineOf(p.itemId) : null })), commitments: commitments.map((c) => withAttention({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null, machine: machineOf(c.id) }, c.id)), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, projectByAtom, briefing: cachedBriefing, trackedProjects, mail, today: todayStr, attention: { budget: attention.budget, served: attention.served, heldBack: attention.heldBack, heldTotal: attention.heldTotal, heldWaiting: attention.heldWaiting, heldHandled: attention.heldHandled, fresh: attention.fresh, catchUp: attention.catchUp } }));
+  return NextResponse.json(guardDeckLabels({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => withAttention({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, preparedKind: preparedKindByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null, machine: machineOf(n.itemId) }, n.itemId)), mustRespond: attentionMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities.map((p) => ({ ...p, machine: p.itemId ? machineOf(p.itemId) : null })), commitments: commitments.map((c) => withAttention({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null, machine: machineOf(c.id) }, c.id)), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, projectByAtom, briefing: cachedBriefing, trackedProjects, mail, today: todayStr, attention: { budget: attention.budget, served: attention.served, heldBack: attention.heldBack, heldTotal: attention.heldTotal, heldWaiting: attention.heldWaiting, heldHandled: attention.heldHandled, fresh: attention.fresh, catchUp: attention.catchUp } }), { headers: clock.headers() });
 }

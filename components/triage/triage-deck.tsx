@@ -361,9 +361,13 @@ function TriageStation({ row, today, canUndo, onUndo, exiting, under, onDecided,
   // make — same endpoints, same optimistic exit, same "…· Undo" toast through /api/restore.
   const undo = (entityType: 'inbox_item' | 'commitment') => (message: string, entityId: string) =>
     showUndoToast({ message, entityType, entityId, onUndo: () => { /* the deck has moved on; the ledger re-reads on exit */ } });
-  const { busy, done, drop, open: openRoom } = useRowActions(row.item, {
+  const { busy, done, drop, open: openRoom, prefetch: warmRoom } = useRowActions(row.item, {
     onUndoInbox: undo('inbox_item'), onUndoCommitment: undo('commitment'),
   });
+  // W17 · THE CARD IN HAND IS THE NEXT OPEN: ⏎ Open is one key away, so the room behind this card
+  // warms the moment the card stands — through the row kit's one warm path (the polite, zero-AI
+  // view warm + the route prefetch; lib/room/warm-client). One card, never the stack.
+  useEffect(() => { warmRoom(); }, [row.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isCommit = row.item.source === 'commitment';
 
@@ -650,8 +654,11 @@ export function TriageDeck({ rows, today, complete = true, onExit, onRefresh, on
   //    cursor, not a crawler, and a prefetch that ran down sixty threads would be the whole-pool
   //    read this surface exists to avoid. ──────────────────────────────────────────────────────────
   const next = stack[cursor + 1] ?? null;
+  // W17: a handed COMMITMENT's evidence is its source (the deck-context door), not a thread tail —
+  // read it one card ahead too, or the next commitment card lands on its skeleton.
   useEffect(() => {
     if (next && TRIAGE_THREADED.includes(next.item.source)) void loadTail(next.id);
+    else if (next && next.item.source === 'commitment') void loadDeckContext(next.id);
   }, [next]);
 
   // ══ THE ONE HEADER LINE (Q9v2 · 2). Close, the band and what is left, the shape toggle — and

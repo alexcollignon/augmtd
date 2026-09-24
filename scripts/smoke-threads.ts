@@ -41,6 +41,7 @@ import {
   pickWhispers, sortDoorRows, CALM_MAX_WHISPERS,
 } from '../lib/home/calm';
 import type { DoItem } from '../lib/home/agenda';
+import { mergeThreadLanding, threadCacheOf } from '../lib/home/thread-cache';
 
 const ROOT = path.join(__dirname, '..');
 let pass = 0;
@@ -569,7 +570,10 @@ console.log('\nT4 · THE COWORKER DM — a MODE of the one surface, not a surfac
       ['attach (the chat-attach upload door)', /chat-attach`, \{ method: 'POST'/],
       ['@mention metadata rides the send', /extra\?\.mentions\?\.length \? \{ mentions: extra\.mentions \}/],
       ['the coworker→thread mapping (find-or-create skipped on reopen)', /saveLS\(dmKey\(agentId\), tid\)/],
-      ['the painted-turn cache (the reopen paints before the fetch)', /loadLS<Turn\[\]>\(DM_TURNS_LS\(agentId\)\)/],
+      // ⟲ RE-POINTED (W17): the cache is now a `{ total, turns }` RECORD read through
+      // lib/home/thread-cache (the v1 bare tail could not say where it sat in the thread) — the
+      // seam (the reopen paints before the fetch) is unchanged.
+      ['the painted-turn cache (the reopen paints before the fetch)', /readThreadCache<Turn>\(loadLS\(DM_TURNS_LS\(agentId\)\)\)/],
     ];
     const broken = ANCHORS.filter(([, re]) => !dm || !re.test(dm)).map(([label]) => label);
     gate('T4.10 the DM engine seams are untouched (send · stream · attach · mentions · thread + turn caches)',
@@ -1241,8 +1245,10 @@ console.log('\nT8 · THE CALM HOME — one sentence, five whispers, one door');
     })());
 
   // THE DOORS ARE THE DECK'S — one href producer, one verb producer, one set of endpoints.
+  // ⟲ RE-POINTED (W17): the hook also hands back `prefetchNow` (a press warms without the hover-intent
+  // wait) — the door is still the row kit's, one href producer, one hook.
   gate('T8.10 a whisper click IS the deck’s door (useRowActions + ctaFor, no second href builder)',
-    !!home && /const \{ removed, exiting, busy, done, drop, open, prefetch \} = useRowActions\(item, handlers\);/.test(home)
+    !!home && /const \{ removed, exiting, busy, done, drop, open, prefetch, prefetchNow \} = useRowActions\(item, handlers\);/.test(home)
     && /\{ctaFor\(item\)\}/.test(home)
     && (() => {
       const start = home.indexOf('function WhisperLine(');
@@ -1372,7 +1378,8 @@ console.log('\nT8 · THE CALM HOME — one sentence, five whispers, one door');
   // surfaces, rather than one component calling itself).
   gate('T8.11 the row kit owns those deeds ONCE (WorkRow runs on the same hook; the verb has ONE producer, shared)',
     !!row && /export function useRowActions\(/.test(row) && /export function ctaFor\(/.test(row)
-    && /const \{ isCommit, isDeal, removed, exiting, busy, done, drop, open, prefetch \} =\s*\n?\s*useRowActions\(item, \{/.test(row)
+    // ⟲ RE-POINTED (W17): + `prefetchNow` from the same hook (WorkRow still runs on it, once).
+    && /const \{ isCommit, isDeal, removed, exiting, busy, done, drop, open, prefetch, prefetchNow \} =\s*\n?\s*useRowActions\(item, \{/.test(row)
     && !!read('components/home/home-view.tsx')?.includes('ctaFor')
     && (row.match(/'Review & send →'/g) || []).length === 1);
 
@@ -1858,12 +1865,26 @@ console.log('\nT12 · THE COWORKER DM — the board’s pane, opening at once');
   gate('T12.6 NO sequential find-then-load when the mapping is known — the click goes straight to the thread',
     !!ask && /const known = cachedDmThread\(w\.id\);/.test(ask)
     && /if \(known\) \{ void loadWorkerRoom\(`worker:\$\{known\}:\$\{w\.id\}`\); return; \}/.test(ask));
+  // ⟲ RE-POINTED (W17): the stamped per-coworker cache is a v2 `{ total, turns }` RECORD
+  // (threadCacheOf), read before the request exactly as before — instant paint is unchanged.
   gate('T12.7 INSTANT PAINT: the last-painted turns hydrate before the request, stamped and per coworker',
-    !!ask && /const DM_TURNS_LS = \(agentId: string\) => `aug-dm-turns-v1-\$\{agentId\}`;/.test(ask)
-    && /const painted = loadLS<Turn\[\]>\(DM_TURNS_LS\(agentId\)\);/.test(ask)
-    && /saveLS\(DM_TURNS_LS\(agentId\), loaded\.slice\(-DM_TURNS_CACHED\)\)/.test(ask));
+    !!ask && /const DM_TURNS_LS = \(agentId: string\) => `aug-dm-turns-v2-\$\{agentId\}`;/.test(ask)
+    && /const paintedCache = readThreadCache<Turn>\(loadLS\(DM_TURNS_LS\(agentId\)\)\);/.test(ask)
+    && ask.indexOf('const paintedCache = readThreadCache<Turn>') < ask.indexOf('fetch(`/api/work/threads/${tid}/chat`).then(')
+    && /saveLS\(DM_TURNS_LS\(agentId\), threadCacheOf\(loaded, DM_TURNS_CACHED\)\)/.test(ask));
+  // ⟲ RE-POINTED (W17) — AND MADE AN OUTCOME GATE: the index merge (`[...prev, ...loaded.slice(
+  // prev.length)]`) compared a cached 30-turn TAIL against the FULL list, so every DM longer than
+  // the tail re-appended turns already on screen. The law is unchanged and now RUN, not matched:
+  // the one merge (lib/home/thread-cache) keeps every painted turn in its seat (same object), and
+  // appends only what is genuinely new — on a thread longer than its cached tail.
   gate('T12.8 the background arrival OBEYS the no-mutation law — painted turns keep their seat, only the tail appends',
-    !!ask && /loaded\.length > prev\.length \? \[\.\.\.prev, \.\.\.loaded\.slice\(prev\.length\)\] : prev/.test(ask));
+    !!ask && /mergeThreadLanding\(paintedCache, prev, loaded\)/.test(ask)
+    && (() => {
+      const full = Array.from({ length: 45 }, (_, i) => ({ i }));
+      const cache = threadCacheOf(full, 30);
+      const next = mergeThreadLanding(cache, cache.turns, [...full, { i: 45 }]);
+      return next.length === 46 && next.every((t, k) => t.i === k) && next[15] === cache.turns[0] && next[44] === cache.turns[29];
+    })());
   gate('T12.8a a SYNTHESIZED first contact is never cached (a greeting is this open’s speech, not history)',
     !!ask && /const synthesized = loaded\.length === 0;/.test(ask)
     && /if \(!synthesized\) saveLS\(DM_TURNS_LS\(agentId\)/.test(ask));
@@ -1897,7 +1918,9 @@ console.log('\nT12 · THE COWORKER DM — the board’s pane, opening at once');
       if (i < 0) return false;
       const seg = ask!.slice(i, i + 2000);
       const set = seg.indexOf('setChatRoom(key); setChatLoading(true);');
-      const flight = seg.indexOf('fetch(`/api/room/turns?key=');
+      // ⟲ RE-POINTED (W17): the flight is THE ONE chat-turns flight (components/home/chat-turns-warm
+      // — a hover warm and the open share it); still set from the key alone BEFORE it.
+      const flight = seg.indexOf('fetchChatTurns(key)');
       return set > 0 && flight > set;
     })()
     // …and the lane clears wherever the DM lane clears (new chat · Home reset · a DM taking over)
@@ -1905,9 +1928,13 @@ console.log('\nT12 · THE COWORKER DM — the board’s pane, opening at once');
   gate('T12.12 THE FAILURE SPEAKS — no silent catch on the turns fetch; a dead read says so in the pane and does NOT claim the room',
     (() => {
       if (!ask) return false;
-      const i = ask.indexOf('fetch(`/api/room/turns?key=');
-      const seg = ask.slice(i, i + 1400);
-      return /Promise\.reject\(new Error\('turns'\)\)/.test(seg)
+      // ⟲ RE-POINTED (W17): the read is `fetchChatTurns(key)` (the one flight); a null landing is
+      // still an explicit rejection, and the failure SPEAKS even behind a cached paint (it appends
+      // beneath the painted turns rather than falling silent).
+      const i = ask.indexOf('fetchChatTurns(key)\n');
+      const seg = ask.slice(i, i + 1600);
+      return i > 0 && /Promise\.reject\(new Error\('turns'\)\)/.test(seg)
+        && /setTurns\(\(prev\) => \(cachedPaint \? \[\.\.\.prev, failed\] : \[failed\]\)\)/.test(seg)
         && /\.catch\(\(\) => \{[\s\S]{0,400}Couldn't open that conversation — try again\./.test(seg)
         && !/\.catch\(\(\) => \{\}\)/.test(seg)
         // the key is stored on the SUCCESS path only — a conversation we could not read is not a
@@ -1915,8 +1942,12 @@ console.log('\nT12 · THE COWORKER DM — the board’s pane, opening at once');
         && seg.indexOf('localStorage.setItem(CHAT_KEY_LS, key)') < seg.indexOf('.catch(');
     })());
   gate('T12.13 AN EMPTY ROOM IS AN OPEN ROOM — `turns: []` paints the room (no skeleton left hanging), and the cross-page intent flag is consumed on a SAME-PAGE open (THE FRESH FLOOR)',
-    !!ask && /setChatLoading\(false\);\s*\n[\s\S]{0,400}setTurns\(mapServerTurns\(d\.turns\)\);/.test(ask)
+    // ⟲ RE-POINTED (W17): the served list arrives through the one chat-turns flight, which hands back
+    // `turns: []` as an ARRAY (an open room) and only a malformed answer as null (the failure path);
+    // the landing still stops the skeleton and paints what was served.
+    !!ask && /setChatLoading\(false\);\s*\n[\s\S]{0,400}const loaded = mapServerTurns\(raw as never\);/.test(ask)
     && !/if \(!Array\.isArray\(d\?\.turns\)\) return;/.test(ask)
+    && /if \(!d \|\| !Array\.isArray\(d\.turns\)\) return null;/.test(read('components/home/chat-turns-warm.ts') ?? '')
     && (() => {
       const i = ask!.indexOf('const onOpen = (e: Event) => {');
       return i > 0 && /sessionStorage\.removeItem\('aug-open-chat-intent'\)/.test(ask!.slice(i, i + 800));
@@ -6415,9 +6446,10 @@ console.log('\nT36 · THE DECISION AND THE FORWARD — the last two room objects
     // the kit derives nothing: it marks `recommended` and prints `why` only on a marked route
     && !/mayRecommend\(|\.recommendation\b/.test(kit36)
     && /\{o\.recommended && o\.why && \(/.test(kit36)
-    // …and with no object at all, the honest sentence (ONE copy, from the law's own module)
-    && /NO_DECISION_OBJECT_LINE/.test(decHost)
-    && /quietLine: NO_DECISION_OBJECT_LINE/.test(decHost));
+    // ⟲ RE-POINTED (W17 · no-waiting): with no object at all the card is its options — the filler
+    // sentence is retired and no quiet line is handed to the kit.
+    && !/NO_DECISION_OBJECT_LINE/.test(decHost)
+    && !/quietLine:/.test(decHost));
 
   gate('T36.6 OPTIMISTIC, WITH A ROLLBACK AND AN HONEST REFUSAL — the decision settles at once, a 409 stays settled, and only a real failure puts the question back',
     /setChosen\(label\);\s*\/\/ optimistic/.test(decHost)
@@ -6492,7 +6524,8 @@ console.log('\nT36 · THE DECISION AND THE FORWARD — the last two room objects
     ].every((f) => harness36.includes(f))
     && /armedOptionId: 'o1'/.test(harness36)
     && /settledLine: 'Chosen: Advance all four to interviews'/.test(harness36)
-    && /quietLine: 'Nothing is attached to review yet\.'/.test(harness36)
+    // ⟲ RE-POINTED (W17): the no-object state carries NO filler line (options alone).
+    && !/Nothing is attached to review/.test(harness36)
     && /state: 'needs_recipient'/.test(harness36)
     // both live cards stand on the PROJECT thread, and the rest on the HOME one
     && /cards: \[DECISION_OPEN\]/.test(harness36) && /cards: \[FORWARD_READY\]/.test(harness36)

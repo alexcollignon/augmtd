@@ -187,7 +187,7 @@ function HeldRow({ item, line, why, onRestored }: {
 }) {
   const undo = (entityType: 'inbox_item' | 'commitment') => (message: string, entityId: string) =>
     showUndoToast({ message, entityType, entityId, onUndo: () => onRestored?.() });
-  const { removed, exiting, busy, done, drop, open, prefetch } = useRowActions(item, {
+  const { removed, exiting, busy, done, drop, open, prefetch, prefetchNow } = useRowActions(item, {
     onUndoInbox: undo('inbox_item'), onUndoCommitment: undo('commitment'),
   });
   if (removed) return null;
@@ -195,7 +195,7 @@ function HeldRow({ item, line, why, onRestored }: {
   // posture. It keeps the way back and nothing it cannot keep.
   const actionable = item.source !== 'deal';
   return (
-    <div onMouseEnter={prefetch} onFocus={prefetch} onMouseDown={prefetch} onTouchStart={prefetch}
+    <div onMouseEnter={prefetch} onFocus={prefetch} onMouseDown={prefetchNow} onTouchStart={prefetchNow}
       className={`group relative flex items-center gap-2.5 rounded-[10px] px-3 py-1.5 transition-colors hover:bg-white ${exitCls(exiting)}`}>
       <div role="button" tabIndex={0} onClick={open}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}

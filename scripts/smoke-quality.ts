@@ -82,7 +82,7 @@ import {
   ATTENTION_BUDGET, type AttentionRow, bandOf, classifyHeld, whyHeldOf,
 } from '../lib/home/attention';
 import { NEEDS_SHAPING_WORD, SEAT_WORDS, STATE_WORDS } from '../lib/work/machine';
-import { resolveDecisionObject, mayRecommend, NO_DECISION_OBJECT_LINE } from '../lib/room/decision-object';
+import { resolveDecisionObject, mayRecommend } from '../lib/room/decision-object';
 import { enforceCtaLaw, moveIsStaged, shapingOffer, shapingSay } from '../lib/room/cta-law';
 import { askAttribution } from '../lib/room/grounding';
 import { JUDGE_VERSION } from '../lib/work/surface-registry';
@@ -411,9 +411,11 @@ function sq7() {
   ok('a title with no body and no file is not an object to review',
     resolveDecisionObject([{ id: 'x', kind: 'deliverable', title: 'The shortlist', content: '' }]) === null);
   ok('   …but a staged FILE is', !!resolveDecisionObject([{ id: 'f', kind: 'deliverable', attachment: { filename: 'shortlist.pdf' } }]));
-  ok('nothing resolves → null, and the honest sentence exists to be spoken',
+  // ⟲ RE-POINTED (W17 · no-waiting): the filler sentence is RETIRED — with no object the card is its
+  // options alone (owner report, Sep 24). The null resolution is the law; nothing is said about it.
+  ok('nothing resolves → null, and no filler sentence exists to be spoken',
     resolveDecisionObject([]) === null && resolveDecisionObject(null) === null
-    && /nothing is attached to review/i.test(NO_DECISION_OBJECT_LINE));
+    && !/NO_DECISION_OBJECT_LINE|Nothing is attached to review/.test(src('lib/room/decision-object.ts').replace(/^\s*\/\/.*$/gm, '')));
 
   // THE STRUCTURAL HALF: approving sight-unseen is never the recommended path.
   ok('with no object, NOTHING may be recommended', !mayRecommend(null) && mayRecommend(resolveDecisionObject([deliverable])));
@@ -426,8 +428,9 @@ function sq7() {
   ok('the ONE card renders the object as its head',
     /spec\.object\.title/.test(card) && /spec\.object\.preview/.test(card)
     && /\{card\.objectNode/.test(kitCard));
-  ok('   …says so honestly when there is none',
-    /NO_DECISION_OBJECT_LINE/.test(card) && /card\.quietLine/.test(kitCard));
+  // ⟲ RE-POINTED (W17): …and with none it SAYS NOTHING about the absence (no filler quietLine).
+  ok('   …and with none, shows its options alone (no filler line)',
+    !/NO_DECISION_OBJECT_LINE|quietLine:/.test(card) && /card\.quietLine/.test(kitCard));
   ok('   …and marks no option primary without it',
     /const recommends = mayRecommend\(spec\.object\);/.test(card)
     && /const rec = recommends && isRec\(o\.label, spec\.recommendation\);/.test(card)

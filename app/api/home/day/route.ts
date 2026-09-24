@@ -14,6 +14,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { buildDayFrame, type DayFrame } from '@/lib/home/day';
+import { phaseClock } from '@/lib/utils/server-timing';
 
 export const maxDuration = 20;
 
@@ -22,11 +23,14 @@ export async function GET() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  const clock = phaseClock();
   try {
     const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
     const features = await getWorkspaceFeatures(user.id, supabase);
+    clock.mark('features');
     const frame = await buildDayFrame(supabase, user.id, features, user.email ?? null);
-    return NextResponse.json(frame satisfies DayFrame);
+    clock.mark('frame');
+    return NextResponse.json(frame satisfies DayFrame, { headers: clock.headers() });
   } catch (err) {
     // THE FRAME NEVER BREAKS THE HOME: a failure is an absent frame (the same thing an empty day
     // looks like), never an error the page has to render.

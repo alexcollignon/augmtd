@@ -12,6 +12,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { ChatBubbleLeftEllipsisIcon, UserCircleIcon, FolderIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { mergeKeyedListLanding } from '@/lib/home/thread-cache';
+import { prefetchChatTurns } from '@/components/home/chat-turns-warm';
+
+/** W17 · the list's own warm paint (the instant-load doctrine: hydrate → paint → refresh → save). */
+const ALL_CONVERSATIONS_LS = 'aug-all-conversations-v1';
 
 type Conversation = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null; at: string | null; project?: string; sub?: string };
 
@@ -38,10 +44,21 @@ export function AllConversations({ onOpenChat }: { onOpenChat: (key: string) => 
   const [q, setQ] = useState('');
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState('');
+  // W17 · A VISITED LIST PAINTS FROM ITS CACHE. The hydrate lives in an effect (this renders inside
+  // an SSR'd route — a warm read at render time would diverge from the server's HTML); the fresh
+  // listing then lands BEHIND the paint (mergeKeyedListLanding: painted rows keep their seats, new
+  // ones arrive at the top). The skeleton below is only for a visit with nothing cached.
   useEffect(() => {
+    const cached = loadLS<Conversation[]>(ALL_CONVERSATIONS_LS);
+    if (Array.isArray(cached)) setRows(cached);
     fetch('/api/rooms/recent?all=1').then((r) => (r.ok ? r.json() : null))
-      .then((d) => setRows(Array.isArray(d?.conversations) ? d.conversations : []))
-      .catch(() => setRows([]));
+      .then((d) => {
+        if (!Array.isArray(d?.conversations)) { setRows((cur) => cur ?? []); return; }
+        const fresh = d.conversations as Conversation[];
+        saveLS(ALL_CONVERSATIONS_LS, fresh);
+        setRows((cur) => mergeKeyedListLanding(cur, fresh));
+      })
+      .catch(() => setRows((cur) => cur ?? []));
   }, []);
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -118,8 +135,8 @@ export function AllConversations({ onOpenChat }: { onOpenChat: (key: string) => 
       />
       {rows === null && (
         <div className="mt-4 space-y-1.5" aria-hidden>
-          <div className="h-12 rounded-xl bg-neutral-100 animate-pulse" />
-          <div className="h-12 rounded-xl bg-neutral-100 animate-pulse" />
+          <div className="h-12 rounded-xl bg-neutral-100 animate-pulse motion-reduce:animate-none" />
+          <div className="h-12 rounded-xl bg-neutral-100 animate-pulse motion-reduce:animate-none" />
         </div>
       )}
       {rows !== null && filtered.length === 0 && (
@@ -146,6 +163,11 @@ export function AllConversations({ onOpenChat }: { onOpenChat: (key: string) => 
                     ) : (
                       <button
                         onClick={() => (manageable ? onOpenChat(c.key) : c.href && router.push(c.href))}
+                        // W17 · HOVER WARMS THE NEXT PAGE — a chat's turns (a peek, no read marker),
+                        // a room's route; the click then paints instead of waiting.
+                        onMouseEnter={() => { if (c.kind === 'chat') prefetchChatTurns(c.key); else if (c.href) router.prefetch(c.href); }}
+                        onFocus={() => { if (c.kind === 'chat') prefetchChatTurns(c.key); else if (c.href) router.prefetch(c.href); }}
+                        onMouseDown={() => { if (c.kind === 'chat') prefetchChatTurns(c.key, { immediate: true }); }}
                         className="min-w-0 flex-1 text-left"
                       >
                         <span className="block truncate text-[13.5px] text-neutral-800">{c.label}</span>

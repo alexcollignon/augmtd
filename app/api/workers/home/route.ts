@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { phaseClock } from '@/lib/utils/server-timing';
 
 export const runtime = 'nodejs';
 
@@ -13,6 +14,25 @@ export async function GET() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  // W17 · NO WAITING — THE READS RUN IN WAVES, NOT IN A LINE. This route used to be six serial
+  // round trips (workers → workflows → runs → threads → notifications → notification runs) where
+  // only two links actually need their predecessor's data. Wave 1 is everything that needs only
+  // the user; wave 2 is everything that needs the worker ids; the recent-runs read is the one true
+  // dependent (it needs the workflow ids). The notification chain rides beside all of it.
+  const clock = phaseClock();
+  const notifsP = (async () => {
+    const { data: notifs } = await supabase
+      .from('workflow_notifications')
+      .select('id, workflow_id, workflow_run_id, summary, seen, created_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(30);
+    const runIds = (notifs ?? []).map(n => n.workflow_run_id).filter(Boolean);
+    const { data: runs2 } = runIds.length
+      ? await supabase.from('workflow_runs').select('id, thread_id').in('id', runIds)
+      : { data: [] as Array<{ id: string; thread_id: string | null }> };
+    return { notifs, runs2 };
+  })();
   const { data: workers } = await supabase
     .from('custom_agents')
     .select('id, name, color, icon, worker_role')
@@ -20,20 +40,34 @@ export async function GET() {
     .eq('is_worker', true)
     .eq('is_active', true)
     .eq('is_enabled', true);
+  clock.mark('workers');
 
   const workerList = workers ?? [];
   const workerMap = new Map(workerList.map(w => [w.id, w]));
   const workerIds = workerList.map(w => w.id);
 
   if (workerIds.length === 0) {
-    return NextResponse.json({ workers: [], needsReview: [], recentActivity: [], upcoming: [] });
+    void notifsP.catch(() => null); // started beside the workers read; nothing waits on it now
+    return NextResponse.json({ workers: [], needsReview: [], recentActivity: [], upcoming: [] }, { headers: clock.headers() });
   }
 
-  const { data: workflows } = await supabase
-    .from('workflows')
-    .select('id, name, agent_id, next_run_at, status')
-    .eq('user_id', user.id)
-    .in('agent_id', workerIds);
+  // Wave 2 — both need only the worker ids, so neither waits on the other.
+  const [{ data: workflows }, { data: threads }] = await Promise.all([
+    supabase
+      .from('workflows')
+      .select('id, name, agent_id, next_run_at, status')
+      .eq('user_id', user.id)
+      .in('agent_id', workerIds),
+    supabase
+      .from('work_threads')
+      .select('id, agent_id, artifacts, updated_at')
+      .eq('user_id', user.id)
+      .in('agent_id', workerIds)
+      .not('artifacts', 'is', null)
+      .order('updated_at', { ascending: false })
+      .limit(20),
+  ]);
+  clock.mark('workflows_threads');
 
   const wfMap = new Map((workflows ?? []).map(w => [w.id, w]));
   const workflowIds = (workflows ?? []).map(w => w.id);
@@ -78,15 +112,6 @@ export async function GET() {
     .slice(0, 6);
 
   // ── Needs review: recent deliverables produced by the team ──
-  const { data: threads } = await supabase
-    .from('work_threads')
-    .select('id, agent_id, artifacts, updated_at')
-    .eq('user_id', user.id)
-    .in('agent_id', workerIds)
-    .not('artifacts', 'is', null)
-    .order('updated_at', { ascending: false })
-    .limit(20);
-
   type Review = { artifactId: string; title: string; type: string; workerId: string | null; workerName: string | null; workerRole: string | null; threadId: string; createdAt: string };
   const needsReview: Review[] = [];
   for (const t of (threads ?? [])) {
@@ -113,15 +138,9 @@ export async function GET() {
   // deeper window than the visible cap — grouping collapses them.
   type TeamMessage = { id: string; workerId: string | null; workerName: string | null; workerRole: string | null; workflowId: string | null; workflowName: string | null; text: string; threadId: string | null; createdAt: string; seen: boolean };
   let messages: TeamMessage[] = [];
-  const { data: notifs } = await supabase
-    .from('workflow_notifications')
-    .select('id, workflow_id, workflow_run_id, summary, seen, created_at')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
-    .limit(30);
+  const { notifs, runs2 } = await notifsP;
+  clock.mark('messages');
   if (notifs?.length) {
-    const runIds = notifs.map(n => n.workflow_run_id).filter(Boolean);
-    const { data: runs2 } = await supabase.from('workflow_runs').select('id, thread_id').in('id', runIds);
     const threadByRun = new Map((runs2 ?? []).map(r => [r.id, r.thread_id]));
     messages = notifs.map(n => {
       const wf = wfMap.get(n.workflow_id);
@@ -147,5 +166,5 @@ export async function GET() {
     recentActivity,
     upcoming,
     messages,
-  });
+  }, { headers: clock.headers() });
 }
