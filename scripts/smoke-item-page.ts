@@ -16,20 +16,28 @@
 //   D · the source floors: the header frame has no state pill / evidence bar / face pile / project
 //       chip; the rail's item door renders through the one composition and no MOVE; the view door
 //       serves no move; every kind mounts the confirm widget through its own done door.
+//   W · W16.2 — ONE set of words: the Home row and the confirm widget say "Mark done" / "Keep open"
+//       from ONE home; no "Not yet" in any looks-done UI.
+//   F · W16.2 — Clara's fallback is DIRECTION-TRUE over fixtures (own promise · their ask · awaiting ·
+//       meeting), from the item's own facts (origin served by the view door; no AI).
+//   K · W16.2 — the confirm widget is a first-class kit kind (`confirm`): in the contract, drawn by the
+//       kit's renderer, specimened in the catalogue, produced by the host, routed by the item page.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
-  composeItemPage, itemPageItems, claraSentenceOf, actionOf, ITEM_ACTION_WIDGETS, CONFIRM_WORDS,
+  composeItemPage, itemPageItems, claraSentenceOf, actionOf, actionCardOf, ITEM_ACTION_WIDGETS, CONFIRM_WORDS,
   WIDGET_OF_ARTIFACT, ARTIFACTS_OF_STATE, NOT_ITEM_PAGE_WIDGETS,
   type ItemActionWidget, type ItemArtifactKind, type ItemArtifactsMounted, type ItemPagePlan, type ItemPageState,
 } from '../components/thread/item-page';
-import { ConfirmCard } from '../components/thread/confirm-card';
 import { ThreadTimeline } from '../components/thread/thread-timeline';
 import { ThreadCardView } from '../components/thread/thread-cards';
-import { THREAD_CARD_KINDS } from '../components/thread/types';
+import { THREAD_CARD_KINDS, type ThreadCard } from '../components/thread/types';
+import { CONFIRM_WORDS as WORDS_HOME } from '../lib/evidence/looks-done-word';
+import { fallbackOpeningLine, originOf } from '../lib/room/opening-fallback';
+import { readdirSync, statSync } from 'fs';
 import { looksDoneEvidenceOf, looksDoneLine, looksDoneLive } from '../lib/evidence/looks-done';
 import type { Evidence } from '../lib/evidence/match';
 import { deriveState } from '../lib/work/machine';
@@ -74,7 +82,6 @@ const SEAT = { id: 'cos', name: 'Clara', roleLabel: 'chief of staff' };
 const widgetNode = (w: ItemActionWidget): React.ReactNode => {
   const tag = (child: React.ReactNode) => React.createElement('div', { 'data-widget': w }, child);
   switch (w) {
-    case 'confirm': return React.createElement(ConfirmCard, { line: 'You replied on Sep 23', onDone: () => {}, onKeep: () => {} });
     case 'email': return tag(React.createElement(ThreadCardView, { card: { kind: 'email', state: 'ready', to: ['sam@acme.example'], subject: 'Re: Order form', body: 'Hi Sam — attached.', onSend: () => {} } as never }));
     case 'input': return tag(React.createElement(ThreadCardView, { card: { kind: 'input', ask: '', items: ['The signed form'], onAttach: () => {} } }));
     case 'deliverable': return tag(React.createElement(ThreadCardView, { card: { kind: 'deliverable', title: 'Notes', onOpen: () => {} } }));
@@ -83,12 +90,14 @@ const widgetNode = (w: ItemActionWidget): React.ReactNode => {
     default: return tag(w);
   }
 };
+const CONFIRM_CARD: ThreadCard = { kind: 'confirm', line: null, onDone: () => {}, onKeep: () => {} };
 const sourceNode = (w: 'source' | 'event') => React.createElement('div', { 'data-source': w }, w === 'event' ? 'Recap call · Tue 10:00 · Sam · Join' : 'the source message');
 const renderPage = (plan: ItemPagePlan) => renderToStaticMarkup(React.createElement(ThreadTimeline, {
   items: itemPageItems(plan, {
     seat: SEAT,
     source: plan.source ? sourceNode(plan.source) : null,
-    action: plan.action ? { node: widgetNode(plan.action), by: null } : null,
+    // W16.2 · the confirm widget is handed as the kit's `confirm` CARD (as item-detail's confirmCardOf does).
+    action: plan.action === 'confirm' ? { card: CONFIRM_CARD, by: null } : plan.action ? { node: widgetNode(plan.action), by: null } : null,
   }),
 }));
 const widgetsIn = (html: string) => [...html.matchAll(/data-widget="([a-z]+)"/g)].map((m) => m[1]);
@@ -193,11 +202,12 @@ console.log('\nB · the rendered thread, every kind × every state');
   }
   gate('B1 every fixture renders: ONE source (the event widget for a meeting), ≤1 action widget (the plan\'s), no MOVE / "Review …" button, no "Not yet", no draft claim, no button in Clara\'s words', bad.length === 0, bad.slice(0, 5).join(' · '));
 
-  const confirm = renderToStaticMarkup(React.createElement(ConfirmCard, { line: 'You replied on Sep 23', onDone: () => {}, onKeep: () => {} }));
+  // ⟲ RE-POINTED (W16.2): rendered through the KIT's renderer as `kind: 'confirm'` (was the bare component).
+  const confirm = renderToStaticMarkup(React.createElement(ThreadCardView, { card: { kind: 'confirm', line: 'You replied on Sep 23', onDone: () => {}, onKeep: () => {} } }));
   gate('B2 the confirm widget: the evidence as one plain line + "Mark done" / "Keep open" (plain words, never "Not yet")',
     confirm.includes('You replied on Sep 23') && confirm.includes(`>${CONFIRM_WORDS.done}<`) && confirm.includes(`>${CONFIRM_WORDS.keep}<`) && !/Not yet/.test(confirm)
     && CONFIRM_WORDS.done === 'Mark done' && CONFIRM_WORDS.keep === 'Keep open');
-  const settled = renderToStaticMarkup(React.createElement(ConfirmCard, { line: 'You replied on Sep 23', state: 'settled', settledLine: 'Kept open.' }));
+  const settled = renderToStaticMarkup(React.createElement(ThreadCardView, { card: { kind: 'confirm', line: 'You replied on Sep 23', state: 'settled', settledLine: 'Kept open.' } }));
   gate('B3 the confirm widget settles in place — no verbs once answered', !/<button/.test(settled) && settled.includes('Kept open.'));
   const cc = read('components/thread/confirm-card.tsx');
   gate('B4 the confirm widget is presentational kit (no fetch, no router) — the host owns both doors', !/\bfetch\(/.test(cc) && !/useRouter|supabase/.test(cc));
@@ -320,6 +330,108 @@ console.log('\nD · the surfaces render through the one composition');
   const view = read('app/api/items/view/route.ts');
   gate('D8 serve-time control truth: the item door serves NO move and NO offers (a control not served cannot be dead at click)',
     /const looseMove = null;/.test(view) && /move: looseMove,/.test(view) && /offers: looseOffers,/.test(view));
+}
+
+// ── W · ONE SET OF WORDS (W16.2) ────────────────────────────────────────────────────────────────────
+console.log('\nW · the Home row and the confirm widget share their words — one home');
+{
+  const home = read('components/home/home-view.tsx');
+  const cc = read('components/thread/confirm-card.tsx');
+  const whisper = home.slice(home.indexOf('function WhisperLine('), home.indexOf('THE HOVER FLOOR'));
+  gate('W1 ONE home: lib/evidence/looks-done-word.ts holds CONFIRM_WORDS; the item page re-exports the SAME object',
+    WORDS_HOME === CONFIRM_WORDS && WORDS_HOME.done === 'Mark done' && WORDS_HOME.keep === 'Keep open'
+    && /export const CONFIRM_WORDS = \{ done: 'Mark done', keep: 'Keep open' \} as const;/.test(read('lib/evidence/looks-done-word.ts'))
+    && !/export const CONFIRM_WORDS =/.test(read('components/thread/item-page.ts')));
+  gate('W2 the Home row\'s looks-done pair and the kit widget both print CONFIRM_WORDS from that home (never their own literals)',
+    /import \{ LOOKS_DONE_WORD, CONFIRM_WORDS \} from '@\/lib\/evidence\/looks-done-word';/.test(home)
+    && />\{CONFIRM_WORDS\.done\}<\/button>/.test(whisper) && />\{CONFIRM_WORDS\.keep\}<\/button>/.test(whisper)
+    && /onClick=\{refuse\}/.test(whisper) && /refuseLooksDoneOnRow\(item\)/.test(whisper)
+    && /import \{ CONFIRM_WORDS \} from '@\/lib\/evidence\/looks-done-word';/.test(cc)
+    && />\{CONFIRM_WORDS\.done\}</.test(cc) && />\{CONFIRM_WORDS\.keep\}</.test(cc)
+    && !/>(?:Done|Not yet|Mark done|Keep open)</.test(whisper) && !/>(?:Mark done|Keep open)</.test(cc));
+  // Every UI file: "Not yet" never appears as rendered text or a string literal (comments aside; the
+  // held list's "Not yet judged" is a different fact and is allowed).
+  const files: string[] = [];
+  const walk = (dir: string) => { for (const f of readdirSync(join(process.cwd(), dir))) { const p = join(dir, f); if (statSync(join(process.cwd(), p)).isDirectory()) walk(p); else if (/\.tsx?$/.test(f)) files.push(p); } };
+  walk('components'); walk('app');
+  const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+  const hits = files.filter((f) => /(>\s*Not yet\s*<|['"`]Not yet(?! judged)[^'"`]*['"`])/.test(stripComments(read(f))));
+  gate('W3 NO "Not yet" in any UI (components/ · app/) — the looks-done refusal is "Keep open" everywhere', hits.length === 0, hits.join(', '));
+}
+
+// ── F · CLARA'S FALLBACK IS DIRECTION-TRUE (W16.2) ──────────────────────────────────────────────────
+console.log('\nF · the fallback sentence is direction-true, from the item\'s own facts');
+{
+  // Fixtures: the SAME words, four origins, derived from the item's own data (no AI).
+  const fx = {
+    own: originOf({ kind: 'commitment', source: 'email', direction: 'you_owe', authoredByUser: true }),
+    theirs: originOf({ kind: 'commitment', source: 'email', direction: 'you_owe', authoredByUser: false }),
+    inbox: originOf({ kind: 'inbox_item', source: 'email', hasSender: true }),
+    awaiting: originOf({ kind: 'commitment', source: 'email', direction: 'awaiting', authoredByUser: false }),
+    meeting: originOf({ kind: 'commitment', source: 'meeting', direction: 'you_owe' }),
+    meetingInbox: originOf({ kind: 'inbox_item', source: 'meeting', hasSender: false }),
+    unknown: originOf({ kind: 'commitment', source: 'email', direction: 'you_owe', authoredByUser: null }),
+  };
+  gate('F1 the origin comes from the item\'s own data: own sent mail → own_promise · received → their_ask · awaiting → awaiting · meeting → meeting · unread → none',
+    fx.own === 'own_promise' && fx.theirs === 'their_ask' && fx.inbox === 'their_ask' && fx.awaiting === 'awaiting'
+    && fx.meeting === 'meeting' && fx.meetingInbox === 'meeting' && fx.unknown === null, JSON.stringify(fx));
+  const say = (origin: typeof fx.own, who: string | null, ask: string) => claraSentenceOf({ brief: null, who, ask, title: null, origin });
+  const own = say(fx.own, 'Acme', 'share the updated report');
+  const ownNamed = say(fx.own, 'Sam Lee', 'join the call with Sam Lee 30 minutes later');
+  const theirs = say(fx.theirs, 'Sam', 'send the signed order form');
+  const awaiting = say(fx.awaiting, 'Acme', 'send the pricing');
+  const meeting = say(fx.meeting, 'Sam', 'send the recap');
+  gate('F2 the user\'s OWN promise: "You told <X> you\'d …" (or "You said you\'d …") — never "<X> is asking you to …"',
+    own === "You told Acme you'd share the updated report." && ownNamed === "You said you'd join the call with Sam Lee 30 minutes later.", `${own} | ${ownNamed}`);
+  gate('F3 the counterparty\'s ask: "<X> asked you to …"; our own framing is never put in their mouth',
+    theirs === 'Sam asked you to send the signed order form.' && say(fx.theirs, 'Sam', 'decide whether to engage') === 'From Sam — decide whether to engage.', String(theirs));
+  gate('F4 awaiting: "Waiting on <X> to …" · meeting: "From the meeting: …"',
+    awaiting === 'Waiting on Acme to send the pricing.' && meeting === 'From the meeting: send the recap.', `${awaiting} | ${meeting}`);
+  const all = [own, ownNamed, awaiting, meeting, say(null, 'Sam', 'send the deck')];
+  gate('F5 no origin, or any non-ask origin → no "asking you / asked you" claim; each is ONE short sentence with no claim',
+    all.every((l) => !!l && !/asking you|asked you/.test(l!) && (l!.match(/[.!?](\s|$)/g) ?? []).length === 1 && !/draft|prepar|below|I['’]ve/i.test(l!))
+    && fallbackOpeningLine({ who: 'Sam', ask: 'Send the deck' }) === 'From Sam — send the deck.', all.join(' | '));
+  const view = read('app/api/items/view/route.ts');
+  const rail = read('components/home/item-rail.tsx');
+  gate('F6 the facts are served, not guessed: the view reads the source\'s authorship through THE ONE SOURCE READER, the row\'s direction, and serves `anchor.origin`; the rail hands it to both fallback seats',
+    /const \{ emailSourceOf \} = await import\('@\/lib\/commitments\/source'\);[\s\S]{0,200}\?\.authoredByUser \?\? null;/.test(view)
+    && /const anchorOrigin = originOf\(\{/.test(view) && /anchor: \{ \.\.\.anchor, origin: anchorOrigin \},/.test(view)
+    && /thread_id, direction'/.test(read('lib/room/item-anchor.ts'))
+    && /origin: view\.anchor\?\.origin \?\? null,/.test(rail) && /preparedClause: prep, origin: a\?\.origin \?\? null \}\)/.test(rail)
+    && !/getAIClient|aiCreate/.test(read('lib/room/opening-fallback.ts')));
+}
+
+// ── K · CONFIRM IS A REAL KIT WIDGET (W16.2) ────────────────────────────────────────────────────────
+console.log('\nK · the confirm widget is a first-class kit kind');
+{
+  const types = read('components/thread/types.ts');
+  const cards = read('components/thread/thread-cards.tsx');
+  const cat = read('app/(main)/dev/thread-preview/preview-catalogue.tsx');
+  const detail = read('components/home/item-detail.tsx');
+  const page = read('components/thread/item-page.ts');
+  gate('K1 `confirm` is in the contract: ThreadCardKind, THREAD_CARD_KINDS, and its own card interface over AnswerableState',
+    (THREAD_CARD_KINDS as string[]).includes('confirm') && /ThreadCardKind =[\s\S]{0,260}'confirm'/.test(types)
+    && /export interface ConfirmWidgetCard extends CardBase \{\n  kind: 'confirm';[\s\S]{0,80}state\?: AnswerableState;/.test(types)
+    && /\| ConfirmWidgetCard \|/.test(types));
+  gate('K2 the kit\'s renderer draws it (case \'confirm\' → ConfirmCard) — the same words, the same three states',
+    /case 'confirm': \{[\s\S]{0,160}<ConfirmCard \{\.\.\.props\} \/>/.test(cards) && /import \{ ConfirmCard \} from '\.\/confirm-card';/.test(cards));
+  const sec = cat.slice(cat.indexOf("\n    section: 'confirm',"), cat.indexOf("\n    section: 'custom',"));
+  gate('K3 the catalogue specimens it in every state (open · busy · settled)',
+    sec.length > 0 && ['open', 'busy', 'settled'].every((st) => new RegExp(`kind: 'confirm'[^}]*state: '${st}'`).test(sec)));
+  gate('K4 the product PRODUCES it: item-detail composes `kind: \'confirm\'` (confirmCardOf) and hands it as the artifact\'s card',
+    /function confirmCardOf\(confirm: LooksDoneConfirm\): ConfirmWidgetCard/.test(detail) && /kind: 'confirm', id: 'confirm', line: confirm\.line,/.test(detail)
+    && /artifactKind: 'looks_done' as const, card,/.test(detail) && !/function ConfirmHost/.test(detail));
+  const plan = composeItemPage({ machine: { state: 'looks_done', line: 'You replied on Sep 23' }, mounted: { looks_done: true }, brief: null, who: 'Sam', ask: 'x', title: null, source: 'source' });
+  const items = itemPageItems(plan, { seat: SEAT, action: { card: CONFIRM_CARD, node: 'ignored' } });
+  const kinds = items.flatMap((i) => ('cards' in i && i.cards ? i.cards.map((c) => c.kind) : []));
+  const html = renderToStaticMarkup(React.createElement(ThreadTimeline, { items }));
+  gate('K5 the item page routes it through the kind — never the custom slot (a confirm plan with only a node renders nothing)',
+    kinds.join(',') === 'confirm' && /data-widget="confirm"/.test(html) && html.includes('You replied on Sep 23')
+    && actionCardOf(plan, { node: 'x' }) === null && /cards: \[card\],/.test(page)
+    && /if \(!c \|\| c\.kind !== 'confirm'\) return null;/.test(page), kinds.join(','));
+  const rail = read('components/home/item-rail.tsx');
+  gate('K6 the rail hands the artifact\'s card to the one composition',
+    /action: actionNode \|\| card\?\.card \? \{ node: actionNode, card: card\?\.card \?\? null, by: card\?\.by \?\? null \} : null,/.test(rail));
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed`);

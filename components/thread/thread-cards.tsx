@@ -13,6 +13,7 @@ import { SourceObjectCard } from './source-object-card';
 // W15.1 · ONE LABEL — every door to a conversation reads the same two words.
 import { OPEN_THREAD_LABEL } from './source-text';
 import { AskRows } from './ask-rows';
+import { ConfirmCard } from './confirm-card';
 // ONE EXPANDER IDIOM — the same "N more" fold every other list in the app uses (never a fork).
 import { ExpandableRows } from '@/components/home/expandable-rows';
 import { Badge } from '@/components/ui';
@@ -1616,6 +1617,14 @@ export function ThreadCardView({ card }: { card: ThreadCard }) {
     // a note, the folded source in the `source` kind's own card, and ONE armed commit.
     case 'forward':
       return <ForwardCardView card={card} />;
+
+    // 18 · THE CONFIRM — the looks-done question (W16.2): the evidence as one plain line and the two
+    // plain deeds, "Mark done" · "Keep open" (the Home row's words — one home). Settles in place.
+    case 'confirm': {
+      const { kind: _k, id: _i, ...props } = card;
+      void _k; void _i;
+      return <ConfirmCard {...props} />;
+    }
 
     // THE CARD SLOT — a host's own rich component, mounted whole.
     case 'custom':

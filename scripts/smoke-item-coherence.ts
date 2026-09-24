@@ -280,7 +280,7 @@ console.log('\nH · a machine draft signed as ANOTHER of the user\'s mailboxes i
 }
 
 // ═══ I · LOOKS DONE — CONFIRM, in the room ═══
-console.log('\nI · a looks_done item shows its evidence line + ONE Done / Not yet row in the room');
+console.log('\nI · a looks_done item shows its evidence line + ONE Mark done / Keep open row in the room');
 {
   const d = src('components/home/item-detail.tsx');
   const v = src('app/api/items/view/route.ts');
@@ -291,15 +291,18 @@ console.log('\nI · a looks_done item shows its evidence line + ONE Done / Not y
   // Sep 24: "remove that top bar, makes no sense, I don't even understand that 'not yet' button"). The
   // same state now renders as the kit's CONFIRM WIDGET in the thread, chosen by the page's one
   // composition; the law it held (one Done, one refusal, the served line) holds there.
-  const host = d.slice(d.indexOf('function ConfirmHost('), d.indexOf('function confirmArtifactOf('));
+  // ⟲ RE-POINTED (W16.2 · CONFIRM IS A REAL KIT WIDGET): the host composes the kit's `confirm` card
+  // (confirmCardOf) instead of mounting a component; the words' one home is lib/evidence/looks-done-word.ts
+  // (the Home row speaks them too). Same line, same two doors, same route.
+  const host = d.slice(d.indexOf('function confirmCardOf('), d.indexOf('function confirmArtifactOf('));
   gate('I2 the confirm widget mounts ONLY on looks_done (the one composition picks it) — no strip under the header',
     /if \(m\?\.state !== 'looks_done'\) return null;/.test(d)
-    && !/LooksDoneStrip|room\.confirm/.test(d) && /<ConfirmCard line=\{confirm\.line\}/.test(host)
+    && !/LooksDoneStrip|room\.confirm/.test(d) && /kind: 'confirm', id: 'confirm', line: confirm\.line,/.test(host)
     && /looks_done: \['looks_done'\],/.test(src('components/thread/item-page.ts')) && /looks_done: 'confirm',/.test(src('components/thread/item-page.ts')));
   gate('I3 ONE CTA row: "Mark done" + "Keep open" in the widget; Keep open posts {kind, id, action: \'not_yet\'} to /api/work/looks-done; the header Done is emphasised on it',
     /JSON\.stringify\(\{ kind, id, action: 'not_yet' \}\)/.test(host) && /LOOKS_DONE_KEEP_OPEN_ROUTE = '\/api\/work\/looks-done'/.test(d)
     && /emphasis: doneEmphasisOf\(view, /.test(d) && /\{room\.resolve && <ResolveGroup resolve=\{room\.resolve\} \/>\}/.test(d)
-    && /CONFIRM_WORDS = \{ done: 'Mark done', keep: 'Keep open' \}/.test(src('components/thread/item-page.ts')));
+    && /CONFIRM_WORDS = \{ done: 'Mark done', keep: 'Keep open' \}/.test(src('lib/evidence/looks-done-word.ts')));
   gate('I4 Done is each item\'s EXISTING resolution door (commitment act(\'done\') · email markHandled · follow-up the complete route) — no new close path',
     /looksDoneConfirmOf\(view, 'commitment', id, \(\) => act\('done'\)\)/.test(d)
     && /looksDoneConfirmOf\(view, 'inbox', id, markHandled\)/.test(d)

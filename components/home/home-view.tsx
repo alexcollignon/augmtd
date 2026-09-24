@@ -15,7 +15,7 @@ import { WorkRow as DoRow, useExit, useCommitmentAct, useRowActions, ctaFor, Row
 // THE CALM HOME (docs/threads-plan.md) — the pick, the words, the receipts, all pure.
 import { pickWhispers, toWhisper, sortDoorRows, servedWho, whisperBody, whisperProject, CALM_MAX_WHISPERS, type Whisper } from '@/lib/home/calm';
 // W11.2 · "looks done — confirm" — the machine's word, from its one client-safe home.
-import { LOOKS_DONE_WORD } from '@/lib/evidence/looks-done-word';
+import { LOOKS_DONE_WORD, CONFIRM_WORDS } from '@/lib/evidence/looks-done-word';
 import { cardFacts } from '@/lib/triage/deck-context';
 import { createClient } from '@/lib/supabase/client';
 import {
@@ -1151,8 +1151,9 @@ function CalmGreeting({ name, greeting: hello, next, entrance, loading }: {
   );
 }
 
-/** W11.2 · "Not yet" on a looks-done row — the user's sticky refusal for the evidence standing now
- *  (POST /api/work/looks-done). Kept OUTSIDE the whisper so the whisper's doors stay the deck's own. */
+/** W11.2 · "Keep open" on a looks-done row (W16.2 — was "Not yet") — the user's sticky refusal for
+ *  the evidence standing now (POST /api/work/looks-done, wire action `not_yet`). Kept OUTSIDE the
+ *  whisper so the whisper's doors stay the deck's own. */
 async function refuseLooksDoneOnRow(item: DoItem): Promise<boolean> {
   try {
     const r = await fetch('/api/work/looks-done', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1179,14 +1180,15 @@ function WhisperLine({ w, whyNow, handlers }: {
 }) {
   const { item } = w;
   const { removed, exiting, busy, done, drop, open, prefetch } = useRowActions(item, handlers);
-  // W11.2 · LOOKS DONE — ONE click each way, on the row itself: Done is the row's OWN resolution
-  // door (logged, undoable — the same ✓ every row carries); Not yet is the sticky refusal for the
+  // W11.2 · LOOKS DONE — ONE click each way, on the row itself: Mark done is the row's OWN resolution
+  // door (logged, undoable — the same ✓ every row carries); Keep open is the sticky refusal for the
   // evidence standing now (POST /api/work/looks-done), after which the row reads as plain work.
-  const [notYet, setNotYet] = useState(false);
-  const looksDone = !notYet && String(item.stateWord ?? '').includes(LOOKS_DONE_WORD) && (item.source === 'commitment' || item.source === 'reply' || item.source === 'notice');
+  // W16.2: the two words are the confirm widget's own (lib/evidence/looks-done-word CONFIRM_WORDS).
+  const [keptOpen, setKeptOpen] = useState(false);
+  const looksDone = !keptOpen && String(item.stateWord ?? '').includes(LOOKS_DONE_WORD) && (item.source === 'commitment' || item.source === 'reply' || item.source === 'notice');
   const refuse = (e: React.MouseEvent) => {
-    e.stopPropagation(); setNotYet(true);
-    refuseLooksDoneOnRow(item).then((ok) => { if (!ok) setNotYet(false); });
+    e.stopPropagation(); setKeptOpen(true);
+    refuseLooksDoneOnRow(item).then((ok) => { if (!ok) setKeptOpen(false); });
   };
   // W12.2 · THE CLICK PAINTS ITS OWN FRAME (owner live walk on prod: +0s and +2s after the click
   // the Home stood unchanged — the kit's push is a transition the router holds until the server
@@ -1229,9 +1231,9 @@ function WhisperLine({ w, whyNow, handlers }: {
         {looksDone && (
           <span className="flex-shrink-0 flex items-center gap-2 text-[12px]">
             <button type="button" disabled={busy} onClick={(e) => { e.stopPropagation(); done(e); }}
-              className="font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-50">Done</button>
+              className="font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-50">{CONFIRM_WORDS.done}</button>
             <button type="button" disabled={busy} onClick={refuse}
-              className="text-neutral-400 hover:text-neutral-600 disabled:opacity-50">Not yet</button>
+              className="text-neutral-400 hover:text-neutral-600 disabled:opacity-50">{CONFIRM_WORDS.keep}</button>
           </span>
         )}
       </div>

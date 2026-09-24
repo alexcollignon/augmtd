@@ -1184,6 +1184,26 @@ const SECTIONS: Section[] = [
   },
 
   {
+    section: 'confirm',
+    mounts: 'item room (the looks-done question — the machine’s looks_done state, W16.2)',
+    owner: 'components/home/item-detail.tsx confirmCardOf (Mark done = the item’s own done door · Keep open = POST /api/work/looks-done)',
+    specimens: [
+      {
+        label: 'confirm · open (the evidence line + "Mark done" / "Keep open")',
+        node: <ThreadCardView card={{ kind: 'confirm', id: 'cat-cf-1', state: 'open', line: 'You replied on Sep 23', onDone: noop, onKeep: noop }} />,
+      },
+      {
+        label: 'confirm · busy (a deed in flight — the verbs stand down)',
+        node: <ThreadCardView card={{ kind: 'confirm', id: 'cat-cf-2', state: 'busy', line: 'Sam delivered it on Sep 3', onDone: noop, onKeep: noop }} />,
+      },
+      {
+        label: 'confirm · settled (kept open — no verbs, one receipt line)',
+        node: <ThreadCardView card={{ kind: 'confirm', id: 'cat-cf-3', state: 'settled', line: 'You met on Sep 3', settledLine: 'Kept open — it comes back if something new arrives.' }} />,
+      },
+    ],
+  },
+
+  {
     section: 'custom',
     mounts: 'every surface — THE CARD SLOT: a host mounts its own rich component whole',
     owner: 'the host’s component; the kit only reserves the 560px seat',

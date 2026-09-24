@@ -159,9 +159,11 @@ async function main() {
     // renders as the kit's confirm widget ("Mark done" · "Keep open" — the owner's words); its Mark done is
     // the SAME door as the header's Done (one door, never a second close path), and the header Done is
     // emphasised exactly then (precedence: `the-item-page-is-a-few-widgets` over this gate's old wording).
-    const host = detailCode.slice(detailCode.indexOf('function ConfirmHost'), detailCode.indexOf('function confirmArtifactOf'));
+    // ⟲ RE-POINTED (W16.2 · CONFIRM IS A REAL KIT WIDGET): the host no longer mounts a component — it
+    // composes the kit's `kind: 'confirm'` card (confirmCardOf) with the SAME line and the SAME two doors.
+    const host = detailCode.slice(detailCode.indexOf('function confirmCardOf'), detailCode.indexOf('function confirmArtifactOf'));
     gate('IC2 the confirm widget keeps the evidence line and Keep open; its Mark done is the header Done\'s own door (never a second close path)',
-      /<ConfirmCard line=\{confirm\.line\}/.test(host) && /await confirm\.onDone\(\)/.test(host) && !/Not yet/.test(host)
+      /kind: 'confirm', id: 'confirm', line: confirm\.line,/.test(host) && /await confirm\.onDone\(\)/.test(host) && !/Not yet/.test(host)
       && /looksDoneConfirmOf\(view, 'inbox', id, markHandled\)/.test(detailCode) && /onDone: markHandled, onDismiss: dismissItem/.test(detailCode));
     gate('IC3 the less common verbs stay in ⋯ (reply · forward · no longer relevant · draft email)',
       /key: 'moot', label: 'No longer relevant'/.test(detailCode) && /key: 'reply', label: 'Reply'/.test(detailCode) && /key: 'draft', label:/.test(detailCode));

@@ -34,7 +34,8 @@ export const ANCHOR_ROW_SELECT: Record<AnchorLinkKind, string> = {
   inbox_item: leanSelect('work_title, source, last_activity_at, created_at, status', { keys: ANCHOR_KEYS }),
   // `source, source_id, thread_id` ride so the door can resolve the commitment's OWN source object
   // (ONE OBJECT, ONE DOOR — lib/room/door.ts objectIdForDoor) without a second read of the row.
-  commitment: 'description, counterparty, created_at, status, source, source_id, thread_id',
+  // W16.2: `direction` rides so the fallback sentence is direction-true (lib/room/opening-fallback originOf).
+  commitment: 'description, counterparty, created_at, status, source, source_id, thread_id, direction',
   meeting: 'title, start_time',
 };
 

@@ -5575,9 +5575,11 @@ console.log('\nT32 · THE ONE OBJECT CARD — the ask and the thing asked about,
     // ⟲ RE-POINTED (W8.4 THE ROOM SPEAKS TRUE): the detection + the attribution moved into the ONE
     // pure fallback ladder (lib/room/opening-fallback.ts — "From <who> — <ask>", their seat and our
     // frame never fused); the rail calls it. smoke-room-voice C1–C4 hold the ladder's fixtures.
-    /const line = fallbackOpeningLine\(\{ who, ask: a\?\.ask \?\? null, preparedClause: prep \}\);/.test(rail32)
+    // ⟲ RE-POINTED (W16.2 — DIRECTION-TRUE): the ladder is also handed the served origin; "<who> asked
+    // you to …" is said only for THEIR ask (origin their_ask) and never for our framing — stricter.
+    /const line = fallbackOpeningLine\(\{ who, ask: a\?\.ask \?\? null, preparedClause: prep, origin: a\?\.origin \?\? null \}\);/.test(rail32)
     && /const MACHINE_FRAMED = \/\^\(decide\|choose\|determine\|assess\|evaluate\|weigh\|consider\|review\|triage\|judge\)\\b\/;/.test(read('lib/room/opening-fallback.ts') ?? '')
-    && /\? `From \$\{who\} — \$\{ask\}\$\{tail\}\.` : `\$\{who\} is asking you to \$\{ask\}\$\{tail\}\.`/.test(read('lib/room/opening-fallback.ts') ?? '')
+    && /origin === 'their_ask' && !MACHINE_FRAMED\.test\(ask\) \? `\$\{who\} asked you to \$\{ask\}\$\{tail\}\.` : `From \$\{who\} — \$\{ask\}\$\{tail\}\.`/.test(read('lib/room/opening-fallback.ts') ?? '')
     // "drafted a reply below" only while that card is in THIS stream
     && /const replyMounted = mountedCards\.some\(\(c\) => c\.key === 'reply'\);/.test(rail32)
     && /a\?\.prepared && replyMounted/.test(rail32)
@@ -6079,11 +6081,16 @@ console.log('\nT35 · THE ASK AND THE GATE — one object, one rendering, one vo
   gate('T35.1 every answerable kind carries a LIFECYCLE — open · busy · settled — declared once, in the contract',
     /export type AnswerableState = 'open' \| 'busy' \| 'settled';/.test(types)
     && /state\?: AnswerableState;/.test(types)
-    && (types.match(/state\?: AnswerableState;/g) ?? []).length === 3
+    // ⟲ RE-POINTED (W16.2 — never weakened): the looks-done CONFIRM is the FOURTH kind whose whole
+    // existence is a question put to the reader (Mark done · Keep open), so it carries the same
+    // lifecycle; the count moves with the grammar (3 → 4), and its view branches on it too.
+    && (types.match(/state\?: AnswerableState;/g) ?? []).length === 4
     // …and the kit actually branches on it, on EVERY one of them
     && /const aState = card\.state \?\? 'open';/.test(kit)
     && /const iState = card\.state \?\? 'open';/.test(kit)
-    && /const state = card\.state \?\? 'open';/.test(kit));
+    && /const state = card\.state \?\? 'open';/.test(kit)
+    && /const state = driven \?\? own\.state;/.test(read('components/thread/confirm-card.tsx') ?? '')
+    && /const settled = state === 'settled';/.test(read('components/thread/confirm-card.tsx') ?? ''));
 
   gate('T35.2 A SETTLED CARD KEEPS NO VERBS — one receipt line stands where the deed stood, on both kinds',
     (() => {
@@ -6543,7 +6550,9 @@ console.log('\nT37 · THE CATALOGUE — every kind the kit owns, in every state 
     gate('T37.1 every kind of THREAD_CARD_KINDS has a catalogue section with at least one real fixture',
       // RE-POINTED (W4-A, Sep 22): 16 → 15. `routine` was retired — it had no producer in the
       // product (T38.1). The law is unchanged: EVERY kind the contract declares has a specimen.
-      KINDS.length === 15 && missing.length === 0,
+      // ⟲ RE-POINTED (W16.2, Sep 24): 15 → 16. The looks-done `confirm` kind joined the contract WITH
+      // its specimens (open · busy · settled). The law is unchanged: every kind has a specimen.
+      KINDS.length === 16 && missing.length === 0,
       missing.length ? `missing: ${missing.join(', ')}` : `${KINDS.length} kinds`);
   }
 
@@ -6569,7 +6578,8 @@ console.log('\nT37 · THE CATALOGUE — every kind the kit owns, in every state 
       for (const lit of lits) if (!new RegExp(`state: '${lit}'`).test(b)) holes.push(`${k}·${lit}`);
     }
     gate('T37.2 EVERY STATE LITERAL OF EVERY CARD UNION HAS A FIXTURE (parsed from types.ts, so a new state fails this)',
-      answerable.length === 3 && expected.length === 7 && holes.length === 0,
+      // ⟲ RE-POINTED (W16.2): 7 → 8 stateful kinds — `confirm` carries AnswerableState, each literal specimened.
+      answerable.length === 3 && expected.length === 8 && holes.length === 0,
       holes.length ? `no fixture for: ${holes.join(', ')}`
         : `${expected.length} stateful kinds · ${expected.reduce((n, [, l]) => n + l.length, 0)} states`);
   }

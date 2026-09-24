@@ -1472,7 +1472,7 @@
    ],
    "tier": 2,
    "domain": "rooms",
-   "statement": "A room opens with one authored colleague paragraph plus a code-validated MOVE and utterance offers, composed over judged state — never stitched from fields.",
+   "statement": "A room opens with one authored colleague paragraph plus a code-validated MOVE and utterance offers, composed over judged state — never stitched from fields. W16.2: the fallback ladder is DIRECTION-TRUE — it claims whose ask it is only from the item's own facts (served `anchor.origin`: own promise · their ask · awaiting · meeting), and with none claims no direction.",
    "homes": [
     "lib/room/brief.ts",
     "lib/room/grounding.ts",
@@ -1500,6 +1500,15 @@
      "cost": "zero-ai",
      "fn": "narratesSpeakerInThirdPerson · sigGateStands · fallbackOpeningLine",
      "note": "W8.4: the third-person refusal fires only when the name denotes the speaker (a known person's full name / a '<Capitalized> <Seat>' name token is someone else); a refused or fully-degraded composition is remembered for its sig (refusedSig — never re-bought per open, last-good served); an AI failure is not cached; the item door's fallback is ONE pure ladder — the item's own ask or nothing, never a membership claim or the title template"
+    },
+    {
+     "suite": "smoke-item-page",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "F1-F6"
+     ],
+     "note": "W16.2: the direction-true fallback over fixtures + the served origin"
     }
    ],
    "fn": "brief sig composition (board digest in the sig)",
@@ -7312,7 +7321,7 @@
    ],
    "tier": 2,
    "domain": "truth",
-   "statement": "\"Work is probably done\" is identified by the PLATFORM, never by an operator or a hand-picked list. When the ONE settle door (lib/work/evidence-settle.ts settleWorkByEvidence) judges open work the user owes and the fulfillment judge answers unclear or promised while the evidence holds a USER-SIDE deed (the user · a teammate · the working circle) ON THE SAME CONVERSATION — the work's own thread / meeting / series / source thread (the matcher's object key): a message, a shared file, a produced deliverable — or a HELD meeting with the counterparty for a MEETING-SHAPED obligation (the judge's schedule verb or the work's own words) (W16: mail with the same counterparty on ANOTHER thread never raises it — it still reaches the judge, silently; the record carries its scope, and a record written before this rule carries none and is not live), the item is recorded (item_plans looks_done, through the typed door) with its evidence line (who · what · when). THE ONE MACHINE serves the lifecycle state `looks_done`, worded \"looks done — confirm\" from one client-safe home; it outranks the ladder (asking or preparing on a debt that may not exist is noise) but never a judged-none. The Home row offers one click each way (Done · Not yet); the ITEM PAGE renders it as the kit's confirm widget (W16): the evidence as one plain line (\"You replied on Sep 23\") with \"Mark done\" = the item's own resolution door (logged, undoable) and \"Keep open\" = a sticky refusal for exactly that evidence (new evidence may raise it again). Attention ranks a looks-done row BELOW every row of real work; its why-now is the word and the evidence line, never \"overdue\". Nothing here closes anything; the sweeps and reverse doors pick evidence up through the same code on their next run.",
+   "statement": "\"Work is probably done\" is identified by the PLATFORM, never by an operator or a hand-picked list. When the ONE settle door (lib/work/evidence-settle.ts settleWorkByEvidence) judges open work the user owes and the fulfillment judge answers unclear or promised while the evidence holds a USER-SIDE deed (the user · a teammate · the working circle) ON THE SAME CONVERSATION — the work's own thread / meeting / series / source thread (the matcher's object key): a message, a shared file, a produced deliverable — or a HELD meeting with the counterparty for a MEETING-SHAPED obligation (the judge's schedule verb or the work's own words) (W16: mail with the same counterparty on ANOTHER thread never raises it — it still reaches the judge, silently; the record carries its scope, and a record written before this rule carries none and is not live), the item is recorded (item_plans looks_done, through the typed door) with its evidence line (who · what · when). THE ONE MACHINE serves the lifecycle state `looks_done`, worded \"looks done — confirm\" from one client-safe home; it outranks the ladder (asking or preparing on a debt that may not exist is noise) but never a judged-none. The Home row offers one click each way (W16.2: \"Mark done\" · \"Keep open\" — the confirm widget's own words, one home: lib/evidence/looks-done-word.ts CONFIRM_WORDS); the ITEM PAGE renders it as the kit's confirm widget (W16): the evidence as one plain line (\"You replied on Sep 23\") with \"Mark done\" = the item's own resolution door (logged, undoable) and \"Keep open\" = a sticky refusal for exactly that evidence (new evidence may raise it again). Attention ranks a looks-done row BELOW every row of real work; its why-now is the word and the evidence line, never \"overdue\". Nothing here closes anything; the sweeps and reverse doors pick evidence up through the same code on their next run.",
    "homes": [
     "lib/evidence/looks-done.ts",
     "lib/evidence/looks-done-word.ts",
@@ -7359,12 +7368,21 @@
       "C1-C8"
      ],
      "note": "W16: only same-conversation evidence (or a held meeting with the counterparty for a meeting-shaped obligation) raises it — the owner's other-thread teammate example stays down; unscoped records are not live; the plain evidence line; the settle door hands the meeting-shaped signal"
+    },
+    {
+     "suite": "smoke-item-page",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "W1-W3"
+     ],
+     "note": "W16.2: the row and the widget share CONFIRM_WORDS (Mark done · Keep open); no \"Not yet\" in any UI"
     }
    ],
    "version_key": null,
    "status": "holding-uncommitted",
    "broken_by": null,
-   "fixed_by": "W11.2 · W16.1",
+   "fixed_by": "W11.2 · W16.1 · W16.2",
    "fn": "looksDoneEvidenceOf · noteLooksDone · refuseLooksDone · looksDoneLive · looksDoneLine · deriveState (looks_done) · attentionRank · looksDoneEvidenceOf scope · looksDoneLive (W16)",
    "note": "Owner requirement Sep 23 (W11.2): a debt with the user's side's delivery sitting on its thread must not silently stay a debt. The room's Done / Not yet pair is W11.1's fence (the room): the state + evidence line are served by workStateOf; POST /api/work/looks-done is the Not-yet door.",
    "collides_with": [
@@ -7665,7 +7683,7 @@
    ],
    "tier": 2,
    "domain": "surfaces · kit",
-   "statement": "Every item page (a mail item, a commitment, a meeting-extracted action, a follow-up, an invite, a handoff, any future source) is ONE composition (components/thread/item-page.ts composeItemPage → itemPageItems, rendered by the rail's item door): the HEADER is back · title · one quiet subtitle (who · date; a scheduled item's when) · Details · Done · Dismiss · ⋯ — no status pill, no face pile, no project chip (project linking is the Details drawer's Project section); CLARA says ONE short sentence — the situation, plainly — the composition's first sentence only when it claims no draft/file/prep, points at no control and asks nothing, else a plain fallback from the item's own facts, never a second paragraph and never a button; the SOURCE widget once (the one thread component, or — a meeting with a calendar event on file — the kit's event widget); then AT MOST ONE ACTION WIDGET with its deed inside it, picked from the WHOLE kit by ONE TABLE keyed by THE MACHINE's single state + the artifact kinds the door has MOUNTED (WIDGET_OF_ARTIFACT · ARTIFACTS_OF_STATE): prepared reply/message → email (Send) · invite → invite · forward → forward · a live ask or an input station → input · options → decision · coworker work / paste pack → deliverable · a produced document → doc · a generated interactive deliverable → frame · a parked workflow/handoff gate → approval (Approve / Hold back) · a BOOKED meeting (the machine's `scheduled` over a calendar event) → the kit's event widget (never a new invite) · looks done → the kit's CONFIRM widget (the evidence as one plain line — \"You replied on Sep 23\" — with \"Mark done\" = the item's own resolution door and \"Keep open\" = the sticky refusal); committed · a judged revisit date · parked · preparing · unjudged · settled → no widget (the header's Done/Dismiss suffice). Every PreparedKind THE ONE READER can serve has a row (typed Record + a gate); collection · bulk · proposal · custom are never item-page widgets. A widget renders only when its card is MOUNTED from what the door served live — a withdrawn target has no card, so no widget and no button; the header's Done is emphasised only beside the confirm widget. Never a standalone MOVE / \"Review …\" button card, an offer line, a gap line, a folded ask, a late second brief, a raised gate stage or engine narration in an item page's stream (narration is filed in the drawer's History; the reader's own exchange follows the widget). SERVE-TIME CONTROL TRUTH: /api/items/view serves no move and no offers — a control the door does not serve cannot be dead at click. The project room keeps its own grammar (its MOVE under `the-move-yields`). AN INVITE IS FOR SOMEONE: /api/items/view serves `withCounterparty: false` on a prepared invite with only the user on it, and no door mounts it (the invite lane asks who instead).",
+   "statement": "Every item page (a mail item, a commitment, a meeting-extracted action, a follow-up, an invite, a handoff, any future source) is ONE composition (components/thread/item-page.ts composeItemPage → itemPageItems, rendered by the rail's item door): the HEADER is back · title · one quiet subtitle (who · date; a scheduled item's when) · Details · Done · Dismiss · ⋯ — no status pill, no face pile, no project chip (project linking is the Details drawer's Project section); CLARA says ONE short sentence — the situation, plainly — the composition's first sentence only when it claims no draft/file/prep, points at no control and asks nothing, else a plain fallback from the item's own facts, never a second paragraph and never a button; the SOURCE widget once (the one thread component, or — a meeting with a calendar event on file — the kit's event widget); then AT MOST ONE ACTION WIDGET with its deed inside it, picked from the WHOLE kit by ONE TABLE keyed by THE MACHINE's single state + the artifact kinds the door has MOUNTED (WIDGET_OF_ARTIFACT · ARTIFACTS_OF_STATE): prepared reply/message → email (Send) · invite → invite · forward → forward · a live ask or an input station → input · options → decision · coworker work / paste pack → deliverable · a produced document → doc · a generated interactive deliverable → frame · a parked workflow/handoff gate → approval (Approve / Hold back) · a BOOKED meeting (the machine's `scheduled` over a calendar event) → the kit's event widget (never a new invite) · looks done → the kit's CONFIRM widget (the evidence as one plain line — \"You replied on Sep 23\" — with \"Mark done\" = the item's own resolution door and \"Keep open\" = the sticky refusal); committed · a judged revisit date · parked · preparing · unjudged · settled → no widget (the header's Done/Dismiss suffice). Every PreparedKind THE ONE READER can serve has a row (typed Record + a gate); collection · bulk · proposal · custom are never item-page widgets. A widget renders only when its card is MOUNTED from what the door served live — a withdrawn target has no card, so no widget and no button; the header's Done is emphasised only beside the confirm widget. Never a standalone MOVE / \"Review …\" button card, an offer line, a gap line, a folded ask, a late second brief, a raised gate stage or engine narration in an item page's stream (narration is filed in the drawer's History; the reader's own exchange follows the widget). SERVE-TIME CONTROL TRUTH: /api/items/view serves no move and no offers — a control the door does not serve cannot be dead at click. The project room keeps its own grammar (its MOVE under `the-move-yields`). AN INVITE IS FOR SOMEONE: /api/items/view serves `withCounterparty: false` on a prepared invite with only the user on it, and no door mounts it (the invite lane asks who instead). W16.2: the confirm widget is a FIRST-CLASS KIT KIND (`kind: 'confirm'` in components/thread/types.ts, drawn by the kit's renderer, specimened in the catalogue in every AnswerableState, produced by item-detail's confirmCardOf) and the item page routes it only through that kind (actionCardOf — never the custom slot); its two words live in ONE home (lib/evidence/looks-done-word.ts CONFIRM_WORDS) that the Home deck row speaks too — \"Mark done\" / \"Keep open\", never \"Done / Not yet\" (the API's `not_yet` action is a wire word). Clara's FALLBACK sentence is DIRECTION-TRUE from the item's own facts (lib/room/opening-fallback.ts originOf over the row's direction + source and the source message's authorship through THE ONE SOURCE READER, served as `anchor.origin`; no AI): the user's own promise → \"You told <X> you'd …\" (\"You said you'd …\"), the counterparty's ask → \"<X> asked you to …\", awaiting → \"Waiting on <X> to …\", a meeting → \"From the meeting: …\"; with no origin no direction is claimed (\"From <X> — …\").",
    "homes": [
     "components/thread/item-page.ts",
     "components/thread/confirm-card.tsx",
@@ -7674,7 +7692,13 @@
     "app/api/items/view/route.ts",
     "lib/evidence/looks-done.ts",
     "lib/work/scheduled.ts",
-    "lib/prepare/pass.ts"
+    "lib/prepare/pass.ts",
+    "lib/evidence/looks-done-word.ts",
+    "lib/room/opening-fallback.ts",
+    "components/thread/types.ts",
+    "components/thread/thread-cards.tsx",
+    "app/(main)/dev/thread-preview/preview-catalogue.tsx",
+    "components/home/home-view.tsx"
    ],
    "gates": [
     {
@@ -7722,12 +7746,48 @@
       "S6-S9"
      ],
      "note": "W16: the invite lane's whole-horizon booked-deed floor (the machine's one booking read, before spend) + the attendee floor (ask who, never stage an invite to oneself); the view serves the event id and the counterparty flag; the subtitle says scheduled, never Due"
+    },
+    {
+     "suite": "smoke-item-page",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "W1-W3"
+     ],
+     "note": "W16.2: ONE home for the confirm words (the item page re-exports the same object); the Home row's looks-done pair and the kit widget both print CONFIRM_WORDS; no \"Not yet\" rendered or as a literal in any components/ or app/ file"
+    },
+    {
+     "suite": "smoke-item-page",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "F1-F5"
+     ],
+     "note": "W16.2: the fallback is direction-true over fixtures — own promise (\"You told Acme you'd …\" / \"You said you'd …\"), their ask (\"Sam asked you to …\", our framing never in their mouth), awaiting (\"Waiting on Acme to …\"), meeting (\"From the meeting: …\"); no origin → no direction claimed; one short sentence, no claim — tests/unit/item-page-words"
+    },
+    {
+     "suite": "smoke-item-page",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "F6"
+     ],
+     "note": "W16.2: the view reads the source's authorship through emailSourceOf, the row's direction, and serves anchor.origin; the rail hands it to both fallback seats; no AI in the ladder"
+    },
+    {
+     "suite": "smoke-item-page",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "K1-K6"
+     ],
+     "note": "W16.2: `confirm` is in ThreadCardKind/THREAD_CARD_KINDS with its own interface over AnswerableState; the kit renderer draws it; the catalogue specimens open · busy · settled; item-detail produces it; itemPageItems renders it as `kind: 'confirm'` (a confirm plan with only a node renders nothing); the rail hands the card"
     }
    ],
    "version_key": null,
    "status": "holding-uncommitted",
    "broken_by": null,
-   "fixed_by": "W16.1",
+   "fixed_by": "W16.1 · W16.2",
    "collides_with": [
     {
      "law": "every-item-can-be-closed",
@@ -7758,7 +7818,8 @@
      "precedence": "the widget table READS the machine's single state; it never adds a rung. `gate_open` is the table's own row for a parked run (the judge structurally nones a handoff), never a machine state"
     }
    ],
-   "fn": "composeItemPage · actionOf · WIDGET_OF_ARTIFACT · ARTIFACTS_OF_STATE · claraSentenceOf · itemPageItems (components/thread/item-page.ts) · ConfirmCard (components/thread/confirm-card.tsx)"
+   "fn": "composeItemPage · actionOf · WIDGET_OF_ARTIFACT · ARTIFACTS_OF_STATE · claraSentenceOf · itemPageItems (components/thread/item-page.ts) · ConfirmCard (components/thread/confirm-card.tsx) · actionCardOf · originOf · fallbackOpeningLine (origin) · CONFIRM_WORDS",
+   "note": " W16.2 (Sep 24, follow-ups of W16.1's OPEN list): the Home row's \"Done / Not yet\" now speaks the widget's words from one home; the fallback said \"<X> is asking you to …\" on a commitment the user promised in their own sent mail — it is direction-true now; the confirm widget left the custom slot for its own kit kind (smoke-confirm-cards C9.2 and smoke-threads T37.1/T37.2 re-pointed 15 → 16 kinds, 7 → 8 stateful kinds)."
   },
   {
    "id": "scheduled-is-not-overdue",

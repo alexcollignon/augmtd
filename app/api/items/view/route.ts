@@ -31,6 +31,7 @@ import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { preparedState, isLiveArtifact, type PreparedState } from '@/lib/prepare/read';
 import { needsReprepareTrip } from '@/lib/room/open-kicks';
+import { originOf } from '@/lib/room/opening-fallback';
 import { anchorOf, activityAtOf, linkKindOf, looseRoomKeyOf, looseTitleOf, ANCHOR_ROW_SELECT, foldAnchorRow } from '@/lib/room/item-anchor';
 import { deriveGap, isOpenStep, isSendBlocked, motionClausesOf } from '@/lib/home/item-gaps';
 import type { ItemPlanKind, ItemPlanTask } from '@/lib/home/item-plan';
@@ -152,8 +153,16 @@ export async function GET(request: NextRequest) {
       const forms = await loadUserForms(supabase, user.id);
       return meetingSourceOf(supabase, user.id, String(itemRow.source_id), (who) => isUserForm(who, forms));
     });
+    // W16.2 · WHOSE WORDS MADE THIS COMMITMENT — the source message's authorship, through THE ONE
+    // SOURCE READER (lib/commitments/source.ts emailSourceOf → the W7.6 authorship stamp). The page's
+    // fallback sentence is direction-true from it ("You told <X> you'd …" vs "<X> asked you to …").
+    const sourceAuthorP = foldedRowP.then(async (itemRow): Promise<boolean | null> => {
+      if (linkKind !== 'commitment' || !itemRow || String(itemRow.source ?? '') !== 'email' || !itemRow.source_id) return null;
+      const { emailSourceOf } = await import('@/lib/commitments/source');
+      return (await emailSourceOf(supabase, user.id, String(itemRow.source_id)))?.authoredByUser ?? null;
+    });
     // Awaited below; marked handled here so an early exit (a throw in wave 1) never leaves one unhandled.
-    for (const p of [roomP, machineP, sourceItemIdP, sourceMeetingP]) void p.catch(() => {});
+    for (const p of [roomP, machineP, sourceItemIdP, sourceMeetingP, sourceAuthorP]) void p.catch(() => {});
 
     const [planRes, prepState, linkRes, anyVerdict, itemRowRes] = await Promise.all([planP, prepP, linkP, anyVerdictP, itemRowP]);
     const preparedArts = prepState?.all ?? [];
@@ -233,7 +242,13 @@ export async function GET(request: NextRequest) {
 
     // ── WAVE 2 — THE RAIL + THE MACHINE + THE DOOR'S OWN OBJECT (each STARTED above on its own
     // input — W11.4), in ONE flight, awaited here beside the brief's last-good read.
-    const [room, machine, sourceItemId, sourceMeeting] = await Promise.all([roomP, machineP, sourceItemIdP, sourceMeetingP]);
+    const [room, machine, sourceItemId, sourceMeeting, sourceAuthor] = await Promise.all([roomP, machineP, sourceItemIdP, sourceMeetingP, sourceAuthorP]);
+    // W16.2 · the anchor's ORIGIN — pure, from the row's own facts + the source reader's authorship.
+    const anchorOrigin = originOf({
+      kind: linkKind, source: linkKind === 'inbox_item' ? (itemRow?.source as string | undefined) ?? 'email' : itemRow?.source ?? null,
+      direction: itemRow?.direction ?? null, authoredByUser: sourceAuthor,
+      hasSender: !!(itemRow?.source_data?.from_name || itemRow?.source_data?.from),
+    });
     mark('wave2');
     const machineState: { state: string; word: string | null; line?: string | null; eventId?: string } | null = machine
       ? { state: machine.state, word: machine.word, ...(machine.line ? { line: machine.line } : {}), ...(machine.eventId ? { eventId: machine.eventId } : {}) } : null;
@@ -325,7 +340,7 @@ export async function GET(request: NextRequest) {
         // Served with the artifact so the card never composes a claim of its own.
         ...(a.note ? { note: a.note } : {}),
       })),
-      anchor,
+      anchor: { ...anchor, origin: anchorOrigin },
       gap,
       inviteTaskId,
       steps,
