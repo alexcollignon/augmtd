@@ -1839,14 +1839,10 @@ export async function GET() {
     /** INSTANT CATCH-UP: this account is dirty enough that the steady-state cron cannot be the
      *  answer — `filing` is how many rows WOULD graduate right now. Null means nothing to drain. */
     catchUp: { filing: number } | null;
-    /** W11.2 · ONE ROW PER CONVERSATION: every conversation holding ≥2 live rows — its lead (the most
-     *  urgent member, the one that takes the seat) and every member id, lead first. */
-    conversations: Array<{ key: string; lead: string; memberIds: string[] }>;
-  } = { budget: 0, served: [], heldBack: [], whyNowByAtom: {}, heldTotal: null, heldWaiting: null, heldHandled: null, fresh: { count: 0, ids: [] }, catchUp: null, conversations: [] };
+  } = { budget: 0, served: [], heldBack: [], whyNowByAtom: {}, heldTotal: null, heldWaiting: null, heldHandled: null, fresh: { count: 0, ids: [] }, catchUp: null };
   try {
     const { whyNowOf, rankAttention, attentionRank, ATTENTION_BUDGET, internalDomainsOf, isInternalBridge,
       seatVerdict, provedAliveOf } = await import('@/lib/home/attention');
-    const { conversationKeyOf } = await import('@/lib/home/conversation-fold');
     const { itemIsSelfEcho } = await import('@/lib/inbox/self-echo');
     type Row = import('@/lib/home/attention').AttentionRow;
     // Q8 · AN INTERNAL TEAMMATE IS NEVER A CALENDAR BRIDGE. A colleague attends everything, so one
@@ -1936,15 +1932,6 @@ export async function GET() {
         fresh: machineOf(entityId)?.surfaced === true,
         // W11.2 · LOOKS DONE — ranked below every row of real work (lib/home/attention.ts attentionRank).
         looksDone: machineOf(entityId)?.state === 'looks_done',
-        // W11.2 · ONE ROW PER CONVERSATION — the conversation this row belongs to: a mail row by its
-        // thread, a commitment by its thread (else its source message). The rank folds a shared key
-        // under ONE seat, positioned by the most urgent member (lib/home/conversation-fold.ts).
-        conversationKey: source === 'commitment'
-          ? conversationKeyOf({
-            threadId: (commitById.get(entityId)?.thread_id as string | null | undefined) ?? null,
-            sourceEmailId: commitById.get(entityId)?.source === 'email' ? ((commitById.get(entityId)?.source_id as string | null | undefined) ?? null) : null,
-          })
-          : conversationKeyOf({ threadId: (sd?.thread_id as string | null | undefined) ?? null }),
       };
       const seat = seatVerdict(draft);
       draft.whyNow = whyNowOf({
@@ -1977,7 +1964,7 @@ export async function GET() {
       .map((r, i) => ({ r, i, w: itemWeights[r.entityId] ?? 20 }))
       .sort((a, b) => (b.w - a.w) || (a.i - b.i))
       .map((x) => x.r);
-    const { served, held, refused, conversations, folded } = rankAttention(ordered, ATTENTION_BUDGET);
+    const { served, held, refused } = rankAttention(ordered, ATTENTION_BUDGET);
     // Q4 · a refused seat is a HELD row with a reason — stated in the log so a contract that starts
     // refusing real work is visible the same day, not a month later on somebody's walk.
     if (refused.length) {
@@ -1995,10 +1982,9 @@ export async function GET() {
         key: r.key, entityId: r.entityId, source: r.source, whyNow: r.whyNow, rank: attentionRank(r),
         anchoredToEventId: r.anchoredToEventId ?? null,
       })),
-      // A conversation's non-lead members are never seated on their own (W11.2): they are held
-      // back, and the served `conversations` say which lead's ONE row speaks for them.
-      heldBack: [...held.map((r) => r.entityId), ...folded.map((x) => x.row.entityId)],
-      conversations,
+      // W13.4 · ONE ITEM, ONE ROW: a row is held back only because the budget or the seat contract
+      // held it — never for sharing a conversation (the W11.2 fold is retired).
+      heldBack: held.map((r) => r.entityId),
       whyNowByAtom: Object.fromEntries(rows.map((r) => [r.entityId, r.whyNow])),
       heldTotal: counts?.total ?? null,
       heldWaiting: counts?.waiting ?? null,
@@ -2100,5 +2086,5 @@ export async function GET() {
   // upstream `stripDeixis` seams stay where they are (they feed the SERVER-side agenda and the
   // briefing composer's inputs, which never pass through here); this is the guarantee that no lane
   // — present or future — can serve a word that has stopped being true.
-  return NextResponse.json(guardDeckLabels({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => withAttention({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, preparedKind: preparedKindByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null, machine: machineOf(n.itemId) }, n.itemId)), mustRespond: attentionMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities.map((p) => ({ ...p, machine: p.itemId ? machineOf(p.itemId) : null })), commitments: commitments.map((c) => withAttention({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null, machine: machineOf(c.id) }, c.id)), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, projectByAtom, briefing: cachedBriefing, trackedProjects, mail, today: todayStr, attention: { budget: attention.budget, served: attention.served, heldBack: attention.heldBack, heldTotal: attention.heldTotal, heldWaiting: attention.heldWaiting, heldHandled: attention.heldHandled, fresh: attention.fresh, catchUp: attention.catchUp, conversations: attention.conversations } }));
+  return NextResponse.json(guardDeckLabels({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => withAttention({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, preparedKind: preparedKindByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null, machine: machineOf(n.itemId) }, n.itemId)), mustRespond: attentionMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities.map((p) => ({ ...p, machine: p.itemId ? machineOf(p.itemId) : null })), commitments: commitments.map((c) => withAttention({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null, machine: machineOf(c.id) }, c.id)), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, projectByAtom, briefing: cachedBriefing, trackedProjects, mail, today: todayStr, attention: { budget: attention.budget, served: attention.served, heldBack: attention.heldBack, heldTotal: attention.heldTotal, heldWaiting: attention.heldWaiting, heldHandled: attention.heldHandled, fresh: attention.fresh, catchUp: attention.catchUp } }));
 }

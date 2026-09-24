@@ -1,10 +1,10 @@
-// W11.2 THE WORKING CIRCLE · ONE ROW PER CONVERSATION · LOOKS DONE — the pure pieces.
+// W11.2 THE WORKING CIRCLE · LOOKS DONE — the pure pieces. (+ W13.4 ONE ITEM, ONE ROW: the W11.2
+// conversation fold is retired — every live item is its own row.)
 // Zero IO, zero AI. Fake identities only (Acme / Sam / Jo).
 import { describe, it, expect } from 'vitest';
 import { inferCircle, countingCircle, circleRows, sameOrganisation, autoVerdict, orgOf, type CircleMail } from '@/lib/evidence/circle';
 import { actorRole, buildActorContext, teammateAddressesOf } from '@/lib/evidence/actor';
 import { looksDoneEvidenceOf, looksDoneLive, looksDoneLine } from '@/lib/evidence/looks-done';
-import { foldByConversation, conversationKeyOf, conversationSentence, foldedIntoOf } from '@/lib/home/conversation-fold';
 import { rankAttention, attentionRank, type AttentionRow } from '@/lib/home/attention';
 import { foldHeldRows } from '@/lib/home/held-list';
 import type { Evidence } from '@/lib/evidence/match';
@@ -91,25 +91,22 @@ describe('looks done', () => {
   });
 });
 
-describe('one row per conversation', () => {
+describe('one item, one row (W13.4 — the conversation fold is retired)', () => {
   const r = (id: string, o: Partial<AttentionRow> = {}): AttentionRow => ({ key: id, entityId: id, source: 'commitment', whyNow: '', ...o });
-  it('folds a conversation under its most urgent member and drops nothing', () => {
-    const k = conversationKeyOf({ threadId: 't1' });
-    const out = rankAttention([r('a', { conversationKey: k }), r('b', { conversationKey: k, dueToday: true }), r('c')], 5);
-    expect(out.served.map((x) => x.entityId)).toEqual(['b', 'c']);
-    expect(out.folded.map((x) => [x.row.entityId, x.into])).toEqual([['a', 'b']]);
-    expect(foldedIntoOf(out.conversations).get('a')).toBe('b');
+  it('seats every live item as its own row, most urgent first, and holds back only over the budget', () => {
+    const out = rankAttention([r('a'), r('b', { dueToday: true }), r('c')], 5);
+    expect(out.served.map((x) => x.entityId)).toEqual(['b', 'a', 'c']);
+    expect(out.held).toEqual([]);
+    expect(Object.keys(out).sort()).toEqual(['held', 'refused', 'served']);
   });
-  it('keys by thread, else source message; rows with no key never fold', () => {
-    expect(conversationKeyOf({ threadId: 't', sourceEmailId: 'm' })).toBe('t:t');
-    expect(conversationKeyOf({ sourceEmailId: 'm' })).toBe('m:m');
-    expect(foldByConversation([1, 2], () => null)).toHaveLength(2);
+  it('served + held accounts for every row', () => {
+    const rows = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((id) => r(id));
+    const out = rankAttention(rows, 5);
+    expect(out.served.length + out.held.length).toBe(rows.length);
+    expect(new Set([...out.served, ...out.held].map((x) => x.entityId)).size).toBe(rows.length);
   });
-  it('words the row once', () => {
-    expect(conversationSentence('Kim', ['a thing', 'b thing'])).toBe('Kim — 2 open on this thread: a thing; b thing');
-  });
-  it('the held list folds by conversation before who+subject', () => {
-    const f = foldHeldRows([{ s: 'x', c: 't:1' }, { s: 'y', c: 't:1' }, { s: 'x', c: null }], (x) => ({ who: 'Kim', subject: x.s, conversation: x.c }));
+  it('the held list folds only same who+subject echoes — distinct asks stay distinct rows', () => {
+    const f = foldHeldRows([{ s: 'x' }, { s: 'y' }, { s: 'x' }], (x) => ({ who: 'Kim', subject: x.s }));
     expect(f.map((g) => g.members.length)).toEqual([2, 1]);
   });
 });

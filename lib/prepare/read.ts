@@ -22,6 +22,7 @@ import { inviteOutsideStatedWindow, vetDraft, signsAsOtherIdentity, mailboxIdent
 import { addresseeOfStamp, addresseeFromNudgeTitle, addresseeWithdrawn, loadUserForms, type Addressee } from '@/lib/prepare/addressee';
 import type { UserForms } from '@/lib/commitments/extraction-truth';
 import { isHandHeld, isPoolRowHandHeld, type HandKind } from '@/lib/prepare/hand';
+import { STAGING_LAW_VERSION } from '@/lib/prepare/staging-law';
 
 export type PreparedKind = 'reply_draft' | 'nudge_draft' | 'deliverable' | 'invite' | 'forward' | 'paste_pack';
 
@@ -74,6 +75,11 @@ export type PreparedArtifact = {
    *  this item's BASE (the pre-existing version an ask for new work builds on — `base:<label>` in the
    *  pool) sends the old file as the answer. Rides `falseClaim` (never live); this flag words it. */
   baseAsAnswer?: boolean;
+  /** W13.3 · THE FILE WAS MATCHED UNDER AN OLDER STAGING LAW: a machine doc-send draft (task
+   *  `prepare-pass-docsend`) whose file match carries no current `stagingLaw` stamp. Rides
+   *  `falseClaim` (never live) so the pass re-prepares the send through TODAY's verifier — the
+   *  platform heals its own legacy sends; no operator list. */
+  stagingStale?: boolean;
   /** TRUE ADDRESSEES (W7.3): who the words are FOR, stamped at production (a legacy nudge's title
    *  carries it). Served so a card can address its To from what the words were written for. */
   addressee?: Addressee | null;
@@ -158,6 +164,9 @@ export function stampTruth<T extends PreparedArtifact>(arts: T[], facts: ItemTru
     //     the completion/chase floors judge its words as if nothing were staged (`stagedIsWork`).
     const onBase = !!a.attachment && !!facts.baseFileIds?.includes(a.attachment.fileId);
     if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft') && !a.hand && onBase) { a.falseClaim = true; a.baseAsAnswer = true; }
+    //   · W13.3 · A LEGACY FILE MATCH IS RE-PROVEN, NOT TRUSTED — a machine doc-send whose file was
+    //     matched under an older staging law is withdrawn; the pass re-runs it through today's law.
+    if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft') && !a.hand && a.stagingStale) a.falseClaim = true;
     if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft' || a.kind === 'paste_pack') && !a.hand
       && vetDraft(a.content, { obligationOpen: facts.obligationOpen, staged: !!a.attachment, stagedIsWork: !!a.attachment && !onBase, attachmentFloor: a.kind !== 'paste_pack' })) a.falseClaim = true;
     //   · THE MAILBOX SIGNS — a machine draft signed as another of the user's mailboxes (the pre-W11.1
@@ -315,6 +324,7 @@ export function withdrawnReasonOf(a: PreparedArtifact): string | null {
   if (a.outsideWindow) return 'outside the window they stated';
   if (a.wrongIdentity) return 'it was signed as another of your mailboxes';
   if (a.baseAsAnswer) return 'it attached the current version as if it were the finished work';
+  if (a.stagingStale) return 'its file was matched under an older rule — re-checking it';
   if (a.falseClaim) return 'its words claimed work that is not done';
   if (a.misaddressed) return 'it was addressed to the wrong person';
   if (a.expired) return 'its proposed time already passed';
@@ -485,8 +495,13 @@ export function poolRowsToArtifacts(rows: Array<Record<string, unknown>>, poolKi
     // TRUE ADDRESSEES (W7.3): the writer's stamp; a LEGACY nudge's own title ("Nudge — X") carries the
     // name its writer addressed (the same field) — read as a name-only addressee.
     const addressee = isCommitDraft ? (addresseeOfStamp(meta.addressee) ?? addresseeFromNudgeTitle(d.title as string)) : null;
+    // W13.3 · the doc-send lane's file match must carry the CURRENT staging-law stamp to be trusted.
+    const lawV = Number((meta as { stagingLaw?: unknown }).stagingLaw);
+    const stagingStale = isCommitDraft && d.task_id === 'prepare-pass-docsend' && !!meta.attachment
+      && (!Number.isFinite(lawV) || lawV < STAGING_LAW_VERSION);
     out.push({
       ...(addressee ? { addressee } : {}),
+      ...(stagingStale ? { stagingStale: true } : {}),
       kind: isCommitDraft ? (String(d.title ?? '').startsWith('Nudge — ') ? 'nudge_draft' : 'reply_draft') : 'deliverable',
       title: (d.title as string) ?? null, content: String(d.content),
       ground: groundFrom(meta.prepared_from),

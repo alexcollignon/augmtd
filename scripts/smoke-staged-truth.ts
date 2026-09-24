@@ -359,6 +359,30 @@ console.log('\nC · the staged file shows as a chip, Send attaches exactly the c
       && /staged: !!freshAttachment \}/.test(inboxDraft)
       && /typeof d\.withheld === 'string' && d\.withheld\.trim\(\)\) \{\s*setWithheld\(d\.withheld\.trim\(\)\); heldOut = true;/.test(card));
   }
+  // ═══ F · W13.3 THE ORPHANED SEND (found live after W13.2: the requirement was unstaged with no base
+  // row, and the legacy doc-send draft kept sending the old file with "now includes … is attached") ═══
+  {
+    const req = src('lib/prepare/requirements.ts');
+    const read = src('lib/prepare/read.ts');
+    const pass = src('lib/prepare/pass.ts');
+    gate('F1 the ONE unstage writer settles the consequence: machine drafts riding an unstaged file are filed into the version chain (never deleted; the user\'s hand wins; sent + base rows untouched)',
+      /await supersedeDraftsRiding\(client, userId, poolKind, args\.itemId, fileIds, args\.reason\)/.test(req)
+      && /version_of: 'superseded:unstaged'/.test(req) && /if \(isPoolRowHeldAnyKind\(r\)\) continue;/.test(req)
+      && /if \(m\.version_of \|\| m\.sent_at \|\| m\.role === 'base'\) continue;/.test(req));
+    gate('F2 a legacy doc-send (no current stagingLaw stamp) is withdrawn by the reader — the platform re-proves its own old file matches',
+      /const stagingStale = isCommitDraft && d\.task_id === 'prepare-pass-docsend' && !!meta\.attachment/.test(read)
+      && /lawV < STAGING_LAW_VERSION/.test(read) && /!a\.hand && a\.stagingStale\) a\.falseClaim = true;/.test(read)
+      && /if \(a\.stagingStale\) return /.test(read));
+    gate('F3 new doc-sends are stamped with today\'s staging law, so they are trusted until the law moves again',
+      /attachment: \{ fileId: cTop\.id, filename: cTop\.filename, source: cTop\.source \}, \.\.\.\(await import\('@\/lib\/prepare\/requirements'\)\)\.stagingStamp\(\)/.test(pass));
+    const { poolRowsToArtifacts, stampTruth } = await import('../lib/prepare/read');
+    const legacy = poolRowsToArtifacts([{ id: 'x', task_id: 'prepare-pass-docsend', type: 'draft', title: 'Send report.pptx', content: 'Here it is.', created_at: '2026-09-23T00:00:00Z', metadata: { attachment: { fileId: 'f1', filename: 'report.pptx' } } }], 'commitment');
+    const fresh = poolRowsToArtifacts([{ id: 'y', task_id: 'prepare-pass-docsend', type: 'draft', title: 'Send report.pptx', content: 'Here it is.', created_at: '2026-09-23T00:00:00Z', metadata: { attachment: { fileId: 'f1', filename: 'report.pptx' }, stagingLaw: 99 } }], 'commitment');
+    stampTruth(legacy, { text: 'x', anchorIso: null, obligationOpen: true });
+    stampTruth(fresh, { text: 'x', anchorIso: null, obligationOpen: true });
+    gate('F4 outcome: an unstamped legacy doc-send reads withdrawn; a stamped one stands',
+      legacy[0]?.falseClaim === true && legacy[0]?.stagingStale === true && !fresh[0]?.falseClaim);
+  }
 
   console.log(`\n${failures.length ? '✗' : '✓'} smoke-staged-truth: ${pass} passed, ${failures.length} failed`);
   if (failures.length) { for (const f of failures) console.log(`  ✗ ${f}`); process.exit(1); }

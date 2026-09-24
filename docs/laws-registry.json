@@ -1153,11 +1153,13 @@
    ],
    "tier": 2,
    "domain": "judge-prepare-deck",
-   "statement": "When a new message or meeting lands on a conversation (an email thread; a meeting's calendar series) that already holds open commitments, extraction does not just append: ONE reasoned pass (classification tier, the message's OWN words, today injected by code, the cut declared) reads the open items against the message and returns per open item keep · update · superseded_by · delivered · moot and per candidate new · duplicate_of. Code decides what a judgment may do: every non-keep disposition quotes the message verbatim (code-checked) or it is keep; `delivered` only NOMINATES the message to the one fulfillment judge (only a judged delivery closes, and only when the debtor wrote it); superseded/moot settle through one conditional status flip with resolved_reason + a reversible activity row; an update writes only a description or a due the message states, never before the message; a duplicate is not written. Failure keeps everything; at most DELTA_MAX_OPEN items per pass, the rest reported. ONE call site: writeCommitments (mail + meeting). The writer also floors a due earlier than its own source to null (a title naming that past date is no commitment) and folds the counterparty through the person registry and the conversation's own forms (accents, short surnames, bare addresses) so one human never lands under two forms. (W9.4) What reaches that pass is never keyword-gated: every email with words reaches the delta (a no-op without open work), and NEW extraction runs only on a reasoned or structural signal — a meeting source, a user-authored message, or the per-item understanding (ownership you_owe/awaiting · relevance action/reply · an ask · a stated deadline); the kind floor (newsletter · receipt · notification · cold outreach · bulk · broadcast footer) never mints; with no understanding yet, an addressed message extracts and a CC-only one consults the keyword list only as a secondary hint. The sync's triage class noise / fyi_only and the user's to-do capture switch (todo_auto → mintNew=false) stop minting only — the delta still reads the message.",
+   "statement": "When a new message or meeting lands on a conversation (an email thread; a meeting's calendar series) that already holds open commitments, extraction does not just append: ONE reasoned pass (classification tier, the message's OWN words, today injected by code, the cut declared) reads the open items against the message and returns per open item keep · update · superseded_by · delivered · moot and per candidate new · duplicate_of. Code decides what a judgment may do: every non-keep disposition quotes the message verbatim (code-checked) or it is keep; `delivered` only NOMINATES the message to the one fulfillment judge (only a judged delivery closes, and only when the debtor wrote it); superseded/moot settle through one conditional status flip with resolved_reason + a reversible activity row; an update writes only a description or a due the message states, never before the message; a duplicate is not written. Failure keeps everything; at most DELTA_MAX_OPEN items per pass, the rest reported. ONE call site: writeCommitments (mail + meeting). The writer also floors a due earlier than its own source to null (a title naming that past date is no commitment) and folds the counterparty through the person registry and the conversation's own forms (accents, short surnames, bare addresses) so one human never lands under two forms. (W9.4) What reaches that pass is never keyword-gated: every email with words reaches the delta (a no-op without open work), and NEW extraction runs only on a reasoned or structural signal — a meeting source, a user-authored message, or the per-item understanding (ownership you_owe/awaiting · relevance action/reply · an ask · a stated deadline); the kind floor (newsletter · receipt · notification · cold outreach · bulk · broadcast footer) never mints; with no understanding yet, an addressed message extracts and a CC-only one consults the keyword list only as a secondary hint. The sync's triage class noise / fyi_only and the user's to-do capture switch (todo_auto → mintNew=false) stop minting only — the delta still reads the message. (W13.4, owner call Sep 24) The delta is the ONLY anti-hoarding mechanism: presentation never folds a conversation — every live item the delta leaves open is its own Home/held row with its own hands (Done · Dismiss · Open), and nothing is held back for sharing a conversation; grouping related work is a user-created project's job (the W11.2 display fold `one-row-per-conversation` is retired).",
    "homes": [
     "lib/work/conversation-delta.ts",
     "lib/commitments/extract.ts",
-    "scripts/repair-conversation-hoard.ts"
+    "scripts/repair-conversation-hoard.ts",
+    "lib/home/attention.ts",
+    "components/home/home-view.tsx"
    ],
    "gates": [
     {
@@ -1194,6 +1196,25 @@
      "kind": "source",
      "cost": "zero-ai",
      "note": "the factory + classification tier + the one clipper; ONE call site (writeCommitments, both paths; an empty extraction still reaches it); delivered only through fulfillment.ts; every write a conditional claim; the writer floors + folds; the repair is guarded (dry-run, --apply --yes, AI only with --judge) and runs the same functions; W9.4: COMMITMENT_HINT read only inside extractionGate; the gate is asked before any AI call and the entry never returns on a keyword; writeCommitments reached for every gated message; the understanding lookup is a JSON-path select fresh for this email id"
+    },
+    {
+     "suite": "smoke-working-circle",
+     "ids": [
+      "R1-R4"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "rankAttention · foldHeldRows · foldCountWord",
+     "note": "W13.4 ONE ITEM, ONE ROW: three live items of one conversation take three seats; served + held = all rows, each once, no folded bucket; the rank carries no conversation key and the fold module is gone; the held list folds only who+subject echoes (pure twin: tests/unit/working-circle.test.ts)"
+    },
+    {
+     "suite": "smoke-working-circle",
+     "ids": [
+      "R5-R9"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W13.4: the brief holds back only what the budget/seat contract held and serves no groups; the Home renders each item as its own row (no lead sentence, no foldedInto guard); no surface says \"N open on this thread\"; each row keeps its own hands incl. looks-done Done / Not yet; the delta stays (+ smoke-threads T8.13 re-pointed: the remainder drops only whispers + anchored rows)"
     }
    ],
    "fn": "quoteInText · validateDelta · dueFloorAgainstSource · foldCounterparty · nameFormsAgree · extractionGate",
@@ -6883,67 +6904,23 @@
   },
   {
    "id": "one-row-per-conversation",
-   "name": "ONE ROW PER CONVERSATION",
+   "name": "ONE ROW PER CONVERSATION (RETIRED W13.4)",
    "aliases": [
     "THE CONVERSATION FOLD",
     "foldByConversation",
     "conversationKeyOf"
    ],
-   "tier": 2,
-   "domain": "judge-prepare-deck",
-   "statement": "When several live items share a conversation — commitments by their thread (else their source message), mail items by their thread — the Home's top five and the held list show ONE row for the conversation (\"<counterparty> — 3 open on this thread: …\"), opening the conversation's mail room when one of its members is the thread's own item (else the lead's room); never three seats. The attention rank (lib/home/attention.ts rankAttention) ranks FIRST and folds AFTER, so the conversation takes the position of its most urgent member; the other members are neither served nor dropped — they ride the lead (served `attention.conversations`, held back), and served + held + folded account for every row. A meeting's action items never fold. The fold is a view computed at the serve (lib/home/conversation-fold.ts), never persisted; every member keeps its own row, its own reader and its own hands one click away.",
-   "homes": [
-    "lib/home/conversation-fold.ts",
-    "lib/home/attention.ts",
-    "app/api/home/brief/route.ts",
-    "components/home/home-view.tsx",
-    "components/home/held-quiet.tsx",
-    "lib/home/held-list.ts"
-   ],
-   "gates": [
-    {
-     "suite": "smoke-working-circle",
-     "kind": "pure",
-     "cost": "zero-ai",
-     "ids": [
-      "R1-R6"
-     ],
-     "note": "the rank folds one conversation into one seat led by its most urgent member; nothing dropped; legacy rows unchanged; the key; the sentence; the held list folds by conversation first — tests/unit/working-circle.test.ts"
-    },
-    {
-     "suite": "smoke-working-circle",
-     "kind": "source",
-     "cost": "zero-ai",
-     "ids": [
-      "R7-R9"
-     ],
-     "note": "the brief keys every row and serves the groups (members held back); the Home words the lead's one row and never seats a folded member; no conversation row is written"
-    }
-   ],
+   "tier": 3,
+   "domain": "retired",
+   "statement": "The W11.2 display fold — several live items sharing a conversation took ONE Home/held row (\"<counterparty> — N open on this thread: …\") led by the most urgent member, the others held back under it. RETIRED Sep 24 (owner call, W13.4): each item stays its own row, individually trackable with its own hands; grouping related work is what a user-created PROJECT is for, so an automatic fold is redundant and hard to manage. The data-level anti-hoarding fix — the conversation delta (`one-conversation-one-live-item`) — stays.",
+   "homes": [],
+   "gates": [],
    "version_key": null,
-   "status": "holding-uncommitted",
+   "status": "obsolete",
    "broken_by": null,
-   "fixed_by": "W11.2",
-   "fn": "rankAttention (conversations · folded) · foldByConversation · conversationKeyOf · conversationSentence · foldedIntoOf · foldHeldRows (conversation)",
-   "note": "Owner walk Sep 23: the Home's top five held three rows from one client conversation (three commitments to the same contact — Aug 28, Sep 4, undated), all overdue and almost certainly done.",
-   "collides_with": [
-    {
-     "law": "one-conversation-one-live-item",
-     "precedence": "that law keeps a conversation's DATA to one live item where it can (the delta settles, supersedes, folds duplicates); this law is the PRESENTATION floor for what legitimately stays open — several distinct asks on one thread take one seat"
-    },
-    {
-     "law": "one-reader-per-object",
-     "precedence": "the fold groups rows AFTER each object's one reader has served it; it never reads, rewrites or merges an object — every member keeps its own door"
-    },
-    {
-     "law": "one-fact-one-home",
-     "precedence": "the conversation group is an in-memory view at the serve; no conversation row is persisted"
-    },
-    {
-     "law": "density-law",
-     "precedence": "a folded conversation frees seats; the density law's five rows are then filled by other conversations, never by the folded members"
-    }
-   ]
+   "fixed_by": null,
+   "collides_with": [],
+   "note": "Sep 24 (W13.4): the owner saw the Home row \"Contact — 4 open on this thread: …; …\" and retired the fold. The code is gone — lib/home/conversation-fold.ts deleted; rankAttention returns served/held/refused again (no conversations/folded; served + held = all rows); the brief serves no conversation groups and holds nothing back for sharing a conversation; the Home words no lead sentence and guards no folded member; the held list folds only same who+subject echoes (\"+N more like this\"). The replacement gates (every live item is its own row) serve `one-conversation-one-live-item`: smoke-working-circle R1–R9, smoke-threads T8.13. Original finding (Sep 23): the Home's top five held three rows from one client conversation — the delta now keeps that data honest."
   },
   {
    "id": "looks-done-confirm",

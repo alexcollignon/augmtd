@@ -32,7 +32,7 @@ export { EXPIRY_LAW_VERSION } from '@/lib/commitments/expiry';
 /** The reply drafter's attachment/direction law — stored drafts re-draft on a bump. */
 export { DRAFT_LAW_VERSION } from '@/lib/inbox/attachment-context';
 /** The staging law a `require:` row was verified under (`metadata.stagingLaw`) — older rows re-verify. */
-export { STAGING_LAW_VERSION } from '@/lib/prepare/requirements';
+export { STAGING_LAW_VERSION } from '@/lib/prepare/staging-law';
 /** The workflow verify gate (verdict sentinel, rules, retry-then-hold). */
 export { VERIFY_GATE_VERSION } from '@/lib/workflows/execute-step';
 /** Entity-pair reflection (merge/separate) — re-judges prior 'separate' verdicts on a bump. */
