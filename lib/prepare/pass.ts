@@ -681,22 +681,50 @@ async function prepareInviteDraft(admin: SupabaseClient, userId: string, w: Work
     const { data: prior } = await admin.from('item_deliverables').select('id, created_at, content, metadata')
       .eq('user_id', userId).eq('kind', 'commitment').eq('entity_id', w.entityId).eq('task_id', 'prepare-pass-invite')
       .order('created_at', { ascending: false }).limit(1).maybeSingle();
-    const priorMeta = (prior?.metadata ?? {}) as { prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null; sent_at?: string };
+    const priorMeta = (prior?.metadata ?? {}) as { prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null; sent_at?: string; invite?: { attendees?: string[] } };
     movedPast = !!prior && groundMoved(priorMeta.prepared_from ?? null, currentGround);
+    // W16 · a prior invite with NO counterparty on it (only the user) is not a standing preparation —
+    // it goes back through the floors below instead of being kept.
+    const priorNoParty = !!prior && !priorMeta.sent_at && !(await inviteHasCounterparty(admin, userId, priorMeta.invite?.attendees));
     // W9.1: no clock. writeDeliverable REPLACES the task's row — a hand-held invite never reaches it.
     const decision = decideRegeneration({
       exists: !!prior, sent: !!priorMeta.sent_at, handHeld: isPoolRowHandHeld('invite', prior),
-      groundMoved: movedPast, nonLive: untrueInvite,
+      groundMoved: movedPast, nonLive: untrueInvite || priorNoParty,
     });
     if (decision.action === 'mark_stale_under_edit') return await markStaleUnderEdit(admin, userId, w, currentGround, 'invite', decision.reason);
     if (decision.action === 'keep') return { did: 'none', reason: decision.reason === 'nothing moved under it — the prepared version stands' ? 'a prepared invite is already on it — nothing moved under it' : decision.reason };
   }
+  // ── W16 · THE BOOKED-DEED FLOOR, THE WHOLE HORIZON — before any spend (owner walk, Sep 24 — a call already booked and
+  // ACCEPTED for Sep 30 while this lane proposed a NEW invite for Sep 25): the ±12h floor below only
+  // sees a meeting near the time it proposes. The machine's ONE booking read (lib/work/machine.ts
+  // bookingOf — the counterparty in a non-cancelled event, within the scheduling horizon) answers
+  // "is this work's meeting already on the calendar?" first; if it is, there is nothing to book and
+  // any prior unsent invite is withdrawn (filed, never deleted). ──
+  try {
+    const { bookingOf } = await import('@/lib/work/machine');
+    const row = isCommit
+      ? (await admin.from('commitments').select('status, description, counterparty, created_at, source, source_id').eq('id', w.entityId).eq('user_id', userId).maybeSingle()).data
+      : (await admin.from('inbox_items').select('status, source_data, source, created_at, work_title').eq('id', w.entityId).eq('user_id', userId).maybeSingle()).data;
+    const booked = await bookingOf(admin, userId, isCommit ? 'commitment' : 'inbox', row, { work: 'schedule' });
+    if (booked?.upcoming) {
+      await withdrawUnsentInvite(admin, userId, w, isCommit, 'booked');
+      return { did: 'none', reason: `already on the calendar — "${booked.upcoming.title.slice(0, 60) || 'meeting'}" at ${booked.upcoming.start.slice(0, 16).replace('T', ' ')}` };
+    }
+  } catch { /* the floor is a protection — an unreadable calendar never blocks the lane */ }
   const { buildItemContext } = await import('@/lib/home/item-context');
   const { prepareCalendarInvite } = await import('@/lib/home/prepare-action');
   const planKind = isCommit ? 'commitment' as const : 'email' as const;
   const ctx = await buildItemContext(admin, userId, planKind, w.entityId);
   if (!ctx) return { did: 'none', reason: 'could not ground the invite in the item' };
   const invite = await prepareCalendarInvite(admin, userId, planKind, ctx, w.title);
+  // ── W16 · THE ATTENDEE FLOOR: an invite is FOR someone. With no counterparty address on it (the
+  // attendees are only the user — the name could not be resolved to an address), there is no invite to
+  // stage: the room ASKS who (the input widget), and nothing is written. ──
+  if (!(await inviteHasCounterparty(admin, userId, invite.attendees))) {
+    await withdrawUnsentInvite(admin, userId, w, isCommit, 'no_counterparty');
+    await askWhoToInvite(admin, userId, w);
+    return { did: 'none', reason: 'needs input: no address for who to invite' };
+  }
   // ── TIME TRUTH (W5a, owner walk Sep 23): THE STATED WINDOW IS A FACT ABOUT THE THREAD. The item's
   // own words ("September 30 or October 1") are parsed by the ONE window parser (code-verified, never
   // guessed); a proposal — the model's or the calendar's — that lands outside it is not "inside what
@@ -1094,6 +1122,61 @@ export function docSendAskLabels(verdict: { requires?: Array<{ label?: string | 
     .map((r) => (typeof r === 'string' ? r : String(r?.label ?? '')).replace(/\s+/g, ' ').trim().slice(0, 120))
     .filter(Boolean).slice(0, 5);
   return labels.length ? labels : ['the document itself'];
+}
+
+// ── W16 · THE INVITE'S COUNTERPARTY — the attendees minus the user's own forms (every address the
+// user signs as). No attendee left = an invite to oneself: never staged. ──
+async function inviteHasCounterparty(admin: SupabaseClient, userId: string, attendees: unknown): Promise<boolean> {
+  const list = (Array.isArray(attendees) ? attendees : []).map((a) => String(a ?? '').trim()).filter(Boolean);
+  if (!list.length) return false;
+  try {
+    const { loadUserForms, isUserForm } = await import('@/lib/prepare/addressee');
+    const forms = await loadUserForms(admin, userId);
+    return list.some((a) => !isUserForm(a, forms));
+  } catch { return true; /* an unreadable identity never blocks the lane */ }
+}
+
+/** W16 · withdraw an UNSENT prepared invite the floors above refuse — FILED (the pool row joins the
+ *  version chain; the inbox field through the one engine strip), never deleted. Never throws. */
+async function withdrawUnsentInvite(admin: SupabaseClient, userId: string, w: WorkItem, isCommit: boolean, why: 'booked' | 'no_counterparty'): Promise<void> {
+  try {
+    if (isCommit) {
+      const { data: prior } = await admin.from('item_deliverables').select('id, metadata')
+        .eq('user_id', userId).eq('kind', 'commitment').eq('entity_id', w.entityId).eq('task_id', 'prepare-pass-invite')
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      const meta = (prior?.metadata ?? {}) as Record<string, unknown>;
+      if (prior && !meta.sent_at && !meta.version_of) {
+        await admin.from('item_deliverables').update({ metadata: { ...meta, version_of: `superseded:${why}` } })
+          .eq('id', prior.id).eq('user_id', userId);
+      }
+      return;
+    }
+    const { data: it } = await admin.from('inbox_items').select('id, source_data').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
+    const sd = (it?.source_data ?? {}) as Record<string, unknown>;
+    const pi = sd.prepared_invite as { sent_at?: string } | undefined;
+    if (it && pi && !pi.sent_at) {
+      const { stripSourceArtifacts } = await import('@/lib/prepare/hand-store');
+      const strip = await stripSourceArtifacts(admin, userId, { itemId: String(it.id), sd, fields: ['prepared_invite'], why: why === 'booked' ? 'booked' : 'plan_changed' });
+      await admin.from('inbox_items').update({ source_data: strip.sd }).eq('id', it.id).eq('user_id', userId);
+    }
+  } catch { /* the reader's own floors still stand */ }
+}
+
+/** W16 · THE WHO-ASK — one plain, deterministic ask in the item's room (the input widget renders it):
+ *  the invite has nobody to go to. Written through the one turns door under the item's engine-ask key. */
+async function askWhoToInvite(admin: SupabaseClient, userId: string, w: WorkItem): Promise<void> {
+  try {
+    const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
+    const itemKind = w.id.startsWith('commit:') ? 'commitment' as const : 'inbox' as const;
+    const roomKey = await roomKeyForItem(admin, userId, itemKind, w.entityId);
+    await writeRoomTurn(admin, userId, roomKey, {
+      role: 'system',
+      text: 'Who should be on the invite? I have no address for them yet.',
+      refs: [{ label: w.title.slice(0, 60), href: itemKind === 'commitment' ? `/item/${w.entityId}?kind=commitment` : `/item/${w.entityId}` }],
+      component: { key: 'input_checklist', state: { items: ['who to invite — their email address'], taskId: null } },
+      dedupeKey: `requires:${w.entityId}`,
+    });
+  } catch { /* the honest none still records */ }
 }
 
 async function askForFile(admin: SupabaseClient, userId: string, w: WorkItem, labels: string[], base?: string[] | null): Promise<void> {

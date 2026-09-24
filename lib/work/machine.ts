@@ -68,6 +68,9 @@ export type WorkMachineState = {
    *  `scheduledWordOf(scheduledLine)` (lib/work/scheduled.ts). */
   scheduledAt?: string;
   scheduledLine?: string | null;
+  /** W16 · on `scheduled` from a BOOKED EVENT: that calendar event's id — the item page's action
+   *  widget is the kit's event widget over it (absent for a judged revisit date). */
+  scheduledEventId?: string;
   /** W15.2 · on a `looks_done` derived from a HELD booked meeting: that event's id (the "Not yet"
    *  refusal keys on it — lib/evidence/looks-done.ts refuseLooksDone). */
   heldEventId?: string;
@@ -222,7 +225,7 @@ export function deriveState(input: DeriveInputs): WorkMachineState {
   const upcoming = v?.work !== 'none' ? input.booked?.upcoming ?? null : null;
   const revisitAfter = v?.work && v.work !== 'none' && v.revisit?.after && v.revisit.after > nowISO.slice(0, 10) ? v.revisit.after : null;
   const scheduled: WorkMachineState | null = upcoming
-    ? { state: 'scheduled', verdictWork: v?.work ?? null, primary: 'none', leadKind: null, scheduledAt: upcoming.start, scheduledLine: scheduledWhenOf(upcoming.start, upcoming.tz, upcoming.allDay) }
+    ? { state: 'scheduled', verdictWork: v?.work ?? null, primary: 'none', leadKind: null, scheduledAt: upcoming.start, scheduledLine: scheduledWhenOf(upcoming.start, upcoming.tz, upcoming.allDay), scheduledEventId: upcoming.id }
     : revisitAfter
       ? { state: 'scheduled', verdictWork: v?.work ?? null, primary: 'none', leadKind: null, scheduledAt: revisitAfter, scheduledLine: scheduledWhenOf(revisitAfter, null, true) }
       : null;
@@ -239,7 +242,10 @@ export function deriveState(input: DeriveInputs): WorkMachineState {
   // René sweep (Aug 13): an invite with no time / a forward with no recipient is staged work the
   // send door hard-rejects — NOT send-shaped (a Send primary that cannot fire is a lie).
   const SEND_KINDS = ['reply_draft', 'nudge_draft', 'invite', 'forward'];
-  const sendShaped = live.find((p) => SEND_KINDS.includes(p.kind) && p.sendReady !== false);
+  // W16 · A BOOKED MEETING MOOTS A STAGED INVITE (owner walk, Sep 24 — a call already booked and
+  // accepted for Sep 30 while the page proposed a NEW invite for Sep 25 with only the user on it): the
+  // booking IS the deed, so a prepared invite is not a Send primary under an upcoming booking.
+  const sendShaped = live.find((p) => SEND_KINDS.includes(p.kind) && p.sendReady !== false && !(upcoming && p.kind === 'invite'));
   const sendBlocked = live.find((p) => SEND_KINDS.includes(p.kind) && p.sendReady === false);
   const decisionBrief = live.find((p) => p.decision && p.decision.options.length >= 2);
   // Q8 · THE PASTE PACK is finished work to READ, not to send: it joins the review lane so a staged
@@ -351,6 +357,26 @@ async function sourcePartiesFor(client: SupabaseClient, userId: string, rows: Bo
   return out;
 }
 
+/** W15.2 → W16 · THE ONE BOOKING READ for one item (exported so the prepare pass's invite lane asks
+ *  the SAME question the machine does — "is this work's meeting already booked?" — over the whole
+ *  horizon, never a ±12h window). Fails open (null). */
+export async function bookingOf(
+  client: SupabaseClient, userId: string, kind: 'inbox' | 'commitment', row: BookingRow | null | undefined,
+  verdict: Verdict, nowISO: string = new Date().toISOString(),
+): Promise<{ upcoming: BookedEvent | null; held: BookedEvent | null } | null> {
+  try {
+    if (verdict?.work === 'none' || !row) return null;
+    let facts = bookingFactsOf(kind, row, verdict);
+    if (kind === 'commitment' && String(row.source ?? '') === 'email'
+      && (verdict?.work === 'schedule' || meetingShaped(String(row.description ?? '')))) {
+      const parties = await sourcePartiesFor(client, userId, [row]);
+      facts = bookingFactsOf(kind, row, verdict, parties.get(String(row.source_id)) ?? []);
+    }
+    if (!facts) return null;
+    return bookedEventFor(facts, await bookingEventsFor(client, userId, nowISO), nowISO);
+  } catch { return null; }
+}
+
 /** Derive the lifecycle for ONE item. One judgment read + the one prepared reader + one ask read —
  *  cheap, cacheable by callers; the ladder itself lives in deriveState. */
 export async function workStateOf(
@@ -416,17 +442,7 @@ export async function workStateOf(
     // ── W15.2 · THE BOOKING — started now, beside the prepared read; only a meeting-shaped
     // obligation with a counterparty key pays the calendar read (bookingFactsOf decides). ──
     const nowISO = new Date().toISOString();
-    const bookingP = (async () => {
-      if (verdict?.work === 'none' || !bookingRow) return null;
-      let facts = bookingFactsOf(item.kind, bookingRow, verdict);
-      if (item.kind === 'commitment' && String(bookingRow.source ?? '') === 'email'
-        && (verdict?.work === 'schedule' || meetingShaped(String(bookingRow.description ?? '')))) {
-        const parties = await sourcePartiesFor(client, userId, [bookingRow]);
-        facts = bookingFactsOf(item.kind, bookingRow, verdict, parties.get(String(bookingRow.source_id)) ?? []);
-      }
-      if (!facts) return null;
-      return bookedEventFor(facts, await bookingEventsFor(client, userId, nowISO), nowISO);
-    })().catch(() => null);
+    const bookingP = bookingOf(client, userId, item.kind, bookingRow, verdict, nowISO);
 
     // ── Prepared truth via THE ONE READER (never a parallel derivation). W2.1: the reader also
     // carries the commitment's sent stamp (a pooled invite/nudge the execute door marked spent),

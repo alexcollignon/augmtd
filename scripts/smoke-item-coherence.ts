@@ -287,18 +287,19 @@ console.log('\nI · a looks_done item shows its evidence line + ONE Done / Not y
   gate('I1 the door serves the machine\'s evidence line beside its word (never composed by the room)',
     // ⟲ RE-POINTED (W15.2): the same line also carries a SCHEDULED item's when (the looks-done line first).
     /line: st\.looksDoneLine \?\? st\.scheduledLine \?\? null/.test(v) && /\.\.\.\(machine\.line \? \{ line: machine\.line \} : \{\}\)/.test(v));
-  gate('I2 the strip mounts ONLY on looks_done, under the header, once per room frame',
+  // ⟲ RE-POINTED (W16 · THE ITEM PAGE IS A FEW KIT WIDGETS — the looks-done STRIP is retired, owner
+  // Sep 24: "remove that top bar, makes no sense, I don't even understand that 'not yet' button"). The
+  // same state now renders as the kit's CONFIRM WIDGET in the thread, chosen by the page's one
+  // composition; the law it held (one Done, one refusal, the served line) holds there.
+  const host = d.slice(d.indexOf('function ConfirmHost('), d.indexOf('function confirmArtifactOf('));
+  gate('I2 the confirm widget mounts ONLY on looks_done (the one composition picks it) — no strip under the header',
     /if \(m\?\.state !== 'looks_done'\) return null;/.test(d)
-    && /<\/header>\s*\{\/\*[^*]*\*\/\}\s*\{room\.confirm && <LooksDoneStrip confirm=\{room\.confirm\} \/>\}/.test(d)
-    && (d.match(/<LooksDoneStrip /g) ?? []).length === 1);
-  const strip = d.slice(d.indexOf('function LooksDoneStrip('), d.indexOf('type RoomResolve'));
-  gate('I3 ONE CTA row: exactly Done + Not yet; Not yet posts {kind, id, action: \'not_yet\'} to /api/work/looks-done',
-    // ⟲ RE-POINTED (W15.2 · EVERY ITEM CAN BE CLOSED): Done moved into the header's ONE action group,
-    // EMPHASISED on looks_done — the strip keeps the one deed only it can do (Not yet); still exactly
-    // one Done + one Not yet on the page.
-    (strip.match(/<button /g) ?? []).length === 1 && !/>Done<\/button>/.test(strip) && />Not yet<\/button>/.test(strip)
-    && /resolveEmphasisOf\(view\?\.machineState\?\.state\)/.test(d) && /\{room\.resolve && <ResolveGroup resolve=\{room\.resolve\} \/>\}/.test(d)
-    && /JSON\.stringify\(\{ kind, id, action: 'not_yet' \}\)/.test(strip) && /LOOKS_DONE_NOT_YET_ROUTE = '\/api\/work\/looks-done'/.test(d));
+    && !/LooksDoneStrip|room\.confirm/.test(d) && /<ConfirmCard line=\{confirm\.line\}/.test(host)
+    && /looks_done: \['looks_done'\],/.test(src('components/thread/item-page.ts')) && /looks_done: 'confirm',/.test(src('components/thread/item-page.ts')));
+  gate('I3 ONE CTA row: "Mark done" + "Keep open" in the widget; Keep open posts {kind, id, action: \'not_yet\'} to /api/work/looks-done; the header Done is emphasised on it',
+    /JSON\.stringify\(\{ kind, id, action: 'not_yet' \}\)/.test(host) && /LOOKS_DONE_KEEP_OPEN_ROUTE = '\/api\/work\/looks-done'/.test(d)
+    && /emphasis: doneEmphasisOf\(view, /.test(d) && /\{room\.resolve && <ResolveGroup resolve=\{room\.resolve\} \/>\}/.test(d)
+    && /CONFIRM_WORDS = \{ done: 'Mark done', keep: 'Keep open' \}/.test(src('components/thread/item-page.ts')));
   gate('I4 Done is each item\'s EXISTING resolution door (commitment act(\'done\') · email markHandled · follow-up the complete route) — no new close path',
     /looksDoneConfirmOf\(view, 'commitment', id, \(\) => act\('done'\)\)/.test(d)
     && /looksDoneConfirmOf\(view, 'inbox', id, markHandled\)/.test(d)
@@ -306,8 +307,9 @@ console.log('\nI · a looks_done item shows its evidence line + ONE Done / Not y
     // Done is the commitment door (the inbox complete route it used to fire could never find the row).
     && /looksDoneConfirmOf\(view, 'commitment', id, \(\) => resolveFollowUp\('done'\)\)/.test(d)
     && /const door = resolveRequestOf\('followup', id, deed\);/.test(d));
-  gate('I5 no second home for the words: the strip prints the served line and the button labels only (the state word stays the machine\'s)',
-    !/looks done/i.test(strip) && /confirm\.line/.test(strip));
+  // ⟲ RE-POINTED (W16): the widget prints the served line and its two labels only.
+  gate('I5 no second home for the words: the confirm widget prints the served line and the button labels only (the state word stays the machine\'s)',
+    !/looks done/i.test(host.replace(/label: 'Looks done'/, '')) && /confirm\.line/.test(host));
 }
 
 console.log(`\n${failures.length ? '✗' : '✓'} smoke-item-coherence: ${pass} passed, ${failures.length} failed`);

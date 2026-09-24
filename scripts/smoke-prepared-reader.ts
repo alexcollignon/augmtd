@@ -126,7 +126,8 @@ console.log('\nB · the commitment room renders');
   // verdict mounted a hollow shell whenever the stored invite was hidden (smoke-prepared-truth F8).
   gate('B1 CommitmentDetail passes artifacts to its ItemRail (like EmailDetail) — invite card from the LIVE pool row only (never the bare verdict, never a plan step), nudge → composer, lead → PreparedLead',
     /<ItemRail kind="commitment"[^>]*artifacts=\{commitArtifacts\}/.test(commitSeg)
-    && /const inviteArt = prepArts\.find\(\(p\) => p\.kind === 'invite'\)/.test(commitSeg)
+    // ⟲ RE-POINTED (W16 · AN INVITE IS FOR SOMEONE): the same live pool row, minus one with only the user on it.
+    && /const inviteArt = prepArts\.find\(\(p\) => p\.kind === 'invite' && p\.invite\?\.withCounterparty !== false\)/.test(commitSeg)
     && /\.\.\.\(inviteArt \? \[\{/.test(commitSeg)
     && !/\(inviteArt \|\| view\?\.inviteTaskId \|\| verdict\?\.work === 'schedule'\)/.test(commitSeg)
     && /node: <InviteCard kind="commitment" entityId=\{id\} taskId=\{view\?\.inviteTaskId \?\? undefined\}\s*verdictLevel=\{!view\?\.inviteTaskId\}/.test(commitSeg)
@@ -135,7 +136,8 @@ console.log('\nB · the commitment room renders');
     /\{embedded && inviteArt && !inviteOpen && \(/.test(commitSeg)
     && /\{embedded && inviteOpen && \(inviteArt \|\| view\?\.inviteTaskId\) && \(/.test(commitSeg));
   gate('B3 the served view type carries the invite payload + sendReady (what the card mounts from)',
-    /invite\?: \{ title: string \| null; startISO: string \| null; proposed: boolean \} \| null;/.test(detail)
+    // ⟲ RE-POINTED (W16): + the served counterparty flag (an invite with only the user on it never mounts).
+    /invite\?: \{ title: string \| null; startISO: string \| null; proposed: boolean; [^}]*withCounterparty\?: boolean \} \| null;/.test(detail)
     && /sendReady\?: boolean;/.test(detail));
 }
 

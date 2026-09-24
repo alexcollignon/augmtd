@@ -1,7 +1,7 @@
 {
  "$schema_note": "THE LAWS REGISTRY (W1.4, Sep 22 2026). Machine-readable source of truth; docs/laws-registry.md is rendered from it; scripts/smoke-laws.ts is the meta-gate. Tier 1 = the 14 invariants of docs/stabilization-plan.md PART II (outcome or walk gate required); tier 2 = domain laws (a pure-function test required, named in `fn`); tier 3 = lessons (compact `lessons[]`, no gate obligation) and obsolete laws. Gate kinds: source (asserts source text) · pure (calls a pure function) · outcome (census on DB/probe data) · walk (browser journey). Gate cost: zero-ai · cached · live-ai. Status: holding · broken-live (a Sep 22 audit finding names it) · gateless · obsolete. A gate with status 'planned' must name its wave and does not count as live.",
  "version": 1,
- "generated": "2026-09-22",
+ "generated": "2026-09-24",
  "tiers": {
   "1": "invariant",
   "2": "domain",
@@ -2386,20 +2386,29 @@
    ],
    "tier": 2,
    "domain": "calendar",
-   "statement": "An invite whose attendee already has a calendar event within ±12h prepares nothing and strips the unsent duplicate; a stated day without a time earns a proposed time inside every stated constraint.",
+   "statement": "An invite whose attendee already has a calendar event within ±12h prepares nothing and strips the unsent duplicate; a stated day without a time earns a proposed time inside every stated constraint. W16: the invite lane first asks the machine's ONE booking read (lib/work/machine.ts bookingOf — the counterparty in a non-cancelled event within the whole scheduling horizon, name-only counterparties matched through attendee addresses) BEFORE any spend — a booked meeting anywhere in the horizon prepares nothing and withdraws (files) a prior unsent invite; and an invite with no counterparty address (only the user) is never staged — the room asks who (the ±12h check stays for the proposed time itself).",
    "homes": [
     "lib/prepare/pass.ts",
     "lib/room/ground-evidence.ts",
-    "lib/tools/prepare-event-action.ts"
+    "lib/tools/prepare-event-action.ts",
+    "lib/work/machine.ts"
    ],
    "gates": [
     {
      "suite": "smoke-compute",
      "kind": "outcome",
      "cost": "live-ai"
+    },
+    {
+     "suite": "smoke-item-page",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "S6-S7"
+     ]
     }
    ],
-   "fn": "booked-window predicate",
+   "fn": "booked-window predicate · bookingOf · inviteHasCounterparty (W16)",
    "version_key": "JUDGE_VERSION",
    "status": "holding",
    "broken_by": null,
@@ -3721,7 +3730,7 @@
    ],
    "tier": 2,
    "domain": "rooms",
-   "statement": "Every door speaks for the object in its title. The item door composes an ITEM-FIRST brief keyed under the item's own `<kind>:<id>` room whatever its links; its project appears as ONE connection line (tracked: the project door; untracked: the quiet 'connects to … Track' chip), never the voice. A tracked project's own door speaks the project agenda. The component note and the claims floor are computed from what THIS door mounts. A MOVE, an object card or a bound card must target an item this door owns (its anchor or its own artifacts) or it does not render; the object card is the door's own source, never the move target. Recognize-on-open may link, but never changes the door's voice or room key mid-visit. Turns already written under entity keys stay as the entity door's record; item doors read their own keys. One card, one door: the object card's 'Thread →' opens the thread where its host reads it (the item door's drawer; the project room's in-room focus) — never a separate page.",
+   "statement": "Every door speaks for the object in its title. The item door composes an ITEM-FIRST brief keyed under the item's own `<kind>:<id>` room whatever its links; its project appears as ONE connection line — W16: in the Details drawer's Project section (the membership control; tracked: the project door), never a header chip and never the voice. A tracked project's own door speaks the project agenda. The component note and the claims floor are computed from what THIS door mounts. A MOVE, an object card or a bound card must target an item this door owns (its anchor or its own artifacts) or it does not render; the object card is the door's own source, never the move target. Recognize-on-open may link, but never changes the door's voice or room key mid-visit. Turns already written under entity keys stay as the entity door's record; item doors read their own keys. One card, one door: the object card's 'Thread →' opens the thread where its host reads it (the item door's drawer; the project room's in-room focus) — never a separate page.",
    "homes": [
     "lib/room/door.ts",
     "lib/room/turns.ts",
@@ -3961,7 +3970,7 @@
    ],
    "tier": 2,
    "domain": "judge-prepare-deck",
-   "statement": "One item tells one story on every surface. A CHASE is valid only on AWAITING work: on work the user owes the judge coerces it (a you_owe commitment → none, no disposition; an inbox item the user owes → reply) at compute AND at every cached/parked serve, and the nudge lane refuses (never writes). Words may say a file is ATTACHED only when an attachment is staged with them (THE ONE READER withdraws the rest; the evaluator revises a nudge that says it), and chase-shaped words on an open you_owe obligation are withdrawn. When the machine says the work is blocked on the user (awaiting_input / awaiting_decision) that word is the row's word on every printer — a receipt never outranks it. A brief's first-person preparation claim must name a KIND a card on the page renders. An email-born commitment's source card is the ONE message it was extracted from (`commitments.source_id`), the rest of the conversation one click away in the thread drawer. A draft on a shared thread keeps the thread's other participants on Cc (never the user, a To recipient or an automated address), and it is voiced and signed from the mailbox its thread lives in — never another identity's signature. A machine draft STORED before the scoped voice that signs as another of the user's mailboxes (and not the thread's own) is withdrawn by THE ONE READER so only it re-drafts; ambiguity leaves it. An item whose machine state is looks_done shows the served evidence line and ONE Done / Not yet row in its room — Done is the item's existing resolution door, Not yet the sticky refusal.",
+   "statement": "One item tells one story on every surface. A CHASE is valid only on AWAITING work: on work the user owes the judge coerces it (a you_owe commitment → none, no disposition; an inbox item the user owes → reply) at compute AND at every cached/parked serve, and the nudge lane refuses (never writes). Words may say a file is ATTACHED only when an attachment is staged with them (THE ONE READER withdraws the rest; the evaluator revises a nudge that says it), and chase-shaped words on an open you_owe obligation are withdrawn. When the machine says the work is blocked on the user (awaiting_input / awaiting_decision) that word is the row's word on every printer — a receipt never outranks it. A brief's first-person preparation claim must name a KIND a card on the page renders. An email-born commitment's source card is the ONE message it was extracted from (`commitments.source_id`), the rest of the conversation one click away in the thread drawer. A draft on a shared thread keeps the thread's other participants on Cc (never the user, a To recipient or an automated address), and it is voiced and signed from the mailbox its thread lives in — never another identity's signature. A machine draft STORED before the scoped voice that signs as another of the user's mailboxes (and not the thread's own) is withdrawn by THE ONE READER so only it re-drafts; ambiguity leaves it. An item whose machine state is looks_done shows the served evidence line in the page's ONE confirm widget (W16 — \"Mark done\" is the item's existing resolution door, \"Keep open\" the sticky refusal); no strip under the header.",
    "homes": [
     "lib/work/judge.ts",
     "lib/prepare/truth.ts",
@@ -7231,6 +7240,68 @@
    "note": "Sep 24 (W13.4): the owner saw the Home row \"Contact — 4 open on this thread: …; …\" and retired the fold. The code is gone — lib/home/conversation-fold.ts deleted; rankAttention returns served/held/refused again (no conversations/folded; served + held = all rows); the brief serves no conversation groups and holds nothing back for sharing a conversation; the Home words no lead sentence and guards no folded member; the held list folds only same who+subject echoes (\"+N more like this\"). The replacement gates (every live item is its own row) serve `one-conversation-one-live-item`: smoke-working-circle R1–R9, smoke-threads T8.13. Original finding (Sep 23): the Home's top five held three rows from one client conversation — the delta now keeps that data honest."
   },
   {
+   "id": "looks-done-strip",
+   "name": "THE LOOKS-DONE STRIP (RETIRED W16)",
+   "aliases": [
+    "LooksDoneStrip",
+    "THE EVIDENCE BAR UNDER THE HEADER",
+    "NOT YET ON THE ITEM PAGE"
+   ],
+   "tier": 3,
+   "domain": "retired",
+   "statement": "The W11.1 full-width bar under the item header — the looks-done evidence line (\"<teammate> sent 'Re: …' Sep 23\") and a \"Not yet\" button beside the header's \"LOOKS DONE — CONFIRM\" word. RETIRED Sep 24 (owner: \"remove that top bar, makes no sense, I don't even understand that 'not yet' button\"): the state renders as the kit's confirm widget in the thread (`the-item-page-is-a-few-widgets`).",
+   "homes": [],
+   "gates": [],
+   "version_key": null,
+   "status": "obsolete",
+   "broken_by": null,
+   "fixed_by": null,
+   "collides_with": [],
+   "note": "W16: LooksDoneStrip / room.confirm / LOOKS_DONE_NOT_YET_ROUTE are gone from components/home/item-detail.tsx; the refusal route is unchanged (the confirm widget's Keep open posts it). Re-pointed gates: smoke-item-coherence I2/I3/I5, smoke-item-actions IC2."
+  },
+  {
+   "id": "item-header-state-word",
+   "name": "THE ITEM HEADER'S STATE WORD (RETIRED W16)",
+   "aliases": [
+    "THE MACHINE'S WORD IN THE ITEM HEADER",
+    "MACHINE_TONE",
+    "THE ITEM HEADER FACE PILE",
+    "THE ITEM HEADER PROJECT CHIP"
+   ],
+   "tier": 3,
+   "domain": "retired",
+   "statement": "The item room's header carried the machine's word as an uppercase toned pill (\"LOOKS DONE — CONFIRM\", \"NEEDS ONE THING FROM YOU\"), a face pile, the project door and the 'connects to … Track' filing chip. RETIRED Sep 24 (W16): the header is back · title · one quiet subtitle · Details · Done · Dismiss · ⋯ — the state speaks through the page's ONE widget, project linking lives in Details, and a scheduled item's when rides the subtitle.",
+   "homes": [],
+   "gates": [],
+   "version_key": null,
+   "status": "obsolete",
+   "broken_by": null,
+   "fixed_by": null,
+   "collides_with": [],
+   "note": "W16: stateWord/stateTone/faces left RoomChrome; MACHINE_TONE and facesOf are deleted. Re-pointed gates: smoke-threads T15.2 · T15.2b · T15.4 · T15.10 · T29.2."
+  },
+  {
+   "id": "item-page-move",
+   "name": "THE ITEM PAGE'S MOVE (RETIRED W16)",
+   "aliases": [
+    "THE ITEM DOOR'S PROPOSAL CARD",
+    "REVIEW REPLY DRAFT BUTTON",
+    "THE ITEM PAGE GAP LINE AND OFFER LINE",
+    "THE RAISED GATE STAGE"
+   ],
+   "tier": 3,
+   "domain": "retired",
+   "statement": "On an ITEM page the room's composed MOVE rendered as a `proposal` card (\"Review reply draft\"), beside the CoS offer line, the plan's gap line, a folded ask, a late second brief, engine narration in the stream and — for a handoff — a gate card on a raised stage. RETIRED Sep 24 (W16): the MOVE's click needed a mounted card the page could lack (the dead \"That prepared work isn't on the board right now…\" button), and four pieces said four things. The item page is Clara's one sentence · the source · ONE widget from the table (`the-item-page-is-a-few-widgets`); /api/items/view serves no move. The project room keeps its MOVE (`the-move-yields`).",
+   "homes": [],
+   "gates": [],
+   "version_key": null,
+   "status": "obsolete",
+   "broken_by": null,
+   "fixed_by": null,
+   "collides_with": [],
+   "note": "W16: the rail's item door branches to itemPageItems; the pinned move/offer/gap/folded-ask/late-brief/lifted-ask/decision/tail/end-artifact seats render only on the project door. Re-pointed gates: smoke-one-door B2, smoke-room-first-paint A8, smoke-threads T22.10 · T22.12 · T28.13 · T15.6b · T15.8b, smoke-one-stage A3."
+  },
+  {
    "id": "looks-done-confirm",
    "name": "LOOKS DONE — CONFIRM",
    "aliases": [
@@ -7241,7 +7312,7 @@
    ],
    "tier": 2,
    "domain": "truth",
-   "statement": "\"Work is probably done\" is identified by the PLATFORM, never by an operator or a hand-picked list. When the ONE settle door (lib/work/evidence-settle.ts settleWorkByEvidence) judges open work the user owes and the fulfillment judge answers unclear or promised while the evidence holds a USER-SIDE deed (the user · a teammate · the working circle) on the work's own object or with its counterparty — a message, a shared file, a produced deliverable — or a HELD meeting, the item is recorded (item_plans looks_done, through the typed door) with its evidence line (who · what · when). THE ONE MACHINE serves the lifecycle state `looks_done`, worded \"looks done — confirm\" from one client-safe home; it outranks the ladder (asking or preparing on a debt that may not exist is noise) but never a judged-none. The row offers one click each way: Done = the item's own resolution door (logged, undoable); Not yet = a sticky refusal for exactly that evidence (new evidence may raise it again). Attention ranks a looks-done row BELOW every row of real work; its why-now is the word and the evidence line, never \"overdue\". Nothing here closes anything; the sweeps and reverse doors pick evidence up through the same code on their next run.",
+   "statement": "\"Work is probably done\" is identified by the PLATFORM, never by an operator or a hand-picked list. When the ONE settle door (lib/work/evidence-settle.ts settleWorkByEvidence) judges open work the user owes and the fulfillment judge answers unclear or promised while the evidence holds a USER-SIDE deed (the user · a teammate · the working circle) ON THE SAME CONVERSATION — the work's own thread / meeting / series / source thread (the matcher's object key): a message, a shared file, a produced deliverable — or a HELD meeting with the counterparty for a MEETING-SHAPED obligation (the judge's schedule verb or the work's own words) (W16: mail with the same counterparty on ANOTHER thread never raises it — it still reaches the judge, silently; the record carries its scope, and a record written before this rule carries none and is not live), the item is recorded (item_plans looks_done, through the typed door) with its evidence line (who · what · when). THE ONE MACHINE serves the lifecycle state `looks_done`, worded \"looks done — confirm\" from one client-safe home; it outranks the ladder (asking or preparing on a debt that may not exist is noise) but never a judged-none. The Home row offers one click each way (Done · Not yet); the ITEM PAGE renders it as the kit's confirm widget (W16): the evidence as one plain line (\"You replied on Sep 23\") with \"Mark done\" = the item's own resolution door (logged, undoable) and \"Keep open\" = a sticky refusal for exactly that evidence (new evidence may raise it again). Attention ranks a looks-done row BELOW every row of real work; its why-now is the word and the evidence line, never \"overdue\". Nothing here closes anything; the sweeps and reverse doors pick evidence up through the same code on their next run.",
    "homes": [
     "lib/evidence/looks-done.ts",
     "lib/evidence/looks-done-word.ts",
@@ -7279,13 +7350,22 @@
       "S2-S3"
      ],
      "note": "the one settle door writes it after every non-delivered judgment; Done/Not yet on the row; both machine readers read it; exactly two writers, no script"
+    },
+    {
+     "suite": "smoke-item-page",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "C1-C8"
+     ],
+     "note": "W16: only same-conversation evidence (or a held meeting with the counterparty for a meeting-shaped obligation) raises it — the owner's other-thread teammate example stays down; unscoped records are not live; the plain evidence line; the settle door hands the meeting-shaped signal"
     }
    ],
    "version_key": null,
    "status": "holding-uncommitted",
    "broken_by": null,
-   "fixed_by": "W11.2",
-   "fn": "looksDoneEvidenceOf · noteLooksDone · refuseLooksDone · looksDoneLive · looksDoneLine · deriveState (looks_done) · attentionRank",
+   "fixed_by": "W11.2 · W16.1",
+   "fn": "looksDoneEvidenceOf · noteLooksDone · refuseLooksDone · looksDoneLive · looksDoneLine · deriveState (looks_done) · attentionRank · looksDoneEvidenceOf scope · looksDoneLive (W16)",
    "note": "Owner requirement Sep 23 (W11.2): a debt with the user's side's delivery sitting on its thread must not silently stay a debt. The room's Done / Not yet pair is W11.1's fence (the room): the state + evidence line are served by workStateOf; POST /api/work/looks-done is the Not-yet door.",
    "collides_with": [
     {
@@ -7524,7 +7604,7 @@
    ],
    "tier": 2,
    "domain": "rooms",
-   "statement": "Every item room (every inbox kind — a mail reply, a meeting-extracted action, an invite, any future inbox source — every commitment and every follow-up) carries ONE persistent action group in its header, on the right beside Details: Done · Dismiss. Each deed goes through the item kind's EXISTING resolution door (inbox: complete 'already handled' / dismiss; commitment and follow-up: the commitment PATCH) — logged, undoable from Activity, its asks settled by the door; the door table (lib/work/item-actions.ts resolveRequestOf) is the one home, and a new kind is a row there, never a new close path. A prepared primary (Send, Review invite, a decision) stays THE primary and the pair renders secondary; when the machine reads looks_done, or settled on an item still open, Done is the emphasised deed. ONE CTA ROW: no other control on the page repeats either deed (the ⋯ menu keeps the less common verbs; the looks-done strip keeps only its evidence line and Not yet). A handoff gate's card owns its own close (approving IS done).",
+   "statement": "Every item room (every inbox kind — a mail reply, a meeting-extracted action, an invite, any future inbox source — every commitment and every follow-up) carries ONE persistent action group in its header, on the right beside Details: Done · Dismiss. Each deed goes through the item kind's EXISTING resolution door (inbox: complete 'already handled' / dismiss; commitment and follow-up: the commitment PATCH) — logged, undoable from Activity, its asks settled by the door; the door table (lib/work/item-actions.ts resolveRequestOf) is the one home, and a new kind is a row there, never a new close path. A prepared primary (Send, Review invite, a decision) stays THE primary and the pair renders secondary; Done is the emphasised deed only when the page's one widget is the confirm widget (W16 — the item page's composition; the looks-done strip is retired). ONE CTA ROW: no other control on the page repeats either deed except the confirm widget's \"Mark done\", which IS the same door (the ⋯ menu keeps the less common verbs). A handoff gate's card owns its own close (approving IS done).",
    "homes": [
     "lib/work/item-actions.ts",
     "components/home/item-detail.tsx"
@@ -7556,7 +7636,7 @@
    "version_key": null,
    "status": "holding-uncommitted",
    "broken_by": null,
-   "fixed_by": "W15.2",
+   "fixed_by": "W15.2 · W16.1",
    "collides_with": [
     {
      "law": "human-in-the-loop",
@@ -7564,13 +7644,121 @@
     },
     {
      "law": "looks-done-confirm",
-     "precedence": "looks-done keeps its evidence line and Not yet; its Done moved into the header's pair (emphasised) — one Done per page"
+     "precedence": "W16: on the item page looks_done is the kit's confirm widget (Mark done · Keep open — Mark done IS this pair's Done door); the header Done is emphasised beside it; the strip is retired"
     },
     {
      "law": "the-machine",
      "precedence": "the emphasis reads the machine's served state only; the pair never changes the ladder"
     }
    ]
+  },
+  {
+   "id": "the-item-page-is-a-few-widgets",
+   "name": "THE ITEM PAGE IS A FEW KIT WIDGETS",
+   "aliases": [
+    "ONE COMPOSITION FOR EVERY ITEM KIND",
+    "AT MOST ONE ACTION WIDGET",
+    "THE ITEM WIDGET TABLE",
+    "CLARA SAYS ONE SENTENCE",
+    "THE CONFIRM WIDGET",
+    "NO STANDALONE MOVE BUTTON"
+   ],
+   "tier": 2,
+   "domain": "surfaces · kit",
+   "statement": "Every item page (a mail item, a commitment, a meeting-extracted action, a follow-up, an invite, a handoff, any future source) is ONE composition (components/thread/item-page.ts composeItemPage → itemPageItems, rendered by the rail's item door): the HEADER is back · title · one quiet subtitle (who · date; a scheduled item's when) · Details · Done · Dismiss · ⋯ — no status pill, no face pile, no project chip (project linking is the Details drawer's Project section); CLARA says ONE short sentence — the situation, plainly — the composition's first sentence only when it claims no draft/file/prep, points at no control and asks nothing, else a plain fallback from the item's own facts, never a second paragraph and never a button; the SOURCE widget once (the one thread component, or — a meeting with a calendar event on file — the kit's event widget); then AT MOST ONE ACTION WIDGET with its deed inside it, picked from the WHOLE kit by ONE TABLE keyed by THE MACHINE's single state + the artifact kinds the door has MOUNTED (WIDGET_OF_ARTIFACT · ARTIFACTS_OF_STATE): prepared reply/message → email (Send) · invite → invite · forward → forward · a live ask or an input station → input · options → decision · coworker work / paste pack → deliverable · a produced document → doc · a generated interactive deliverable → frame · a parked workflow/handoff gate → approval (Approve / Hold back) · a BOOKED meeting (the machine's `scheduled` over a calendar event) → the kit's event widget (never a new invite) · looks done → the kit's CONFIRM widget (the evidence as one plain line — \"You replied on Sep 23\" — with \"Mark done\" = the item's own resolution door and \"Keep open\" = the sticky refusal); committed · a judged revisit date · parked · preparing · unjudged · settled → no widget (the header's Done/Dismiss suffice). Every PreparedKind THE ONE READER can serve has a row (typed Record + a gate); collection · bulk · proposal · custom are never item-page widgets. A widget renders only when its card is MOUNTED from what the door served live — a withdrawn target has no card, so no widget and no button; the header's Done is emphasised only beside the confirm widget. Never a standalone MOVE / \"Review …\" button card, an offer line, a gap line, a folded ask, a late second brief, a raised gate stage or engine narration in an item page's stream (narration is filed in the drawer's History; the reader's own exchange follows the widget). SERVE-TIME CONTROL TRUTH: /api/items/view serves no move and no offers — a control the door does not serve cannot be dead at click. The project room keeps its own grammar (its MOVE under `the-move-yields`). AN INVITE IS FOR SOMEONE: /api/items/view serves `withCounterparty: false` on a prepared invite with only the user on it, and no door mounts it (the invite lane asks who instead).",
+   "homes": [
+    "components/thread/item-page.ts",
+    "components/thread/confirm-card.tsx",
+    "components/home/item-rail.tsx",
+    "components/home/item-detail.tsx",
+    "app/api/items/view/route.ts",
+    "lib/evidence/looks-done.ts",
+    "lib/work/scheduled.ts",
+    "lib/prepare/pass.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-item-page",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "T1-T6",
+      "A1-A8"
+     ],
+     "note": "W16: the table — every PreparedKind maps (read from lib/prepare/read.ts), every widget is a kit kind or the confirm widget, collection/bulk/proposal/custom never, no dead row, the whole named kit reachable; the composition over 9 item kinds × 11 states (email · commitment · meeting action · follow-up · invite · forward · deliverable · handoff · meeting-born commitment) — ≤1 widget, the table's pick from what is mounted; withdrawn → none; no header pill; Done emphasis only on confirm; Clara's one sentence never claims a draft/file/prep, is short and never a question"
+    },
+    {
+     "suite": "smoke-item-page",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "B1-B4"
+     ],
+     "note": "W16: server renders of the kit timeline for every kind × state through itemPageItems — one source (the event widget for a meeting), ≤1 action widget (the plan's), no MOVE / \"Review …\" button, no \"Not yet\", no draft claim, no button in Clara's words; the confirm widget's \"Mark done\" / \"Keep open\" and its settled state"
+    },
+    {
+     "suite": "smoke-item-page",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "D1-D8"
+     ],
+     "note": "W16: the header frame (no pill/faces/project chip/evidence bar), project linking in Details, every kind's confirm through its own done door, every mounted card declares its artifact kind, the handoff gate and the meeting event ride the rail, the rail's item door renders through the one composition and no MOVE, the table picks from mounted artifacts only, the view door serves no move"
+    },
+    {
+     "suite": "smoke-item-page",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "S1-S5"
+     ],
+     "note": "W16 (the owner's booked-call case): a name-only counterparty finds its booked, accepted event through the attendees' own addresses; the machine reads `scheduled` over a staged invite; the page is the source + the EVENT widget; a lone invite mounts nothing and the who-ask is the input widget"
+    },
+    {
+     "suite": "smoke-item-page",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "S6-S9"
+     ],
+     "note": "W16: the invite lane's whole-horizon booked-deed floor (the machine's one booking read, before spend) + the attendee floor (ask who, never stage an invite to oneself); the view serves the event id and the counterparty flag; the subtitle says scheduled, never Due"
+    }
+   ],
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W16.1",
+   "collides_with": [
+    {
+     "law": "every-item-can-be-closed",
+     "precedence": "the header pair stays on every item page; its emphasis now follows the page's one composition (Done leads only beside the confirm widget) instead of the machine word directly"
+    },
+    {
+     "law": "looks-done-confirm",
+     "precedence": "on the item page the looks_done state renders ONLY as the confirm widget in the thread (Mark done · Keep open); the strip under the header is retired"
+    },
+    {
+     "law": "the-move-yields",
+     "precedence": "on an ITEM page there is no MOVE to yield: this law wins there; the project room keeps its MOVE and that law"
+    },
+    {
+     "law": "one-voice-brief",
+     "precedence": "the composed brief still speaks — on an item page only its first plain sentence, and only when it passes the claim test; the paragraph, move and offers are not rendered there"
+    },
+    {
+     "law": "a-claim-renders",
+     "precedence": "strengthened: the item page makes no preparation claim in words at all — the widget IS the claim, and it renders only when mounted"
+    },
+    {
+     "law": "no-mutation-and-address",
+     "precedence": "a late composition is never appended as a second bubble on an item page (one sentence) and never swapped in — it is the next open's material"
+    },
+    {
+     "law": "the-machine",
+     "precedence": "the widget table READS the machine's single state; it never adds a rung. `gate_open` is the table's own row for a parked run (the judge structurally nones a handoff), never a machine state"
+    }
+   ],
+   "fn": "composeItemPage · actionOf · WIDGET_OF_ARTIFACT · ARTIFACTS_OF_STATE · claraSentenceOf · itemPageItems (components/thread/item-page.ts) · ConfirmCard (components/thread/confirm-card.tsx)"
   },
   {
    "id": "scheduled-is-not-overdue",
@@ -7582,7 +7770,7 @@
    ],
    "tier": 2,
    "domain": "judge-prepare-deck",
-   "statement": "An open item whose deed is a booked future event is `scheduled` (\"scheduled — Wed, Sep 30, 11:00\", the event's own zone), derived AT READ with zero AI by both machine readers from truth that exists: a non-cancelled calendar event the item's counterparty sits in (an attendee who did not decline, or the organizer — by address, by full name, or by the commitment's source-message party) on a MEETING-SHAPED obligation (its own words in the four corpus languages, or the judged verb `schedule`), within 60 days; or a judged revisit date on live work. It ranks below every rung where the user holds real work (a decision, a live ask, a staged Send keep the primary) and above ready/motion/unjudged/committed. A scheduled row never takes a top-five seat before its event's day (held, never deleted — refusal `scheduled`), never reads overdue or due (its clause is the machine's word with its when; its room shows no Due/Overdue), and speaks no receipt. Once the event has ended after the obligation arose (within 14 days), the item LOOKS DONE (\"you met Sep 30\") — Done / Not yet, with Not yet sticky for that event. The word's one home is lib/work/scheduled.ts (client-safe), read by STATE_WORDS.",
+   "statement": "An open item whose deed is a booked future event is `scheduled` (\"scheduled — Wed, Sep 30, 11:00\", the event's own zone), derived AT READ with zero AI by both machine readers from truth that exists: a non-cancelled calendar event the item's counterparty sits in (an attendee who did not decline, or the organizer — by address, by full name, or by the commitment's source-message party) on a MEETING-SHAPED obligation (its own words in the four corpus languages, or the judged verb `schedule`), within 60 days; or a judged revisit date on live work. It ranks below every rung where the user holds real work (a decision, a live ask, a staged Send keep the primary) and above ready/motion/unjudged/committed. A scheduled row never takes a top-five seat before its event's day (held, never deleted — refusal `scheduled`), never reads overdue or due (its clause is the machine's word with its when; its room shows no Due/Overdue), and speaks no receipt. Once the event has ended after the obligation arose (within 14 days), the item LOOKS DONE (\"You met on Sep 30\") — the confirm widget's Mark done / Keep open on the item page (the Home row keeps Done / Not yet), with the refusal sticky for that event. The word's one home is lib/work/scheduled.ts (client-safe), read by STATE_WORDS. W16: a counterparty stored as NAMES only (\"A Person and B Person\") is split into name keys, and a name key finds an attendee with no display name through the attendee's OWN address (first+last, or initial+last in the local part); an upcoming booking MOOTS a staged invite (the booking is the deed — `scheduled`, never \"ready to send\"), and on the item page the booked meeting is the kit's EVENT widget (the served `eventId`).",
    "homes": [
     "lib/work/scheduled.ts",
     "lib/work/machine.ts",
@@ -7620,13 +7808,21 @@
       "SC20-SC21"
      ],
      "note": "W15.2: the brief serves the word with its when and spreads the seat facts after the due facts; the room serves the when and drops Due/Overdue on a scheduled commitment"
+    },
+    {
+     "suite": "smoke-item-page",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "S1-S4"
+     ]
     }
    ],
-   "fn": "bookedEventFor · meetingShaped · scheduledSeatOf · scheduledWordOf (lib/work/scheduled.ts) · deriveState · bookingFactsOf (lib/work/machine.ts) · seatVerdict (lib/home/attention.ts)",
+   "fn": "bookedEventFor · meetingShaped · scheduledSeatOf · scheduledWordOf (lib/work/scheduled.ts) · deriveState · bookingFactsOf (lib/work/machine.ts) · seatVerdict (lib/home/attention.ts) · nameKeysOf · addressNamesPerson (W16)",
    "version_key": null,
    "status": "holding-uncommitted",
    "broken_by": null,
-   "fixed_by": "W15.2",
+   "fixed_by": "W15.2 · W16.1",
    "collides_with": [
     {
      "law": "time-truth",

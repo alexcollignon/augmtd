@@ -69,9 +69,11 @@ console.log('\nA · ONE STAGE — a commitment\'s message is the ONE EmailCard i
     && /node: emailCardNode,/.test(commitSeg)
     // ⟲ RE-POINTED (W15.2): + a SETTLED commitment mounts no card (the machine's word).
     && /\(!isHandoff && !done && !roomSettled\(view\) && \(nudgeArt \|\| draftSummoned\)\)/.test(commitSeg));
-  gate('A3 the stage exists ONLY for a parked gate; the "Source" handle is gone for every other commitment',
-    /const stageOpen = sourceOpen \|\| \(isHandoff && inviteOpen\) \|\| gateStanding;/.test(commitSeg)
-    && /\.\.\.\(isHandoff \? \{ onSummonStage: \(\) => setSourceOpen\(true\), sourceLabel: 'The ask' \} : \{\}\)/.test(commitSeg)
+  // ⟲ RE-POINTED (W16 · THE ITEM PAGE IS A FEW KIT WIDGETS): the parked gate left the stage too — it is
+  // the thread's ONE action widget now — so NO commitment summons a stage or wears a stage handle.
+  gate('A3 no stage is raised for a commitment (a parked gate is the thread\'s one widget); no "Source" / "The ask" handle',
+    /const stageOpen = sourceOpen \|\| \(isHandoff && inviteOpen\);/.test(commitSeg)
+    && !/sourceLabel: 'The ask'/.test(commitSeg)
     && !/sourceLabel: isHandoff \? 'The ask' : 'Source'/.test(commitSeg));
   gate('A4 the verb "Draft an email" SUMMONS the card into the conversation (never a stage)',
     /label: data\?\.counterparty \? `Draft email → [^`]+` : 'Draft an email', onClick: \(\) => \{ setDraftSummoned\(true\); setInviteOpen\(false\); \}/.test(commitSeg));

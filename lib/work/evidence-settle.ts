@@ -118,7 +118,14 @@ export async function settleWorkByEvidence(
     const spend = { cached: verdict.cached, fresh: verdict.fresh };
     // W11.2 "LOOKS DONE — CONFIRM": user-side evidence (the user · a teammate · the working circle)
     // the judge did not close on is recorded for the machine to serve — never a close (lib/evidence/looks-done.ts).
-    if (verdict.verdict !== 'delivered') await noteLooksDone(client, userId, { kind: work.kind, id: work.id, fulfiller: work.fulfiller }, evidence, verdict.verdict);
+    // W16 · LOOKS DONE MUST BE MEANINGFUL: only same-conversation evidence (or a held meeting with the
+    // counterparty for a MEETING-SHAPED obligation — the judge's `schedule` signal, or the work's own
+    // words) may raise the state; other-thread mail with the same counterparty stays with the judge.
+    if (verdict.verdict !== 'delivered') {
+      const { meetingShaped } = await import('@/lib/work/scheduled');
+      await noteLooksDone(client, userId, { kind: work.kind, id: work.id, fulfiller: work.fulfiller }, evidence, verdict.verdict,
+        { meetingShaped: schedulingSignal || meetingShaped(String(work.description ?? '')) });
+    }
     const by = verdict.by ?? null;
     const reason = by ? evidenceReason(by.type, by.role) : 'evidence:email';
     const attribution = attributionOf(by);

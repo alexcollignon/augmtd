@@ -116,7 +116,8 @@ async function main() {
     const commit = detail.slice(detail.indexOf('function CommitmentDetail('), detail.indexOf('function InputStationCard('));
     const follow = detail.slice(detail.indexOf('function FollowUpDetail('), detail.indexOf('function CommitmentSourceSection('));
     gate('IA5 the EMAIL room (every inbox kind) hands the header its pair, through resolveRequestOf(\'email\', …)',
-      /resolve: itemDismissed \? null : \{ onDone: markHandled, onDismiss: dismissItem, emphasis: resolveEmphasisOf\(/.test(email)
+      // ⟲ RE-POINTED (W16): the emphasis is the page's one composition's (Done leads only on the confirm widget).
+      /resolve: itemDismissed \? null : \{ onDone: markHandled, onDismiss: dismissItem, emphasis: doneEmphasisOf\(view, emailConfirm\)/.test(email)
       && /resolveRequestOf\('email', id, 'dismiss'\)/.test(email) && /resolveRequestOf\('email', id, 'done'\)/.test(email));
     gate('IA6 the COMMITMENT room hands the header its pair, through resolveRequestOf(\'commitment\', …) (a handoff gate\'s card owns its close)',
       /resolve: isHandoff \|\| done \? null : \{ onDone: \(\) => act\('done'\), onDismiss: \(\) => act\('dismissed'\)/.test(commit)
@@ -154,8 +155,14 @@ async function main() {
     const dup = roomVerbBlocks.filter((b) => HEADER_OWNED_VERB_KEYS.some((k) => new RegExp(`key: '${k}'`).test(b)));
     gate('IC1 no room\'s ⋯ menu carries a done/dismiss verb (the header group owns both deeds)', roomVerbBlocks.length >= 3 && dup.length === 0,
       `blocks=${roomVerbBlocks.length} dup=${dup.length}`);
-    const strip = detailCode.slice(detailCode.indexOf('function LooksDoneStrip'), detailCode.indexOf('function ResolveGroup'));
-    gate('IC2 the looks-done strip keeps its evidence line and Not yet — never a second Done', /Not yet/.test(strip) && !/>Done</.test(strip));
+    // ⟲ RE-POINTED (W16 · THE ITEM PAGE IS A FEW KIT WIDGETS): the looks-done STRIP is retired. Its state
+    // renders as the kit's confirm widget ("Mark done" · "Keep open" — the owner's words); its Mark done is
+    // the SAME door as the header's Done (one door, never a second close path), and the header Done is
+    // emphasised exactly then (precedence: `the-item-page-is-a-few-widgets` over this gate's old wording).
+    const host = detailCode.slice(detailCode.indexOf('function ConfirmHost'), detailCode.indexOf('function confirmArtifactOf'));
+    gate('IC2 the confirm widget keeps the evidence line and Keep open; its Mark done is the header Done\'s own door (never a second close path)',
+      /<ConfirmCard line=\{confirm\.line\}/.test(host) && /await confirm\.onDone\(\)/.test(host) && !/Not yet/.test(host)
+      && /looksDoneConfirmOf\(view, 'inbox', id, markHandled\)/.test(detailCode) && /onDone: markHandled, onDismiss: dismissItem/.test(detailCode));
     gate('IC3 the less common verbs stay in ⋯ (reply · forward · no longer relevant · draft email)',
       /key: 'moot', label: 'No longer relevant'/.test(detailCode) && /key: 'reply', label: 'Reply'/.test(detailCode) && /key: 'draft', label:/.test(detailCode));
   }
@@ -206,7 +213,7 @@ async function main() {
       (() => { const r = deriveState({ ...base, verdict: { work: 'reply', revisit: { after: '2026-10-02' } } }); return r.state === 'scheduled' && r.scheduledLine === 'Fri, Oct 2'; })());
     const heldIn = { upcoming: null, held: { id: 'ev0', start: '2026-09-23T11:00:00.000Z', end: '2026-09-23T11:30:00.000Z', title: 'Sync', tz: 'UTC', allDay: false } };
     const h = deriveState({ ...base, booked: heldIn });
-    gate('SC14 AFTER the event: looks_done (confirm) with the evidence line — never due again', h.state === 'looks_done' && h.heldEventId === 'ev0' && h.looksDoneLine === 'you met Sep 23');
+    gate('SC14 AFTER the event: looks_done (confirm) with the evidence line — never due again', h.state === 'looks_done' && h.heldEventId === 'ev0' && h.looksDoneLine === 'You met on Sep 23'); // ⟲ W16 · the confirm widget's plain line
     gate('SC15 "Not yet" on that event keeps it down (sticky per event)', deriveState({ ...base, booked: heldIn, refusedBookings: ['ev0'] }).state !== 'looks_done');
   }
   {
@@ -262,7 +269,7 @@ async function main() {
     gate('SC23 …and through the SOURCE MESSAGE\'s sender when the counterparty text carries no address',
       batch.get('commitment:c-src')?.state === 'scheduled', JSON.stringify(batch.get('commitment:c-src')));
     gate('SC24 …a meeting held after the obligation arose → looks_done ("you met …"); a send obligation is untouched',
-      batch.get('commitment:c-held')?.state === 'looks_done' && /^you met /.test(batch.get('commitment:c-held')?.looksDoneLine ?? '')
+      batch.get('commitment:c-held')?.state === 'looks_done' && /^You met on /.test(batch.get('commitment:c-held')?.looksDoneLine ?? '') /* ⟲ W16 wording */
       && batch.get('commitment:c-send')?.state !== 'scheduled', JSON.stringify([batch.get('commitment:c-held'), batch.get('commitment:c-send')]));
     gate('SC25 THE SINGLE READER agrees with the batch (one ladder, one booking read)',
       single.state === 'scheduled' && single.scheduledAt === batch.get('commitment:c-sched')?.scheduledAt);
@@ -302,7 +309,8 @@ async function main() {
       && STATE_WORDS.settled === null);
     const rail = code('components/home/item-rail.tsx');
     gate('ST6 THE RAIL (every card kind, one gate): the machine says settled → no artifact card, no decision',
-      /const itemSettled = \(view as \{ machineState\?: \{ state\?: string \} \| null \}\)\.machineState\?\.state === 'settled';/.test(rail)
+      // ⟲ RE-POINTED (W16): RailView now types `machineState` (the item page reads it) — same predicate, no cast.
+      /const itemSettled = view\.machineState\?\.state === 'settled';/.test(rail)
       && /const artifacts = itemSettled \? \[\] : artifactsIn;/.test(rail) && /const decision = itemSettled \? null : decisionIn;/.test(rail));
     gate('ST7 each room\'s own card list drops on settled too (email · commitment · follow-up), and the room view serves only live artifacts',
       /const artifactList: StreamArtifact\[\] = itemDismissed \|\| roomSettled\(view\) \? \[\] :/.test(detail)
@@ -338,7 +346,11 @@ async function main() {
       /readiness === 'empty' && !redrafting \? \{ bodyNote: EMPTY_DRAFT_NOTE \}/.test(card) && /onEditBody: editBody,/.test(card)
       && EMPTY_DRAFT_NOTE.length > 20 && !/ready/i.test(EMPTY_DRAFT_NOTE));
     gate('EM6 the rooms mount a reply / follow-up card only over WORDS (never a "drafted — ready" label over an empty draft)',
-      /\.\.\.\(!sent && !!draft\?\.trim\(\) && verdict\?\.work !== 'decide'/.test(detail) && /\.\.\.\(!!draft\?\.trim\(\) \? \[\{\s*key: 'nudge', label: 'Follow-up drafted/.test(detail));
+      // ⟲ RE-POINTED (W16): the follow-up's nudge is now the kit EMAIL widget, mounted over the LIVE pooled
+      // nudge — the served list is THE ONE READER's live set, and an empty draft is never live (EM3).
+      /\.\.\.\(!sent && !!draft\?\.trim\(\) && verdict\?\.work !== 'decide'/.test(detail)
+      && /const followNudgeLive = \(view\?\.prepared \?\? \[\]\)\.some\(\(p\) => p\.kind === 'nudge_draft' \|\| p\.kind === 'reply_draft'\);/.test(detail)
+      && /\.\.\.\(followNudgeLive \? \[\{\s*key: 'nudge', label: 'Follow-up drafted/.test(detail));
   }
 
   console.log(`\n${failures.length ? '❌' : '✅'} smoke-item-actions: ${pass} passed, ${failures.length} failed`);

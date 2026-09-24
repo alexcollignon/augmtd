@@ -82,8 +82,10 @@ console.log('\nB · the item door composes ITEM-FIRST under its own key, whateve
     && !/import\('@\/lib\/room\/brief'\)[\s\S]{0,80}ensureRoomBrief,/.test(view.slice(view.indexOf('const looseKey'))));
   gate('B2 the composition rides the door\'s OWN fields unconditionally; the entity is served VOICELESS (name · tracked — the connection line)',
     /const looseBrief = r\?\.text \?\? null;/.test(view)
-    && /const looseMove = r\?\.move \?\? null;/.test(view)
-    && /const looseOffers = r\?\.offers \?\? \[\];/.test(view)
+    // ⟲ RE-POINTED (W16 · the item page renders no MOVE): the door serves no move/offers at all —
+    // its one control is the machine-chosen widget (components/thread/item-page.ts). Stricter, not weaker.
+    && /const looseMove = null;/.test(view)
+    && /const looseOffers: Array<\{ label: string; say: string \}> = \[\];/.test(view)
     && /const looseBriefAt = r\?\.at \?\? null;/.test(view)
     && /\{ \.\.\.room\.entity, brief: null, move: null, offers: \[\], briefAt: null \}/.test(view)
     && !/\{ \.\.\.room\.entity, brief: r\.text/.test(view));

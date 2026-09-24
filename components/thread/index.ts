@@ -13,3 +13,8 @@ export { SourceObjectCard } from './source-object-card';
 export { AvatarStatus, FacePile, WorkRing, NeedsYouBadge, accentFor, ringOverhang, AVATAR_RING_GUTTER } from './avatar-status';
 export type { AvatarStatusProps } from './avatar-status';
 export * from './types';
+// W16 · THE ITEM PAGE IS A FEW KIT WIDGETS — the one composition + the kit's confirm widget.
+export { composeItemPage, actionOf, actionWidgetOf, claraSentenceOf, itemPageItems, ITEM_ACTION_WIDGETS, WIDGET_OF_ARTIFACT, ARTIFACTS_OF_STATE, NOT_ITEM_PAGE_WIDGETS, CONFIRM_WORDS } from './item-page';
+export type { ItemActionWidget, ItemArtifactKind, ItemArtifactsMounted, ItemPageFacts, ItemPagePlan, ItemPageState, ItemSourceWidget } from './item-page';
+export { ConfirmCard } from './confirm-card';
+export type { ConfirmCardProps } from './confirm-card';
