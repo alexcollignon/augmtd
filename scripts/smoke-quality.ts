@@ -94,6 +94,8 @@ import {
 } from '../lib/triage/words';
 import { EXCERPT_MARK } from '../lib/utils/clip-for-prompt';
 import { mergeQueue, queueCount } from '../lib/triage/queue';
+import { initialWaitingShape } from '../lib/triage/view-shape';
+import { DECISION_CARD_H, DECISION_ACTIONS_H } from '../components/triage/decision-frame';
 import type { DoItem } from '../lib/home/agenda';
 
 const root = join(__dirname, '..');
@@ -1093,11 +1095,17 @@ function sq17() {
 
   // THE ENTRY AND THE TOGGLE.
   const lens = src('components/home/held-quiet.tsx');
+  // ⟲ RE-POINTED (W15.3 — ONE DECISION PER SCREEN): the rule moved to lib/triage/view-shape.ts and
+  // got STRICTER — the Home's door ALWAYS opens the deck; the persisted list choice ("View all") is
+  // honoured only when the address names the lens. Full gates: scripts/smoke-decision-card.ts D1.
   ok('the door opens INTO the deck by default, and the list is a persisted choice',
-    /loadLS<WaitingShape>\(VIEW_KEY\) === 'list' \? 'list' : 'deck'/.test(lens)
-    && /saveLS\(VIEW_KEY, s\)/.test(lens) && /View as list/.test(lens));
+    /initialWaitingShape\(\{ fromHome, stored: loadLS<WaitingShape>\(VIEW_KEY\) \}\)/.test(lens)
+    && initialWaitingShape({ fromHome: true, stored: 'list' }) === 'deck'
+    && initialWaitingShape({ fromHome: false, stored: 'list' }) === 'list'
+    && initialWaitingShape({ fromHome: false, stored: null }) === 'deck'
+    && /saveLS\(VIEW_KEY, s\)/.test(lens) && /TRIAGE_VIEW_ALL/.test(lens));
   ok('   …the shape is read in an EFFECT, never a useState initializer (the hydration law)',
-    /useEffect\(\(\) => \{ setShape\(loadShape\(\)\); \}, \[\]\);/.test(lens)
+    /useEffect\(\(\) => \{ setShape\(loadShape\(fromHome\)\); \}, \[\]\);/.test(lens)
     && !/useState<WaitingShape>\(loadShape/.test(lens));
   // RE-POINTED (Sep 21 — CLOSE RETURNS WHERE YOU CAME FROM): the exit now consults the RECORDED
   // ORIGIN first (Home-opened → the Home), and only then ends the session in place. The law this
@@ -1235,10 +1243,15 @@ function sq19() {
   ok('   …and they sit BELOW the card, in the frame\'s own row (card first, then the verbs)',
     deck.indexOf('THE STACK, PEEKING') < deck.indexOf('THE PILL BAR — BELOW THE CARD')
     && deck.indexOf('<TriageCard row={row} />') < deck.indexOf('{primary.map((v) => ('));
-  ok('   …the pill bar does not move when the card does (only the card wears the exit class, and the card area holds a floor)',
+  // ⟲ RE-POINTED (W15.3 — ONE DECISION PER SCREEN): the floor became a FIXED HEIGHT. A floor let a
+  // tall card, or evidence landing late, push the pills down; the card is now one height
+  // (DECISION_CARD_H) that scrolls inside, and the pills sit in a pinned fixed-height slot.
+  ok('   …the pill bar does not move when the card does (only the card wears the exit class, and the card has one fixed height)',
     /exiting \? `opacity-0 \$\{CARD_EXIT\[exiting\]\}` : 'opacity-100'/.test(deck)
-    && /const CARD_MIN_H = 'min-h-\[\d+px\]';/.test(deck)
-    && /<div className=\{`\$\{CARD_MIN_H\} flex flex-col pb-4`\}>/.test(deck));
+    && !/CARD_MIN_H/.test(deck)
+    && /<div className=\{CARD_AREA\}>/.test(deck)
+    && /<DecisionActionsSlot>/.test(deck)
+    && /^h-\[clamp\(/.test(DECISION_CARD_H) && /^h-\[\d+px\]$/.test(DECISION_ACTIONS_H));
   ok('   …and the stack still READS as a stack beneath it (both shoulders survive the move)',
     (deck.match(/rounded-b-2xl border border-t-0/g) ?? []).length === 2
     && /\{under && \(/.test(deck));

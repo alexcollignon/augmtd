@@ -14,11 +14,12 @@
 //     that exists only when there is something to undo. NOTHING verb-shaped renders inside the
 //     card — `TriageCard` below holds no deed, no door and no verb table at all.
 //     ⚠️ THE VERBS SIT BELOW THE CARD (owner, Sep 21 — "CTA buttons should be below?"). The frame
-//     still owns them; only their seat moved. They must not BOUNCE as cards change height, so the
-//     card area carries a stable floor (`CARD_MIN_H`): short cards pad down to it, and the pills
-//     sit at one place for most of a session rather than climbing with every advance. A taller
-//     card still pushes them down — a card that is the thing itself is never clipped to keep a
-//     button still.
+//     still owns them; only their seat moved. They must not BOUNCE as cards change height.
+//     W15.3 · ONE DECISION PER SCREEN (owner walk, Sep 24 — "I don't want the user to scroll for
+//     the buttons"): the Sep-21 floor let a tall card, or evidence landing late, push them down.
+//     Every card is now THE ONE DECISION CARD (components/triage/decision-frame.tsx): one fixed
+//     height that fits the viewport, the evidence scrolling INSIDE it, and the verbs in a pinned
+//     fixed-height slot beneath. Nothing is clipped away — it scrolls within the card.
 // 2 · TRUE FOCUS. The card is ~640px, centred, and the surrounding prose collapses (the lens owns
 //     that half — this file owns the one header line: Close · the band · what is left · view as
 //     list).
@@ -71,7 +72,7 @@ import type { HeldClassId } from '@/lib/home/attention';
 // THE DECK'S PURE WORDS — the receipt, the whens, the verb table, the keyboard map, the tail clip.
 import {
   TRIAGE_KEYS, TRIAGE_VERBS, TRIAGE_EXIT_LABEL, TRIAGE_HINTS, TRIAGE_UNDO_LABEL,
-  TRIAGE_SOURCE_WORD, TRIAGE_THREADED,
+  TRIAGE_SOURCE_WORD, TRIAGE_THREADED, TRIAGE_VIEW_ALL,
   laterOptions, whenWords, triageReceipt, triageEnd, initialOf, verbsOfRank,
   type TriageTally, type TriageVerb, type TriageMessage,
 } from '@/lib/triage/words';
@@ -83,8 +84,15 @@ import { loadThreadTail, loadThreadDoor, peekThreadDoor } from '@/lib/inbox/thre
 import { loadDeckContext, peekDeckContext } from '@/lib/triage/deck-context-door';
 import type { DeckContext } from '@/lib/triage/deck-context';
 import { SourceObjectMount } from '@/components/room/source-object';
-// W11.3 · THE MARKER NEVER RENDERS — every excerpt on this card passes the one UI text floor.
-import { displayText } from '@/lib/utils/clip-for-prompt';
+// W15.1 · THE ONE THREAD COMPONENT — the evidence renders through the kit's one source card.
+import { SourceObjectCard } from '@/components/thread/source-object-card';
+// W15.3 · THE ONE DECISION CARD — one fixed geometry for every kind; the evidence scrolls inside it
+// and the verbs sit in a pinned slot outside it.
+import {
+  DecisionCardFrame, DecisionCardSkeleton, DecisionEvidenceSkeleton, DecisionActionsSlot,
+} from '@/components/triage/decision-frame';
+// W11.3 · THE MARKER NEVER RENDERS — every excerpt on this card renders through the kit's source
+// card (W15.1), whose one render path applies the UI text floor (displayText).
 // THE HONEST COUNTER — a stack still being extended may not state a total (lib/triage/queue.ts).
 import { queueCount, mergeQueue, settleQueue } from '@/lib/triage/queue';
 
@@ -110,11 +118,12 @@ export type TriageRow = {
 
 type Decided = { row: TriageRow; verb: TriageVerb; undoable: boolean };
 
-/** THE CARD AREA'S FLOOR (Sep 21, with the verbs beneath the card). The two big targets must not
- *  climb and drop with every advance, so the card's block pads down to one height: a short card
- *  leaves quiet space beneath it, a tall one grows past it. A floor, never a cap — the card is the
- *  thing itself, and clipping it to keep a button still would be the wrong trade. */
-const CARD_MIN_H = 'min-h-[300px]';
+/** THE CARD AREA (W15.3 — supersedes Sep 21's min-height floor). The floor let a tall card push
+ *  the verbs down, and let evidence arriving late push them down again mid-read (owner walk, Sep 24:
+ *  "I don't want the user to scroll for the buttons"). The card now has ONE fixed height
+ *  (`DECISION_CARD_H`, components/triage/decision-frame.tsx) and scrolls inside, so this block is
+ *  only the stack's own padding for its shoulders — it never grows. */
+const CARD_AREA = 'flex flex-shrink-0 flex-col pb-4';
 
 const CARD_EXIT: Record<TriageVerb, string> = {
   done: 'translate-x-10', dismiss: '-translate-x-10', keep: '-translate-y-8', later: '-translate-x-10', open: '',
@@ -180,42 +189,6 @@ function QuietPill({ v, busy, onClick }: {
 // why this component imports neither the row kit nor the verb table.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 function TriageCard({ row }: { row: TriageRow }) {
-  const [tail, setTail] = useState<TriageMessage[] | null>(() => peekThreadDoor(row.id)?.tail ?? null);
-  const threaded = TRIAGE_THREADED.includes(row.item.source);
-
-  // LAZY, ON THE CARD IN HAND. The cache makes a revisit free; a stale component that resolves
-  // after the reader has moved on writes to nothing (the guard below).
-  useEffect(() => {
-    if (!threaded) { setTail(null); return; }
-    let live = true;
-    void loadTail(row.id).then((t) => { if (live) setTail(t); });
-    return () => { live = false; };
-  }, [row.id, threaded]);
-
-  // A HANDED COMMITMENT HAS NO THREAD OF ITS OWN — its founding context comes through the deck
-  // context door (coalesced across the whole handed set), and when the obligation was born in a
-  // thread that has an inbox item, THE ONE OBJECT CARD mounts it once its door has answered (so the
-  // card never swaps a served line for an empty frame).
-  const founded = row.item.source === 'commitment';
-  const [ctx, setCtx] = useState<DeckContext | null>(() => (founded ? peekDeckContext(row.id) : null));
-  const [objectReady, setObjectReady] = useState<boolean>(() => {
-    const c = founded ? peekDeckContext(row.id) : null;
-    return !!(c?.inboxItemId && peekThreadDoor(c.inboxItemId));
-  });
-  useEffect(() => {
-    if (!founded) { setCtx(null); setObjectReady(false); return; }
-    let live = true;
-    void loadDeckContext(row.id).then((c) => {
-      if (!live) return;
-      setCtx(c);
-      if (c?.inboxItemId) {
-        if (peekThreadDoor(c.inboxItemId)) { setObjectReady(true); return; }
-        void loadThreadDoor(c.inboxItemId).then((d) => { if (live) setObjectReady(!!d && (d.tail.length > 0 || !!d.subject)); });
-      }
-    });
-    return () => { live = false; };
-  }, [row.id, founded]);
-
   const sourceWord = TRIAGE_SOURCE_WORD[row.item.source] ?? null;
   // THE PROJECT REFERENCE — served (tracked-only), already filtered so it never repeats the title.
   const project = (row.item.initiative ?? '').trim() || null;
@@ -228,77 +201,131 @@ function TriageCard({ row }: { row: TriageRow }) {
   const chip = row.preparedWord ?? (row.prepared === 'reply_draft' ? 'draft ready'
     : row.prepared === 'invite' ? 'invite ready' : null);
 
+  // W15.3 · THE ONE DECISION CARD — every kind of row gets the same fixed-height frame: the head is
+  // bounded (its lines clamp), the evidence scrolls INSIDE the card, and the verbs sit outside it.
   return (
-    <div className="flex flex-col rounded-2xl border border-neutral-200/70 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
-      {/* ── TOP · WHO, WHAT KIND, WHEN ────────────────────────────────────────────────────────────
-          An initial-avatar, the counterparty, the row's own kind, and the stated date at the edge
-          with the contextual chip. Every one of them is ABSENT when the row does not have it — a
-          labelled empty space is worse than a shorter card. */}
-      <div className="flex items-center gap-2.5 px-5 pt-4">
-        <span aria-hidden className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-neutral-100 text-[12px] font-medium text-neutral-500">
-          {/* THE AVATAR IS THE WHO'S — never a letter of the title; no who → the neutral glyph. */}
-          {initialOf(row.who)}
-        </span>
-        <div className="flex min-w-0 flex-1 flex-col">
-          {row.who && <span className="truncate text-[13px] font-medium text-neutral-800">{row.who}</span>}
-          <span className="flex items-center gap-1.5 text-[11px] text-neutral-400">
-            {[sourceWord, project, row.dueDate ? whenWords(row.dueDate) : null].filter(Boolean).map((t, i) => (
-              <span key={i} className="flex items-center gap-1.5">
-                {i > 0 && <span aria-hidden>·</span>}
-                <span className={t === project ? 'truncate' : undefined}>{t}</span>
-              </span>
-            ))}
+    <DecisionCardFrame head={
+      <>
+        {/* ── TOP · WHO, WHAT KIND, WHEN ──────────────────────────────────────────────────────────
+            An initial-avatar, the counterparty, the row's own kind, and the stated date at the edge
+            with the contextual chip. Every one of them is ABSENT when the row does not have it — a
+            labelled empty space is worse than a shorter card. */}
+        <div className="flex items-center gap-2.5 px-5 pt-4">
+          <span aria-hidden className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-neutral-100 text-[12px] font-medium text-neutral-500">
+            {/* THE AVATAR IS THE WHO'S — never a letter of the title; no who → the neutral glyph. */}
+            {initialOf(row.who)}
           </span>
-        </div>
-        {chip && (
-          <span className="flex-shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-500">{chip}</span>
-        )}
-      </div>
-
-      <p className="mt-2.5 px-5 text-[15px] font-medium leading-snug text-neutral-900">{row.title}</p>
-      {/* THE WHY-HELD CLAUSE — the ledger's own served sentence, not a second account of it. */}
-      {whyLine && <p className="mt-1 px-5 text-[12px] text-neutral-400">{whyLine}</p>}
-
-      {/* ── MIDDLE · THE THING ITSELF ─────────────────────────────────────────────────────────────
-          For a mail row the thread's tail, author-named, each message's own words clipped by the
-          one clipper. While it is being read the card shows what it already has (the served first
-          words) rather than a hole — and if the read comes back empty, that served excerpt IS the
-          content. There is never dead vertical space and never a spinner where substance exists. */}
-      <div className="mt-3 flex flex-col gap-3 px-5">
-        {threaded && tail && tail.length > 0 ? tail.map((m) => (
-          <div key={m.id} className="flex flex-col gap-0.5">
-            <span className="text-[11px] font-medium text-neutral-400">{m.author}</span>
-            <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-neutral-600">{displayText(m.body)}</p>
-          </div>
-        )) : row.excerpt ? (
-          <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-neutral-500">{displayText(row.excerpt)}</p>
-        ) : founded && ctx ? (
-          // THE FOUNDING CONTEXT (W3.6): the thread itself through THE ONE OBJECT CARD once its door
-          // has answered; until then (or with no inbox item) the newest message as a compact line in
-          // the tail's own grammar; a meeting-born obligation names its meeting. Absent → nothing.
-          ctx.inboxItemId && objectReady ? (
-            <SourceObjectMount itemId={ctx.inboxItemId} />
-          ) : ctx.founding ? (
-            <div className="flex flex-col gap-0.5">
-              <span className="text-[11px] font-medium text-neutral-400">
-                {[ctx.founding.who, ctx.founding.at ? whenWords(ctx.founding.at.slice(0, 10)) : null].filter(Boolean).join(' · ')}
-              </span>
-              <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-neutral-600">{displayText(ctx.founding.line)}</p>
-            </div>
-          ) : ctx.meeting ? (
-            <span className="text-[12px] text-neutral-500">
-              {[`From ${ctx.meeting.title}`, ctx.meeting.date ? whenWords(ctx.meeting.date) : null].filter(Boolean).join(' · ')}
+          <div className="flex min-w-0 flex-1 flex-col">
+            {row.who && <span className="truncate text-[13px] font-medium text-neutral-800">{row.who}</span>}
+            <span className="flex items-center gap-1.5 text-[11px] text-neutral-400">
+              {[sourceWord, project, row.dueDate ? whenWords(row.dueDate) : null].filter(Boolean).map((t, i) => (
+                <span key={i} className="flex items-center gap-1.5">
+                  {i > 0 && <span aria-hidden>·</span>}
+                  <span className={t === project ? 'truncate' : undefined}>{t}</span>
+                </span>
+              ))}
             </span>
-          ) : null
-        ) : null}
-      </div>
+          </div>
+          {chip && (
+            <span className="flex-shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-500">{chip}</span>
+          )}
+        </div>
 
-      {/* ── BOTTOM · NOTHING (Q9v2 · 3, AMENDED Sep 21) ───────────────────────────────────────────
-          The reply slot is PARKED by owner call: no composer, and no read-only draft body. What a
-          reader needs to know at triage speed — that something is already prepared — is the chip
-          at the top of this card, and the words themselves are one ⏎ away in the room, which is
-          also the only surface that can send them. */}
-      <div className="pb-4" />
+        <p className="mt-2.5 line-clamp-2 px-5 text-[15px] font-medium leading-snug text-neutral-900">{row.title}</p>
+        {/* THE WHY-HELD CLAUSE — the ledger's own served sentence, not a second account of it. */}
+        {whyLine && <p className="mt-1 line-clamp-2 px-5 text-[12px] text-neutral-400">{whyLine}</p>}
+        <div className="h-3" aria-hidden />
+      </>
+    }>
+      {/* ── MIDDLE · THE THING ITSELF — THE EVIDENCE MOUNT (W15.3 → W15.1). ONE line, on purpose:
+          the compact thread component (components/thread/**) replaces this mount when it lands. The
+          frame around it already scrolls, so no renderer mounted here can move the verbs. */}
+      <TriageEvidence row={row} />
+    </DecisionCardFrame>
+  );
+}
+
+// ── THE EVIDENCE — the current renderer, behind the frame's fixed height (W15.3). ────────────────
+// For a mail row the thread's tail, author-named, each message's own words clipped by the one
+// clipper. While it is being read the card shows what it already has (the served first words) —
+// and with nothing served yet, the evidence skeleton INSIDE the scroll region, so the card's own
+// height never changes when the read lands. If the read comes back empty, the served excerpt IS the
+// content. Pure content: no verb, no deed, no keyboard.
+function TriageEvidence({ row }: { row: TriageRow }) {
+  const [tail, setTail] = useState<TriageMessage[] | null>(() => peekThreadDoor(row.id)?.tail ?? null);
+  const threaded = TRIAGE_THREADED.includes(row.item.source);
+  const [tailRead, setTailRead] = useState<boolean>(() => !!peekThreadDoor(row.id));
+
+  // LAZY, ON THE CARD IN HAND. The cache makes a revisit free; a stale component that resolves
+  // after the reader has moved on writes to nothing (the guard below).
+  useEffect(() => {
+    if (!threaded) { setTail(null); return; }
+    let live = true;
+    void loadTail(row.id).then((t) => { if (live) { setTail(t); setTailRead(true); } }, () => { if (live) setTailRead(true); });
+    return () => { live = false; };
+  }, [row.id, threaded]);
+
+  // A HANDED COMMITMENT HAS NO THREAD OF ITS OWN — its founding context comes through the deck
+  // context door (coalesced across the whole handed set), and when the obligation was born in a
+  // thread that has an inbox item, THE ONE OBJECT CARD mounts it once its door has answered (so the
+  // card never swaps a served line for an empty frame).
+  const founded = row.item.source === 'commitment';
+  const [ctx, setCtx] = useState<DeckContext | null>(() => (founded ? peekDeckContext(row.id) : null));
+  const [ctxRead, setCtxRead] = useState<boolean>(() => !founded || !!peekDeckContext(row.id));
+  const [objectReady, setObjectReady] = useState<boolean>(() => {
+    const c = founded ? peekDeckContext(row.id) : null;
+    return !!(c?.inboxItemId && peekThreadDoor(c.inboxItemId));
+  });
+  useEffect(() => {
+    if (!founded) { setCtx(null); setObjectReady(false); return; }
+    let live = true;
+    void loadDeckContext(row.id).then((c) => {
+      if (!live) return;
+      setCtx(c); setCtxRead(true);
+      if (c?.inboxItemId) {
+        if (peekThreadDoor(c.inboxItemId)) { setObjectReady(true); return; }
+        void loadThreadDoor(c.inboxItemId).then((d) => { if (live) setObjectReady(!!d && (d.tail.length > 0 || !!d.subject)); });
+      }
+    }, () => { if (live) setCtxRead(true); });
+    return () => { live = false; };
+  }, [row.id, founded]);
+
+  // STILL READING, WITH NOTHING SERVED TO SHOW — the skeleton holds the place inside the frame.
+  const reading = (threaded && !tailRead && !row.excerpt) || (founded && !ctxRead && !row.excerpt);
+  if (reading) return <DecisionEvidenceSkeleton />;
+
+  return (
+    <div className="flex flex-col gap-3 px-5">
+      {/* W15.1 · ONE THREAD COMPONENT — every lane of the evidence is the kit's one source card
+          (own words, older messages folded, fixed max height, the render floor); no deck markup. */}
+      {threaded && tail && tail.length > 0 ? (
+        <SourceObjectCard card={{
+          kind: 'source', id: `triage-${row.id}`, source: 'email',
+          messages: tail.map((m) => ({ id: m.id, author: m.author, body: m.body, when: m.at ? whenWords(m.at.slice(0, 10)) : null })),
+        }} />
+      ) : row.excerpt ? (
+        <SourceObjectCard card={{ kind: 'source', id: `triage-x-${row.id}`, source: 'email', excerpt: row.excerpt }} />
+      ) : founded && ctx ? (
+        // THE FOUNDING CONTEXT (W3.6): the thread itself through THE ONE OBJECT CARD once its door
+        // has answered; until then (or with no inbox item) the newest message as a compact line in
+        // the tail's own grammar; a meeting-born obligation names its meeting. Absent → nothing.
+        ctx.inboxItemId && objectReady ? (
+          <SourceObjectMount itemId={ctx.inboxItemId} />
+        ) : ctx.founding ? (
+          <SourceObjectCard card={{
+            kind: 'source', id: `triage-f-${row.id}`, source: 'email',
+            who: ctx.founding.who, when: ctx.founding.at ? whenWords(ctx.founding.at.slice(0, 10)) : null,
+            excerpt: ctx.founding.line,
+          }} />
+        ) : ctx.meeting ? (
+          <span className="text-[12px] text-neutral-500">
+            {[`From ${ctx.meeting.title}`, ctx.meeting.date ? whenWords(ctx.meeting.date) : null].filter(Boolean).join(' · ')}
+          </span>
+        ) : null
+      ) : null}
+      {/* ── BOTTOM · NOTHING (Q9v2 · 3, AMENDED Sep 21) — the reply slot is PARKED by owner call: no
+          composer, and no read-only draft body. The prepared fact is the chip in the head; the
+          words are one ⏎ away in the room, the only surface that can send them. */}
     </div>
   );
 }
@@ -459,11 +486,11 @@ function TriageStation({ row, today, canUndo, onUndo, exiting, under, onDecided,
           bottom padding keeps them readable as a STACK now that the verbs sit underneath.
           Only THIS block moves on a verdict; the pill bar below it never does.
 
-          THE FLOOR (`CARD_MIN_H`) is what keeps the pills from bouncing: a short card pads down to
-          it, so the two big targets sit in one place across a run of ordinary cards. A genuinely
-          taller card still pushes them down — clipping the thing itself to hold a button still
-          would trade the card's whole purpose for a pixel. ════════════════════════════════════ */}
-      <div className={`${CARD_MIN_H} flex flex-col pb-4`}>
+          THE FIXED HEIGHT (W15.3) is what keeps the pills from bouncing: every card — short, long,
+          or still reading its evidence — is the same box (`DECISION_CARD_H`), and whatever is taller
+          than the box scrolls INSIDE it. The two big targets sit in one place for the whole session.
+          ════════════════════════════════════════════════════════════════════════════════════════ */}
+      <div className={CARD_AREA}>
         <div className={`relative transition-all duration-200 ease-out motion-reduce:transition-none motion-reduce:transform-none ${
           exiting ? `opacity-0 ${CARD_EXIT[exiting]}` : 'opacity-100'
         }`}>
@@ -480,15 +507,16 @@ function TriageStation({ row, today, canUndo, onUndo, exiting, under, onDecided,
       {/* ══ THE PILL BAR — BELOW THE CARD, and still the FRAME'S (Q9v2 · 1 — only the seat moved).
           The two deeds that clear are the big pair; Keep and Open are quiet beneath them; Later is
           a chip; Undo exists only when there is something to undo. Nothing verb-shaped renders
-          inside the card above. ══════════════════════════════════════════════════════════════ */}
-      <div className="flex flex-col gap-2">
+          inside the card above. W15.3: the bar is PINNED — a fixed-height slot outside the card's
+          scroll region; the whens, the posture offer and a refusal open inside it. ══════════════ */}
+      <DecisionActionsSlot>
         <div className="flex items-stretch gap-2">
           {primary.map((v) => (
             <PrimaryPill key={v.verb} v={v} busy={busy}
               onClick={v.verb === 'done' ? doDone : doDismiss} />
           ))}
         </div>
-        <div className="flex flex-wrap items-center gap-1">
+        <div className="flex flex-nowrap items-center gap-1">
           <QuietPill v={verbOf('keep')} busy={busy} onClick={doKeep} />
           <QuietPill v={verbOf('open')} busy={busy} onClick={openRoom} />
           <QuietPill v={verbOf('later')} busy={busyLater} onClick={() => setLaterOpen((o) => !o)} />
@@ -499,13 +527,13 @@ function TriageStation({ row, today, canUndo, onUndo, exiting, under, onDecided,
               <span>{TRIAGE_UNDO_LABEL}</span>
             </button>
           )}
-          <span className="ml-auto pl-2 text-[11px] text-neutral-300">{TRIAGE_HINTS}</span>
+          <span className="hidden truncate sm:inline ml-auto pl-2 text-[11px] text-neutral-300">{TRIAGE_HINTS}</span>
         </div>
 
         {/* L'S WHENS. Two keystroke-cheap days and one real date; every one of them IS a date. */}
         {laterOpen && (
-          <div className="flex flex-wrap items-center gap-2 pt-0.5">
-            <span className="text-[12px] text-neutral-400">Bring it back</span>
+          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto">
+            <span className="flex-shrink-0 text-[12px] text-neutral-400">Bring it back</span>
             {whens.map((w) => (
               <button key={w.id} disabled={busyLater} onClick={() => void park(w.after)}
                 className="rounded-lg border border-neutral-200 px-2 py-1 text-[12px] text-neutral-600 transition-colors hover:border-indigo-300 hover:text-indigo-600 disabled:opacity-50">
@@ -525,16 +553,16 @@ function TriageStation({ row, today, canUndo, onUndo, exiting, under, onDecided,
 
         {/* ← DISMISS'S TAIL — "always?", offered ONLY where the postures module says it is keepable. */}
         {pendingPosture && offer.ok && !postureNote && (
-          <div className="flex flex-wrap items-center gap-3 pt-0.5">
-            <span className="min-w-0 flex-1 text-[12px] text-neutral-500">{offer.offer.ask}</span>
+          <div className="flex flex-nowrap items-center gap-3">
+            <span className="min-w-0 flex-1 truncate text-[12px] text-neutral-500" title={offer.offer.ask}>{offer.offer.ask}</span>
             <button onClick={() => void keepDoingThis()} className="text-[12px] font-medium text-indigo-600">Always</button>
             <button onClick={() => onDecided({ row, verb: 'dismiss', undoable: true })}
               className="text-[12px] text-neutral-400 hover:text-neutral-600">Just this one</button>
           </div>
         )}
-        {postureNote && <p className="text-[12px] text-neutral-500">{postureNote}</p>}
-        {note && <p className="text-[12px] text-rose-600">{note}</p>}
-      </div>
+        {postureNote && <p className="truncate text-[12px] text-neutral-500" title={postureNote}>{postureNote}</p>}
+        {note && <p className="truncate text-[12px] text-rose-600">{note}</p>}
+      </DecisionActionsSlot>
     </div>
   );
 }
@@ -637,51 +665,78 @@ export function TriageDeck({ rows, today, complete = true, onExit, onRefresh, on
     if (next && TRIAGE_THREADED.includes(next.item.source)) void loadTail(next.id);
   }, [next]);
 
+  // ══ THE ONE HEADER LINE (Q9v2 · 2). Close, the band and what is left, the shape toggle — and
+  //    nothing else. The page's title, intro and band prose collapse behind this. W15.3: it stands
+  //    over EVERY state of the deck (a card, the counting skeleton, the end) at one fixed height, so
+  //    the card below it never lands in a different place. ══════════════════════════════════════
+  const header = (
+    <div className="flex h-5 items-center gap-2 px-1">
+      <button onClick={leave}
+        className="inline-flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-indigo-600">
+        <ArrowLeftIcon className="w-3.5 h-3.5" /><span>{TRIAGE_EXIT_LABEL}</span>
+      </button>
+      <span className="text-[11px] text-neutral-300" aria-hidden>·</span>
+      <span className="text-[12px] text-neutral-400">When you&rsquo;re ready</span>
+      <span className="text-[11px] text-neutral-300">{queueCount(left, complete)}</span>
+      {onViewAsList && (
+        <button onClick={onViewAsList}
+          className="ml-auto flex-shrink-0 text-[12px] text-neutral-300 transition-colors hover:text-indigo-600">
+          {TRIAGE_VIEW_ALL}
+        </button>
+      )}
+    </div>
+  );
+
   // ── THE END OF A STACK STILL BEING COUNTED is not the end of the band. A receipt here would
-  //    claim a session finished over rows the account had not handed over yet. ──────────────────
+  //    claim a session finished over rows the account had not handed over yet.
+  //    W15.3: it stands in THE SAME FRAME as a card, at the same height — a skeleton, never a strip.
   if (!row && !complete) {
     return (
-      <div className="rounded-2xl border border-neutral-200/70 bg-white px-5 py-6">
-        <p className="text-[13px] text-neutral-400">Counting the rest of the account…</p>
+      <div className="flex flex-col gap-3">
+        {header}
+        <div className={CARD_AREA}><DecisionCardSkeleton message="Counting the rest of the account…" /></div>
       </div>
     );
   }
 
-  // ── THE END OF THE STACK — the receipt, in place, before the ledger returns. ───────────────────
+  // ── THE END OF THE STACK — the receipt, in place, before the ledger returns (the same frame). ──
   if (!row) {
     return (
-      <div className="flex flex-col items-start gap-3 rounded-2xl border border-neutral-200/70 bg-white px-5 py-6">
-        <p className="text-[14px] text-neutral-700">{triageEnd(tallyNow())}</p>
-        <button onClick={leave} className="text-[12px] font-medium text-indigo-600">Back to the account →</button>
+      <div className="flex flex-col gap-3">
+        {header}
+        <div className={CARD_AREA}>
+          <DecisionCardFrame>
+            <div className="flex flex-col items-start gap-3 px-5 pt-6">
+              <p className="text-[14px] text-neutral-700">{triageEnd(tallyNow())}</p>
+              <button onClick={leave} className="text-[12px] font-medium text-indigo-600">Back to the account →</button>
+            </div>
+          </DecisionCardFrame>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-3">
-      {/* ══ THE ONE HEADER LINE (Q9v2 · 2). Close, the band and what is left, the shape toggle —
-          and nothing else. The page's title, intro and band prose collapse behind this. ═══════ */}
-      <div className="flex items-center gap-2 px-1">
-        <button onClick={leave}
-          className="inline-flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-indigo-600">
-          <ArrowLeftIcon className="w-3.5 h-3.5" /><span>{TRIAGE_EXIT_LABEL}</span>
-        </button>
-        <span className="text-[11px] text-neutral-300" aria-hidden>·</span>
-        <span className="text-[12px] text-neutral-400">When you&rsquo;re ready</span>
-        <span className="text-[11px] text-neutral-300">{queueCount(left, complete)}</span>
-        {onViewAsList && (
-          <button onClick={onViewAsList}
-            className="ml-auto flex-shrink-0 text-[12px] text-neutral-300 transition-colors hover:text-indigo-600">
-            View as list
-          </button>
-        )}
-      </div>
+      {header}
 
-      {/* THE FRAME AND ITS STACK — the station owns the pills (fixed) and the card (which moves). */}
+      {/* THE FRAME AND ITS STACK — the station owns the pills (pinned) and the card (which moves). */}
       <TriageStation key={row.id} row={row} today={today}
         canUndo={undoDepth > 0} onUndo={() => void undoLast()}
         exiting={exiting} under={left > 1}
         onDecided={advance} onCount={count} />
+    </div>
+  );
+}
+
+/** THE DECK BEFORE IT HAS A DAY (W15.3) — the lens's place-holder, in the deck's own geometry: the
+ *  header line's height, the card area, the frame's skeleton. It claims nothing (no count, no verbs,
+ *  no rows), and when the deck arrives the card stands exactly where this one stood. */
+export function TriageDeckSkeleton() {
+  return (
+    <div className="flex flex-col gap-3" aria-busy>
+      <div className="h-5" aria-hidden />
+      <div className={CARD_AREA}><DecisionCardSkeleton /></div>
     </div>
   );
 }

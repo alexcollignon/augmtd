@@ -38,13 +38,15 @@ export type ThreadDoorData = {
   receivedAt: string | null;
   /** The tail, already clipped by THE ONE CLIPPER with its honest excerpt marker. */
   tail: TriageMessage[];
+  /** W15.1 · how many messages the conversation holds (the source card's "+N earlier" count). */
+  count: number;
   files: ThreadDoorFile[];
   /** INVITES ARE EVENTS (W7.4): the meeting this item IS, when it is an invitation — served by the
    *  door (lib/present/invite-object.ts), validated here. Null = ordinary mail. */
   invite: InviteObject | null;
 };
 
-const EMPTY: ThreadDoorData = { subject: null, fromName: null, fromAddress: null, receivedAt: null, tail: [], files: [], invite: null };
+const EMPTY: ThreadDoorData = { subject: null, fromName: null, fromAddress: null, receivedAt: null, tail: [], count: 0, files: [], invite: null };
 
 /** A served invite object survives only whole: a spec must pass the event guard, a card must carry
  *  a title. Anything else reads as "not an invite" — the mail renders, never a broken card. */
@@ -73,6 +75,10 @@ function readPayload(d: DoorPayload | null): ThreadDoorData {
     fromAddress: d.fromAddress ?? null,
     receivedAt: d.receivedAt ?? null,
     tail: threadTail(d.messages as Parameters<typeof threadTail>[0]),
+    // Messages with words (threadTail drops a message with neither body nor snippet).
+    count: Array.isArray(d.messages)
+      ? (d.messages as Array<{ body?: unknown; snippet?: unknown }>).filter((m) => !!(m && (String(m.body ?? '').trim() || String(m.snippet ?? '').trim()))).length
+      : 0,
     files,
     invite: readInviteObject(d.invite),
   };

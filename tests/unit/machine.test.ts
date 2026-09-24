@@ -113,15 +113,26 @@ describe('deriveState — the one ladder', () => {
   });
 
   it('a send-shaped artifact (sendReady !== false) → awaiting_approval, primary send', () => {
-    const result = deriveState(base({ prepared: [artifact({ kind: 'reply_draft' })] }));
+    // ⟲ RE-POINTED (W15.2 · NO EMPTY "READY"): a reply draft is send-shaped only with WORDS — the
+    // fixture's draft carries some (an empty one is asserted below: never send-shaped).
+    const result = deriveState(base({ prepared: [artifact({ kind: 'reply_draft', content: 'Thanks — sending it Friday.' })] }));
     // ⟲ RE-POINTED (W14.1): + leadKind — the send-shaped artifact's kind.
     expect(result).toEqual({ state: 'awaiting_approval', verdictWork: 'reply', primary: 'send', leadKind: 'reply_draft' });
   });
 
   it('each SEND_KINDS member is send-shaped', () => {
     for (const kind of ['reply_draft', 'nudge_draft', 'invite', 'forward'] as const) {
-      const result = deriveState(base({ prepared: [artifact({ kind })] }));
+      // ⟲ RE-POINTED (W15.2): the text kinds carry words (an empty draft is not prepared work).
+      const result = deriveState(base({ prepared: [artifact({ kind, content: 'Drafted words.' })] }));
       expect(result.state, `kind=${kind}`).toBe('awaiting_approval');
+    }
+  });
+
+  it('W15.2 · an EMPTY reply / nudge draft is never send-shaped (no "ready to send" over no words)', () => {
+    for (const kind of ['reply_draft', 'nudge_draft'] as const) {
+      for (const content of ['', '   ', '<p><br></p>']) {
+        expect(deriveState(base({ prepared: [artifact({ kind, content })] })).state, `kind=${kind} content=${JSON.stringify(content)}`).not.toBe('awaiting_approval');
+      }
     }
   });
 

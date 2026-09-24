@@ -23,6 +23,11 @@ import { isLiveArtifact, type PreparedArtifact, type PreparedState } from '@/lib
 import { askIsMoot, isEngineAskKey, verdictRequireLabels } from '@/lib/room/ask-mootness';
 import { fetchAllRows } from '@/lib/utils/fetch-all';
 import { LOOKS_DONE_WORD as LOOKS_DONE_WORD_LITERAL } from '@/lib/evidence/looks-done-word'; // W11.2
+import { looksDoneLine as looksDoneLineOf } from '@/lib/evidence/looks-done';
+import {
+  SCHEDULED_WORD, addressesIn, bookedEventFor, meetingShaped, nameKeyOf, scheduledWhenOf, SCHEDULED_HORIZON_DAYS, HELD_WINDOW_DAYS,
+  type BookedEvent, type BookingFacts, type CalendarRowLike,
+} from '@/lib/work/scheduled'; // W15.2
 
 export type WorkLifecycle =
   | 'unjudged'          // spotted, no verdict — may deck, claims nothing
@@ -33,6 +38,7 @@ export type WorkLifecycle =
   | 'awaiting_approval' // a send-shaped artifact is staged — Send is the primary (the commit door)
   | 'committed'         // sent/booked, awaiting settle
   | 'parked'            // deliberately set aside with a date (revisit)
+  | 'scheduled'         // W15.2 — the deed is a booked future event (or a judged revisit date): not due, not seated until its day
   | 'looks_done'        // W11.2 — user-side evidence the judge did not close on: confirm Done / Not yet
   | 'settled';          // closed — renders nowhere active
 
@@ -57,6 +63,14 @@ export type WorkMachineState = {
    *  `ladderReceiptKind` derives the same from the served state word), never by `leadKindOf`'s own
    *  ranking — which put a live decision brief above a document the ladder reads as "ready to review". */
   leadKind?: string | null;
+  /** W15.2 · on `scheduled`: WHEN (ISO — the booked event's start, or the revisit date) and the
+   *  human when ("Wed, Sep 30, 11:00", the event's own zone). The served word is
+   *  `scheduledWordOf(scheduledLine)` (lib/work/scheduled.ts). */
+  scheduledAt?: string;
+  scheduledLine?: string | null;
+  /** W15.2 · on a `looks_done` derived from a HELD booked meeting: that event's id (the "Not yet"
+   *  refusal keys on it — lib/evidence/looks-done.ts refuseLooksDone). */
+  heldEventId?: string;
 };
 
 // ── THE MOOT ASK BY CODE (stabilization W3.5 (d); lib/room/ask-mootness is the ONE predicate) ──
@@ -98,6 +112,10 @@ export const STATE_WORDS: Record<WorkLifecycle, string | null> = {
   // judge did not close on it. The row offers Done (the normal, undoable resolution) / Not yet (a
   // sticky refusal for that evidence); attention ranks it below real work.
   looks_done: LOOKS_DONE_WORD_LITERAL,
+  // W15.2 (owner walk, Sep 24 — "Due Thu · You owe…" on a call already booked for next Wednesday):
+  // the deed IS a booked future event, so nothing is due and no seat is taken before its day. The
+  // served word carries its when — `scheduledWordOf` (lib/work/scheduled.ts, the client-safe home).
+  scheduled: SCHEDULED_WORD,
   settled: null,
 };
 
@@ -167,19 +185,49 @@ export type DeriveInputs = {
   sentStamp: boolean;
   /** W11.2 — a live (un-refused) looks-done record stands on the item (lib/evidence/looks-done.ts). */
   looksDone?: boolean;
+  /** W15.2 — the item's booked event(s) (lib/work/scheduled.ts bookedEventFor): the soonest upcoming
+   *  one and the most recent held one. Absent = no booking read (the ladder is unchanged). */
+  booked?: { upcoming: BookedEvent | null; held: BookedEvent | null } | null;
+  /** W15.2 — the booked events the user answered "Not yet" for (the looks-done record's
+   *  `refusedBookings`): a held booking in this list never rises again for that event. */
+  refusedBookings?: readonly string[] | null;
+  /** The clock (tests pin it); defaults to now. */
+  nowISO?: string;
 };
+
+
 
 /** THE ONE LADDER — pure, both readers call it. Every clause carries its found-live rationale. */
 export function deriveState(input: DeriveInputs): WorkMachineState {
   const none: WorkMachineState = { state: 'settled', verdictWork: null, primary: 'none' };
   if (!input.open) return none;
   const v = input.verdict;
+  const nowISO = input.nowISO ?? new Date().toISOString();
   // W11.2 LOOKS DONE outranks the ladder: the evidence says the work may already be finished, so
   // asking, preparing or offering a Send would be work on a debt that may not exist. A judged-none
   // item is settled whatever the record says.
   if (input.looksDone && v?.work !== 'none') return { state: 'looks_done', verdictWork: v?.work ?? null, primary: 'none' };
-  if (!v?.work) return { state: 'unjudged', verdictWork: null, primary: 'none' };
-  if (v.work === 'none') return v.revisit?.after && v.revisit.after > new Date().toISOString().slice(0, 10)
+  // W15.2 · THE BOOKED MEETING WAS HELD — the event the work was scheduled for has passed (after the
+  // obligation arose): the work LOOKS done (confirm Done / Not yet), never "due" again. A "Not yet"
+  // for exactly this event (its sig) keeps it down.
+  const held = v?.work !== 'none' ? input.booked?.held ?? null : null;
+  if (held && !input.booked?.upcoming && !(input.refusedBookings ?? []).includes(held.id)) {
+    return {
+      state: 'looks_done', verdictWork: v?.work ?? null, primary: 'none', heldEventId: held.id,
+      looksDoneLine: looksDoneLineOf({ type: 'calendar', id: held.id, at: held.start, by: 'user', name: null, title: held.title, deed: 'meeting_held' }),
+    };
+  }
+  // W15.2 · SCHEDULED — the deed is a booked future event, or live work the judge said to revisit
+  // after a date. Derived here once; each rung below that the booking outranks returns it.
+  const upcoming = v?.work !== 'none' ? input.booked?.upcoming ?? null : null;
+  const revisitAfter = v?.work && v.work !== 'none' && v.revisit?.after && v.revisit.after > nowISO.slice(0, 10) ? v.revisit.after : null;
+  const scheduled: WorkMachineState | null = upcoming
+    ? { state: 'scheduled', verdictWork: v?.work ?? null, primary: 'none', leadKind: null, scheduledAt: upcoming.start, scheduledLine: scheduledWhenOf(upcoming.start, upcoming.tz, upcoming.allDay) }
+    : revisitAfter
+      ? { state: 'scheduled', verdictWork: v?.work ?? null, primary: 'none', leadKind: null, scheduledAt: revisitAfter, scheduledLine: scheduledWhenOf(revisitAfter, null, true) }
+      : null;
+  if (!v?.work) return scheduled ?? { state: 'unjudged', verdictWork: null, primary: 'none' };
+  if (v.work === 'none') return v.revisit?.after && v.revisit.after > nowISO.slice(0, 10)
     ? { state: 'parked', verdictWork: 'none', primary: 'none' }
     : { state: 'settled', verdictWork: 'none', primary: 'none' };
 
@@ -204,7 +252,8 @@ export function deriveState(input: DeriveInputs): WorkMachineState {
   // a real account read "preparing" for 17 days while the door showed a live decision).
   const decisionMaterial = !!decisionBrief || (Array.isArray(v.options) && v.options.length >= 2);
 
-  if (input.sentStamp) return { state: 'committed', verdictWork: v.work, primary: 'none', leadKind: null };
+  // W15.2: a send that BOOKED the meeting is scheduled, not merely "sent — awaiting them".
+  if (input.sentStamp) return scheduled ?? { state: 'committed', verdictWork: v.work, primary: 'none', leadKind: null };
 
   // ── The ladder (most-specific first; the spec's order). W14.1: every rung that rests on an artifact
   // names its kind (`leadKind`) — the row's receipt is worded by the rung, never by a second ranking. ──
@@ -214,6 +263,11 @@ export function deriveState(input: DeriveInputs): WorkMachineState {
   // real account sat demoted behind a Send button). The draft stays available on the door.
   if (input.liveAsk) return { state: 'awaiting_input', verdictWork: v.work, primary: 'supply', leadKind: null };
   if (sendShaped) return { state: 'awaiting_approval', verdictWork: v.work, primary: 'send', leadKind: sendShaped.kind };
+  // W15.2 · SCHEDULED sits BELOW every rung where the user holds real work (a decision, an ask, a
+  // staged Send — the prepared primary stays the primary) and ABOVE everything else: a booked
+  // meeting makes a timeless invite moot, a document waits for its day, and motion/unjudged/committed
+  // are less true than the booking.
+  if (scheduled) return scheduled;
   // A staged-but-unfireable send (timeless invite, recipientless forward) needs the user's input
   // even without a checklist turn — the artifact card says what's missing.
   if (sendBlocked) return { state: 'awaiting_input', verdictWork: v.work, primary: 'supply', leadKind: sendBlocked.kind };
@@ -228,6 +282,73 @@ export function deriveState(input: DeriveInputs): WorkMachineState {
     return { state: 'unjudged', verdictWork: v.work, primary: 'none' };
   }
   return { state: 'preparing', verdictWork: v.work, primary: 'none' };
+}
+
+// ── W15.2 · THE BOOKING READ (zero AI) — the facts come from the row the reader already holds; the
+// events from ONE paged calendar read over the window a booking can matter in. Both fail OPEN: an
+// unreadable calendar is no booking, and the ladder is exactly what it was. ────────────────────────
+type BookingRow = { source_data?: unknown; work_title?: unknown; created_at?: unknown; counterparty?: unknown; description?: unknown; source?: unknown; source_id?: unknown };
+
+/** The booking facts of one item — null when no booking could be THIS work's deed (no counterparty
+ *  key, or an obligation that is not a meeting) so the reader never pays the calendar read. Pure. */
+export function bookingFactsOf(
+  kind: 'inbox' | 'commitment', row: BookingRow | null | undefined, verdict: Verdict, sourceParty: string[] = [],
+): BookingFacts | null {
+  if (!row) return null;
+  let facts: BookingFacts;
+  if (kind === 'inbox') {
+    const sd = (row.source_data ?? {}) as { from_address?: unknown; from?: unknown; from_name?: unknown; subject?: unknown; received_at?: unknown; understanding?: { ask?: unknown } | null };
+    facts = {
+      addresses: addressesIn([sd.from_address, sd.from].map((x) => String(x ?? ''))),
+      names: [nameKeyOf(sd.from_name), nameKeyOf(sd.from)].filter((n): n is string => !!n),
+      text: [sd.subject, sd.understanding?.ask, row.work_title].map((x) => String(x ?? '')).join(' · '),
+      verdictWork: verdict?.work ?? null,
+      afterISO: String(row.created_at ?? sd.received_at ?? '') || null,
+    };
+  } else {
+    if (['handoff', 'workflow'].includes(String(row.source ?? ''))) return null;
+    facts = {
+      addresses: [...new Set([...addressesIn(String(row.counterparty ?? '')), ...sourceParty])],
+      names: [nameKeyOf(row.counterparty)].filter((n): n is string => !!n),
+      text: String(row.description ?? ''),
+      verdictWork: verdict?.work ?? null,
+      afterISO: String(row.created_at ?? '') || null,
+    };
+  }
+  if (!facts.addresses.length && !facts.names.length) return null;
+  if (facts.verdictWork !== 'schedule' && !meetingShaped(facts.text)) return null;
+  return facts;
+}
+
+const BOOKING_CAL_COLS = 'id, start_time, end_time, title, attendees, organizer, status, timezone, is_all_day';
+/** The calendar window a booking can matter in — paged whole (NO SILENT CAPS), ordered. */
+async function bookingEventsFor(client: SupabaseClient, userId: string, nowISO: string): Promise<CalendarRowLike[]> {
+  try {
+    const now = Date.parse(nowISO);
+    const lo = new Date(now - (HELD_WINDOW_DAYS + 1) * 86_400_000).toISOString();
+    const hi = new Date(now + SCHEDULED_HORIZON_DAYS * 86_400_000).toISOString();
+    return await fetchAllRows<CalendarRowLike>((from, to) => client.from('calendar_events').select(BOOKING_CAL_COLS)
+      .eq('user_id', userId).gte('start_time', lo).lte('start_time', hi)
+      .order('start_time', { ascending: true }).order('id', { ascending: true }).range(from, to) as unknown as PromiseLike<{ data: CalendarRowLike[] | null; error: unknown }>);
+  } catch { return []; }
+}
+
+/** A commitment's counterparty as its SOURCE MESSAGE names it (commitments.source_id → the emails
+ *  row): the sender of an inbound, the recipients of the user's own message. One id-keyed read. */
+async function sourcePartiesFor(client: SupabaseClient, userId: string, rows: BookingRow[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  const ids = [...new Set(rows.filter((r) => String(r.source ?? '') === 'email' && /^[0-9a-f-]{36}$/i.test(String(r.source_id ?? ''))).map((r) => String(r.source_id)))];
+  if (!ids.length) return out;
+  try {
+    for (let i = 0; i < ids.length; i += 150) {
+      const { data, error } = await client.from('emails').select('id, from_address, to_addresses, cc_addresses, is_from_user').eq('user_id', userId).in('id', ids.slice(i, i + 150));
+      if (error) continue;
+      for (const e of (data ?? []) as Array<{ id: string; from_address?: string | null; to_addresses?: string[] | null; cc_addresses?: string[] | null; is_from_user?: boolean | null }>) {
+        out.set(String(e.id), e.is_from_user ? addressesIn([...(e.to_addresses ?? []), ...(e.cc_addresses ?? [])]) : addressesIn(String(e.from_address ?? '')));
+      }
+    }
+  } catch { /* fail open — the counterparty text still keys */ }
+  return out;
 }
 
 /** Derive the lifecycle for ONE item. One judgment read + the one prepared reader + one ask read —
@@ -251,11 +372,13 @@ export async function workStateOf(
     let sentStamp = false;
     let itemTitle: string | null = null; // the moot-ask floor's title half (W3.5 (d))
     let askKind: 'inbox' | 'commitment' = item.kind;
+    let bookingRow: BookingRow | null = null; // W15.2 — the row the booking facts read
     if (item.kind === 'inbox') {
       const it = held?.row !== undefined
         ? held.row as { status?: unknown; source_data?: unknown; source?: unknown } | null
-        : (await client.from('inbox_items').select('status, source_data, source').eq('id', item.id).eq('user_id', userId).maybeSingle()).data;
+        : (await client.from('inbox_items').select('status, source_data, source, created_at').eq('id', item.id).eq('user_id', userId).maybeSingle()).data;
       open = !!it && it.status === 'pending';
+      bookingRow = (it as BookingRow | null) ?? null;
       const sd = (it?.source_data ?? {}) as { draft?: { sent_at?: string }; prepared_invite?: { sent_at?: string }; prepared_forward?: { sent_at?: string }; subject?: string };
       sentStamp = !!(sd.draft?.sent_at || sd.prepared_invite?.sent_at || sd.prepared_forward?.sent_at);
       // The inbound's OWN subject — never the judge's work_title, which phrases the user's obligation
@@ -268,9 +391,10 @@ export async function workStateOf(
     } else {
       const c = held?.row !== undefined
         ? held.row as { status?: unknown; description?: unknown } | null
-        : (await client.from('commitments').select('status, description').eq('id', item.id).eq('user_id', userId).maybeSingle()).data;
+        : (await client.from('commitments').select('status, description, counterparty, created_at, source, source_id').eq('id', item.id).eq('user_id', userId).maybeSingle()).data;
       open = !!c && ['pending', 'active', 'open'].includes(String(c.status));
       itemTitle = (c?.description as string | null) || null;
+      bookingRow = (c as BookingRow | null) ?? null;
     }
     if (!open) return none;
 
@@ -288,6 +412,21 @@ export async function workStateOf(
     const ldRec = (ld?.tasks ?? null) as import('@/lib/evidence/looks-done').LooksDoneRecord | null;
     const looksDone = looksDoneLive(ldRec);
     const verdict = ((j?.tasks ?? null) as { verdict?: Verdict } | null)?.verdict ?? null;
+
+    // ── W15.2 · THE BOOKING — started now, beside the prepared read; only a meeting-shaped
+    // obligation with a counterparty key pays the calendar read (bookingFactsOf decides). ──
+    const nowISO = new Date().toISOString();
+    const bookingP = (async () => {
+      if (verdict?.work === 'none' || !bookingRow) return null;
+      let facts = bookingFactsOf(item.kind, bookingRow, verdict);
+      if (item.kind === 'commitment' && String(bookingRow.source ?? '') === 'email'
+        && (verdict?.work === 'schedule' || meetingShaped(String(bookingRow.description ?? '')))) {
+        const parties = await sourcePartiesFor(client, userId, [bookingRow]);
+        facts = bookingFactsOf(item.kind, bookingRow, verdict, parties.get(String(bookingRow.source_id)) ?? []);
+      }
+      if (!facts) return null;
+      return bookedEventFor(facts, await bookingEventsFor(client, userId, nowISO), nowISO);
+    })().catch(() => null);
 
     // ── Prepared truth via THE ONE READER (never a parallel derivation). W2.1: the reader also
     // carries the commitment's sent stamp (a pooled invite/nudge the execute door marked spent),
@@ -310,8 +449,9 @@ export async function workStateOf(
       ({ live: liveAsk, mootKeys: mootAskKeys } = liveAsksOf((asks ?? []) as AskRow[], { itemTitle, itemKind: askKind, verdictRequires: requiresOf(verdict) }));
     }
 
+    const booked = await bookingP;
     return {
-      ...deriveState({ open, verdict, judgedAt: (j?.updated_at as string) ?? null, prepared, liveAsk, sentStamp, looksDone }),
+      ...deriveState({ open, verdict, judgedAt: (j?.updated_at as string) ?? null, prepared, liveAsk, sentStamp, looksDone, booked, refusedBookings: ldRec?.refusedBookings ?? null, nowISO }),
       ...(looksDone && ldRec?.evidence ? { looksDoneLine: looksDoneLine(ldRec.evidence) } : {}),
       ...(mootAskKeys.length ? { mootAskKeys } : {}),
       liveAsk,
@@ -341,10 +481,10 @@ export async function workStatesFor(
     const [jRes, inboxRes, commitRes, askRes, ldRows] = await Promise.all([
       readPlans(client, userId, 'judgment', { keys: items.map(keyOf) }).then(asRawResult),
       inboxNeedingRows.length
-        ? client.from('inbox_items').select('id, status, source_data, last_activity_at, source').eq('user_id', userId).in('id', inboxNeedingRows)
+        ? client.from('inbox_items').select('id, status, source_data, last_activity_at, source, created_at').eq('user_id', userId).in('id', inboxNeedingRows)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
       commitNeedingRows.length
-        ? client.from('commitments').select('id, status, description').eq('user_id', userId).in('id', commitNeedingRows)
+        ? client.from('commitments').select('id, status, description, counterparty, created_at, source, source_id').eq('user_id', userId).in('id', commitNeedingRows)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
       // NO SILENT CAPS (W11.1): this read was `.limit(200)`, unordered — past 200 live checklists an
       // item's ask could fall outside the slice, and the deck read "ready to send" where the room
@@ -375,10 +515,39 @@ export async function workStatesFor(
     // ONE READER PER OBJECT (W2.1): the batched reader owns the pool read, the source_data read,
     // the kind mapping, the exact ground (W14.1) AND the sent stamp — this loop only consumes.
     const { preparedStatesFor } = await import('@/lib/prepare/read');
-    const prepStates = await preparedStatesFor(client, userId, items.map((i) => {
-      const row = i.row ?? rows.get(keyOf(i));
-      return { kind: i.kind, id: i.id, ...(row ? { row: { source_data: row.source_data, last_activity_at: row.last_activity_at ?? null } } : {}) };
-    }));
+    // W15.2 · THE BOOKINGS — beside the prepared read: facts from the rows in hand, the commitments'
+    // source-message parties in one id-keyed read, then ONE paged calendar read for the whole deck —
+    // only when some item is a meeting-shaped obligation with a counterparty key.
+    const nowISO = new Date().toISOString();
+    const bookingsP = (async () => {
+      const byKey = new Map<string, { upcoming: BookedEvent | null; held: BookedEvent | null }>();
+      const rowOf = (i: typeof items[number]) => (i.row ?? rows.get(keyOf(i))) as BookingRow | undefined;
+      const shapedCommits = items.filter((i) => {
+        const r = rowOf(i); const v = judgments.get(keyOf(i))?.verdict ?? null;
+        return i.kind === 'commitment' && r && String(r.source ?? '') === 'email' && v?.work !== 'none'
+          && (v?.work === 'schedule' || meetingShaped(String(r.description ?? '')));
+      });
+      const parties = shapedCommits.length ? await sourcePartiesFor(client, userId, shapedCommits.map((i) => rowOf(i)!)) : new Map<string, string[]>();
+      const facts = new Map<string, BookingFacts>();
+      for (const i of items) {
+        const v = judgments.get(keyOf(i))?.verdict ?? null;
+        if (v?.work === 'none') continue;
+        const r = rowOf(i);
+        const f = bookingFactsOf(i.kind, r, v, i.kind === 'commitment' ? parties.get(String(r?.source_id ?? '')) ?? [] : []);
+        if (f) facts.set(keyOf(i), f);
+      }
+      if (!facts.size) return byKey;
+      const events = await bookingEventsFor(client, userId, nowISO);
+      for (const [k, f] of facts) byKey.set(k, bookedEventFor(f, events, nowISO));
+      return byKey;
+    })().catch(() => new Map<string, { upcoming: BookedEvent | null; held: BookedEvent | null }>());
+    const [prepStates, bookings] = await Promise.all([
+      preparedStatesFor(client, userId, items.map((i) => {
+        const row = i.row ?? rows.get(keyOf(i));
+        return { kind: i.kind, id: i.id, ...(row ? { row: { source_data: row.source_data, last_activity_at: row.last_activity_at ?? null } } : {}) };
+      })),
+      bookingsP,
+    ]);
     for (const item of items) {
       const key = keyOf(item);
       const row = (item.row ?? rows.get(key)) as { status?: string | null; source_data?: unknown; last_activity_at?: string | null; description?: string | null; source?: string | null } | undefined;
@@ -401,6 +570,7 @@ export async function workStatesFor(
           open, verdict: j?.verdict ?? null, judgedAt: j?.at ?? null,
           prepared: st?.all ?? [], liveAsk: asks.live, sentStamp: st?.sentStamp ?? false,
           looksDone: looksDoneLive(looksDoneByKey.get(key)),
+          booked: bookings.get(key) ?? null, refusedBookings: looksDoneByKey.get(key)?.refusedBookings ?? null, nowISO,
         }),
         ...(looksDoneLive(looksDoneByKey.get(key)) && looksDoneByKey.get(key)?.evidence ? { looksDoneLine: looksDoneLine(looksDoneByKey.get(key)!.evidence) } : {}),
         ...(asks.mootKeys.length ? { mootAskKeys: asks.mootKeys } : {}),

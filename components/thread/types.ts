@@ -314,15 +314,26 @@ export interface SourceCard extends CardBase {
   /** A rendered date label, never a raw timestamp (THE CLOCK stays at the host). */
   when?: string | null;
   title?: string | null;
-  /** The tail: each message's OWN words, already clipped. Oldest→newest, as the door served them. */
-  messages?: Array<{ id: string; author: string; body: string }>;
+  /** The tail: each message's OWN words, already clipped. Oldest→newest, as the door served them.
+   *  W15.1: the NEWEST prints its own words (the kit's `ownWords` floor strips any history,
+   *  signature or blank run still in it); every older one folds to a one-line row
+   *  (author · `when` · first line). `when` is a rendered label, composed by the host. */
+  messages?: Array<{ id: string; author: string; body: string; when?: string | null }>;
+  /** W15.1 · "+N earlier": how many messages of the conversation are NOT in `messages`. A count the
+   *  host read from its door, never a guess; it opens the thread through `onOpen` (no door → text). */
+  earlierCount?: number;
+  /** W15.1 · THE QUOTE SLOT — one short highlighted line a host may pass ("You wrote: '…'"),
+   *  rendered ABOVE the message. Composed by the host; absent → no line. */
+  quote?: string | null;
   /** The single excerpt lane (a meeting's summary, a served first-words line). */
   excerpt?: string | null;
   /** What came with it, in the EmailCard's own `contextFiles` shape — ONE CHIP GRAMMAR, ONE VIEWER
    *  (T25.9c): the kit mounts the shared AttachmentChip and the HOST raises the lightbox. Without
    *  an `onOpen` a chip is a fact rather than a door (no lying doors). */
   files?: Array<{ name: string; size?: number | null; onOpen?: () => void }>;
-  /** The one door — "Thread →" · "Open →". A door with no handler does not render. */
+  /** The one door. W15.1 · ONE LABEL: an EMAIL source's door always reads OPEN_THREAD_LABEL
+   *  ("Open thread") whatever is passed; a meeting / document source may name its own
+   *  ("Open meeting →" · "Review →"). A door with no handler does not render. */
   openLabel?: string;
   onOpen?: () => void;
 }
@@ -402,7 +413,7 @@ export interface EmailCardVariant {
  * the recipient editor prominent and NO Send — a card that cannot mail never wears a Send button
  * (the invite's `needs_time` law, one kind over).
  *
- * The card never inlines the email THREAD: the raw thread lives behind the `Thread →` door, which
+ * The card never inlines the email THREAD: the raw thread lives behind the "Open thread" door, which
  * points at the room that already renders it. A door with no handler does not render.
  */
 export interface EmailCard extends CardBase {
@@ -416,8 +427,8 @@ export interface EmailCard extends CardBase {
    *  only do so through a lane that writes nothing (A PREVIEW IS NOT A DEED). Optional — a card
    *  whose host passes none simply never warms. */
   onWarmVariant?: (id: string) => void;
-  /** "Thread →" — the right edge of the tab row. */
-  threadLabel?: string;
+  /** The door to the message being answered — the right edge of the tab row. W15.1 · ONE LABEL:
+   *  it always reads OPEN_THREAD_LABEL ("Open thread"); a host passes the handler, never words. */
   onOpenThread?: () => void;
   /**
    * THE FROM ROW (Sep 21 — the standalone lane). A reply to a message in one of the user's own

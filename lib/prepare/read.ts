@@ -99,7 +99,27 @@ export type PreparedArtifact = {
    *  superseded (it stays live — the user's words are never hidden or replaced); it is MARKED, so
    *  the card can say "the thread moved since you edited this" and offer a fresh version. */
   staleUnderEdit?: boolean;
+  /** W15.2 · SETTLED ITEMS DROP THEIR ACTION CARDS: the item this artifact belongs to is CLOSED
+   *  (resolved, dismissed, done). Never live — no card, chip or Send offers work on settled work; the
+   *  history (the thread, the narration, the Activity record) stays readable. */
+  settled?: boolean;
 };
+
+/** W15.2 · NO EMPTY "READY": a text artifact (a reply / nudge draft) with no visible words is not
+ *  prepared work — never live, never "ready to send" (lib/prepare/card-readiness.ts holds the card's
+ *  half of the same rule). Pure. */
+export function emptyTextArtifact(a: Pick<PreparedArtifact, 'kind' | 'content'>): boolean {
+  if (a.kind !== 'reply_draft' && a.kind !== 'nudge_draft') return false;
+  return !String(a.content ?? '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/[\s\u200B\u00A0]+/g, '').length;
+}
+
+/** W15.2 · the closed statuses, per item table (an explicit list — an unknown status stays open). */
+export const CLOSED_INBOX_STATUSES: readonly string[] = ['completed', 'dismissed', 'done', 'archived', 'resolved', 'deleted'];
+export const CLOSED_COMMITMENT_STATUSES: readonly string[] = ['done', 'dismissed', 'completed', 'cancelled', 'resolved', 'fulfilled', 'archived'];
+export function itemStatusClosed(kind: 'inbox' | 'commitment', status: unknown): boolean {
+  const st = String(status ?? '').toLowerCase();
+  return !!st && (kind === 'inbox' ? CLOSED_INBOX_STATUSES : CLOSED_COMMITMENT_STATUSES).includes(st);
+}
 
 /** THE GROUND MOVED under an artifact — the ONE place the two laws meet: machine words are
  *  superseded (`stale`, not live); the user's words are marked (`staleUnderEdit`, still live). */
@@ -319,7 +339,8 @@ export function inviteExpired(a: Pick<PreparedArtifact, 'kind' | 'invite'>, now:
  *  ground move, not past its own time, not outside the item's stated window, not claiming a deed
  *  the facts deny (W5a). (Sent artifacts never enter the list at all.) */
 export function isLiveArtifact(a: PreparedArtifact): boolean {
-  return !a.stale && !a.expired && !a.outsideWindow && !a.falseClaim && !a.misaddressed;
+  return !a.stale && !a.expired && !a.outsideWindow && !a.falseClaim && !a.misaddressed
+    && !a.settled && !emptyTextArtifact(a); // W15.2
 }
 
 /** WHY an artifact is not live, in one word — null when it is live. The ONE vocabulary every
@@ -333,6 +354,8 @@ export function withdrawnReasonOf(a: PreparedArtifact): string | null {
   if (a.misaddressed) return 'it was addressed to the wrong person';
   if (a.expired) return 'its proposed time already passed';
   if (a.stale) return 'superseded by a newer message';
+  if (a.settled) return 'the work is already settled'; // W15.2
+  if (emptyTextArtifact(a)) return 'it has no words yet'; // W15.2
   return null;
 }
 
@@ -346,6 +369,8 @@ export function withdrawnReasonOf(a: PreparedArtifact): string | null {
 export function storedDraftWithdrawal(all: PreparedArtifact[]): string | null {
   const a = all.find((x) => x.kind === 'reply_draft' && x.payload?.store === 'source_data' && x.payload.field === 'draft');
   if (!a || a.hand || isLiveArtifact(a)) return null;
+  // W15.2: SETTLED is not a reason to regenerate words — the item is closed and no card mounts.
+  if (a.settled && isLiveArtifact({ ...a, settled: false })) return null;
   return withdrawnReasonOf(a);
 }
 
@@ -357,7 +382,8 @@ export function storedDraftWithdrawal(all: PreparedArtifact[]): string | null {
 export function nonLiveKindsOf(st: Pick<PreparedState, 'all'>): Set<PreparedKind> {
   // A kind that ALSO has a live artifact is not re-prepared on this account (the live one stands).
   const live = new Set(st.all.filter(isLiveArtifact).map((a) => a.kind));
-  return new Set(st.all.filter((a) => !isLiveArtifact(a) && !live.has(a.kind)).map((a) => a.kind));
+  // W15.2: a SETTLED item's artifacts are never re-prepared (the work is closed, not withdrawn).
+  return new Set(st.all.filter((a) => !a.settled && !isLiveArtifact(a) && !live.has(a.kind)).map((a) => a.kind));
 }
 
 /** Stamp the derived time flag on every artifact (in place; returns the same array). */
@@ -724,7 +750,7 @@ export async function preparedStatesFor(
       inboxNeedingRows.length
         // THE HOT-PATH LAW: body-free; the one floor that reads the item's words (an invite's stated
         // window) gets them below, for exactly the rows carrying an invite.
-        ? client.from('inbox_items').select(leanSelect('id, last_activity_at, connection_id, work_state', { keys: READER_FACT_KEYS })).eq('user_id', userId).in('id', inboxNeedingRows)
+        ? client.from('inbox_items').select(leanSelect('id, last_activity_at, connection_id, work_state, status', { keys: READER_FACT_KEYS })).eq('user_id', userId).in('id', inboxNeedingRows)
             .then((r) => ({ data: foldLeanRows((r.data ?? []) as unknown as Array<Record<string, unknown>>, { keys: READER_FACT_KEYS }) }))
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
       inboxIds.length
@@ -745,12 +771,20 @@ export async function preparedStatesFor(
     ]);
     const commitFacts = new Map<string, ItemTruthFacts | null>();
     const commitThread = new Map<string, string>();
+    // W15.2 · the item's own status (closed → every artifact on it is SETTLED, never live).
+    const closedKeys = new Set<string>();
     for (const r of (commitFactsRes.data ?? []) as Array<Record<string, unknown>>) {
+      if (itemStatusClosed('commitment', r.status)) closedKeys.add(`commitment:${r.id}`);
       commitFacts.set(String(r.id), commitmentTruthFacts(r as CommitFactsRow));
       if (r.thread_id) commitThread.set(String(r.id), String(r.thread_id));
     }
     const rows = new Map<string, { source_data?: unknown; last_activity_at?: string | null; work_state?: string | null; connection_id?: string | null }>();
     for (const r of (inboxRes.data ?? []) as Array<Record<string, unknown>>) rows.set(String(r.id), r as never);
+    for (const i of items) {
+      if (i.kind !== 'inbox') continue;
+      const r = (i.row ?? rows.get(i.id)) as { status?: unknown } | undefined;
+      if (r && itemStatusClosed('inbox', r.status)) closedKeys.add(`inbox:${i.id}`);
+    }
     const rowOf = (i: (typeof items)[number]) => (i.row ?? rows.get(i.id)) as { source_data?: unknown; work_state?: string | null; connection_id?: string | null } | undefined;
     const poolBy = new Map<string, Array<Record<string, unknown>>>();
     for (const r of [...poolEmail, ...poolCommit]) {
@@ -843,6 +877,7 @@ export async function preparedStatesFor(
       const baseFacts = itemFacts && bases.length ? { ...itemFacts, baseFileIds: bases } : itemFacts;
       const facts = baseFacts && boxes && connOf.has(keyOf(item)) ? { ...baseFacts, mailbox: mailboxFactsFor(connOf.get(keyOf(item)), boxes) } : baseFacts;
       stampTruth(arts, facts);
+      if (closedKeys.has(keyOf(item))) for (const a of arts) a.settled = true; // W15.2
       if (hasAddressed(arts)) {
         userForms ??= await loadUserForms(client, userId);
         stampAddressees(arts, { counterparty: facts?.counterparty ?? null, user: userForms });

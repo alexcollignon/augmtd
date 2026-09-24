@@ -2604,7 +2604,10 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
   gate('T18.4 TRUTH BEFORE PRESENTATION: no recipient ⇒ no Send (the card asks for the address and waits)',
     !!mapper && /state: to\.length \? 'ready' : 'needs_recipient'/.test(mapper)
     && !!cards && /const ready = card\.state === 'ready';/.test(cards) && /\{ready && card\.onSend/.test(cards)
-    && !!host && /\.\.\.\(props\.state === 'ready' \? \{ onSend: send/.test(host));
+    // ⟲ W15.2 (NO EMPTY "READY"): Send rides `sendable` — a recipient AND words (the card-readiness
+    // predicate) — so the no-recipient law still holds and an empty body can no longer carry Send.
+    && !!host && /const sendable = props\.state === 'ready' && mayClaimReady\(readiness\);/.test(host)
+    && /\.\.\.\(sendable \? \{ onSend: send/.test(host));
   gate('T18.5 THE THREAD IS NEVER INLINED — the card carries a DOOR, and a door with no handler does not render',
     !!cards && /onOpenThread/.test(cards) && /card\.onOpenThread && \(/.test(cards)
     // the whole raw thread renderer lives nowhere near the kit
@@ -3707,9 +3710,11 @@ console.log('\nT24 · THE CARD EDITOR — content-truth, live controls, one comp
   gate('T24.10 THE THREAD DOOR RENDERS WHEREVER A HOST HANDS ONE — even on a sent card, never gated on liveness',
     // ⚠️ RE-POINTED (Sep 14): the door stopped depending on a host remembering the prop — on the
     // item lane the card falls back to its own address, so it renders at EVERY mount (T29.7).
-    !!host && /\.\.\.\(openThread \? \{ onOpenThread: openThread, threadLabel: 'Thread →' \} : \{\}\),/.test(host)
+    // ⟲ RE-POINTED (W15.1 · ONE THREAD COMPONENT): the host hands the HANDLER only — the door's words
+    // are the kit's one label (OPEN_THREAD_LABEL), so the `threadLabel: 'Thread →'` field is gone.
+    !!host && /\.\.\.\(openThread \? \{ onOpenThread: openThread \} : \{\}\),/.test(host)
     // it sits OUTSIDE the `live` block (which begins at `...(live ? {`) — one spread, before it
-    && host.indexOf("onOpenThread: openThread, threadLabel") < host.indexOf('...(live ? {')
+    && host.indexOf("onOpenThread: openThread }") < host.indexOf('...(live ? {')
     && !!emailView && /card\.onOpenThread && \(/.test(emailView));
 
   gate('T24.9b AN EDITOR NEVER SWALLOWS WHAT WAS TYPED — a closed people field commits its address',
@@ -3972,7 +3977,8 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     && /if \(!sigV\) return;\n\s*setDrawerOpen\(true\);/.test(detail)
     && (() => { const dr = read('components/room/filed-drawer.tsx') ?? ''; return /if \(sigTab\) setTab\(sigTab\);/.test(dr); })()
     // …and the card carries the door the host handed it
-    && !!card && /\.\.\.\(openThread \? \{ onOpenThread: openThread, threadLabel: 'Thread →' \} : \{\}\)/.test(card));
+    // ⟲ RE-POINTED (W15.1): the handler only — the kit owns the one label ("Open thread").
+    && !!card && /\.\.\.\(openThread \? \{ onOpenThread: openThread \} : \{\}\)/.test(card));
 
   // ── (e) THE SHARED RENDERER'S ATTACHMENT LANE IS OPT-IN (the inbox inherits, never regresses) ──
   gate('T25.9 attachments are OPTIONAL in the shared renderer — a caller that serves none renders no lane',
@@ -4822,7 +4828,8 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   // 4 · THE CARD'S OWN DOOR
   gate('T29.7 "Thread →" IS STRUCTURAL — the item lane always has a door, host-supplied or its own address',
     !!card && /const openThread = onOpenThread \?\? \(item \? \(\) => router\.push\(`\/item\/\$\{item\.id\}\?kind=email`\) : undefined\);/.test(card)
-    && /\.\.\.\(openThread \? \{ onOpenThread: openThread, threadLabel: 'Thread →' \} : \{\}\)/.test(card)
+    // ⟲ RE-POINTED (W15.1): the handler only — the kit owns the one label ("Open thread").
+    && /\.\.\.\(openThread \? \{ onOpenThread: openThread \} : \{\}\)/.test(card)
     // the unfillable state points at the thread through the same derivation
     && /\{openThread && \(/.test(card)
     // and both room mounts still hand it the door they own
@@ -5471,7 +5478,10 @@ console.log('\nT32 · THE ONE OBJECT CARD — the ask and the thing asked about,
   gate('T32.3 NO LYING DOORS ON THE OBJECT — the door and each chip render only with a handler',
     !!card32 && /card\.onOpen && \(/.test(card32) && /f\.onOpen\s*\n?\s*\?/.test(card32)
     // TRUTH BEFORE PRESENTATION: nothing to show is no card, never an empty labelled frame
-    && /if \(!messages\.length && !card\.excerpt && !files\.length && !card\.title\) return null;/.test(card32));
+    // ⟲ RE-POINTED (W15.1): the excerpt is tested AFTER the own-words floor (`excerpt`, computed
+    // from card.excerpt) — an excerpt that is nothing but a quoted tail is nothing to show.
+    && /if \(!messages\.length && !excerpt && !files\.length && !card\.title\) return null;/.test(card32)
+    && /const excerpt = card\.excerpt \? own\(displayText\(card\.excerpt\) \?\? ''\) : '';/.test(card32));
 
   // ── clause 1 · ONE READ OF THE THREAD DOOR ──
   gate('T32.4 THE DECK AND THE KIT SHARE ONE THREAD-TAIL IMPLEMENTATION — the loader lives in lib/inbox/thread-door.ts and the deck\'s inline copy is GONE',

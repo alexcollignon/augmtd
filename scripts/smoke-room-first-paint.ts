@@ -194,8 +194,10 @@ console.log('\nD · (d) a requires-ask for the draft itself / the item\'s own in
     && (machine.match(/liveAsksOf\(/g) ?? []).length >= 3
     && /mootAskKeys\?: string\[\];/.test(machine)
     // the title half is the inbound's OWN subject (source_data.subject), never the judge's work_title
-    && /select\('status, source_data, source'\)/.test(machine) && /itemTitle = sd\.subject \|\| null;/.test(machine)
-    && /select\('id, status, source_data, last_activity_at, source'\)/.test(machine)
+    // ⟲ RE-POINTED (W15.2): the reads also carry `created_at` (the SCHEDULED matcher's obligation
+    // clock only) — still never work_title, and the ask title is still the inbound's own subject.
+    && /select\('status, source_data, source, created_at'\)/.test(machine) && /itemTitle = sd\.subject \|\| null;/.test(machine)
+    && /select\('id, status, source_data, last_activity_at, source, created_at'\)/.test(machine)
     && !/select\('[^']*work_title/.test(machine));
   const view = src('app/api/items/view/route.ts');
   const rail = src('components/home/item-rail.tsx');

@@ -191,10 +191,16 @@ console.log('\nE · a commitment\'s source card reads commitments.source_id');
     && /\(commitmentDoor && sourceEmail\) \? \(\s*<EmailSourceMount source=\{sourceEmail\}/.test(rail)
     && /\(objectItemId && !objectAlreadyMounted && !commitmentDoor\)/.test(rail));
   const so2 = src('components/room/source-object.tsx');
-  gate('E5 "later in this conversation" is the card\'s one door (the thread drawer), and the drawer carries the thread after the source',
-    /export const LATER_IN_CONVERSATION_LABEL = 'Later in this conversation →';/.test(so2)
+  // ⟲ RE-POINTED (W15.1 · ONE THREAD COMPONENT): the door's words are the kit's ONE label ("Open
+  // thread", OPEN_THREAD_LABEL — a host passes the handler, never words), and the drawer's source
+  // message is the kit card too (CommitmentSourceMessage mounts EmailSourceMount). The law is
+  // unchanged: the source card's one door opens the thread; the drawer carries the thread after it.
+  gate('E5 "Open thread" is the card\'s one door (the thread drawer), and the drawer carries the thread after the source',
+    /export const OPEN_THREAD_LABEL = 'Open thread';/.test(src('components/thread/source-text.ts'))
+    && /\.\.\.\(onOpen \? \{ onOpen \} : \{\}\),/.test(so2) && !/LATER_IN_CONVERSATION_LABEL/.test(so2)
     && /sourceEmail=\{src\?\.kind === 'email' && src\.emailId \?/.test(src('components/home/item-detail.tsx'))
-    && /<CommitmentSourceMessage src=\{src\} \/>[\s\S]{0,300}<SourceObjectMount itemId=\{laterItemId\} \/>/.test(src('components/home/item-detail.tsx')));
+    && /<CommitmentSourceMessage src=\{src\} \/>[\s\S]{0,300}<SourceObjectMount itemId=\{laterItemId\} \/>/.test(src('components/home/item-detail.tsx'))
+    && /function CommitmentSourceMessage[\s\S]{0,1400}<EmailSourceMount source=\{\{/.test(src('components/home/item-detail.tsx')));
 }
 
 // ═══ F · REPLY-ALL ═══
@@ -279,19 +285,27 @@ console.log('\nI · a looks_done item shows its evidence line + ONE Done / Not y
   const d = src('components/home/item-detail.tsx');
   const v = src('app/api/items/view/route.ts');
   gate('I1 the door serves the machine\'s evidence line beside its word (never composed by the room)',
-    /line: st\.looksDoneLine \?\? null/.test(v) && /\.\.\.\(machine\.line \? \{ line: machine\.line \} : \{\}\)/.test(v));
+    // ⟲ RE-POINTED (W15.2): the same line also carries a SCHEDULED item's when (the looks-done line first).
+    /line: st\.looksDoneLine \?\? st\.scheduledLine \?\? null/.test(v) && /\.\.\.\(machine\.line \? \{ line: machine\.line \} : \{\}\)/.test(v));
   gate('I2 the strip mounts ONLY on looks_done, under the header, once per room frame',
     /if \(m\?\.state !== 'looks_done'\) return null;/.test(d)
     && /<\/header>\s*\{\/\*[^*]*\*\/\}\s*\{room\.confirm && <LooksDoneStrip confirm=\{room\.confirm\} \/>\}/.test(d)
     && (d.match(/<LooksDoneStrip /g) ?? []).length === 1);
-  const strip = d.slice(d.indexOf('function LooksDoneStrip('), d.indexOf('function ItemRoomFrame('));
+  const strip = d.slice(d.indexOf('function LooksDoneStrip('), d.indexOf('type RoomResolve'));
   gate('I3 ONE CTA row: exactly Done + Not yet; Not yet posts {kind, id, action: \'not_yet\'} to /api/work/looks-done',
-    (strip.match(/<button /g) ?? []).length === 2 && />Done<\/button>/.test(strip) && />Not yet<\/button>/.test(strip)
+    // ⟲ RE-POINTED (W15.2 · EVERY ITEM CAN BE CLOSED): Done moved into the header's ONE action group,
+    // EMPHASISED on looks_done — the strip keeps the one deed only it can do (Not yet); still exactly
+    // one Done + one Not yet on the page.
+    (strip.match(/<button /g) ?? []).length === 1 && !/>Done<\/button>/.test(strip) && />Not yet<\/button>/.test(strip)
+    && /resolveEmphasisOf\(view\?\.machineState\?\.state\)/.test(d) && /\{room\.resolve && <ResolveGroup resolve=\{room\.resolve\} \/>\}/.test(d)
     && /JSON\.stringify\(\{ kind, id, action: 'not_yet' \}\)/.test(strip) && /LOOKS_DONE_NOT_YET_ROUTE = '\/api\/work\/looks-done'/.test(d));
   gate('I4 Done is each item\'s EXISTING resolution door (commitment act(\'done\') · email markHandled · follow-up the complete route) — no new close path',
     /looksDoneConfirmOf\(view, 'commitment', id, \(\) => act\('done'\)\)/.test(d)
     && /looksDoneConfirmOf\(view, 'inbox', id, markHandled\)/.test(d)
-    && /looksDoneConfirmOf\(view, 'inbox', id, async \(\) => \{\s*const res = await fetch\(`\/api\/inbox\/\$\{id\}\/complete`/.test(d));
+    // ⟲ RE-POINTED (W15.2): a follow-up IS a waiting-on commitment — its id is a commitment id, so its
+    // Done is the commitment door (the inbox complete route it used to fire could never find the row).
+    && /looksDoneConfirmOf\(view, 'commitment', id, \(\) => resolveFollowUp\('done'\)\)/.test(d)
+    && /const door = resolveRequestOf\('followup', id, deed\);/.test(d));
   gate('I5 no second home for the words: the strip prints the served line and the button labels only (the state word stays the machine\'s)',
     !/looks done/i.test(strip) && /confirm\.line/.test(strip));
 }

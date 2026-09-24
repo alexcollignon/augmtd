@@ -18,6 +18,7 @@ import {
 } from '@/lib/prepare/email-card';
 // W13 · the ONE attachment claim (pure, client-safe) — the card re-vets the words against its chips.
 import { claimsUnstagedAttachment } from '@/lib/prepare/truth';
+import { draftReadinessOf, mayClaimReady, EMPTY_DRAFT_NOTE } from '@/lib/prepare/card-readiness'; // W15.2
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE EMAIL CARD'S HOST (docs/threads-plan.md — THE CARD CONTRACT, the `email_draft` clause).
@@ -93,7 +94,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
    *  host already holds — read in the email context, not only in the drawer's Files tab. They are
    *  NOT outgoing files: they open in THE ONE viewer and never ride the send. */
   sourceFiles?: LightboxFile[] | null;
-  /** "Thread →" — the card's own door to the message it is answering.
+  /** "Open thread" (W15.1 · one label) — the card's own door to the message it is answering.
    *
    *  ⚠️ THE DOOR IS STRUCTURAL NOW (owner, Sep 14: "amazing, much better! just missing the see
    *  email thread… that opens the side panel"). It used to be "supplied only where the raw thread
@@ -694,6 +695,11 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
     { to, cc, bcc, subject, body, directions: itemLane && mailboxLane ? directions : [], userEdit: dirty },
     { selectedVariantId: variant },
   );
+  // W15.2 · NO EMPTY "READY" — the commit row claims readiness (and carries Send) only when there are
+  // recipients AND words. An empty body shows the honest empty state (W12.3's held-back line, else the
+  // plain empty line) with the editor open; Send appears the moment words exist.
+  const readiness = draftReadinessOf({ recipients: to, body, withheld, sent });
+  const sendable = props.state === 'ready' && mayClaimReady(readiness);
 
   // The standalone lane is live wherever its own door can carry it: a connected mailbox, or the
   // feature-null coworker channel on a workspace with none.
@@ -722,7 +728,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
     // it to the component as the others"): wherever a host hands the card a way to the raw thread,
     // the card carries it — a sent card still opens its thread, and no surface grows a second
     // top-of-page button for a door the card already owns.
-    ...(openThread ? { onOpenThread: openThread, threadLabel: 'Thread →' } : {}),
+    ...(openThread ? { onOpenThread: openThread } : {}),
     // THE FROM ROW — only the standalone lane has a sender to settle. One mailbox states itself;
     // several offer themselves; none says plainly that the assistant's address will carry it.
     ...(standalone ? {
@@ -801,7 +807,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
         } } : {}),
       // TRUTH BEFORE PRESENTATION at the commit row: with no recipient there is nothing to mail,
       // so the card carries NO Send — it asks for the address and waits.
-      ...(props.state === 'ready' ? { onSend: send, sendLabel: itemLane ? 'Send reply' : 'Send', sendDisabled: sending || unattachedClaim } : {}),
+      ...(sendable ? { onSend: send, sendLabel: itemLane ? 'Send reply' : 'Send', sendDisabled: sending || unattachedClaim } : {}),
     } : {}),
     // THE MATERIAL IS PART OF THE EMAIL CONTEXT — counted, never claimed: with nothing attached the
     // lane is absent. Independent of `live`: a sent reply still shows what it was answering.
@@ -811,7 +817,9 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
       })),
       contextFilesLabel: sourceList.length > 1 ? `Came with the email · ${sourceList.length}` : 'Came with the email',
     } : {}),
-    ...(withheld && !dirty && !sent ? { bodyNote: withheld } : unattachedClaim ? { bodyNote: UNATTACHED_CLAIM_NOTE } : {}),
+    ...(withheld && !dirty && !sent ? { bodyNote: withheld }
+      : readiness === 'empty' && !redrafting ? { bodyNote: EMPTY_DRAFT_NOTE }
+      : unattachedClaim ? { bodyNote: UNATTACHED_CLAIM_NOTE } : {}),
     bodyHint: sent ? undefined
       : redrafting ? 'redrafting…'
       : dirty ? 'your words — kept in “Your edit”, whichever tab you try'
@@ -822,7 +830,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
       : undefined,
     error: err ?? undefined,
     receipt: sent ? 'sent' : sending ? 'sending…'
-      : props.state === 'ready' ? (itemLane ? 'reply ready' : 'ready to send') : undefined,
+      : sendable ? (itemLane ? 'reply ready' : 'ready to send') : undefined,
   };
 
   return (

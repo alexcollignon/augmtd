@@ -68,6 +68,10 @@ export const verbsOfRank = (rank: TriageRank) => TRIAGE_VERBS.filter((v) => v.ra
  *  decides nothing about the card. */
 export const TRIAGE_EXIT_LABEL = 'Close';
 export const TRIAGE_HINTS = 'L later · space keep · Z undo · esc close';
+/** W15.3 · THE LIST IS THE SECONDARY VIEW — one word on the deck's header line ("View all"), and its
+ *  way back from the list ("One at a time"). The deck is what "When you're ready" opens into. */
+export const TRIAGE_VIEW_ALL = 'View all';
+export const TRIAGE_ONE_AT_A_TIME = 'One at a time';
 /** The undo pill's word — it appears only when there is something to undo (the frame's own test). */
 export const TRIAGE_UNDO_LABEL = 'Undo';
 

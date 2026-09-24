@@ -121,7 +121,7 @@ export async function GET(request: NextRequest) {
             const st = await workStateOf(supabase, user.id, { kind: linkKind === 'inbox_item' ? 'inbox' : 'commitment', id }, { row: itemRow, prepared: prepState });
             // W11.1 · LOOKS DONE: the evidence line rides the word (who · what · when — its one home is
             // lib/evidence/looks-done.ts; the room renders it, never composes it).
-            return { state: st.state, word: STATE_WORDS[st.state], moot: st.mootAskKeys ?? [], line: st.looksDoneLine ?? null, liveAsk: st.liveAsk };
+            return { state: st.state, word: STATE_WORDS[st.state], moot: st.mootAskKeys ?? [], line: st.looksDoneLine ?? st.scheduledLine ?? null /* W15.2 · on scheduled: the when */, liveAsk: st.liveAsk };
           } catch { return null; /* non-fatal — the word is an enhancement */ }
         })
       : Promise.resolve(null);

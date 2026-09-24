@@ -29,6 +29,7 @@ import { getUnderstanding } from '@/lib/inbox/item-understanding';
 import { isNoMoveNotice, rawMailKindOf, isAutomatedSenderStrong, listMailOf } from '@/lib/inbox/notice-demotion';
 import { fromEmailOf } from '@/lib/home/deck-floors';
 import { NEEDS_SHAPING_WORD, rowWordOf, LOOKS_DONE_WORD } from '@/lib/work/machine';
+import { isScheduledWord } from '@/lib/work/scheduled'; // W15.2
 // THE EXCERPT-HONESTY LAW, on a surface instead of a prompt (Q9 · the triage card shows the
 // message's own first words): the ONE clipper, word-boundary, declaring its own cut.
 // W11.3 · a SURFACE clip is a display clip (boundary + "…") — EXCERPT_MARK is prompt-side only.
@@ -147,6 +148,9 @@ export function whyNowOf(f: WhyNowFacts, today: Date = new Date()): string {
     const line = (f.evidenceLine ?? '').trim();
     return clipClause(line ? `${LOOKS_DONE_WORD} · ${line}` : LOOKS_DONE_WORD);
   }
+  // 0b · W15.2 SCHEDULED — the deed is a booked event: the clause is the machine's word with its when
+  // ("scheduled — Wed, Sep 30, 11:00") and NEVER the due words (a booked meeting is not overdue).
+  if (isScheduledWord(f.stateWord)) return clipClause(String(f.stateWord).trim());
   // 1 · CALENDAR ADJACENCY — the strongest why-now the clock can give.
   if (f.meeting) {
     const who = (f.who ?? '').trim();
@@ -243,6 +247,11 @@ export type AttentionRow = {
   /** W14.4 · the one work judgment ruled `none` for this item, or its machine state reads settled —
    *  a seat is for work; such a row is HELD (never deleted). Only a computed `true` refuses. */
   judgedNothing?: boolean;
+  /** W15.2 · SCHEDULED — the machine's `scheduled` state: when its booked event (or revisit date)
+   *  stands (ISO), and whether that day has come (`scheduledSeatOf`, lib/work/scheduled.ts). Before
+   *  its day the row is HELD (never seated, never deleted); the facts also clear overdue/dueToday. */
+  scheduledFor?: string | null;
+  scheduledToday?: boolean;
 };
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -286,7 +295,7 @@ export type SeatVerdict = {
 
 /** Why a row may not sit — W14.3 adds the KIND FLOOR (a notice / pitch with no move in it) and
  *  STALENESS (weeks quiet, no deadline near). Every refusal is HELD, never deleted. */
-export type SeatRefusal = 'self' | 'not_alive' | 'kind_floor' | 'stale' | 'judged_none';
+export type SeatRefusal = 'self' | 'not_alive' | 'kind_floor' | 'stale' | 'judged_none' | 'scheduled';
 
 /** THE SEAT TESTS (pure). One row, its facts, one verdict — every caller reads THIS. */
 export function seatVerdict(r: AttentionRow): SeatVerdict {
@@ -298,6 +307,9 @@ export function seatVerdict(r: AttentionRow): SeatVerdict {
   // machine state reads settled) never takes a seat, whatever carve-out kept it on the deck
   // (owner call Sep 24: the dunning-notice carve-out applies only when there is work to do).
   if (r.judgedNothing === true) return { seated: false, refusal: 'judged_none', needsShaping: false };
+  // W15.2 · SCHEDULED IS NOT OVERDUE — booked work waits for its day: no seat before the event's day
+  // (only a computed `false` refuses; on the day it seats like any row, never as overdue).
+  if (r.scheduledFor && r.scheduledToday === false) return { seated: false, refusal: 'scheduled', needsShaping: false };
   return { seated: true, refusal: null, needsShaping: !r.prepared };
 }
 
