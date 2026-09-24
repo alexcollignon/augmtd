@@ -86,7 +86,12 @@ export type PrepareOneResult = {
 
 export async function prepareOneItem(
   admin: SupabaseClient, userId: string, w: WorkItem,
-  opts?: { route?: TaskRoute },
+  opts?: {
+    route?: TaskRoute;
+    /** W13.2 · the pass's shared re-verify budget (items with stale staging it may re-verify this
+     *  run). Absent → this one item may (a single on-demand prepare). */
+    reverify?: { left: number; deferred: number };
+  },
 ): Promise<PrepareOneResult> {
   try {
     const done = (r: PrepareOneResult) => narratePrepare(admin, userId, w, r);
@@ -136,6 +141,27 @@ export async function prepareOneItem(
     const { applyVerdictConsequences } = await import('@/lib/work/apply-verdict');
     const cons = await applyVerdictConsequences(admin, userId, { kind: w.id.startsWith('commit:') ? 'commitment' : 'inbox', id: w.entityId }, verdict);
     if (cons.resolved) return { did: 'none', reason: `resolved by the verdict (${verdict.resolution}): ${verdict.reason}` };
+    // ── W13.2 · THE STAGING LAW HEALS ITSELF, before any lane reads the pool: a `require:` row staged
+    // under an OLDER staging law re-verifies through THE ONE RESOLVER (lib/prepare/requirements
+    // `reverifyStaleStaging` — one read when nothing is stale, zero AI). The lanes below may never
+    // reach the resolver (a kept reply draft, a doc-send "already prepared with the file"), so the pass
+    // asks here, bounded per run; an item past the budget is counted and left for the next sweep. A
+    // demoted row re-stages its file as the BASE, and THE ONE READER (next block) then withdraws any
+    // draft riding it — the lanes re-prepare it in this same pass. ──
+    if (verdict.requires?.length && (verdict.work === 'reply' || verdict.work === 'send_file')) {
+      const budget = opts?.reverify ?? { left: 1, deferred: 0 };
+      const { reverifyStaleStaging, standingRequireRows, stagingLawStale } = await import('@/lib/prepare/requirements');
+      const itemKind = w.id.startsWith('commit:') ? 'commitment' as const : 'inbox' as const;
+      if (budget.left > 0) {
+        const rv = await reverifyStaleStaging(admin, userId, {
+          itemKind, itemId: w.entityId, itemTitle: w.title, entityId: w.entity?.id ?? null, requires: verdict.requires, work: verdict.work,
+        }).catch(() => ({ stale: 0, ran: false }));
+        if (rv.ran) budget.left--;
+      } else {
+        const rows = await standingRequireRows(admin, userId, { itemKind, itemId: w.entityId, labels: verdict.requires.map((r) => r.label) }).catch(() => []);
+        if (rows.some((r) => stagingLawStale(r.metadata))) budget.deferred++;
+      }
+    }
     // ── W5c · A HIDDEN ARTIFACT IS NEVER FRESH: THE ONE READER's non-live kinds (outside the stated
     // window · a false completion claim · a passed time · superseded) are handed to every lane below,
     // whose freshness guard would otherwise read a young-but-untrue row as "already on it" — the
@@ -190,7 +216,7 @@ export async function prepareOneItem(
           : 'could not write the words for this yet — it will retry' };
       }
     }
-    if (verdict.work === 'send_file') return await done(await prepareDocSend(admin, userId, w, verdict));
+    if (verdict.work === 'send_file') return await done(await prepareDocSend(admin, userId, w, verdict, nonLive));
     // ── W11.1 · THE DIRECTION FLOOR, at the lane (belt to the judge's own floor): a chase on work the
     // USER owes is refused here, never written — a hand-routed or pre-floor verdict cannot reach the
     // nudge drafter. prepareNudge re-asks the same predicate on its own facts. ──
@@ -1082,13 +1108,35 @@ async function askForFile(admin: SupabaseClient, userId: string, w: WorkItem, la
   } catch { /* the honest none still records via prep_outcome */ }
 }
 
-async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem, verdict?: import('@/lib/work/judge').WorkVerdict): Promise<PrepareOneResult> {
+// ── W13 · THE BASE IS NOT THE SEND — the doc-send lanes found the file the ask is ABOUT, but the ask
+// is for new work on it (it predates the request). The file is staged as the BASE (context, through
+// THE ONE unstage writer), and the new work is asked for in the room — the honest none, never a send
+// of the old file dressed as the answer. ──
+async function offerBase(
+  admin: SupabaseClient, userId: string, w: WorkItem, itemKind: 'inbox' | 'commitment',
+  file: { id: string; filename: string; source: string; fileAt?: string | null; snippet?: string }, requestAt: string | null,
+): Promise<PrepareOneResult> {
+  const { unstageRequirement } = await import('@/lib/prepare/requirements');
+  const label = `the updated version of "${file.filename}"`.slice(0, 120);
+  await unstageRequirement(admin, userId, {
+    itemKind, itemId: w.entityId, label, reason: 'the file predates a request for new work — it is the base, not the deliverable',
+    base: { fileId: file.id, filename: file.filename, source: file.source, fileAt: file.fileAt ?? null, snippet: file.snippet ?? null },
+    requestAt, onlyResolverRows: true,
+  });
+  await askForFile(admin, userId, w, label);
+  return { did: 'none', reason: 'the file found is the version to update, not the new work — asked in the room' };
+}
+
+async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem, verdict?: import('@/lib/work/judge').WorkVerdict, nonLive?: Set<PreparedKind>): Promise<PrepareOneResult> {
+  // W13.2 · A WITHDRAWN SEND IS NEVER "ALREADY PREPARED": THE ONE READER withdrew the draft (it rides
+  // the item's BASE, or its words fail the vet) — the file guard below must not keep it standing.
+  const sendWithdrawn = !!(nonLive?.has('reply_draft') || nonLive?.has('nudge_draft'));
   if (w.id.startsWith('commit:')) {
     const { data: prior } = await admin.from('item_deliverables').select('id, content, metadata, created_at')
       .eq('user_id', userId).eq('kind', 'commitment').eq('entity_id', w.entityId).eq('type', 'draft')
       .filter('metadata->>version_of', 'is', null)
       .order('created_at', { ascending: false }).limit(1).maybeSingle();
-    if ((prior?.metadata as { attachment?: unknown } | null)?.attachment) return { did: 'none', reason: 'already prepared with the file' };
+    if ((prior?.metadata as { attachment?: unknown } | null)?.attachment && !sendWithdrawn) return { did: 'none', reason: 'already prepared with the file' };
     // W9.1 THE USER'S HAND WINS: a send drafted beside the user's own message would SHADOW it (the
     // reader serves the newest commitment draft) — their words stand; the file is theirs to attach.
     if (isPoolRowHandHeld('reply_draft', prior)) return { did: 'none', reason: 'your edit stands — the engine never overwrites your words' };
@@ -1097,8 +1145,12 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
     if (!cTop || cTop.score < 0.7) { await askForFile(admin, userId, w, `the document itself`); return { did: 'none', reason: 'could not find the document — asked in the room' }; }
     // W6 — the ONE evidence-quoting verifier (cross-entity rejected structurally; the quote is
     // code-checked): a wrong attach is worse than none.
-    const { verifyArtifactMatch: verifyC } = await import('@/lib/prepare/requirements');
-    const cJudge = await verifyC(admin, userId, { task: w.title, candidate: cTop, entityId: w.entity?.id ?? null });
+    // W13 · A STAGED FILE IS THE DELIVERABLE, OR IT ISN'T STAGED: the request's own date + words ride
+    // the verifier — a file that predates an ask for NEW work is its base, never the send.
+    const { verifyArtifactMatch: verifyC, requestFactsOf: reqFactsC } = await import('@/lib/prepare/requirements');
+    const reqC = await reqFactsC(admin, userId, { kind: 'commitment', id: w.entityId });
+    const cJudge = await verifyC(admin, userId, { task: w.title, candidate: cTop, entityId: w.entity?.id ?? null, emailExcerpt: reqC.excerpt, requestAt: reqC.requestAt, requestText: reqC.requestText });
+    if (!cJudge.match && cJudge.role === 'base') return await offerBase(admin, userId, w, 'commitment', cTop, reqC.requestAt);
     if (!cJudge.match) { await askForFile(admin, userId, w, `the document itself`); return { did: 'none', reason: 'no confident file match — asked in the room' }; }
     // TRUE ADDRESSEES (W7.3): the send is addressed by THE ONE LADDER and stamped with it.
     const { resolveCommitmentAddressee: resolveC, recipientsLabel: labelC, addresseeStamp: stampC } = await import('@/lib/prepare/addressee');
@@ -1119,7 +1171,7 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
   if (!it || it.status !== 'pending') return { did: 'none', reason: 'no longer open' };
   const sd = (it.source_data ?? {}) as Record<string, unknown>;
   const existingDraft = (sd.draft ?? null) as { body?: string; attachment?: unknown } | null;
-  if (existingDraft?.attachment) return { did: 'none', reason: 'already prepared with the file' };
+  if (existingDraft?.attachment && !sendWithdrawn) return { did: 'none', reason: 'already prepared with the file' };
   // W9.1 THE USER'S HAND WINS: both writes below replace `source_data.draft` — never over their words.
   if (isHandHeld('reply_draft', existingDraft)) return { did: 'none', reason: 'your edit stands — the engine never overwrites your words' };
   // ── THE DELIVERABLE RESOLUTION (multi-artifact sends — "share these three reports"): when the
@@ -1158,14 +1210,19 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
   // evidence law: the verifier quotes the proving phrase (code-checked) and rejects cross-entity
   // candidates structurally. Reject → no auto-attach (the deep-dive's picker offers candidates
   // instead). A wrong attach is worse than none — trust is the product.
-  const { verifyArtifactMatch } = await import('@/lib/prepare/requirements');
+  const { verifyArtifactMatch, requestFactsOf } = await import('@/lib/prepare/requirements');
+  const reqI = await requestFactsOf(admin, userId, { kind: 'inbox', id: String(it.id) });
   const judge = await verifyArtifactMatch(admin, userId, {
     task: w.title, candidate: top, entityId: w.entity?.id ?? null,
     emailExcerpt: String(sd.body || '').slice(0, 400) || null,
+    requestAt: reqI.requestAt, requestText: reqI.requestText,
   });
+  // W13: the verified file predates an ask for new work — the base, never the send.
+  if (!judge.match && judge.role === 'base') return await offerBase(admin, userId, w, 'inbox', top, reqI.requestAt);
   if (!judge.match) return { did: 'none', reason: 'no confident file match' };
-  const reusedDraft = !!existingDraft?.body;
-  const body = existingDraft?.body
+  // W13.2: a withdrawn draft's words are never reused as the send's body.
+  const reusedDraft = !!existingDraft?.body && !sendWithdrawn;
+  const body = (reusedDraft ? existingDraft?.body : null)
     || (await generateReplyDraft(userId, sd as Record<string, never>, admin, `The reply should send the document "${top.filename}" (it will be attached).`).catch(() => null));
   if (!body) return { did: 'none', reason: 'could not draft the send' };
   // Stamp the drafting law ONLY on words this run actually authored — a reused body keeps whatever
@@ -1420,10 +1477,14 @@ export async function runPreparationPass(
   const laneOf = new Map<string, PrepLane>();
   lanes.forEach((lane, i) => { for (const w of lane) if (!laneOf.has(w.id)) laneOf.set(w.id, laneNames[i]); });
   const seen = new Set<string>();
+  // W13.2 · THE STAGING RE-VERIFY BUDGET — shared by every item this run (lib/prepare/requirements
+  // REVERIFY_PER_PASS); what it leaves behind is counted and said, never silent (invariant 10).
+  const { REVERIFY_PER_PASS } = await import('@/lib/prepare/requirements');
+  const reverify = { left: REVERIFY_PER_PASS, deferred: 0 };
   // The ledger names the lane that ACTUALLY reached the item (the overflow keeps the item's first lane).
   const work = async (w: WorkItem, lane: PrepLane) => {
     seen.add(w.id);
-    const r = await prepareOneItem(admin, userId, w);
+    const r = await prepareOneItem(admin, userId, w, { reverify });
     tally(r);
     await recordOutcome(w, r, lane);
     // A re-queued item is SERVED once the pass reached it (its outcome is now on the ledger).
@@ -1464,6 +1525,9 @@ export async function runPreparationPass(
   }
   if (leftBehind > 0) {
     console.log(`[prepare-pass] budget spent for user ${userId}: ${leftBehind} candidate(s) left for the next sweep`);
+  }
+  if (reverify.deferred > 0) {
+    console.log(`[prepare-pass] staging re-verify budget spent for user ${userId}: ${reverify.deferred} item(s) with older-law staging left for the next sweep`);
   }
 
   // ── B3c · MEETING PREP RETIRED HERE (owner call, Sep 17 — attention-plan PART III, law Q8) ─────

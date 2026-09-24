@@ -477,6 +477,15 @@
      "kind": "pure",
      "cost": "zero-ai",
      "note": "stale-by-false-claim at the one reader"
+    },
+    {
+     "suite": "smoke-staged-truth",
+     "ids": [
+      "C3-C11"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W13.1: a draft that says a file is attached shows that file as a chip, and Send attaches exactly the chips that stand"
     }
    ],
    "version_key": null,
@@ -1976,13 +1985,22 @@
     "ATTACHABLE-REQUIRES LAW",
     "ATTACHABILITY FLOOR",
     "THE DELIVERABLE RESOLUTION",
-    "verifyArtifactMatch"
+    "verifyArtifactMatch",
+    "A STAGED FILE IS THE DELIVERABLE, OR IT ISN'T STAGED",
+    "RELATED IS NOT IS, IN TIME",
+    "THE BASE IS NOT THE ANSWER (stagingRole)",
+    "THE STAGING LAW IS VERSIONED (STAGING_LAW_VERSION)",
+    "THE LAW HEALS ITSELF (reverifyStaleStaging)"
    ],
    "tier": 2,
    "domain": "judge-prepare-deck",
-   "statement": "Only the item's own pool material or a same-entity file auto-stages; evidence is quoted and code-checked; a global hit becomes a named suggestion in the ask, never a staged attachment.",
+   "statement": "Only the item's own pool material or a same-entity file auto-stages; evidence is quoted and code-checked; a global hit becomes a named suggestion in the ask, never a staged attachment. W13.1: a staged file is the deliverable IN TIME and of the right KIND, or it is not staged. The requirement's kind (`existing` — a document sent as it is · `new_work` — new or revised content still to be produced, even INTO an existing document) is a reasoned field judged in the same pick that matches the file (a kind the judge's inventory states wins); the dates are code-checked against the REQUEST message (a commitment's source email): the file's effective date is the EARLIEST it can be (its own name's date, when we first saw it, its conversation's date). New work is never satisfied by a file from on or before the request — that file is offered as the BASE (staged as context under `base:<label>`, never `require:`), the requirement stays an ask/produce; an older file satisfies an existing-artifact ask only when the request names it. A resolver-staged row the law now refuses is unstaged through ONE writer (the pointer row goes, the user's file is never touched, the reason is recorded), and only on a positive demotion — an AI outage never unstages. W13.2: the law is VERSIONED and heals itself — the platform, never an operator. Every resolver-staged `require:` row carries the staging-law version it was verified under (`metadata.stagingLaw`, no migration); a row stamped with an older law, or unstamped, is never read as settled and is re-verified by THE ONE RESOLVER on its next touch (the prepare pass before its lanes, the judge's serving edge, the draft doors): its FILE is put first in the same reasoned pick (the kind rides that call), and the ruling is code's — the same file verified restamps in place (not new supply), another file replaces it, a demotion or a stale row the pick cleanly does not verify is unstaged through the one writer, and an unanswered pick holds (the row stands, still stale, still read as staged — an AI failure never unstages). Bounded: REVERIFY_PER_PASS items per pass (the rest counted and said), one item per open. The repair script is an optional accelerator that calls the same function.",
    "homes": [
-    "lib/prepare/requirements.ts"
+    "app/api/items/judge/route.ts",
+    "lib/knowledge/resolve.ts",
+    "lib/prepare/pass.ts",
+    "lib/prepare/requirements.ts",
+    "scripts/repair-stale-staging.ts"
    ],
    "gates": [
     {
@@ -1993,13 +2011,67 @@
      ],
      "kind": "outcome",
      "cost": "cached"
+    },
+    {
+     "suite": "smoke-staged-truth",
+     "ids": [
+      "A1-A16"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "stagingRole · stagedRowVerdict · requestNamesFile · dateInFilename · effectiveFileAt · buildTruth · baseTaskId · baseLine · kbFileAt · poolFileAt"
+    },
+    {
+     "suite": "smoke-staged-truth",
+     "ids": [
+      "A17-A23",
+      "D1-D4"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W13.1: both reasoned picks ask the kind (one KIND_RULE) and see both dates; the role runs after the evidence check on the effective date; the resolver reads the request and unstages only on a positive demotion; the unstage writer removes only the resolver's pointer row; the pool source never offers a base; both doc-send lanes offer the base and ask instead of sending the old file; the repair is dry-run by default and, applied (--apply --yes), runs the platform's own self-heal — never its own unstage path (D1/D2 re-pointed in W13.2)"
+    },
+    {
+     "suite": "smoke-staged-truth",
+     "ids": [
+      "E1",
+      "E3-E5"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "stagingLawStale · servingEdgeShouldResolve · reverifyDecision · standingCandidateOf"
+    },
+    {
+     "suite": "smoke-staged-truth",
+     "ids": [
+      "E2",
+      "E6-E10"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W13.2: every resolver write carries the stamp; the resolver reads the standing rows and re-judges the FILE first in the same pick (the pointer row never its own candidate); `judged` only when the model answered; hold keeps the row and the truth, unproven unstages through the one writer, restamp updates in place; the pass asks reverifyStaleStaging before its lanes under a shared REVERIFY_PER_PASS budget and logs what it left; a withdrawn send is never 'already prepared'"
     }
    ],
-   "fn": "pickArtifacts · verifyArtifactMatch",
-   "version_key": null,
-   "status": "holding",
+   "fn": "pickArtifacts · verifyArtifactMatch · stagingRole · stagedRowVerdict · unstageRequirement (tests/unit/staged-truth.test.ts) · W13.2: STAGING_LAW_VERSION · stagingLawStale · servingEdgeShouldResolve · reverifyDecision · reverifyStaleStaging · reverifyItemStaging (tests/unit/staging-self-heal.test.ts — resolveRequirements outcome over an in-memory pool with a stubbed model)",
+   "version_key": "STAGING_LAW_VERSION",
+   "status": "holding-uncommitted",
    "broken_by": null,
-   "collides_with": []
+   "collides_with": [
+    {
+     "law": "every-draft-same-truth",
+     "precedence": "the staging law decides what may ride a draft as the deliverable; the vet then judges the words against it — a BASE rides as context only, so the completion floor treats it as nothing staged (stagedIsWork false) and THE ONE READER withdraws a draft that attaches it as the answer"
+    },
+    {
+     "law": "a-claim-renders",
+     "precedence": "a staged file is a claim the card must render: the draft doors serve it, the card shows it as a chip, Send attaches exactly the standing chips"
+    },
+    {
+     "law": "the-users-hand-wins",
+     "precedence": "the self-heal only ever re-verifies and unstages a RESOLVER pointer row — never a typed supply, a user drop, or the user's file; a draft the user edited is never withdrawn or regenerated by it (the reader never judges hand-held words)"
+    }
+   ],
+   "fixed_by": "W13.1, W13.2",
+   "note": "W13.1 (owner live walk on prod after W12): a you_owe commitment asking to ADD detail to slides 7&8 of an interim report staged the PRE-EXISTING report as the requirement (plus a doc-send draft carrying it), and the reply said the report 'now includes' the new slides. No JUDGE_VERSION bump: the judge prompt is unchanged — the kind is reasoned inside the requirements pick. Rows staged before W13 carry no kind: scripts/repair-stale-staging.ts (dry-run, zero AI) lists decisive violations and suspects; --apply --yes --judge (owner-gated) judges the suspects and unstages the new-work ones. W13.2 (owner principle — the platform corrects itself): rows staged under the old law were read as settled by the judge's serving edge and never re-checked; only the one-shot repair fixed them. The staging law is now versioned and every older-law row re-verifies on its next touch (bounded; an AI failure never unstages); the repair became an optional accelerator over the same function. Fixed by W13.2 (uncommitted)."
   },
   {
    "id": "ask-direction-floor",
@@ -3734,18 +3806,29 @@
     "NO SECOND DOOR FOR WORDS",
     "NO PAY-PER-OPEN",
     "THE YOU_OWE TASK DELIVERS",
-    "RELATIVE TIME IS VERIFIED"
+    "RELATIVE TIME IS VERIFIED",
+    "THE WORK-DONE FORMS",
+    "THE CARD RE-VETS ITS CHIPS",
+    "THE INBOX DOOR READS THE ONE READER"
    ],
    "tier": 2,
    "domain": "judge-prepare-deck",
-   "statement": "Every machine-written message is vetted by ONE function (lib/prepare/truth vetDraft: a deed claimed on an open obligation, a file claimed with nothing staged, a chase on work the user owes) at every door that serves words — THE ONE READER, the evaluator and the compose door alike. A generated draft that fails is regenerated ONCE with the failure named, else not served (the honest empty state). The compose task for a you_owe commitment frames DELIVERY, never a request to the counterparty; a chase is valid only on awaiting work. A generated commitment draft is pooled once as the commitment's prepared artifact (the pass's shape + prepared_from ground stamp), so the next open serves it through the reader at zero AI and it then obeys the-users-hand-wins. Every relative day claim in a room brief ('N days ago', 'yesterday', 'last week') is code-verified against the page's dated events — an attributed false one is rewritten to its absolute date, anything else unverifiable is dropped.",
+   "statement": "Every machine-written message is vetted by ONE function (lib/prepare/truth vetDraft: a deed claimed on an open obligation, a file claimed with nothing staged, a chase on work the user owes) at every door that serves words — THE ONE READER, the evaluator and the compose door alike. A generated draft that fails is regenerated ONCE with the failure named, else not served (the honest empty state). The compose task for a you_owe commitment frames DELIVERY, never a request to the counterparty; a chase is valid only on awaiting work. A generated commitment draft is pooled once as the commitment's prepared artifact (the pass's shape + prepared_from ground stamp), so the next open serves it through the reader at zero AI and it then obeys the-users-hand-wins. Every relative day claim in a room brief ('N days ago', 'yesterday', 'last week') is code-verified against the page's dated events — an attributed false one is rewritten to its absolute date, anything else unverifiable is dropped. W13.1: the completion floor also reads the WORK-DONE forms — the first-person present perfect of revision verbs ('we've added', 'I've updated'), the passive perfect ('has been updated'), 'is now <state>', 'now includes/contains', 'is ready' (EN/PT/DE/FR; grammatical forms, never topic words; negations, futures and 'ready to' excluded) — and it speaks unless the thing staged IS the work (`stagedIsWork`): a BASE riding the draft is not the work, and a machine draft that attaches the item's base as the answer is withdrawn (`baseAsAnswer`). A draft served with a staged file shows it as a chip (name · open in the one viewer · remove); Send hands the standing chips' ids to a door that loads the bytes itself, all or nothing, before the commit claim; words that say 'attached' with no chip left re-vet on the card (the same attachment floor) and hold Send. W13.2: the inbox draft door (/api/inbox/[id]/draft) serves a stored draft only through THE ONE READER's truth stamp (`storedDraftWithdrawal`): a draft the reader withdraws (riding the item's base, failing the one vet, signed as another mailbox, misaddressed) is a `nonLive` input to decideRegeneration — regenerated there through the one vet (once, else the honest `withheld` empty state the card prints); the user's own edit is never judged.",
    "homes": [
-    "lib/prepare/truth.ts",
+    "app/api/compose/draft/route.ts",
+    "app/api/compose/send/route.ts",
+    "app/api/inbox/[id]/draft/route.ts",
+    "app/api/inbox/[id]/send-reply/route.ts",
+    "app/api/kb/attachment/route.ts",
+    "components/home/email-card.tsx",
+    "components/thread/thread-cards.tsx",
+    "lib/knowledge/kb-attachment.ts",
+    "lib/prepare/email-card.ts",
     "lib/prepare/evaluate.ts",
     "lib/prepare/read.ts",
-    "app/api/compose/draft/route.ts",
-    "lib/room/self-voice.ts",
-    "lib/room/brief.ts"
+    "lib/prepare/truth.ts",
+    "lib/room/brief.ts",
+    "lib/room/self-voice.ts"
    ],
    "gates": [
     {
@@ -3777,13 +3860,53 @@
      "kind": "source",
      "cost": "zero-ai",
      "note": "W12.1: the reader, the evaluator and the compose door call vetDraft (no private floor copy); both compose generation paths run through draftThroughVet and serve the vetted body; the pool write is once, never over the user's hand, stamped with groundOf; the brief runs the relative-time net after the name net and before the store"
+    },
+    {
+     "suite": "smoke-staged-truth",
+     "ids": [
+      "B1-B9",
+      "B11-B12",
+      "C1-C2"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "completionClaimIn · attachmentClaimIn · vetDraft (stagedIsWork) · draftThroughVet · stampTruth (baseAsAnswer) · baseFileIdsOf · stagedFilesOf · claimsUnstagedAttachment"
+    },
+    {
+     "suite": "smoke-staged-truth",
+     "ids": [
+      "B10",
+      "C3-C11"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W13.1: the base ids reach both readers; both draft doors serve the staged file; the card seeds chips once, opens them in the one viewer, sends them by id on both doors and holds Send on an unsupported 'attached'; both send doors load the ids through THE ONE loader all-or-nothing before the claim; the assistant-address fallback refuses files"
+    },
+    {
+     "suite": "smoke-staged-truth",
+     "ids": [
+      "E11"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "storedDraftWithdrawal · stampTruth · decideRegeneration"
+    },
+    {
+     "suite": "smoke-staged-truth",
+     "ids": [
+      "E12",
+      "E13"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W13.2: the inbox draft door reads preparedState → storedDraftWithdrawal → decideRegeneration (never for a hand-held draft) before serving stored words; its fresh words run through draftThroughVet; the card prints the withheld line on the inbox lane"
     }
    ],
-   "fn": "vetDraft · draftThroughVet · commitmentComposeTask · composeDraftRow · enforceRelativeTimeTruth · relativeDayRange (tests/unit/compose-truth.test.ts)",
+   "fn": "vetDraft · draftThroughVet · commitmentComposeTask · composeDraftRow · enforceRelativeTimeTruth · relativeDayRange (tests/unit/compose-truth.test.ts) · stagedFilesOf · baseFileIdsOf (tests/unit/staged-truth.test.ts) · storedDraftWithdrawal (tests/unit/staging-self-heal.test.ts)",
    "version_key": null,
    "status": "holding-uncommitted",
    "broken_by": null,
-   "fixed_by": "W12.1",
+   "fixed_by": "W12.1, W13.1, W13.2",
    "collides_with": [
     {
      "law": "one-coherent-item",

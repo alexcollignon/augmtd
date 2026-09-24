@@ -219,6 +219,35 @@ export function sameBody(a: string, b: string): boolean {
   return n(a) === n(b);
 }
 
+// ── W13 · A CLAIM RENDERS — THE STAGED FILE ON THE CARD ─────────────────────────────────────────
+// A prepared draft can carry a STAGED file (the pass's `attachment` — a KB file the staging law proved
+// IS the deliverable). The doors serve it; the card shows it as a chip (name · open · remove) and Send
+// carries exactly the chips that stand, by id, to a door that loads the bytes itself. Only KB-held
+// bytes can ride a send (drive-catalog and pool-text haves never become a phantom chip).
+
+/** One staged file as the card holds it. */
+export interface StagedFile { fileId: string; filename: string; source?: string }
+
+/** A door's served staged file(s) → the card's chips. Accepts one object or a list; keeps only
+ *  KB-held files with a real id; deduped by id. Pure. */
+export function stagedFilesOf(raw: unknown): StagedFile[] {
+  const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  const out: StagedFile[] = [];
+  for (const r of list) {
+    const o = (r ?? {}) as { fileId?: unknown; filename?: unknown; source?: unknown };
+    const fileId = typeof o.fileId === 'string' ? o.fileId.trim() : '';
+    const source = typeof o.source === 'string' ? o.source : undefined;
+    if (!/^[0-9a-f-]{8,64}$/i.test(fileId) || (source && source !== 'kb')) continue;
+    if (out.some((f) => f.fileId === fileId)) continue;
+    out.push({ fileId, filename: String(o.filename ?? 'attachment'), ...(source ? { source } : {}) });
+  }
+  return out;
+}
+
+/** The re-vet's one line when the words say "attached" and no file stands on the card — the host
+ *  prints it and holds Send until a file is attached or the words change. */
+export const UNATTACHED_CLAIM_NOTE = 'This message says a file is attached, but nothing is attached now — attach it, or change the words before sending.';
+
 const cleanList = (v: unknown): string[] =>
   [...new Set((Array.isArray(v) ? v : []).map((s) => String(s ?? '').trim()).filter(Boolean))];
 

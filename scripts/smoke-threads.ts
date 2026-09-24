@@ -1726,7 +1726,9 @@ console.log('\nT13 · THE ASK SPEAKS CONSEQUENCE — one accent, named faces');
     && /itemTitle: string;/.test(req));
   gate('T13.6 the judged verb REACHES the seam — every resolveRequirements caller hands over its consequence',
     !!req && /work\?: WorkVerb \| null;/.test(req)
-    && !!pass && (pass.match(/requires: verdict\.requires, work: verdict\.work,/g) ?? []).length === 3
+    // ⟲ RE-POINTED (W13.2): 3 → 4 — the pass's pre-lane staging re-verify (reverifyStaleStaging →
+    // resolveRequirements) hands over the consequence too.
+    && !!pass && (pass.match(/requires: verdict\.requires, work: verdict\.work,/g) ?? []).length === 4
     && /work: verdict\.work,/.test(read('app/api/inbox/[id]/draft/route.ts') ?? '')
     && /work: verdict\.work,/.test(read('app/api/items/judge/route.ts') ?? ''));
   gate('T13.7 COMPOSED ONCE — a standing ask covering the same gap re-states its words, never re-buys them',
@@ -4493,7 +4495,9 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
       // BOTH answers, so a slow thread can never paint "couldn't load" over a draft still arriving.
       return /const \[unfilled, setUnfilled\] = useState\(false\);/.test(card)
         && /const settle = \(\) => \{/.test(card)
-        && /setUnfilled\(!preparedOut && !\(item\.to\?\.length \|\| threadHasFrom\)\);/.test(card)
+        // ⟲ RE-POINTED (W13.2): a draft the one vet HELD BACK is an answer, not a hollow card — the
+        // inbox lane prints the withheld line over the open editor (as the compose lane already did).
+        && /setUnfilled\(!preparedOut && !heldOut && !\(item\.to\?\.length \|\| threadHasFrom\)\);/.test(card)
         && /if \(!alive \|\| --left > 0\) return;/.test(card)
         && /if \(unfilled && !dirty\) \{/.test(card)
         && /I couldn&apos;t load this draft just now\./.test(card)

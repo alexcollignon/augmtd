@@ -470,7 +470,10 @@ export interface EmailCard extends CardBase {
   bodyRev?: string;
   /** THE ATTACHMENTS — chips above the commit row, and the host's own picker surface mounted whole
    *  (hidden input + KB picker). The chips are the receipt that the file will ride the send. */
-  attachments?: Array<{ name: string; onRemove?: () => void }>;
+  attachments?: Array<{ name: string; onRemove?: () => void;
+    /** W13 · A CLAIM RENDERS — a STAGED file's chip opens it in the host's mount of THE ONE viewer, so
+     *  the reader can see what "attached" refers to before it rides the send. */
+    onOpen?: () => void }>;
   onAttachFile?: () => void;
   onAttachFromKb?: () => void;
   attachNode?: ReactNode;

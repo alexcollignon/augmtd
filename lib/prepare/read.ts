@@ -70,6 +70,10 @@ export type PreparedArtifact = {
    *  mailboxes (not the one its thread lives in). Rides `falseClaim` (never live — the re-prepare
    *  trip re-drafts it under the scoped voice); this flag only words the reason. */
   wrongIdentity?: boolean;
+  /** W13 · A STAGED FILE IS THE DELIVERABLE, OR IT ISN'T STAGED: a machine draft whose attachment is
+   *  this item's BASE (the pre-existing version an ask for new work builds on — `base:<label>` in the
+   *  pool) sends the old file as the answer. Rides `falseClaim` (never live); this flag words it. */
+  baseAsAnswer?: boolean;
   /** TRUE ADDRESSEES (W7.3): who the words are FOR, stamped at production (a legacy nudge's title
    *  carries it). Served so a card can address its To from what the words were written for. */
   addressee?: Addressee | null;
@@ -116,7 +120,20 @@ export type ItemTruthFacts = {
   /** W11.1 · THE MAILBOX SIGNS: the mailbox this item's thread lives in and the user's OTHER
    *  mailboxes. Absent/null = the signature floor is off (one mailbox, or nothing resolvable). */
   mailbox?: { own: MailboxIdentity; others: MailboxIdentity[] } | null;
+  /** W13 · the file ids staged as this item's BASE (pool rows `role: 'base'`) — a draft riding one is
+   *  sending the old file as the answer, and its words' completion claims are unsupported. */
+  baseFileIds?: string[] | null;
 };
+
+/** W13 · the item's BASE file ids, read off its pool rows (the unstage writer's `role: 'base'`). Pure. */
+export function baseFileIdsOf(pool: Array<Record<string, unknown>>): string[] {
+  const out: string[] = [];
+  for (const d of pool) {
+    const m = (d.metadata ?? {}) as { role?: unknown; attachment?: { fileId?: unknown } | null };
+    if (m.role === 'base' && typeof m.attachment?.fileId === 'string') out.push(m.attachment.fileId);
+  }
+  return out;
+}
 
 // ── THE TRUTH STAMPS (W5a) — pure, exported for the gate and the sweeps. ──
 /** Stamp `outsideWindow` (invites vs the item's stated window) and `falseClaim` (words that
@@ -136,8 +153,13 @@ export function stampTruth<T extends PreparedArtifact>(arts: T[], facts: ItemTru
     //     exempt — it is pasted where the work lives, and its destination may carry the file).
     //   · THE INVERTED CHASE (W11.1) — chase-shaped words ("just a quick nudge…") on an OPEN
     //     obligation the USER owes: the counterparty is being chased for the user's own debt.
+    //   · W13 · THE BASE IS NOT THE ANSWER — a draft whose attachment is the item's BASE sends the old
+    //     file as the deliverable (withdrawn outright); and a base that rides along is not the WORK, so
+    //     the completion/chase floors judge its words as if nothing were staged (`stagedIsWork`).
+    const onBase = !!a.attachment && !!facts.baseFileIds?.includes(a.attachment.fileId);
+    if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft') && !a.hand && onBase) { a.falseClaim = true; a.baseAsAnswer = true; }
     if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft' || a.kind === 'paste_pack') && !a.hand
-      && vetDraft(a.content, { obligationOpen: facts.obligationOpen, staged: !!a.attachment, attachmentFloor: a.kind !== 'paste_pack' })) a.falseClaim = true;
+      && vetDraft(a.content, { obligationOpen: facts.obligationOpen, staged: !!a.attachment, stagedIsWork: !!a.attachment && !onBase, attachmentFloor: a.kind !== 'paste_pack' })) a.falseClaim = true;
     //   · THE MAILBOX SIGNS — a machine draft signed as another of the user's mailboxes (the pre-W11.1
     //     global voice). Withdrawn so only THESE re-draft (no DRAFT_LAW_VERSION corpus re-draft).
     if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft') && !a.hand && facts.mailbox
@@ -292,11 +314,25 @@ export function isLiveArtifact(a: PreparedArtifact): boolean {
 export function withdrawnReasonOf(a: PreparedArtifact): string | null {
   if (a.outsideWindow) return 'outside the window they stated';
   if (a.wrongIdentity) return 'it was signed as another of your mailboxes';
+  if (a.baseAsAnswer) return 'it attached the current version as if it were the finished work';
   if (a.falseClaim) return 'its words claimed work that is not done';
   if (a.misaddressed) return 'it was addressed to the wrong person';
   if (a.expired) return 'its proposed time already passed';
   if (a.stale) return 'superseded by a newer message';
   return null;
+}
+
+/**
+ * W13.2 · NO SECOND DOOR FOR WORDS — the inbox item's STORED reply draft (`source_data.draft`) as THE
+ * ONE READER judged it: why it is withdrawn, or null (live · hand-held · not in the reader's list —
+ * an unreadable reader is never a withdrawal). The draft door serves the stored words only when this
+ * is null; otherwise the door's regeneration decision (`decideRegeneration`'s `nonLive`) replaces them
+ * through the one vet. Pure.
+ */
+export function storedDraftWithdrawal(all: PreparedArtifact[]): string | null {
+  const a = all.find((x) => x.kind === 'reply_draft' && x.payload?.store === 'source_data' && x.payload.field === 'draft');
+  if (!a || a.hand || isLiveArtifact(a)) return null;
+  return withdrawnReasonOf(a);
 }
 
 /** W5c · THE RE-PREPARE KEY: the artifact KINDS on an item that exist but are NOT live. A lane's
@@ -592,6 +628,8 @@ export async function preparedState(
       .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', item.id)
       .order('created_at', { ascending: false }).limit(8);
     pool = (dels ?? []) as Array<Record<string, unknown>>;
+    // W13 · the item's BASE files — the truth floors judge a draft riding one as not the work.
+    { const bases = baseFileIdsOf(pool); if (facts && bases.length) facts = { ...facts, baseFileIds: bases }; }
     out.push(...(item.kind === 'inbox_item'
       ? await stripNoticeDrafts(poolRowsToArtifacts(pool, poolKind), sd, null)
       : poolRowsToArtifacts(pool, poolKind)));
@@ -717,7 +755,9 @@ export async function preparedStatesFor(
         const pAt = Date.parse(String(a.ground?.receivedAt ?? '')) || 0;
         if (pAt && lastAct > pAt + 5000) markGroundMoved(a);
       }
-      const baseFacts = item.kind === 'inbox' ? inboxTruthFacts(sd) : commitFacts.get(item.id) ?? null;
+      const itemFacts = item.kind === 'inbox' ? inboxTruthFacts(sd) : commitFacts.get(item.id) ?? null;
+      const bases = baseFileIdsOf(pool);
+      const baseFacts = itemFacts && bases.length ? { ...itemFacts, baseFileIds: bases } : itemFacts;
       const facts = baseFacts && boxes && connOf.has(keyOf(item)) ? { ...baseFacts, mailbox: mailboxFactsFor(connOf.get(keyOf(item)), boxes) } : baseFacts;
       stampTruth(arts, facts);
       if (hasAddressed(arts)) {

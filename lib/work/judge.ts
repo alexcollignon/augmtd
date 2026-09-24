@@ -204,7 +204,9 @@ export type WorkVerdict = {
    *  org report, individual report and ALP sheet" → 3 entries). ONLY what the item explicitly
    *  asks for or the work objectively cannot go out without — never inferred nice-to-haves.
    *  The preparation pass resolves each (have it / need it from the user) before drafting. */
-  requires?: Array<{ label: string }>;
+  requires?: Array<{ label: string; /** W13 · the requirement's kind when a judge states it (the prompt does
+   *  not ask yet — lib/prepare/requirements reasons it in its own pick; a stated kind wins there). */
+    kind?: 'existing' | 'new_work' }>;
   /** FAILURE HONESTY (proactive-team W2): true means the judge COULD NOT judge — the reasoning call
    *  failed or returned an unusable verdict. A failed verdict is NEVER cached (the next open retries)
    *  and NEVER moves the posture or strips artifacts (apply-verdict guards on it). "Failed to judge"

@@ -30,12 +30,24 @@ export async function POST(
     }
 
     const { id } = await params;
-    const { customMessage, aiDraft, attachments: rawAttachments, cc, bcc, to } = await request.json();
+    const { customMessage, aiDraft, attachments: rawAttachments, stagedFileIds: rawStaged, cc, bcc, to } = await request.json();
     const attachments: EmailAttachment[] = (rawAttachments || []).map((a: { filename: string; content: string; mimeType: string }) => ({
       filename: a.filename,
       content: Buffer.from(a.content, 'base64'),
       mimeType: a.mimeType,
     }));
+    // W13 · A CLAIM RENDERS — the card's STAGED chips (the prepared file the draft says is attached)
+    // ride as ids and are loaded HERE through THE ONE loader: the send attaches exactly what the chip
+    // showed, all or nothing (a file that cannot load refuses the send, naming it — before any claim).
+    {
+      const { stagedFileIdsOf, loadStagedAttachments } = await import('@/lib/knowledge/kb-attachment');
+      const ids = stagedFileIdsOf(rawStaged);
+      if (ids.length) {
+        const loaded = await loadStagedAttachments(supabase, user.id, ids);
+        if (!loaded.ok) return NextResponse.json({ error: loaded.error }, { status: 422 });
+        attachments.push(...loaded.files);
+      }
+    }
 
     // Get inbox item with draft
     const { data: item, error: fetchError } = await supabase

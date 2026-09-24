@@ -30,6 +30,11 @@ export type UniversalCandidate = {
   entityId?: string | null;   // the file's own entity link (Phase A) — affinity signal
   originKind?: string | null; // provenance for the pick's reasoning + the preview
   score: number;              // source-local relevance, normalized 0..1
+  /** W13 · THE FILE'S OWN DATE — when these bytes came to exist as far as we can tell (an email
+   *  attachment: the message's date; a KB/drive file: its modified/indexed time; a pool row: the date
+   *  its writer stamped, else the row's own). null = unknown. The staging law code-checks it against
+   *  the REQUEST's date: a file that predates an ask for NEW work can only be that work's base. */
+  fileAt?: string | null;
 };
 
 export type FileSource = {
@@ -56,6 +61,9 @@ const SOURCES: FileSource[] = [
         const qTokens = query.toLowerCase().split(/\W+/).filter((w) => w.length > 2);
         if (!qTokens.length) return [];
         return ((data ?? []) as Array<Record<string, unknown>>)
+          // W13 · a BASE row (the pre-existing version an ask wants new work added to) is context for
+          // its own item, never a candidate for anything — it must not come back as "the pool has it".
+          .filter((r) => (r.metadata as { role?: string } | null)?.role !== 'base')
           .map((r) => {
             const hay = `${String(r.title ?? '')} ${String((r.metadata as { gist?: string } | null)?.gist ?? '')}`.toLowerCase();
             const hits = qTokens.filter((t) => hay.includes(t)).length;
@@ -66,7 +74,7 @@ const SOURCES: FileSource[] = [
           .map(({ r }) => ({
             source: 'pool' as const, id: r.id as string, filename: String(r.title ?? 'file'),
             snippet: String(r.content ?? '').replace(/\s+/g, ' ').slice(0, 200),
-            entityId: null, score: 1,
+            entityId: null, score: 1, fileAt: poolFileAt(r),
           }));
       } catch { return []; }
     },
@@ -79,18 +87,31 @@ const SOURCES: FileSource[] = [
       if (!groups.length) return [];
       // Join the Phase-A provenance (entity link + origin) for affinity + the pick's reasoning.
       const ids = groups.map((g) => g.fileId);
-      const meta = new Map<string, { entity_id: string | null; origin: { kind?: string } | null }>();
+      const meta = new Map<string, { entity_id: string | null; origin: { kind?: string; ref?: string } | null; last_modified_at?: string | null; indexed_at?: string | null }>();
       try {
-        const { data } = await admin.from('knowledge_files').select('id, entity_id, origin').in('id', ids);
-        for (const r of (data ?? []) as Array<Record<string, unknown>>) meta.set(r.id as string, { entity_id: (r.entity_id as string) ?? null, origin: (r.origin as { kind?: string }) ?? null });
+        // W13 · the file's own dates ride the same read (a failed select — the silent-column trap —
+        // retries without them, so affinity never dies for the sake of a date).
+        const dated = await admin.from('knowledge_files').select('id, entity_id, origin, last_modified_at, indexed_at').in('id', ids);
+        const rows: unknown[] | null = dated.error
+          ? (await admin.from('knowledge_files').select('id, entity_id, origin').in('id', ids)).data
+          : dated.data;
+        for (const r of (rows ?? []) as Array<Record<string, unknown>>) meta.set(r.id as string, {
+          entity_id: (r.entity_id as string) ?? null, origin: (r.origin as { kind?: string; ref?: string }) ?? null,
+          last_modified_at: (r.last_modified_at as string | null) ?? null, indexed_at: (r.indexed_at as string | null) ?? null,
+        });
       } catch { /* pre-migration — no affinity */ }
-      return groups.map((g, i) => ({
-        source: 'kb' as const, id: g.fileId, filename: g.filename,
-        snippet: (g.summary || g.contextText || '').slice(0, 300),
-        entityId: meta.get(g.fileId)?.entity_id ?? null,
-        originKind: meta.get(g.fileId)?.origin?.kind ?? null,
-        score: Math.max(0.1, 1 - i * 0.15),
-      }));
+      const attachedAt = await emailAttachmentDates(admin, ctx.userId, [...meta.values()]);
+      return groups.map((g, i) => {
+        const m = meta.get(g.fileId);
+        return {
+          source: 'kb' as const, id: g.fileId, filename: g.filename,
+          snippet: (g.summary || g.contextText || '').slice(0, 300),
+          entityId: m?.entity_id ?? null,
+          originKind: m?.origin?.kind ?? null,
+          score: Math.max(0.1, 1 - i * 0.15),
+          fileAt: kbFileAt(m, attachedAt),
+        };
+      });
     },
   },
   // ── Connected drives (Phase B3) — TIER-0 catalog over the NATIVE clients (the mailbox connection's
@@ -107,7 +128,7 @@ const SOURCES: FileSource[] = [
       const { listDriveContents } = await import('./google-drive');
       const items = await listDriveContents(tokens).catch(() => []);
       return nameRank(items.filter((i: { mimeType?: string }) => !String(i.mimeType || '').includes('folder'))
-        .map((i: { id: string; name: string }) => ({ id: i.id, name: i.name })), query, 'gdrive', limit);
+        .map((i: { id: string; name: string; modifiedTime?: string | null }) => ({ id: i.id, name: i.name, at: i.modifiedTime ?? null })), query, 'gdrive', limit);
     },
   },
   {
@@ -119,7 +140,7 @@ const SOURCES: FileSource[] = [
       const { listOneDriveContents } = await import('./onedrive');
       const items = await listOneDriveContents(tokens).catch(() => []);
       return nameRank(items.filter((i: { type?: string; mimeType?: string }) => (i as { type?: string }).type !== 'folder')
-        .map((i: { id: string; name: string }) => ({ id: i.id, name: i.name })), query, 'onedrive', limit);
+        .map((i: { id: string; name: string; lastModifiedDateTime?: string | null }) => ({ id: i.id, name: i.name, at: i.lastModifiedDateTime ?? null })), query, 'onedrive', limit);
     },
   },
 ];
@@ -147,6 +168,52 @@ export async function resolveFileUniversal(
 }
 
 
+// ── W13 · THE FILE'S OWN DATE (pure where it can be) ─────────────────────────────────────────────
+/** A pool row's file date: the date its writer stamped (`metadata.fileAt` — a staged KB pointer
+ *  carries its FILE's date, never the row's), else — for a row that merely POINTS at a file
+ *  (`metadata.attachment`) with no stamp — unknown, else the row's own birth (a file the user dropped
+ *  in IS born when it lands). Pure. */
+export function poolFileAt(r: { created_at?: unknown; metadata?: unknown }): string | null {
+  const m = (r.metadata ?? {}) as { fileAt?: unknown; attachment?: unknown };
+  if (typeof m.fileAt === 'string' && m.fileAt) return m.fileAt;
+  if (m.attachment) return null;
+  return typeof r.created_at === 'string' ? r.created_at : null;
+}
+
+/** A KB row's file date. Every date we hold is an UPPER bound on when the file came to exist — its
+ *  modified time, when we indexed it, and (an email attachment) the date its conversation's item
+ *  carries — so the file is at least as old as the EARLIEST of them. Pure. */
+export function kbFileAt(
+  m: { origin?: { kind?: string; ref?: string } | null; last_modified_at?: string | null; indexed_at?: string | null } | undefined,
+  attachedAt: Map<string, string>,
+): string | null {
+  if (!m) return null;
+  const ref = m.origin?.kind === 'email_attachment' ? m.origin.ref : null;
+  const ts = [ref ? attachedAt.get(ref) : null, m.last_modified_at, m.indexed_at]
+    .map((d) => Date.parse(String(d ?? ''))).filter((t) => Number.isFinite(t));
+  return ts.length ? new Date(Math.min(...ts)).toISOString() : null;
+}
+
+/** The dates of the inbox items email-attachment KB rows came from — one bounded read. */
+export async function emailAttachmentDates(
+  admin: SupabaseClient, userId: string,
+  rows: Array<{ origin?: { kind?: string; ref?: string } | null }>,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const refs = [...new Set(rows.filter((r) => r.origin?.kind === 'email_attachment' && r.origin.ref).map((r) => String(r.origin!.ref)))];
+  if (!refs.length) return out;
+  try {
+    const { data, error } = await admin.from('inbox_items').select('id, created_at, received_at:source_data->>received_at')
+      .eq('user_id', userId).in('id', refs.slice(0, 50));
+    if (error) return out;
+    for (const r of (data ?? []) as Array<{ id: string; created_at?: string | null; received_at?: string | null }>) {
+      const at = r.received_at || r.created_at;
+      if (at) out.set(String(r.id), String(at));
+    }
+  } catch { /* unknown dates stay unknown — the staging law fails safe on them */ }
+  return out;
+}
+
 // ── Drive helpers (B3) ───────────────────────────────────────────────────────────────────────────
 async function driveTokens(admin: SupabaseClient, userId: string, provider: 'gmail' | 'outlook'): Promise<string | null> {
   try {
@@ -157,13 +224,13 @@ async function driveTokens(admin: SupabaseClient, userId: string, provider: 'gma
 }
 
 /** Cheap Tier-0 ranking: query-word overlap against the filename (catalog has no content yet). */
-function nameRank(items: Array<{ id: string; name: string }>, query: string, source: UniversalCandidate['source'], limit: number): UniversalCandidate[] {
+function nameRank(items: Array<{ id: string; name: string; at?: string | null }>, query: string, source: UniversalCandidate['source'], limit: number): UniversalCandidate[] {
   const qw = query.toLowerCase().split(/\W+/).filter((w) => w.length >= 3); // >=3: acronyms (client codes) are prime signals
   return items
     .map((i) => {
       const name = i.name.toLowerCase();
       const hits = qw.filter((w) => name.includes(w)).length;
-      return { source, id: i.id, filename: i.name, snippet: `(drive catalog: ${i.name})`, score: hits ? Math.min(0.9, 0.3 + hits * 0.2) : 0 };
+      return { source, id: i.id, filename: i.name, snippet: `(drive catalog: ${i.name})`, score: hits ? Math.min(0.9, 0.3 + hits * 0.2) : 0, fileAt: i.at ?? null };
     })
     .filter((c) => c.score > 0)
     .sort((a, b) => b.score - a.score)
