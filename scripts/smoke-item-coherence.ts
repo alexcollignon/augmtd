@@ -115,8 +115,11 @@ console.log('\nB · a draft may never say "attached" unless an attachment is sta
     && isLiveArtifact(stampTruth([art({ content: chaseOnly })], awaiting)[0]));
   const ev = src('lib/prepare/evaluate.ts');
   gate('B10 the evaluator carries the attachment floor with its fact (staged === false), before the AI review',
-    /if \(args\.kind !== 'deliverable' && args\.staged === false\) \{\s*const claim = claimsUnstagedAttachment\(args\.content, \{ staged: false \}\);/.test(ev)
-    && ev.indexOf('claimsUnstagedAttachment(args.content') < ev.indexOf('await aiCall'));
+    // ⟲ RE-POINTED (W12.1 · EVERY DRAFT PASSES THE SAME TRUTH): the floors are ONE function now —
+    // the evaluator calls lib/prepare/truth `vetDraft` with the attachment floor ON only when the
+    // producer stated `staged === false` (behaviour held in smoke-compose-truth A).
+    /const failed = vetDraft\(args\.content, \{\s*obligationOpen: args\.obligationOpen === true, staged: args\.staged === true, attachmentFloor: args\.staged === false,\s*\}\);/.test(ev)
+    && ev.indexOf('vetDraft(args.content') < ev.indexOf('await aiCall'));
   gate('B11 the pass states the fact for every nudge it reviews (a nudge never stages a file)',
     /const staged = args\.kind === 'nudge' \? \{ staged: false \} : \{\};/.test(src('lib/prepare/pass.ts')));
 }

@@ -475,6 +475,11 @@ function EmailCardView({ card }: { card: EmailCard }) {
           </div>
         )}
 
+        {/* THE HELD-BACK LINE (W12.3) — the door's own words for why no draft was served, above
+            the editor that stays open for the user's. Quiet: a fact about the draft, never a banner. */}
+        {card.bodyNote && (
+          <p data-body-note className="text-[12px] leading-[1.5] text-neutral-500">{card.bodyNote}</p>
+        )}
         {/* CLICK ANYWHERE TO EDIT — the card IS the workspace; the stage survives for the deep 20%.
             The editor is the INBOX'S OWN rich composer (contentEditable + FormatToolbar: bold ·
             italic · lists · link), mounted, never forked — so a card send and a stage send of the

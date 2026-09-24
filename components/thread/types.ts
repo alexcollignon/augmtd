@@ -477,6 +477,13 @@ export interface EmailCard extends CardBase {
   /** "click anywhere to edit · mirrors the thread's language" — vocabulary, never speech. */
   bodyHint?: string;
   /**
+   * THE HELD-BACK LINE (W12.3) — when the host's door served NO words on purpose (a generated draft
+   * failed the one truth vet twice, `/api/compose/draft` → `withheld`), the door's own sentence, one
+   * quiet line ABOVE the editor. The host passes the served words verbatim (no second home for the
+   * text); the editor below stays live for the user's own words.
+   */
+  bodyNote?: string;
+  /**
    * WHAT YOU ARE REPLYING TO CAME WITH THESE (owner walk, Sep 10: "wasn't considered in the email
    * context… nor to open/see the document"). The SOURCE message's own attachments, read where the
    * reply is written — a fact about the material, never an outgoing file. They render ABOVE the

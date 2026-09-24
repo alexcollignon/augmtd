@@ -7,20 +7,32 @@
 // POST — the user's click: { address, action: 'confirm' | 'remove' | 'add' | 'reset', name? }.
 //        One row per address in the typed store; returns the refreshed view.
 //
-// RLS client only (the user's own rows). Zero AI. The user's hand wins: a removed address never
+// RLS client for the user's own rows; the member address list alone is read with the service role,
+// scoped to the caller's own companies (W12.3). Zero AI. The user's hand wins: a removed address never
 // counts, whatever its evidence.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { loadActorContext } from '@/lib/evidence/actor';
 import {
   loadCircle, circleRows, decideCircle,
   CIRCLE_SUGGEST_MIN_THREADS, CIRCLE_AUTO_MIN_THREADS, CIRCLE_AUTO_MIN_ALONGSIDE, CIRCLE_WINDOW_DAYS,
 } from '@/lib/evidence/circle';
 
+// W12.3 · MEMBERS ARE READ WITH THE SERVICE ROLE, scoped to the CALLER's own active companies
+// (loadActorContext reads only this user's company_members → those members' connected addresses).
+// Through RLS a teammate's connections are invisible, so a member writing from a second mailbox
+// surfaced as an "inferred" suggestion; the admin read returns only that address list, nothing else.
+function adminClient() {
+  return createAdminClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function view(supabase: any, userId: string, refresh: boolean) {
-  const base = await loadActorContext(supabase, userId, { circle: false });
+  const base = await loadActorContext(adminClient(), userId, { circle: false });
   const c = await loadCircle(supabase, userId, base, { refresh });
   return {
     members: base.teammates.map((a) => ({ address: a, name: base.teammateNames?.[a] ?? null })),

@@ -21,6 +21,13 @@
 //   • SAME ORGANISATION IS NEVER A SIDE: a pair whose two addresses share a CORPORATE domain says
 //     nothing (the counterparty's own colleague replying alongside them is on THEIR side). A public
 //     mail domain proves no organisation either way, so there only the structure speaks.
+//   • THE COUNTERPARTY IS AN ORGANISATION (W12.2): sides are decided between organisations first —
+//     per thread, an org that loses an org contest is that thread's counterparty and none of its
+//     addresses is a same-side collaborator there; across threads, an org whose side threads fall
+//     below CIRCLE_ORG_SIDE_DOMINANCE × its counterparty threads (org contests lost + threads with
+//     sides where the user wrote TO it) is a COUNTERPARTY ORGANISATION: its pairs are void and its
+//     people are never suggested (a client's colleagues, whom the user copies or who write to the
+//     user's partner with the user copied, are the client's side, not ours).
 //   • NEVER THE COUNTERPARTY: an address is a candidate only while its side threads OUTNUMBER its
 //     counter threads; and the ladder's own precedence (counterparty > teammate) still names the
 //     counterparty of any specific work, whatever the circle says.
@@ -56,12 +63,17 @@ import { COWORKER_EMAIL_DOMAIN } from '@/lib/integrations/registry';
 import { deletePlans, readPlan, readPlans, upsertPlan } from '@/lib/store/item-plans';
 import { fetchAllRows } from '@/lib/utils/fetch-all';
 
-export const CIRCLE_VERSION = 1;
+// v2 (W12.2): the counterparty is an organisation; a cached v1 inference is recomputed on read.
+export const CIRCLE_VERSION = 2;
 export const CIRCLE_WINDOW_DAYS = 180;
 export const CIRCLE_SUGGEST_MIN_THREADS = 2;
 export const CIRCLE_AUTO_MIN_THREADS = 4;
 export const CIRCLE_AUTO_MIN_ALONGSIDE = 2;
 export const CIRCLE_AUTO_DOMINANCE = 4;
+/** W12.2 — an ORGANISATION is on the user's side only while its side threads reach this multiple of
+ *  its counterparty threads; below it, it is a counterparty organisation and none of its people is
+ *  ever a same-side collaborator (a client's colleagues, whatever the structure of one message says). */
+export const CIRCLE_ORG_SIDE_DOMINANCE = 2;
 export const CIRCLE_TTL_MS = 24 * 3_600_000;
 /** The stated bound on each mail lane the recompute reads (reported as `capped` — NO SILENT CAPS). */
 export const CIRCLE_READ_MAX = 20_000;
@@ -112,6 +124,18 @@ const isPublic = (d: string): boolean => FREE_EMAIL_DOMAINS.has(d.toLowerCase())
 const MACHINE_LOCAL = /^(no-?reply|do-?not-?reply|donotreply|notifications?|notify|mailer-daemon|postmaster|bounces?|calendar|invites?|support|info|news(letter)?|updates?|alerts?)([+._-]|$)/i;
 export const isMachineAddress = (a: string): boolean => MACHINE_LOCAL.test(a.split('@')[0] ?? '');
 
+/** The organisation an address speaks for: its corporate domain; a public-provider address is its
+ *  own (a public domain proves no organisation). */
+export const orgOf = (a: string): string => { const d = domainOf(a); return d && !isPublic(d) ? d : a; };
+
+/** THE HIGH BAR — a verdict of the counts under the CURRENT rule, never a stored fact: a cached
+ *  inference is re-judged on every read (W12.2 — a verdict cached under an earlier rule held both
+ *  of the owner's strongest partners below the bar for a day). */
+export function autoVerdict(c: Pick<CircleCandidate, 'threads' | 'counterThreads' | 'alongside' | 'publicDomain'>): boolean {
+  return c.threads >= CIRCLE_AUTO_MIN_THREADS && c.threads >= CIRCLE_AUTO_DOMINANCE * c.counterThreads
+    && c.alongside >= CIRCLE_AUTO_MIN_ALONGSIDE && !c.publicDomain;
+}
+
 /** Two addresses of the SAME organisation (a shared CORPORATE domain) — never a side pair. */
 export function sameOrganisation(a: string, b: string): boolean {
   const da = domainOf(a), db = domainOf(b);
@@ -140,6 +164,7 @@ export function inferCircle(mails: readonly CircleMail[], known: CircleKnown): C
   type Pair = { s: number; alongside: number; cc: number };
   const byThread = new Map<string, Map<string, Pair>>(); // thread → `${x}\u0000${y}` → score
   const names = new Map<string, string>();
+  const userTo = new Map<string, Set<string>>(); // thread → the orgs the user wrote TO there
   const bump = (t: string, x: string, y: string, kind: 'alongside' | 'cc') => {
     if (x === y || sameOrganisation(x, y)) return;
     const m = byThread.get(t) ?? byThread.set(t, new Map()).get(t)!;
@@ -154,6 +179,8 @@ export function inferCircle(mails: readonly CircleMail[], known: CircleKnown): C
     const cc = [...new Set(m.cc.map(external).filter((a): a is string => !!a))];
     if (m.fromUser) {
       for (const y of to) for (const x of cc) bump(m.threadId, x, y, 'cc');
+      const ut = userTo.get(m.threadId) ?? userTo.set(m.threadId, new Set()).get(m.threadId)!;
+      for (const y of to) ut.add(orgOf(y));
       continue;
     }
     const x = external(m.from);
@@ -164,14 +191,80 @@ export function inferCircle(mails: readonly CircleMail[], known: CircleKnown): C
     for (const y of to) bump(m.threadId, x, y, 'alongside');
   }
 
+  // ── W12.2 · THE COUNTERPARTY IS AN ORGANISATION (owner walk on prod after W11 deployed: Settings →
+  //    Team suggested people on the CLIENT's own domain — the client's colleagues, copied when the
+  //    user writes to someone else, or writing to the user's partner with the user copied, won a
+  //    pair over a third address and read as "ours"). A side is decided between ORGANISATIONS first:
+  //    per thread, the org pairs are summed (a corporate domain is one org; a public-provider
+  //    address is its own) and an org that loses any org contest on the thread is that thread's
+  //    COUNTERPARTY — no address of it is a same-side collaborator there. Across threads, an org
+  //    whose side threads do not reach CIRCLE_ORG_SIDE_DOMINANCE × its counterparty threads is a
+  //    COUNTERPARTY ORGANISATION for this user: its pairs are void everywhere (they neither make it
+  //    "ours" nor push anyone else to the counterparty side — the partner's inflated counter count
+  //    came from exactly those pairs), and none of its people is ever suggested.
+  type OrgSides = { side: Set<string>; counter: Set<string> };
+  const orgContest = (pairs: Map<string, Pair>, voidOrg: (o: string) => boolean): OrgSides => {
+    const os = new Map<string, number>();
+    for (const [k, p] of pairs) {
+      const [x, y] = k.split('\u0000');
+      const ox = orgOf(x), oy = orgOf(y);
+      if (ox === oy || voidOrg(ox)) continue;
+      os.set(`${ox}\u0000${oy}`, (os.get(`${ox}\u0000${oy}`) ?? 0) + p.s);
+    }
+    const wins = new Set<string>(), counter = new Set<string>();
+    for (const [k, sc] of os) {
+      const [ox, oy] = k.split('\u0000');
+      if (sc > (os.get(`${oy}\u0000${ox}`) ?? 0)) { wins.add(ox); counter.add(oy); }
+    }
+    return { side: new Set([...wins].filter((o) => !counter.has(o))), counter };
+  };
+  // Pass 1 — every thread's org contest → each org's side / counterparty threads, settled ONE org at
+  // a time: the most counterparty-like org (lowest side ÷ counterparty ratio) is voided first and the
+  // tallies re-read without its pairs, so a client's colleagues writing to the partner never make the
+  // PARTNER look like a counterparty (the pairs that did are void by then). Bounded by the org count.
+  const counterpartyOrgs = new Set<string>();
+  const isCorporateOrg = (o: string) => !o.includes('@');
+  for (;;) {
+    const orgTally = new Map<string, { side: number; counter: number }>();
+    const tallyOf = (o: string) => orgTally.get(o) ?? orgTally.set(o, { side: 0, counter: 0 }).get(o)!;
+    for (const [t, pairs] of byThread) {
+      const { side, counter } = orgContest(pairs, (o) => counterpartyOrgs.has(o));
+      if (!side.size) continue;
+      for (const o of side) tallyOf(o).side++;
+      // The org the USER addressed on a thread with sides, and that did not stand on the user's side
+      // there, is that thread's To-counterparty (the user writing TO them is the counterparty's mark).
+      const counted = new Set(counter);
+      for (const o of userTo.get(t) ?? []) if (!side.has(o)) counted.add(o);
+      for (const o of counted) tallyOf(o).counter++;
+    }
+    let worst: string | null = null, worstRatio = Infinity, worstCounter = 0;
+    for (const [o, n] of orgTally) {
+      if (!isCorporateOrg(o) || counterpartyOrgs.has(o)) continue;
+      if (!(n.counter > 0 && n.side < CIRCLE_ORG_SIDE_DOMINANCE * n.counter)) continue;
+      const ratio = n.side / n.counter;
+      if (ratio < worstRatio || (ratio === worstRatio && (n.counter > worstCounter || (n.counter === worstCounter && worst !== null && o < worst)))) {
+        worst = o; worstRatio = ratio; worstCounter = n.counter;
+      }
+    }
+    if (!worst) break;
+    counterpartyOrgs.add(worst);
+  }
+  const voidOrg = (o: string) => counterpartyOrgs.has(o);
+
+  // Pass 2 — the address pairs, credited only between a side org and a counterparty org of that thread.
   type Agg = { side: Set<string>; counter: Set<string>; alongside: number; cc: number };
   const agg = new Map<string, Agg>();
   const at = (a: string) => agg.get(a) ?? agg.set(a, { side: new Set(), counter: new Set(), alongside: 0, cc: 0 }).get(a)!;
   for (const [t, pairs] of byThread) {
+    const orgs = orgContest(pairs, voidOrg);
     for (const [k, p] of pairs) {
       const [x, y] = k.split('\u0000');
+      if (voidOrg(orgOf(x))) continue; // a counterparty organisation's pair says nothing
       const rev = pairs.get(`${y}\u0000${x}`)?.s ?? 0;
       if (p.s <= rev) continue; // the strict margin — a symmetric exchange names no side
+      // THE THREAD'S COUNTERPARTY IS AN ORG: X's org must stand on the user's side of this thread and
+      // Y's org must be its counterparty — never a same-side credit on the counterparty's own domain.
+      if (!orgs.side.has(orgOf(x)) || !orgs.counter.has(orgOf(y))) continue;
       const ax = at(x);
       if (!ax.side.has(t)) { ax.side.add(t); }
       ax.alongside += p.alongside; ax.cc += p.cc;
@@ -181,18 +274,15 @@ export function inferCircle(mails: readonly CircleMail[], known: CircleKnown): C
 
   const out: CircleCandidate[] = [];
   for (const [address, a] of agg) {
-    if (excluded(address)) continue;
+    if (excluded(address) || voidOrg(orgOf(address))) continue;
     // NEVER THE COUNTERPARTY: a counter thread is not also a side thread for this address.
     const counterOnly = [...a.counter].filter((t) => !a.side.has(t)).length;
     const threads = a.side.size;
     if (threads < CIRCLE_SUGGEST_MIN_THREADS || threads <= counterOnly) continue;
     const publicDomain = isPublic(domainOf(address));
-    out.push({
-      address, name: names.get(address) ?? null, threads, counterThreads: counterOnly,
-      alongside: a.alongside, ccByUser: a.cc, publicDomain,
-      auto: threads >= CIRCLE_AUTO_MIN_THREADS && threads >= CIRCLE_AUTO_DOMINANCE * counterOnly
-        && a.alongside >= CIRCLE_AUTO_MIN_ALONGSIDE && !publicDomain,
-    });
+    const c = { address, name: names.get(address) ?? null, threads, counterThreads: counterOnly,
+      alongside: a.alongside, ccByUser: a.cc, publicDomain };
+    out.push({ ...c, auto: autoVerdict(c) });
   }
   return out.sort((p, q) => q.threads - p.threads || q.alongside - p.alongside || p.address.localeCompare(q.address));
 }
@@ -308,6 +398,8 @@ export async function loadCircle(
       if (opts.persist !== false && persistAllowed) await upsertPlan(client, userId, CIRCLE_KIND, CIRCLE_KEY, inference as never);
     } catch { /* keep the stale inference (or none) — a failed read only NARROWS the circle */ }
   }
+  // Re-judge the high bar under the CURRENT rule (a cached verdict is never served as a fact).
+  if (inference) inference = { ...inference, candidates: (inference.candidates ?? []).map((c) => ({ ...c, auto: autoVerdict(c) })) };
   const candidates = inference?.candidates ?? [];
   const names: Record<string, string> = {};
   for (const c of candidates) if (c.name) names[c.address] = c.name;

@@ -302,3 +302,162 @@ export function enforceRenderedClaims(
   // degrades to nothing, and the caller keeps its last-good rather than shipping a lie.
   return { text: droppedDraftClaim ? OFFER_INSTEAD : '', dropped };
 }
+
+// ── TIME TRUTH IN THE BRIEF (stabilization W12.1 · owner live walk Sep 23, after W11) ─────────────
+// The room brief said "<Contact> asked us nine days ago" about an ask dated Aug 28, on Sep 23 — 26
+// days. The composer does arithmetic in prose and nothing checked it. THE NET: every relative day
+// claim in served prose ("N days ago", "yesterday", "the day before yesterday", "last week", "a week
+// ago", "a few days ago", "earlier this week") is CODE-VERIFIED against the dated events the page
+// actually carries (the user's own clock, lib/utils/user-time localNow):
+//   · the phrase is ATTRIBUTED when a known person's name stands just before it in the same clause
+//     ("<Contact> asked us nine days ago") — then it must match one of THAT person's dated events;
+//     unattributed, it must match some dated event on the page;
+//   · verified → kept; an attributed claim that fails is REWRITTEN to the absolute date of that
+//     person's event when exactly one day is on record ("asked us on Aug 28"); anything else is
+//     DROPPED (the phrase, never the sentence — the prose says less, never something else).
+// Pure, deterministic, zero AI (the floor doctrine: a missed catch costs precision, a false catch
+// must never invent a date — a rewrite only ever uses a date the page holds for that person).
+
+/** A dated event the page carries — its LOCAL day (YYYY-MM-DD, the user's zone) and, when known,
+ *  the person it is about. */
+export type DatedEvent = { day: string; who?: string | null };
+
+const NUM_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
+  eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, a: 1, an: 1,
+};
+const NUM = `(?:\\d{1,3}|${Object.keys(NUM_WORDS).filter((k) => k !== 'a' && k !== 'an').join('|')}|twenty[- ](?:one|two|three|four|five|six|seven|eight|nine))`;
+const QUAL = `(?:(?:about|around|roughly|nearly|almost|over|more than|less than|under|just over|just under|some)\\s+)?`;
+/** The relative-day vocabulary (EN — the composer writes the room brief in the user's language; the
+ *  non-EN forms are a stated gap, never a guess). Longest forms first so "the day before yesterday"
+ *  is never read as "yesterday". */
+const RELATIVE_DAY = new RegExp(
+  `\\b(?:the day before yesterday|day before yesterday|yesterday|earlier this week|last week|` +
+  `${QUAL}(?:a couple of|a few|several) days ago|` +
+  `${QUAL}${NUM} days? ago|` +
+  `${QUAL}(?:a|an|${NUM}) weeks? ago)\\b`, 'gi');
+
+function numOf(tok: string): number | null {
+  const t = tok.toLowerCase().replace(/-/g, ' ');
+  if (/^\d+$/.test(t)) return parseInt(t, 10);
+  if (NUM_WORDS[t] !== undefined) return NUM_WORDS[t];
+  const m = /^twenty (\w+)$/.exec(t);
+  return m && NUM_WORDS[m[1]] !== undefined ? 20 + NUM_WORDS[m[1]] : null;
+}
+
+/** Whole days between two YYYY-MM-DD local days (a − b). */
+export function dayDiff(a: string, b: string): number {
+  return Math.round((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000);
+}
+
+/** The day-offset range [lo, hi] (days before `today`) a relative phrase claims; null = unparsed. */
+export function relativeDayRange(phrase: string, today: string): [number, number] | null {
+  const p = phrase.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (/day before yesterday$/.test(p)) return [2, 2];
+  if (p === 'yesterday') return [1, 1];
+  const dow = (new Date(`${today}T12:00:00Z`).getUTCDay() + 6) % 7; // Mon = 0
+  if (p === 'earlier this week') return dow >= 1 ? [1, dow] : null;
+  if (p === 'last week') return [dow + 1, dow + 7];
+  const q = /^(about|around|roughly|nearly|almost|over|more than|less than|under|just over|just under|some) /.exec(p)?.[1] ?? null;
+  const core = q ? p.slice(q.length + 1) : p;
+  let lo: number; let hi: number; let n: number;
+  const vague = /^(a couple of|a few|several) days ago$/.exec(core);
+  if (vague) {
+    [lo, hi] = vague[1] === 'a couple of' ? [2, 3] : vague[1] === 'a few' ? [2, 6] : [3, 9];
+    n = Math.round((lo + hi) / 2);
+  } else {
+    const d = /^(.+?) days? ago$/.exec(core);
+    const w = /^(.+?) weeks? ago$/.exec(core);
+    const k = d ? numOf(d[1]) : w ? numOf(w[1]) : null;
+    if (k === null) return null;
+    if (d) { n = k; const tol = k <= 2 ? 0 : 1; lo = k - tol; hi = k + tol; }
+    else { n = 7 * k; lo = n - 3; hi = n + 3; }
+  }
+  if (q === 'over' || q === 'more than' || q === 'just over') return [n + 1, Number.POSITIVE_INFINITY];
+  if (q === 'less than' || q === 'under' || q === 'just under') return [0, Math.max(0, n - 1)];
+  if (q) { const t = Math.max(1, Math.round(n * 0.15)); return [Math.max(0, lo - t), hi + t]; }
+  return [lo, hi];
+}
+
+/** A person's name tokens worth matching in prose (capitalized, ≥3 letters; the address stripped). */
+function personTokens(who: string | null | undefined): string[] {
+  return String(who ?? '').replace(/<[^>]*>/g, ' ').replace(/[^\p{L}\s'-]/gu, ' ').split(/\s+/)
+    .filter((t) => t.length >= 3 && /^\p{Lu}/u.test(t));
+}
+
+/** The person the phrase is attributed to: a known name standing just before it in the same clause
+ *  (≤ 60 chars, no other subject — I/we/you — and no clause break between). */
+function attributedWho(sentence: string, phraseAt: number, people: string[]): string | null {
+  let best: { who: string; at: number } | null = null;
+  for (const who of people) {
+    for (const tok of personTokens(who)) {
+      const re = new RegExp(`(?<![\\p{L}])${tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}])`, 'gu');
+      for (const m of sentence.matchAll(re)) {
+        const at = m.index ?? 0;
+        if (at >= phraseAt) continue;
+        const gap = sentence.slice(at + m[0].length, phraseAt);
+        if (gap.length > 60 || /\b(?:I|we|you)\b/.test(gap) || /[;:—–()]/.test(gap)) continue;
+        if (!best || at > best.at) best = { who, at };
+      }
+    }
+  }
+  return best?.who ?? null;
+}
+
+/** "Aug 28" (the year only when it is not today's). */
+export function absoluteDayLabel(day: string, today: string): string {
+  const d = new Date(`${day}T12:00:00Z`);
+  const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return day.slice(0, 4) === today.slice(0, 4) ? label : `${label}, ${day.slice(0, 4)}`;
+}
+
+/**
+ * THE RELATIVE-TIME NET — verify every relative day claim against the page's dated events; rewrite
+ * an attributed false one to its absolute date, drop anything else unverifiable. Returns the text
+ * and what changed (for the gate / the log).
+ */
+export function enforceRelativeTimeTruth(
+  text: string, facts: { today: string; events: DatedEvent[] },
+): { text: string; rewritten: string[]; dropped: string[] } {
+  const rewritten: string[] = [];
+  const dropped: string[] = [];
+  if (!text || !facts.today) return { text, rewritten, dropped };
+  const people = [...new Set(facts.events.map((e) => e.who).filter((w): w is string => !!w && personTokens(w).length > 0))];
+  const sents = String(text).split(/(?<=[.!?])\s+/);
+  const out = sents.map((sentence) => {
+    let s = sentence;
+    // Walk the matches right-to-left so earlier offsets stay valid through the edits.
+    const matches = [...sentence.matchAll(RELATIVE_DAY)].reverse();
+    for (const m of matches) {
+      const phrase = m[0];
+      const at = m.index ?? 0;
+      const range = relativeDayRange(phrase, facts.today);
+      if (!range) continue;
+      const who = attributedWho(sentence, at, people);
+      const pool = who ? facts.events.filter((e) => e.who === who) : facts.events;
+      const ok = pool.some((e) => { const d = dayDiff(facts.today, e.day); return d >= range[0] && d <= range[1]; });
+      if (ok) continue;
+      const days = who ? [...new Set(pool.map((e) => e.day).filter((d) => dayDiff(facts.today, d) >= 0))] : [];
+      if (days.length === 1) {
+        const abs = `on ${absoluteDayLabel(days[0], facts.today)}`;
+        const cap = /^\p{Lu}/u.test(phrase) ? abs.charAt(0).toUpperCase() + abs.slice(1) : abs;
+        s = s.slice(0, at) + cap + s.slice(at + phrase.length);
+        rewritten.push(`${phrase} → ${abs}`);
+        continue;
+      }
+      // DROP the phrase (and a preposition it leaves dangling); a sentence-opening phrase takes its
+      // comma with it and the next word is re-capitalized.
+      let head = s.slice(0, at);
+      let tail = s.slice(at + phrase.length);
+      head = head.replace(/\b(?:since|from|as of|until)\s+$/i, '');
+      if (!head.trim()) { tail = tail.replace(/^\s*,?\s*/, ''); tail = tail.charAt(0).toUpperCase() + tail.slice(1); }
+      s = (head.replace(/\s+$/, '') + (head.trim() && tail && !/^[\s,.;:!?]/.test(tail) ? ' ' : '') + tail.replace(/^\s+(?=[,.;:!?])/, ''))
+        .replace(/\s{2,}/g, ' ').replace(/\s+([,.;:!?])/g, '$1').replace(/,\s*([.!?])/g, '$1');
+      dropped.push(phrase);
+    }
+    return s;
+  });
+  if (!rewritten.length && !dropped.length) return { text, rewritten, dropped };
+  return { text: out.join(' ').replace(/\s{2,}/g, ' ').trim(), rewritten, dropped };
+}

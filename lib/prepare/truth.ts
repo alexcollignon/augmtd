@@ -363,3 +363,129 @@ export function signsAsOtherIdentity(
   }
   return null;
 }
+
+// ── EVERY DRAFT PASSES THE SAME TRUTH (stabilization W12.1 · owner live walk Sep 23, after W11) ──
+// W11.1 put the chase-inversion floor, the attachment floor and the completion floor on the pass's
+// artifacts (THE ONE READER's stampTruth + the evaluator). The COMPOSE door (/api/compose/draft) was
+// a second door: with nothing pooled for a you_owe commitment it generated a FRESH conversation-tier
+// draft on every open — "Just a quick nudge on the small edit … in the second tab of the attached
+// interim report … let me know when you've had a chance" — addressed to the client, served with NO
+// floor at all. The floors are ONE function now: `vetDraft`, called by the reader (stampTruth), the
+// evaluator (evaluateDeliverable) and the compose door alike. Pure, zero IO, the floor doctrine
+// (fail-safe: each floor speaks only with its facts in hand).
+
+/** The facts every draft is vetted against — code's, never the model's. */
+export type DraftVetFacts = {
+  /** The user OWES what these words are about and it is still open (a you_owe commitment · an inbox
+   *  item whose understanding says you_owe). A completion claim or a chase is false only here. */
+  obligationOpen: boolean;
+  /** Something real rides with the words (an attachment, a staged deliverable). */
+  staged: boolean;
+  /** The attachment floor speaks (default true). Off for a PASTE PACK (its destination may carry
+   *  the file) and for an evaluator caller that stated no `staged` fact. */
+  attachmentFloor?: boolean;
+};
+
+/** Which floor a draft failed, the words that tripped it, and the ONE objection a regeneration is
+ *  handed (the same wording the evaluator stores). */
+export type DraftVetFailure = { floor: 'completion' | 'attachment' | 'chase'; claim: string; objection: string };
+
+/** The objection for a tripped chase floor — one wording. */
+export function chaseObjection(claim: string): string {
+  return `The message chases the recipient ("${claim.slice(0, 80)}") but the USER owes this — ` +
+    `rewrite it to DELIVER what was committed (or state honestly where it stands and when it will arrive); ` +
+    `never ask them for an update, never nudge or remind them about the user's own obligation.`;
+}
+
+/**
+ * THE ONE VET — the first floor these words fail, or null (they pass). Order: the completion claim
+ * (a deed that did not happen), the attachment claim (a file that does not ride along), the inverted
+ * chase (chasing the counterparty for the user's own debt). Pure.
+ */
+export function vetDraft(text: string | null | undefined, facts: DraftVetFacts): DraftVetFailure | null {
+  const done = claimsUndoneWork(text, { obligationOpen: facts.obligationOpen, staged: facts.staged });
+  if (done) return { floor: 'completion', claim: done, objection: completionObjection(done) };
+  if (facts.attachmentFloor !== false) {
+    const att = claimsUnstagedAttachment(text, { staged: facts.staged });
+    if (att) return { floor: 'attachment', claim: att, objection: attachmentObjection(att) };
+  }
+  if (facts.obligationOpen && !facts.staged) {
+    const chase = chaseWordsIn(text);
+    if (chase) return { floor: 'chase', claim: chase, objection: chaseObjection(chase) };
+  }
+  return null;
+}
+
+/**
+ * THE COMPOSE TASK FOR A COMMITMENT — the direction decides the frame. On work the USER owes
+ * (`you_owe`) the message DELIVERS (or honestly schedules) what the user committed to — it is never a
+ * request to the counterparty; on work THEY owe (`awaiting`) a polite chase is the valid message. The
+ * honesty rule and the no-attachment fact ride both. Pure — the compose door's prompt reads it.
+ */
+export function commitmentComposeTask(c: { direction?: string | null; description?: string | null }, recipientName: string | null): string {
+  const what = String(c.description ?? '').trim();
+  const who = recipientName || 'the recipient';
+  const noFile = 'NOTHING is attached to this message — never say anything is attached, enclosed or "please find".';
+  if (String(c.direction ?? '') === 'you_owe') {
+    return `THE USER OWES THIS: "${what}". Write a short email FROM the user TO ${who} that DELIVERS it — ` +
+      `state the change or the answer itself when the context gives it; otherwise state honestly where it ` +
+      `stands and WHEN it will arrive. This is the user's own obligation: NEVER ask ${who} for an update, ` +
+      `never nudge, remind or "follow up" with them, never write "let me know when you've had a chance". ` +
+      `${noFile} ${COMPLETION_HONESTY_RULE}`;
+  }
+  return `${who} OWES the user this: "${what}". Write a short, polite follow-up asking ${who} for it ` +
+    `(where it stands, and when the user can expect it). Address ${who} directly. ${noFile}`;
+}
+
+/**
+ * THE VETTED GENERATION — generate, vet, and on a failure regenerate ONCE with the failure named;
+ * a second failure is NOT served (`body: ''`, the card shows the honest empty state — write it
+ * yourself, or the ask). The generator is the caller's (the compose door's model call); this owns
+ * only the loop, so the gate can hold it with a fake generator. An empty generation is not a
+ * failure of truth — it is returned empty, with no retry.
+ */
+export async function draftThroughVet(
+  generate: (objection: string | null) => Promise<string>,
+  facts: DraftVetFacts,
+): Promise<{ body: string; failed: DraftVetFailure | null; attempts: number }> {
+  const first = String(await generate(null) ?? '').trim();
+  if (!first) return { body: '', failed: null, attempts: 1 };
+  const f1 = vetDraft(first, facts);
+  if (!f1) return { body: first, failed: null, attempts: 1 };
+  const second = String(await generate(f1.objection).catch(() => '') ?? '').trim();
+  const f2 = second ? vetDraft(second, facts) : f1;
+  if (second && !f2) return { body: second, failed: null, attempts: 2 };
+  return { body: '', failed: f2 ?? f1, attempts: 2 };
+}
+
+/** The honest words the compose door returns when a draft failed the vet twice — the card's empty
+ *  state reads it (never a draft that says what is not true). */
+export function withheldLine(failed: DraftVetFailure): string {
+  return failed.floor === 'chase'
+    ? 'I held back a draft that chased them for something you owe — write it yourself, or tell me what to say.'
+    : failed.floor === 'attachment'
+      ? 'I held back a draft that said a file was attached when none is — write it yourself, or attach the file first.'
+      : 'I held back a draft that claimed work that is not done yet — write it yourself, or tell me where it stands.';
+}
+
+/**
+ * THE COMPOSE DOOR'S POOL ROW — a generated commitment draft is written ONCE as the commitment's
+ * prepared artifact (the same `item_deliverables` shape + `prepared_from` ground stamp + addressee
+ * stamp the pass writes), so the next open serves it through THE ONE READER at zero AI — and from then
+ * on it obeys the-users-hand-wins and regenerates only on a ground move, like every pass artifact.
+ * A chase (they owe) is titled "Nudge — …" (the reader's nudge_draft); a delivery (the user owes) is
+ * "Message — …" (reply_draft). Pure.
+ */
+export function composeDraftRow(args: {
+  userId: string; commitmentId: string; direction: string | null | undefined; body: string;
+  recipientLabel: string | null; preparedFrom: { emailId: string | null; receivedAt: string | null } | null;
+  addresseeStamp: Record<string, unknown>;
+}): { user_id: string; kind: 'commitment'; entity_id: string; type: 'draft'; title: string; content: string; ref: null; metadata: Record<string, unknown> } {
+  const name = args.recipientLabel ? args.recipientLabel.split('<')[0].trim() : '';
+  const lead = String(args.direction ?? '') === 'you_owe' ? 'Message' : 'Nudge';
+  return {
+    user_id: args.userId, kind: 'commitment', entity_id: args.commitmentId, type: 'draft',
+    title: `${lead} — ${name || 'recipient to confirm'}`.slice(0, 100), content: args.body, ref: null,
+    metadata: { source: 'compose', prepared: 'compose', prepared_from: args.preparedFrom, ...args.addresseeStamp },
+  };
+}

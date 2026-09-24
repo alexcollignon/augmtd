@@ -18,7 +18,7 @@
 
 import { leanSelect, foldLean, foldLeanRows, hydrateBodies, isLeanSource, PREPARED_KEYS, ONE_READER_KEYS } from '@/lib/home/lean-source';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { inviteOutsideStatedWindow, claimsUndoneWork, claimsUnstagedAttachment, chaseWordsIn, signsAsOtherIdentity, mailboxIdentityOf, type MailboxIdentity, type ProposedFrom } from '@/lib/prepare/truth';
+import { inviteOutsideStatedWindow, vetDraft, signsAsOtherIdentity, mailboxIdentityOf, type MailboxIdentity, type ProposedFrom } from '@/lib/prepare/truth';
 import { addresseeOfStamp, addresseeFromNudgeTitle, addresseeWithdrawn, loadUserForms, type Addressee } from '@/lib/prepare/addressee';
 import type { UserForms } from '@/lib/commitments/extraction-truth';
 import { isHandHeld, isPoolRowHandHeld, type HandKind } from '@/lib/prepare/hand';
@@ -127,19 +127,17 @@ export function stampTruth<T extends PreparedArtifact>(arts: T[], facts: ItemTru
   if (!facts) return arts;
   for (const a of arts) {
     if (a.kind === 'invite' && inviteOutsideStatedWindow(a.invite ?? null, facts.text, facts.anchorIso)) a.outsideWindow = true;
+    // THE TRUTH FLOORS — ONE VET (W12.1 · EVERY DRAFT PASSES THE SAME TRUTH): lib/prepare/truth
+    // `vetDraft` is the ONE function this reader, the evaluator and the compose door call. Machine
+    // words only (the user's own edit is theirs to make):
+    //   · THE COMPLETION CLAIM (W5a) — a deed announced on an open obligation with nothing staged.
+    //   · THE ATTACHMENT CLAIM (W11.1) — "the attached interim report" with nothing attached. Speaks
+    //     whoever owes what: a file either rides with the message or it does not (a PASTE PACK is
+    //     exempt — it is pasted where the work lives, and its destination may carry the file).
+    //   · THE INVERTED CHASE (W11.1) — chase-shaped words ("just a quick nudge…") on an OPEN
+    //     obligation the USER owes: the counterparty is being chased for the user's own debt.
     if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft' || a.kind === 'paste_pack') && !a.hand
-      && claimsUndoneWork(a.content, { obligationOpen: facts.obligationOpen, staged: !!a.attachment })) a.falseClaim = true;
-    // W11.1 · ONE COHERENT ITEM — two more claims words may not make (machine words only; the user's
-    // own edit is theirs to make, as above):
-    //   · THE ATTACHMENT CLAIM — "the attached interim report" with nothing attached. Speaks whoever
-    //     owes what: a file either rides with the message or it does not (a PASTE PACK is exempt — it
-    //     is pasted where the work lives, and its destination may carry the file).
-    //   · THE INVERTED CHASE — chase-shaped words ("just a quick nudge…") on an OPEN obligation the
-    //     USER owes: the counterparty is being chased for the user's own debt (found live, Sep 23).
-    if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft') && !a.hand
-      && claimsUnstagedAttachment(a.content, { staged: !!a.attachment })) a.falseClaim = true;
-    if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft' || a.kind === 'paste_pack') && !a.hand
-      && facts.obligationOpen && !a.attachment && chaseWordsIn(a.content)) a.falseClaim = true;
+      && vetDraft(a.content, { obligationOpen: facts.obligationOpen, staged: !!a.attachment, attachmentFloor: a.kind !== 'paste_pack' })) a.falseClaim = true;
     //   · THE MAILBOX SIGNS — a machine draft signed as another of the user's mailboxes (the pre-W11.1
     //     global voice). Withdrawn so only THESE re-draft (no DRAFT_LAW_VERSION corpus re-draft).
     if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft') && !a.hand && facts.mailbox

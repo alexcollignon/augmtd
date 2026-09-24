@@ -116,10 +116,14 @@ console.log('\nB · prepared words never claim an undone deed');
     && claimsUndoneWork(live, { obligationOpen: true, staged: true }) === null);
   const ev = src('lib/prepare/evaluate.ts');
   gate('B4 the evaluator carries the deterministic floor BEFORE the AI review (obligationOpen + staged facts; revise with the one objection)',
-    /import \{ claimsUndoneWork, completionObjection \} from '@\/lib\/prepare\/truth';/.test(ev)
+    // ⟲ RE-POINTED (W12.1 · EVERY DRAFT PASSES THE SAME TRUTH): the evaluator's floors are the ONE
+    // vet (lib/prepare/truth vetDraft — completion first, with the same facts), whose objection is
+    // `completionObjection` (behaviour held in smoke-compose-truth A).
+    /import \{ vetDraft \} from '@\/lib\/prepare\/truth';/.test(ev)
     && /obligationOpen\?: boolean;/.test(ev) && /staged\?: boolean;/.test(ev)
-    && /const claim = claimsUndoneWork\(args\.content, \{ obligationOpen: true, staged: args\.staged === true \}\);/.test(ev)
-    && /if \(claim\) return \{ verdict: 'revise', objection: completionObjection\(claim\) \};/.test(ev));
+    && /const failed = vetDraft\(args\.content, \{\s*obligationOpen: args\.obligationOpen === true, staged: args\.staged === true,/.test(ev)
+    && /if \(failed\) return \{ verdict: 'revise', objection: failed\.objection \};/.test(ev)
+    && ev.indexOf('vetDraft(args.content') < ev.indexOf('await aiCall'));
   const pp = src('lib/prepare/paste-pack.ts');
   gate('B5 the paste pack producer: the rule + the FACTS ride the prompt; a tripped pack regenerates ONCE and then REFUSES (nothing stored)',
     /COMPLETION_HONESTY_RULE/.test(pp) && /this obligation is STILL OPEN/.test(pp)

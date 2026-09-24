@@ -22,6 +22,12 @@
  *   E · THE HELD DOOR ANSWERS AT THE CLICK — a transition with an immediate pending word.
  *   F · TRUTH KEPT — the no-mutation pairing is untouched; a hover warm's landing is never handed to
  *       an open (the open's background work still runs exactly once).
+ *   G · W12.2 THE CLICK PAINTS ITS OWN FRAME (owner live walk on prod after W11: +0s/+2s still the
+ *       Home) — a loading boundary cannot paint before the router's transition gets its server
+ *       answer unless a prefetch already landed it; so the row paints its pending state and the
+ *       room's frame FROM THE CLIENT on the click, and the route fills it (announced before paint).
+ *   H · W12.3 THE HOVER PREFETCH IS AUTO — the row's router.prefetch asks for the loading boundary
+ *       only, never a FULL dynamic segment per hovered row.
  * ════════════════════════════════════════════════════════════════════════════════════════════════
  */
 import { readFileSync, existsSync } from 'fs';
@@ -71,7 +77,7 @@ async function main() {
       && !/supabase\/server|next\/headers/.test(importsOf(frame)));
     gate('A3 the frame renders WITHOUT awaiting data: no await, no use(), no Suspense read — its name is what the browser already holds',
       !!frame && !/\bawait\b/.test(frame) && !/\buse\(/.test(frame) && !/<Suspense/.test(frame)
-      && /useLayoutEffect\(\(\) => \{\s*if \(!id\) return;\s*setTitle\(heldTitleOf\(/.test(frame)
+      && /useLayoutEffect\(\(\) => \{\s*if \(origin === 'route'\) markRouteLanded\(\);\s*if \(!id\) return;\s*setTitle\(heldTitleOf\(/.test(frame)
       && /<RoomConversationSkeleton \/>/.test(frame));
     gate('A4 the held name comes ONLY from the deep-dive\'s own instant-load keys (never composed; unknown → a ghost bar)',
       /aug-item-commitment-\$\{id\}/.test(frame) && /aug-item-thread-\$\{id\}/.test(frame)
@@ -94,7 +100,7 @@ async function main() {
       /export function startOpenReads\(/.test(frame) && /void fetchItemView\(viewKind, id\);/.test(frame)
       && /void fetchOpenObject\(`\/api\/commitments\/\$\{id\}`, `aug-item-commitment-\$\{id\}`\);/.test(frame)
       && /if \(kind === 'email'\) void loadThreadRaw\(id\);/.test(frame)
-      && /startOpenReads\(kindOfSearch\(window\.location\.search\), id\);/.test(frame));
+      && /startOpenReads\(kindProp \?\? kindOfSearch\(window\.location\.search\), id\);/.test(frame));
     const detail = src(DETAIL);
     gate('B2 the commitment door reads its facts through the SAME flight (joins/takes the frame\'s read); a post-deed reload reads afresh',
       /const read: Promise<CommitmentData \| null> = reload === 0\s*\? \(fetchOpenObject\(`\/api\/commitments\/\$\{id\}`, `aug-item-commitment-\$\{id\}`\)/.test(detail)
@@ -214,6 +220,69 @@ async function main() {
     const v2 = calls.filter((c) => c.url.startsWith(`/api/items/view?kind=email&id=${id2}`));
     gate('F3 pure: an open joining a warm in flight is ONE view request + ONE kick (unchanged W8.4 shape)', v2.length === 1 && kicks.length === 1,
       `views=${v2.length} kicks=${kicks.length}`);
+  }
+
+  // ═══ G · W12.2 THE CLICK PAINTS ITS OWN FRAME ═══
+  console.log('\nG · the click paints its own frame (never behind the router\'s transition)');
+  {
+    const home = src(HOME);
+    const i = home.indexOf('function WhisperLine(');
+    const row = home.slice(i, home.indexOf('\nfunction ', i + 10));
+    gate('G1 the deck row\'s click sets its OWN pending state synchronously (a discrete event, no transition) BEFORE the router push, and refuses a second click',
+      /const \[opening, setOpening\] = useState\(false\);/.test(row)
+      && /const openNow = \(\) => \{ if \(opening\) return; setOpening\(true\); open\(\); \};/.test(row)
+      && /onClick=\{openNow\}/.test(row) && /e\.preventDefault\(\); openNow\(\);/.test(row)
+      && !/startTransition\([^)]*setOpening/.test(row) && !/onClick=\{open\}/.test(row));
+    gate('G2 …the row SHOWS it (aria-busy + the raised surface) and stands the room\'s frame over the Home from the client',
+      /aria-busy=\{opening \|\| undefined\}/.test(row) && /\{opening && <ClientOpenFrame door=\{item\.href\} onDone=\{\(\) => setOpening\(false\)\} \/>\}/.test(row));
+    const frame = src(FRAME);
+    gate('G3 the client frame is THE ONE frame (same component, the modal geometry), portalled to <body> (never inside a transformed ancestor)',
+      /export function ClientOpenFrame\(/.test(frame)
+      && /createPortal\(<ItemOpenFrame docked id=\{target\.id\} kind=\{target\.kind\} origin="client" \/>, document\.body\)/.test(frame));
+    gate('G4 it steps aside when the route LANDS (subscribed in a layout effect), when the address moves elsewhere, or after a stated bound',
+      /useLayoutEffect\(\(\) => onRouteLanded\(\(\) => done\.current\(\)\), \[\]\);/.test(frame)
+      && /if \(pathname !== startPath && pathname !== `\/item\/\$\{targetId\}`\) done\.current\(\);/.test(frame)
+      && /setTimeout\(\(\) => done\.current\(\), CLIENT_FRAME_MAX_MS\)/.test(frame));
+    const modal = src(MODAL);
+    gate('G5 the route announces its landing BEFORE its first paint: the loading frame (route origin) and the deep-dive modal each call markRouteLanded in a layout effect',
+      /if \(origin === 'route'\) markRouteLanded\(\);/.test(frame) && /useLayoutEffect\(\(\) => \{ markRouteLanded\(\); \}, \[\]\);/.test(modal));
+    gate('G6 no second entrance: the route\'s frame replacing the click\'s frame mounts already entered; the client frame marks the paint',
+      /useState\(\(\) => origin === 'route' && docked && peekFramePainted\(\)\)/.test(frame) && /if \(docked\) _framePaintedAt = Date\.now\(\);/.test(frame));
+    gate('G7 the client frame needs NO route params: id + kind come from the row\'s href (the room\'s kind rule, viewTargetOf)',
+      /export function clientFrameTarget\(/.test(frame) && /const t = viewTargetOf\(href\);/.test(frame)
+      && /const id = idProp \?\? \(typeof params\?\.id === 'string' \? params\.id : null\);/.test(frame));
+    // THE PREMISE, pinned to the installed Next (re-check on an upgrade): the legacy router's
+    // router.prefetch defaults to a FULL prefetch (the whole dynamic segment) — the loading state is
+    // not what it fetches, so the row can never rely on a hover prefetch to paint at the click.
+    const nextSrc = readFileSync(join(ROOT, 'node_modules/next/dist/client/components/app-router-instance.js'), 'utf8');
+    const cfg = ['next.config.ts', 'next.config.js', 'next.config.mjs'].filter((f) => existsSync(join(ROOT, f))).map(src).join('\n');
+    gate('G8 the premise holds on the installed Next: legacy router.prefetch defaults to PrefetchKind.FULL and the segment cache is off — the click must not depend on a prefetch',
+      /kind: \(_options_kind = options == null \? void 0 : options\.kind\) != null \? _options_kind : _routerreducertypes\.PrefetchKind\.FULL/.test(nextSrc)
+      && !/clientSegmentCache\s*:\s*true/.test(cfg));
+  }
+
+  // ═══ H · W12.3 THE HOVER PREFETCH IS AUTO ═══
+  console.log('\nH · hovering a row prefetches only down to the loading boundary (AUTO), never the full dynamic segment');
+  {
+    const wr = src('components/work/work-row.tsx');
+    gate('H1 the row\'s hover prefetch passes { kind: PrefetchKind.AUTO } — no bare router.prefetch(href) remains in the row module',
+      /router\.prefetch\?\.\(item\.href, \{ kind: PrefetchKind\.AUTO \}\)/.test(wr)
+      && !/router\.prefetch\??\.?\([^,)]*\)/.test(wr));
+    gate('H2 the enum comes from the path the installed Next\'s own PrefetchOptions type uses (a value import, client-safe: no server graph)',
+      /import \{ PrefetchKind \} from 'next\/dist\/client\/components\/router-reducer\/router-reducer-types';/.test(wr)
+      && /import type \{ FocusAndScrollRef, PrefetchKind \} from '\.\.\/\.\.\/client\/components\/router-reducer\/router-reducer-types';/
+        .test(readFileSync(join(ROOT, 'node_modules/next/dist/shared/lib/app-router-context.shared-runtime.d.ts'), 'utf8')));
+    // The import resolves at RUNTIME to the value the router switches on (a const-enum would erase).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const rrt = require('next/dist/client/components/router-reducer/router-reducer-types') as { PrefetchKind?: Record<string, string> };
+    gate('H3 the enum resolves at runtime: PrefetchKind.AUTO === "auto" (FULL "full")',
+      rrt.PrefetchKind?.AUTO === 'auto' && rrt.PrefetchKind?.FULL === 'full');
+    const nextDir = 'node_modules/next/dist/client/components';
+    const inst = readFileSync(join(ROOT, `${nextDir}/app-router-instance.js`), 'utf8');
+    const fsr = readFileSync(join(ROOT, `${nextDir}/router-reducer/fetch-server-response.js`), 'utf8');
+    gate('H4 the behaviour on the installed Next: the legacy prefetch honours options.kind, and ONLY AUTO sends Next-Router-Prefetch (a dynamic route fetched to its loading boundary)',
+      /kind: \(_options_kind = options == null \? void 0 : options\.kind\) != null \? _options_kind : /.test(inst)
+      && /if \(prefetchKind === _routerreducertypes\.PrefetchKind\.AUTO\) \{\s*headers\[_approuterheaders\.NEXT_ROUTER_PREFETCH_HEADER\] = '1';/.test(fsr));
   }
 
   console.log(`\n${failures.length ? '✗' : '✓'} smoke-item-open: ${pass} passed, ${failures.length} failed`);

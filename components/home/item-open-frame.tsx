@@ -22,13 +22,27 @@
 //
 // Light by construction: no deep-dive import (the frame must not wait on the chunk it stands in
 // for), no AI, no writes. Mounted by the route's loading boundaries (the modal and the full page).
+//
+// W12.2 · THE CLICK PAINTS ITS OWN FRAME (owner live walk on prod after W11 deployed — +0s and +2s
+// still showed the Home; the room arrived by +5s). A route's loading boundary CANNOT paint at the
+// click on its own: `router.push` runs inside a transition, and the App Router holds the current UI
+// until the server answers the navigation (middleware session refresh + lambda + the RSC root) —
+// the loading state is only instant when a prefetch has ALREADY LANDED it, and `router.prefetch`
+// in the legacy (non-segment-cache) router defaults to a FULL prefetch of a dynamic route
+// (node_modules/next/dist/client/components/app-router-instance.js: `kind ?? PrefetchKind.FULL`),
+// which is the whole segment, still in the air when a reader hovers and clicks within a second.
+// So the click paints the frame FROM THE CLIENT (`ClientOpenFrame`, portalled beside the Home, the
+// same component in the same geometry) and the route FILLS it: the route's frame / the deep-dive
+// announce they have landed (`markRouteLanded`, a layout effect — before their first paint) and the
+// client frame steps aside in that same frame, so there is never a gap and never two entrances.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-import { useEffect, useLayoutEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useParams, usePathname } from 'next/navigation';
 import { BackLink } from '@/components/ui/back-link';
 import { RoomConversationSkeleton } from '@/components/room/room-skeleton';
 import { loadLS } from '@/lib/utils/local-cache';
-import { fetchItemView, fetchOpenObject, type ItemViewKind } from '@/lib/room/warm-client';
+import { fetchItemView, fetchOpenObject, viewTargetOf, type ItemViewKind } from '@/lib/room/warm-client';
 import { loadThreadRaw } from '@/lib/inbox/thread-door';
 
 type OpenKind = 'email' | 'meeting' | 'commitment' | 'followup';
@@ -38,9 +52,35 @@ type OpenKind = 'email' | 'meeting' | 'commitment' | 'followup';
 // room for a beat right after it appeared. One mark per frame; the modal takes it once.
 let _framePaintedAt = 0;
 export function takeFramePainted(): boolean {
-  const painted = _framePaintedAt > 0 && Date.now() - _framePaintedAt < 60_000;
+  const painted = peekFramePainted();
   _framePaintedAt = 0;
   return painted;
+}
+/** A frame already slid in (the click's own) — the route's frame replacing it mounts entered. */
+export function peekFramePainted(): boolean {
+  return _framePaintedAt > 0 && Date.now() - _framePaintedAt < 60_000;
+}
+
+// ── W12.2 THE ROUTE HAS LANDED — the route's frame or the deep-dive announce their mount (a layout
+// effect: before their first paint), and the click's client frame steps aside in that same frame.
+const _landListeners = new Set<() => void>();
+export function markRouteLanded(): void {
+  for (const l of Array.from(_landListeners)) { try { l(); } catch { /* a listener never blocks the land */ } }
+}
+export function onRouteLanded(fn: () => void): () => void {
+  _landListeners.add(fn);
+  return () => { _landListeners.delete(fn); };
+}
+
+/** The click's frame never outlives a navigation that did not come (stated, bounded). */
+export const CLIENT_FRAME_MAX_MS = 30_000;
+
+/** An href the click can paint a room frame for: `/item/<id>` only (a project room is a page of its
+ *  own — its row still shows the pending cue, it just has no item frame to stand in). */
+export function clientFrameTarget(href: string | null | undefined): { id: string; kind: OpenKind } | null {
+  const t = viewTargetOf(href);
+  if (!t || t.kind === 'awareness') return null;
+  return { id: t.id, kind: t.kind };
 }
 
 /** The address → the door's kind (kind absent → email, exactly as the deep-dive reads it). */
@@ -71,24 +111,32 @@ export function startOpenReads(kind: OpenKind, id: string): void {
   if (kind === 'email') void loadThreadRaw(id);
 }
 
-/** The frame itself — `docked` = the modal's geometry over the Home; else the full page's. */
-export function ItemOpenFrame({ docked }: { docked: boolean }) {
+/** The frame itself — `docked` = the modal's geometry over the Home; else the full page's.
+ *  `origin` 'route' = mounted by a loading boundary (id + kind from the address); 'client' = painted
+ *  by the click itself before the address changed (id + kind from the row's href, passed in). */
+export function ItemOpenFrame({ docked, id: idProp, kind: kindProp, origin = 'route' }: {
+  docked: boolean; id?: string; kind?: OpenKind; origin?: 'route' | 'client';
+}) {
   const params = useParams<{ id?: string }>();
-  const id = typeof params?.id === 'string' ? params.id : null;
-  const [title, setTitle] = useState<string | null>(null);
-  const [entered, setEntered] = useState(false);
-  // Pre-paint (a layout effect): the held name paints on the frame's FIRST frame.
+  const id = idProp ?? (typeof params?.id === 'string' ? params.id : null);
+  // THE HELD NAME, ON THE FIRST RENDER: the client frame knows its kind from the row's href, so its
+  // name is read at the click (no effect → the name is in the very first paint); the route's frame
+  // reads the address in a layout effect (still pre-paint).
+  const [title, setTitle] = useState<string | null>(() => (kindProp && id ? heldTitleOf(kindProp, id) : null));
+  // The route's frame replacing the click's own frame mounts ALREADY ENTERED (a fill, not an entrance).
+  const [entered, setEntered] = useState(() => origin === 'route' && docked && peekFramePainted());
   useLayoutEffect(() => {
+    if (origin === 'route') markRouteLanded();
     if (!id) return;
-    setTitle(heldTitleOf(kindOfSearch(window.location.search), id));
-  }, [id]);
+    setTitle(heldTitleOf(kindProp ?? kindOfSearch(window.location.search), id));
+  }, [id, kindProp, origin]);
   useEffect(() => {
     if (!id) return;
-    startOpenReads(kindOfSearch(window.location.search), id);
+    startOpenReads(kindProp ?? kindOfSearch(window.location.search), id);
     if (docked) _framePaintedAt = Date.now();
     const r = requestAnimationFrame(() => setEntered(true));
     return () => cancelAnimationFrame(r);
-  }, [id, docked]);
+  }, [id, kindProp, docked]);
 
   const frame = (
     <div className="w-full h-full min-h-0 flex flex-col bg-neutral-50" aria-busy="true">
@@ -122,4 +170,33 @@ export function ItemOpenFrame({ docked }: { docked: boolean }) {
       </div>
     </div>
   );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// W12.2 · THE CLICK'S OWN FRAME — mounted by the deck row the moment it is clicked (a discrete
+// event: its state update is synchronous, painted on the next frame, never behind the router's
+// transition). Portalled to <body> so the modal geometry (position: fixed) is the viewport's, not a
+// transformed ancestor's. It stands until the route lands (the route's frame or the deep-dive
+// announces it), the address moves somewhere else, or CLIENT_FRAME_MAX_MS passes — whichever first.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+/** `door` = the row's own href (the deck's ONE href producer — never rebuilt here). */
+export function ClientOpenFrame({ door, onDone }: { door: string; onDone: () => void }) {
+  const target = clientFrameTarget(door);
+  const pathname = usePathname();
+  const [startPath] = useState(pathname);
+  const done = useRef(onDone);
+  done.current = onDone;
+  // Subscribed in a layout effect: the route's own layout effect fires after this one is standing.
+  useLayoutEffect(() => onRouteLanded(() => done.current()), []);
+  const targetId = target?.id ?? null;
+  useEffect(() => {
+    // The address moved, and not to this item (a different door, back, a sidebar hop) → step aside.
+    if (pathname !== startPath && pathname !== `/item/${targetId}`) done.current();
+  }, [pathname, startPath, targetId]);
+  useEffect(() => {
+    const t = setTimeout(() => done.current(), CLIENT_FRAME_MAX_MS);
+    return () => clearTimeout(t);
+  }, []);
+  if (!target || typeof document === 'undefined') return null;
+  return createPortal(<ItemOpenFrame docked id={target.id} kind={target.kind} origin="client" />, document.body);
 }

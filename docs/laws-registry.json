@@ -951,7 +951,9 @@
     "lib/utils/user-time.ts",
     "lib/utils/weekday-floor.ts",
     "lib/workflows/execute-step.ts",
-    "lib/home/attention.ts"
+    "lib/home/attention.ts",
+    "lib/room/self-voice.ts",
+    "lib/room/brief.ts"
    ],
    "gates": [
     {
@@ -1019,6 +1021,15 @@
       "C1-C6"
      ],
      "note": "W8.3: a past-dated unjudged event leaves Waiting; 'urgent' counts judged rows only; served dates are plain words (plainDay), never a raw ISO string"
+    },
+    {
+     "suite": "smoke-compose-truth",
+     "ids": [
+      "E1-E8"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "landed W12.1 (uncommitted): every relative day claim in a room brief is code-verified against the page's dated events (the user's zone) — attributed false → absolute date, else dropped"
     }
    ],
    "version_key": "JUDGE_VERSION",
@@ -3712,6 +3723,83 @@
     {
      "law": "the-users-hand-wins",
      "precedence": "every new withdrawal skips hand-held words — the user's own edit may say 'attached' or chase; the engine's may not"
+    }
+   ]
+  },
+  {
+   "id": "every-draft-same-truth",
+   "name": "EVERY DRAFT PASSES THE SAME TRUTH",
+   "aliases": [
+    "THE ONE VET (vetDraft)",
+    "NO SECOND DOOR FOR WORDS",
+    "NO PAY-PER-OPEN",
+    "THE YOU_OWE TASK DELIVERS",
+    "RELATIVE TIME IS VERIFIED"
+   ],
+   "tier": 2,
+   "domain": "judge-prepare-deck",
+   "statement": "Every machine-written message is vetted by ONE function (lib/prepare/truth vetDraft: a deed claimed on an open obligation, a file claimed with nothing staged, a chase on work the user owes) at every door that serves words — THE ONE READER, the evaluator and the compose door alike. A generated draft that fails is regenerated ONCE with the failure named, else not served (the honest empty state). The compose task for a you_owe commitment frames DELIVERY, never a request to the counterparty; a chase is valid only on awaiting work. A generated commitment draft is pooled once as the commitment's prepared artifact (the pass's shape + prepared_from ground stamp), so the next open serves it through the reader at zero AI and it then obeys the-users-hand-wins. Every relative day claim in a room brief ('N days ago', 'yesterday', 'last week') is code-verified against the page's dated events — an attributed false one is rewritten to its absolute date, anything else unverifiable is dropped.",
+   "homes": [
+    "lib/prepare/truth.ts",
+    "lib/prepare/evaluate.ts",
+    "lib/prepare/read.ts",
+    "app/api/compose/draft/route.ts",
+    "lib/room/self-voice.ts",
+    "lib/room/brief.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-compose-truth",
+     "ids": [
+      "A1-A7",
+      "B1-B2",
+      "C1-C6",
+      "D1-D4",
+      "E1-E8",
+      "E11-E12"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "vetDraft · draftThroughVet · withheldLine · commitmentComposeTask · composeDraftRow · stampTruth · poolRowsToArtifacts · decideRegeneration · enforceRelativeTimeTruth · relativeDayRange"
+    },
+    {
+     "suite": "smoke-compose-truth",
+     "ids": [
+      "A8",
+      "B3",
+      "B4",
+      "C7",
+      "C8",
+      "D5-D10",
+      "E9",
+      "E10"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W12.1: the reader, the evaluator and the compose door call vetDraft (no private floor copy); both compose generation paths run through draftThroughVet and serve the vetted body; the pool write is once, never over the user's hand, stamped with groundOf; the brief runs the relative-time net after the name net and before the store"
+    }
+   ],
+   "fn": "vetDraft · draftThroughVet · commitmentComposeTask · composeDraftRow · enforceRelativeTimeTruth · relativeDayRange (tests/unit/compose-truth.test.ts)",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W12.1",
+   "collides_with": [
+    {
+     "law": "one-coherent-item",
+     "precedence": "W11.1's floors are unchanged in substance — they move into ONE function (vetDraft) the reader, the evaluator and the compose door share; the reader's withdrawal and the door's refusal can no longer disagree"
+    },
+    {
+     "law": "the-users-hand-wins",
+     "precedence": "a pooled compose draft is a machine artifact like any pass draft: it never shadows a hand-held newest row, and once pooled it regenerates only on a ground move (decideRegeneration); the vet never judges the user's own edit"
+    },
+    {
+     "law": "a-claim-renders",
+     "precedence": "a draft that fails the vet twice is not served — the card shows the honest empty state with the withheld reason; nothing claims words that are not there"
+    },
+    {
+     "law": "time-truth",
+     "precedence": "the brief's relative-time net is a post-check after the prose nets (self-voice → claims → restatements → names → time); it only rewrites to a date the page holds for that person, or drops the phrase — never invents a date; ROOM_BRIEF_VERSION is not bumped (prompt unchanged)"
     }
    ]
   },

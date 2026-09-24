@@ -13,6 +13,12 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+// W12.3 · THE HOVER PREFETCH IS AUTO. Next 15.5's legacy (non-segment-cache) router defaults
+// a bare router prefetch to PrefetchKind.FULL (app-router-instance.js: `kind ?? PrefetchKind.FULL`)
+// — the WHOLE dynamic segment per hovered row. AUTO sends `Next-Router-Prefetch: 1`, so a dynamic
+// route is fetched only down to its loading boundary (fetch-server-response.js). The enum has no
+// public re-export in 15.5; this path is the one `AppRouterInstance`'s own PrefetchOptions type uses.
+import { PrefetchKind } from 'next/dist/client/components/router-reducer/router-reducer-types';
 import { toast } from 'sonner';
 import {
   EnvelopeIcon, BellAlertIcon, CheckCircleIcon, FolderIcon, PlusIcon,
@@ -354,7 +360,7 @@ export function useRowActions(item: DoItem, cbs: RowActionCallbacks = {}) {
   };
   // Hover = intent to open → warm the deep-dive cache + the route JS so the click is instant.
   // Mousedown fires it too — fast clicks and touch get no hover dwell.
-  const prefetch = () => { prefetchItem(item.href); router.prefetch?.(item.href); warmProjectPicker(); };
+  const prefetch = () => { prefetchItem(item.href); router.prefetch?.(item.href, { kind: PrefetchKind.AUTO }); warmProjectPicker(); };
   return { isCommit, isDeal, removed, exiting, busy: acting || commit.acting, done, drop, open, prefetch };
 }
 
