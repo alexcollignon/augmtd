@@ -117,6 +117,7 @@ import { stripDeixis } from '@/lib/inbox/deixis';
 // THE LABEL FOLLOWS THE PRESENT (LAW 3's watermark half) — the ONE reader that decides whether a
 // stored understanding may still speak. See lib/inbox/refresh-understanding.ts.
 import { servedClaimOf } from '@/lib/inbox/refresh-understanding';
+import { scheduledWordOf, scheduledSeatOf } from '@/lib/work/scheduled'; // W15.2
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function attendeeEmails(ev: any): string[] {
@@ -1746,7 +1747,7 @@ export async function GET() {
   // prepared reader · live asks), BATCHED for the whole deck in one call. The word is an ENHANCEMENT:
   // the field is optional everywhere and a payload without it (a cached brief, a failed derivation)
   // renders exactly as before. Meetings are out of scope — the machine speaks for inbox + commitments.
-  const machineByAtom = new Map<string, { state: string; word: string | null; surfaced?: boolean; proved?: { at: string; quietDays: number; result?: 'reaffirmed' | 'demoted' }; /** W11.2 — looks done: who · what · when */ evidenceLine?: string }>();
+  const machineByAtom = new Map<string, { state: string; word: string | null; /** W15.2 · on scheduled: when (ISO) */ scheduledAt?: string; surfaced?: boolean; proved?: { at: string; quietDays: number; result?: 'reaffirmed' | 'demoted' }; /** W11.2 — looks done: who · what · when */ evidenceLine?: string }>();
   try {
     const { workStatesFor, STATE_WORDS } = await import('@/lib/work/machine');
     const rowById = new Map(items.map((it) => [String(it.id), it]));
@@ -1772,6 +1773,8 @@ export async function GET() {
     for (const [key, st] of states) {
       machineByAtom.set(key.slice(key.indexOf(':') + 1), {
         state: st.state, word: STATE_WORDS[st.state],
+        // W15.2 · SCHEDULED speaks its when ("scheduled — Wed, Sep 30, 11:00") and carries it to the seat.
+        ...(st.state === 'scheduled' && st.scheduledAt ? { word: scheduledWordOf(st.scheduledLine), scheduledAt: st.scheduledAt } : {}),
         ...(st.looksDoneLine ? { evidenceLine: st.looksDoneLine } : {}),
         ...(st.judgedFirstAt && Date.parse(st.judgedFirstAt) > dayAgo && !['settled', 'unjudged'].includes(st.state) ? { surfaced: true } : {}),
       });
@@ -1981,11 +1984,13 @@ export async function GET() {
         looksDone: machineOf(entityId)?.state === 'looks_done',
         // W14.4 · the judge said nothing is owed (or the machine reads settled) → held, never seated.
         judgedNothing: judgedNoneIds.has(entityId) || machineOf(entityId)?.state === 'settled',
+        // W15.2 · SCHEDULED IS NOT OVERDUE — no seat before the event's day, never overdue/due.
+        ...scheduledSeatOf(machineOf(entityId)?.scheduledAt, todayStr),
       };
       const seat = seatVerdict(draft);
       draft.whyNow = whyNowOf({
-        source, who: f.who ?? null, dueDate: f.dueDate ?? null, overdue: !!f.overdue,
-        dueToday: !!f.dueToday, prepared: f.prepared ?? null, preparedKind: f.preparedKind ?? null, needsShaping: seat.needsShaping,
+        source, who: f.who ?? null, dueDate: f.dueDate ?? null, overdue: !!draft.overdue,
+        dueToday: !!draft.dueToday, prepared: f.prepared ?? null, preparedKind: f.preparedKind ?? null, needsShaping: seat.needsShaping,
         stateWord: machineOf(entityId)?.word ?? null, meeting: adj,
         evidenceLine: machineOf(entityId)?.evidenceLine ?? null,
       }, now);

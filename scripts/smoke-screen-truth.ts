@@ -100,8 +100,15 @@ console.log('\nS1 · THE MARKER NEVER RENDERS');
   ok('a rendered source card (excerpt lane) never shows the marker', !html2.includes('clipped for length') && html2.includes('…'));
 
   const deck = stripComments(read('components/triage/triage-deck.tsx'));
+  // ⟲ RE-POINTED (W15.1 · ONE THREAD COMPONENT): the deck no longer authors excerpt markup — every
+  // lane (the tail, the served excerpt, the founding line) is the kit's one source card, whose ONE
+  // render path applies the floor (asserted by the render test above). The law is unchanged: no
+  // excerpt reaches the screen around the floor.
   ok('the triage card passes every excerpt it renders through the render floor',
-    /\{displayText\(m\.body\)\}/.test(deck) && /\{displayText\(row\.excerpt\)\}/.test(deck) && /\{displayText\(ctx\.founding\.line\)\}/.test(deck)
+    /<SourceObjectCard card=\{\{[\s\S]{0,200}messages: tail\.map/.test(deck)
+    && /<SourceObjectCard card=\{\{[\s\S]{0,160}excerpt: row\.excerpt \}\} \/>/.test(deck)
+    && /<SourceObjectCard card=\{\{[\s\S]{0,260}excerpt: ctx\.founding\.line,/.test(deck)
+    && /\{displayText\(newest\.own\)\}/.test(read('components/thread/source-object-card.tsx'))
     && !/>\{m\.body\}</.test(deck) && !/>\{row\.excerpt\}</.test(deck));
 }
 

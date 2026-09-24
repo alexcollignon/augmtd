@@ -382,7 +382,7 @@ function Chip({ icon, label, onClick }: { icon?: React.ReactNode; label: string;
   );
 }
 
-export function ItemRail({ kind, id, view, pending = false, onDraft, decision, artifacts, onOpenHref, onStage, onHistory, sourceItemId, sourceMeeting, sourceEmail, onOpenThread }: {
+export function ItemRail({ kind, id, view, pending = false, onDraft, decision: decisionIn, artifacts: artifactsIn, onOpenHref, onStage, onHistory, sourceItemId, sourceMeeting, sourceEmail, onOpenThread }: {
   kind: RailKind; id: string; view: RailView;
   /** THE STRUCTURAL FRAME (UX arc): true while the view is still loading — the rail mounts its
    *  shell (header, turns, composer) immediately and shows a quiet shimmer instead of anchor
@@ -452,6 +452,14 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision, a
    *  separate page hop. */
   onOpenThread?: (itemId: string) => void;
 }) {
+  // ══ W15.2 · SETTLED ITEMS DROP THEIR ACTION CARDS (one gate for every card kind) ════════════════
+  // When THE MACHINE says this item's work is settled (closed, or judged owed-nothing), no prepared
+  // card and no decision mounts in its room — a Send on settled work is a claim about work that does
+  // not exist. The conversation and the drawer's history stay readable. A project room (no item
+  // machine on its view) is untouched.
+  const itemSettled = (view as { machineState?: { state?: string } | null }).machineState?.state === 'settled';
+  const artifacts = itemSettled ? [] : artifactsIn;
+  const decision = itemSettled ? null : decisionIn;
   const router = useRouter();
   const ent = view.entity;
   const sib = view.siblings;

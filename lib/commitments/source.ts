@@ -119,6 +119,8 @@ export type EmailSource = {
   from: string | null;
   receivedAt: string | null;
   excerpt: string | null;
+  /** W15.4 — the user wrote this message (the W7.6 authorship stamp); a quote's lead reads it. */
+  authoredByUser: boolean;
 };
 
 /** The pure shaping half (the gate holds it): an `emails` row → the source message facts. */
@@ -133,6 +135,7 @@ export function emailSourceFromRow(row: Record<string, unknown> | null | undefin
     from: (row.from_name as string | null) || (row.from_address as string | null) || null,
     receivedAt: (row.received_at as string | null) ?? null,
     excerpt: text ? clipForDisplay(text, EMAIL_SOURCE_EXCERPT_CHARS) : null,
+    authoredByUser: row.is_from_user === true,
   };
 }
 
@@ -142,10 +145,65 @@ export async function emailSourceOf(client: SupabaseClient, userId: string, emai
   if (!emailId) return null;
   try {
     const { data, error } = await client.from('emails')
-      .select('id, thread_id, subject, body, from_name, from_address, received_at')
+      .select('id, thread_id, subject, body, from_name, from_address, received_at, is_from_user')
       .eq('id', emailId).eq('user_id', userId).maybeSingle();
     if (error || !data) return null;
     const { topMessageOf } = await import('@/lib/inbox/top-message');
     return emailSourceFromRow(data as Record<string, unknown>, (b) => topMessageOf(b) || b);
+  } catch { return null; }
+}
+
+// ── WHY THIS COMMITMENT EXISTS (stabilization W15.4 · A PROMISE IS QUOTED OR IT ISN'T A PROMISE) ──
+// Found live (owner, Sep 24): "why items on my sent emails?" — the item never said why it existed.
+// Every extracted commitment now carries the EXACT words of its source that make it
+// (`commitments.source_quote`, code-verified at the write door — lib/commitments/extract.ts
+// `promiseQuoteFloor`). This is THE ONE READ of it: hosts render `lead` + `text`
+// ("You wrote: '…'" · "Sam asked: '…'" · "Said in the meeting: '…'") and compose nothing.
+
+/** A commitment's quote, as a host renders it — all served. */
+export type SourceQuote = {
+  text: string;
+  /** Who said it: the user (their own mail), the other party (received mail), or a meeting line. */
+  by: 'user' | 'other' | 'meeting';
+  /** The other party's display name, when `by === 'other'` and known. */
+  name: string | null;
+  /** The ready lead-in: "You wrote" · "<Name> asked" · "<Name> wrote" · "Said in the meeting". */
+  lead: string;
+  /** The one served line a host's quote slot prints (W15.1 `quote`): `<lead>: "<text>"`. */
+  line: string;
+};
+
+/** The pure shaping half (the gate holds it). No quote → null (a pre-W15.4 row, or the migration pending). */
+export function sourceQuoteFrom(f: {
+  quote: string | null | undefined; source: string | null | undefined; direction: string | null | undefined;
+  authoredByUser?: boolean | null; from?: string | null; counterparty?: string | null;
+}): SourceQuote | null {
+  const text = String(f.quote ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  const done = (by: SourceQuote['by'], name: string | null, lead: string): SourceQuote => ({ text, by, name, lead, line: `${lead}: “${text}”` });
+  if (f.source === 'meeting') return done('meeting', null, 'Said in the meeting');
+  if (f.authoredByUser === true) return done('user', null, 'You wrote');
+  const name = String(f.from ?? f.counterparty ?? '').replace(/<[^>]*>/g, '').replace(/^["']|["']$/g, '').trim() || null;
+  const verb = f.direction === 'awaiting' ? 'wrote' : 'asked';
+  return done('other', name, name ? `${name} ${verb}` : (verb === 'asked' ? 'They asked' : 'They wrote'));
+}
+
+/** THE ONE READ of a commitment's quote: its own row (tolerant of the pending `source_quote` column —
+ *  an error is no quote, never a broken read) + its source message's author, when mail. Zero AI. */
+export async function sourceQuoteOf(client: SupabaseClient, userId: string, commitmentId: string | null | undefined): Promise<SourceQuote | null> {
+  if (!commitmentId) return null;
+  try {
+    const { data: c, error } = await client.from('commitments')
+      .select('id, source_quote, source, source_id, direction, counterparty')
+      .eq('id', commitmentId).eq('user_id', userId).maybeSingle();
+    if (error || !c || !c.source_quote) return null;
+    let authoredByUser: boolean | null = null;
+    let from: string | null = null;
+    if (c.source === 'email' && c.source_id) {
+      const { data: e, error: eErr } = await client.from('emails').select('is_from_user, from_name, from_address')
+        .eq('id', String(c.source_id)).eq('user_id', userId).maybeSingle();
+      if (!eErr && e) { authoredByUser = e.is_from_user === true; from = (e.from_name as string | null) || (e.from_address as string | null) || null; }
+    }
+    return sourceQuoteFrom({ quote: c.source_quote as string, source: c.source as string, direction: c.direction as string, authoredByUser, from, counterparty: (c.counterparty as string | null) ?? null });
   } catch { return null; }
 }

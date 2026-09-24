@@ -10,6 +10,8 @@ import { sanitizeDraftHtml } from '@/lib/utils/sanitize-html';
 import { AttachmentChip } from '@/components/ui/attachment-lightbox';
 // THE ONE OBJECT CARD — the source half of the grammar, in its own file (one component, one law).
 import { SourceObjectCard } from './source-object-card';
+// W15.1 · ONE LABEL — every door to a conversation reads the same two words.
+import { OPEN_THREAD_LABEL } from './source-text';
 import { AskRows } from './ask-rows';
 // ONE EXPANDER IDIOM — the same "N more" fold every other list in the app uses (never a fork).
 import { ExpandableRows } from '@/components/home/expandable-rows';
@@ -282,7 +284,7 @@ function RecipientChip({ address }: { address: string }) {
 /**
  * THE EMAIL CARD (docs/design/threads/EmailCard.dc.html) — the drafted message, in the thread.
  *
- *   the tab row      DIRECTION-VARIANTS (the reply-directions organ) + the `Thread →` door
+ *   the tab row      DIRECTION-VARIANTS (the reply-directions organ) + the "Open thread" door (OPEN_THREAD_LABEL)
  *   the draft        To/Cc chips · the subject, quiet at the right · the editable body
  *   the selector     grounded refinements + the open "…or tell me what to change" row
  *   the commit row   Send · the tone tweak · the receipt word — always the card's bottom edge
@@ -378,7 +380,7 @@ function EmailCardView({ card }: { card: EmailCard }) {
           {card.onOpenThread && (
             <button type="button" onClick={card.onOpenThread}
               className="aug-focus ml-3 flex-shrink-0 rounded py-[9px] text-[12px] font-medium text-indigo-600 hover:text-indigo-700">
-              {card.threadLabel ?? 'Thread →'}
+              {OPEN_THREAD_LABEL}
             </button>
           )}
         </div>

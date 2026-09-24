@@ -27,6 +27,13 @@ export type ExtractedCommitment = {
   /** W7.4 THE DIRECTION FLOOR: WHO performs the act, as the extraction named it ("user" or the other
    *  party's name/email). Code-verified against the user's identity (lib/commitments/direction.ts). */
   doer?: string | null;
+  /** W15.4 A PROMISE IS QUOTED OR IT ISN'T A PROMISE: the EXACT words in the source message that make
+   *  this commitment (the user's own promise · the counterparty's ask · the meeting line). Code-checked
+   *  against the message's own words (`promiseQuoteFloor`); no verifiable quote → no commitment. */
+  quote?: string | null;
+  /** W15.4: the extraction's judgment that the quote is an EXPLICIT FIRST-PERSON commitment with a
+   *  deliverable or action (required for a user-authored you_owe — a pitch or an offer is not one). */
+  explicit_promise?: boolean | null;
 };
 
 // Clean an initiative label (drop the model's "null"/"none" filler; cap length).
@@ -54,7 +61,7 @@ const BULK_HINT = /unsubscribe|view (this )?(e?-?mail )?in (your )?browser|manag
 import { norm, emailLocalpart, nameTokens, emailDenotesName, sameAttendee } from '@/lib/projects/identity';
 import { dateStatedInText } from '@/lib/utils/user-time';
 import { topMessageOf } from '@/lib/inbox/top-message';
-import { conversationDelta, type ConversationKey, type DeltaJudge, type ApplyDeps } from '@/lib/work/conversation-delta';
+import { conversationDelta, quoteInText, type ConversationKey, type DeltaJudge, type ApplyDeps } from '@/lib/work/conversation-delta';
 
 // ── EXTRACTION TRUTH floors (W8.2 · ONE CONVERSATION, ONE LIVE ITEM) ─────────────────────────────
 // Pure, zero AI. The write door (writeCommitments) and the repair (scripts/repair-conversation-hoard.ts)
@@ -75,6 +82,47 @@ export function dueFloorAgainstSource(
   if (due >= floorDay) return { due, drop: false, floored: false };
   return { due: null, drop: dateStatedInText(description, due), floored: true };
 }
+
+// ── W15.4 A PROMISE IS QUOTED OR IT ISN'T A PROMISE ─────────────────────────────────────────────
+// Found live (owner, Sep 24): "why items on my sent emails?" — since W9.4 every user-authored message
+// is extracted, and a you_owe was minted from the user's own sent reply whose words read as a pitch,
+// not a promise; the item never said WHY it existed. THE LAW, at the one write door (writeCommitments):
+// every extracted commitment carries `quote` — the exact words in the source message that make it —
+// and code checks the quote EXISTS in the message's own words (THE SAME checker the conversation delta
+// uses: `quoteInText` — accent/case/quote-mark/whitespace folded, ≥6 chars per fragment, in order).
+// No verifiable quote → no commitment (logged, counted). A user-authored you_owe additionally needs
+// the extraction's judgment that the quote is an EXPLICIT FIRST-PERSON commitment with a deliverable
+// or action (`explicit_promise: true`) — reasoned by the model with the quote as proof, never a keyword
+// list. The quote is stored (`commitments.source_quote`) and served by the source reader
+// (lib/commitments/source.ts) so the item says "You wrote: '…'" / "<Name> asked: '…'".
+/** The extraction prompt + the quote law's shape. Bump when either changes (lib/core/versions.ts). */
+export const COMMITMENT_EXTRACTION_VERSION = 2;
+/** The longest quote the store keeps (quoteInText refuses a longer one anyway). */
+export const QUOTE_MAX_CHARS = 400;
+export type QuoteFloorReason = 'no-quote' | 'quote-not-in-own-words' | 'not-first-person';
+export type QuoteFloorVerdict = { keep: true; quote: string } | { keep: false; reason: QuoteFloorReason };
+
+/**
+ * THE QUOTE FLOOR (pure, zero AI): may this candidate become a commitment? `ownWords` is the source
+ * message's OWN words (topMessageOf for mail — never the quoted chain; the transcript for a meeting).
+ * `authoredByUser` = the user wrote the message: then a you_owe must be judged an explicit first-person
+ * commitment (`explicit_promise === true`). The kept quote is trimmed of wrapping quote marks.
+ */
+export function promiseQuoteFloor(
+  c: { direction?: string | null; quote?: unknown; explicit_promise?: unknown },
+  ctx: { ownWords: string | null | undefined; authoredByUser: boolean },
+): QuoteFloorVerdict {
+  const raw = typeof c.quote === 'string' ? c.quote.trim() : '';
+  const quote = raw.replace(/^["'“”‘’«»]+|["'“”‘’«»]+$/g, '').trim();
+  if (!quote) return { keep: false, reason: 'no-quote' };
+  if (!quoteInText(quote, String(ctx.ownWords ?? ''))) return { keep: false, reason: 'quote-not-in-own-words' };
+  if (ctx.authoredByUser && c.direction === 'you_owe' && c.explicit_promise !== true) return { keep: false, reason: 'not-first-person' };
+  return { keep: true, quote: quote.slice(0, QUOTE_MAX_CHARS) };
+}
+
+/** Is this insert error the not-yet-applied `source_quote` column (the pending migration)? Pure. */
+export const missingQuoteColumn = (err: { message?: string | null; code?: string | null } | null | undefined): boolean =>
+  !!err && /source_quote/.test(String(err.message ?? '')) && (err.code === 'PGRST204' || err.code === '42703' || /column|schema cache/i.test(String(err.message ?? '')));
 
 /** Split "Name <addr>" / a bare address / a bare name. Pure. */
 function whoParts(raw: string): { name: string | null; email: string | null } {
@@ -252,6 +300,10 @@ export async function writeCommitments(
       authorAddress?: string | null } | null;
     /** The delta's injectable judge/appliers (the zero-AI gates stub them; production omits it). */
     delta?: { judge?: DeltaJudge; deps?: ApplyDeps } | null;
+    /** W15.4 THE QUOTE FLOOR's text for a MEETING source (the transcript / notes). Mail needs none —
+     *  its own words are the message's (topMessageOf). A meeting caller that hands none is the legacy
+     *  path: its rows land 'suggested' (the review gate), unquoted, and are counted. */
+    ownWords?: string | null;
   },
   client: DBClient,
 ): Promise<void> {
@@ -275,6 +327,12 @@ export async function writeCommitments(
     aliases: [...(owned.aliases ?? []), ...(meta.user?.addresses ?? [])],
   };
   const other = meta.otherParty ?? meta.counterparty ?? null;
+  const authoredByUser = meta.message?.authoredByUser === true;
+  const quoteWords = meta.source === 'email'
+    ? (meta.message?.text ?? (meta.sourceText ? topMessageOf(meta.sourceText) : ''))
+    : (meta.ownWords ?? null);
+  const quoteLaw = meta.source === 'email' || typeof meta.ownWords === 'string';
+  const quoteFloor: Record<QuoteFloorReason | 'legacyUnquoted', number> = { 'no-quote': 0, 'quote-not-in-own-words': 0, 'not-first-person': 0, legacyUnquoted: 0 };
   const clean = clean0.map((c) => {
     // THE DIRECTION FLOOR (W7.4) — who DOES it decides the direction, before anything else reads it.
     const floor = directionFloor(
@@ -289,7 +347,20 @@ export async function writeCommitments(
     return fixed.changed
       ? { ...c, description: fixed.description, counterparty: fixed.counterparty, direction: (fixed.direction as ExtractedCommitment['direction']) ?? c.direction }
       : c;
+  }).flatMap((c): ExtractedCommitment[] => {
+    // W15.4 THE QUOTE FLOOR — a promise is quoted or it isn't a promise. Mail: the quote must exist in
+    // the message's OWN words; a user-authored you_owe must be judged an explicit first-person
+    // commitment. Meeting: checked against the transcript when the caller hands it (`ownWords`).
+    // Applied AFTER the direction floor, so the first-person rule reads the final direction.
+    if (!quoteLaw) { quoteFloor.legacyUnquoted++; return [{ ...c, quote: null }]; }
+    const v = promiseQuoteFloor(c, { ownWords: quoteWords, authoredByUser });
+    if (v.keep) return [{ ...c, quote: v.quote }];
+    quoteFloor[v.reason]++;
+    return [];
   });
+  if (quoteFloor['no-quote'] || quoteFloor['quote-not-in-own-words'] || quoteFloor['not-first-person'] || quoteFloor.legacyUnquoted) {
+    console.log(`[commitments] quote floor v${COMMITMENT_EXTRACTION_VERSION} ${meta.source}:${meta.sourceId.slice(0, 8)} candidates=${clean0.length} dropped: no-quote=${quoteFloor['no-quote']} not-in-own-words=${quoteFloor['quote-not-in-own-words']} not-first-person=${quoteFloor['not-first-person']}${quoteFloor.legacyUnquoted ? ` legacy-unquoted=${quoteFloor.legacyUnquoted}` : ''}`);
+  }
 
   const { data: existing } = hasCandidates ? await client.from('commitments')
     .select('description').eq('user_id', userId).eq('source_id', meta.sourceId) : { data: [] };
@@ -415,7 +486,9 @@ export async function writeCommitments(
         source_id: meta.sourceId,
         thread_id: meta.threadId ?? null,
         status: meta.status ?? 'open',
-      },
+        // W15.4 — WHY this commitment exists, in the source's own words (served by lib/commitments/source.ts).
+        source_quote: c.quote ? String(c.quote).slice(0, QUOTE_MAX_CHARS) : null,
+      } as Record<string, unknown> & { description: string; direction: string; counterparty: string | null; due_date: string | null },
     };
   });
 
@@ -443,7 +516,14 @@ export async function writeCommitments(
   const rows = toWrite.map((b) => b.row);
   let inserted: Array<{ id: string; description: string }> | null = null;
   if (rows.length) {
-    const { data, error } = await client.from('commitments').insert(rows).select('id, description');
+    let { data, error } = await client.from('commitments').insert(rows).select('id, description');
+    // Code works BEFORE the pending migration (20260924_commitment_source_quote.sql): the column is
+    // missing → the same rows, without the quote (the floor above has already run — only the display
+    // of WHY waits for the migration).
+    if (error && missingQuoteColumn(error)) {
+      ({ data, error } = await client.from('commitments')
+        .insert(rows.map((r) => Object.fromEntries(Object.entries(r).filter(([k]) => k !== 'source_quote')))).select('id, description'));
+    }
     if (error) console.error('[commitments] insert failed:', error.message);
     inserted = (data ?? null) as Array<{ id: string; description: string }> | null;
   }
@@ -525,8 +605,13 @@ export function soleCounterpartOf(
 export async function writeMeetingCommitments(
   userId: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  actionItems: Array<{ action?: string; assignee?: string | null; isUserTask?: boolean | null; dueDate?: string | null; due_date?: string | null }>,
-  meta: { transcriptId: string; attendees?: Array<string | null | undefined> | null; userName?: string | null; meetingDate?: string | null },
+  actionItems: Array<{ action?: string; assignee?: string | null; isUserTask?: boolean | null; dueDate?: string | null; due_date?: string | null;
+    /** W15.4 — the meeting line that makes this action item (verbatim from the transcript/notes). */
+    quote?: string | null }>,
+  meta: { transcriptId: string; attendees?: Array<string | null | undefined> | null; userName?: string | null; meetingDate?: string | null;
+    /** W15.4 THE QUOTE FLOOR's text: the transcript / notes the action items were drawn from. Handed →
+     *  every item must quote a line of it (no quote → no commitment). Absent → the legacy path. */
+    transcriptText?: string | null },
   client: DBClient,
 ): Promise<void> {
   // The set of "other" participants (attendee names that aren't the user). Used only to resolve a
@@ -569,6 +654,7 @@ export async function writeMeetingCommitments(
       due_date: a.dueDate ?? a.due_date ?? null,
       counterparty,
       initiative: await resolveInitiative(counterparty),
+      quote: typeof a.quote === 'string' ? a.quote : null,
     } as ExtractedCommitment);
   }
   // B2: meeting follow-ups are PROPOSED, not imposed — they land 'suggested' for the user's
@@ -576,6 +662,7 @@ export async function writeMeetingCommitments(
   await writeCommitments(userId, list, {
     source: 'meeting', sourceId: meta.transcriptId, threadId: null, status: 'suggested',
     anchorAt: meta.meetingDate ?? null, otherParty: soleCounterpart, user: { name: meta.userName ?? null },
+    ...(typeof meta.transcriptText === 'string' ? { ownWords: meta.transcriptText } : {}),
   }, client);
 }
 
@@ -768,7 +855,7 @@ export async function extractEmailCommitments(opts: {
     const initCand = await getInitiativeCandidates(client, userId, { threadId, personNames: [counterparty], personEmails: [counterparty] }).catch(() => ({ canonical: null, candidates: [] as string[] }));
     const initiativeGrounding = initiativeGroundingClause(initCand.canonical, initCand.candidates);
     const perspective = isFromUser
-      ? `This email was SENT BY ${who}. Things ${who} promises to do = direction "you_owe". Things ${who} asks or requests the other party to do (and is now waiting on) = direction "awaiting". CRITICAL: because ${who} is the SENDER, an imperative or request aimed at the other party ("process the refund", "please send X", "can you review Y") is something the OTHER party owes — direction "awaiting" — NOT something ${who} owes. Only a first-person promise by ${who} ("I'll…", "I will…", "let me…", "we'll…") is "you_owe".`
+      ? `This email was SENT BY ${who}. Things ${who} promises to do = direction "you_owe". Things ${who} asks or requests the other party to do (and is now waiting on) = direction "awaiting". CRITICAL: because ${who} is the SENDER, an imperative or request aimed at the other party ("process the refund", "please send X", "can you review Y") is something the OTHER party owes — direction "awaiting" — NOT something ${who} owes. Only a first-person promise by ${who} ("I'll…", "I will…", "let me…", "we'll…") is "you_owe". THE PROMISE LAW: a "you_owe" from ${who}'s own email exists ONLY when ${who} wrote an EXPLICIT FIRST-PERSON COMMITMENT to a deliverable or an action ("I'll send the deck on Monday", "I will get back to you by Friday", "vou enviar a proposta amanhã", "je vous envoie le contrat") — its quote must BE that sentence, and "explicit_promise" is true only then. A pitch, a description of what a product or team can do, an offer or invitation ("happy to show you…", "we can set up…", "let me know if…"), a pleasantry or a plan stated without committing to it is NOT a promise — return nothing for it.`
       : `This email was RECEIVED BY ${who} from ${counterparty || 'someone'}. Things the other party asks ${who} to do = direction "you_owe". Things the other party promises to do for ${who} = direction "awaiting".`;
 
     const prompt = `Extract concrete COMMITMENTS from this email — a SPECIFIC obligation a party EXPLICITLY took on, or is explicitly owed, between ${who} and a REAL person (e.g. "Send the Q3 proposal", "Review the contract by Friday").
@@ -797,15 +884,18 @@ Body:
 ${text.slice(0, 2500)}
 """
 
+quote — THE QUOTE LAW: every commitment MUST carry "quote": the EXACT words, copied VERBATIM from THIS message's own text (not from quoted earlier messages below it, not paraphrased, not translated), that make the commitment — ${isFromUser ? `${who}'s own promise (you_owe) or ${who}'s own request (awaiting)` : `the other party's ask of ${who} (you_owe) or their own promise (awaiting)`}. One sentence or clause, at most ~200 characters. If you cannot quote such words, it is not a commitment — leave it out.
+explicit_promise: true ONLY when the quote is an explicit first-person commitment by its writer to a deliverable or an action; false otherwise.
+
 description — THE TITLE LAW: a short IMPERATIVE, at most ~9 words, starting with a verb and naming the deliverable ("Send the Q3 proposal", "Review the contract by Friday"). NEVER notes/narration phrasing ("Discussed the possibility of…", "It was agreed that…", "X mentioned…", "Follow up regarding the conversation about…") and never a sentence describing the conversation — the title is the TASK, written the way it would sit on a to-do list.
 THE DEIXIS LAW: a stored title must stay TRUE as time passes — never write relative time words ("tomorrow", "today", "tonight", "next week", "this Friday") into the description. Resolve them against THIS EMAIL'S OWN DATE above and write the absolute instead: "Be at the meeting room at 12:30 tomorrow" (sent Jul 27) → "Be at the meeting room — Jul 28, 12:30". Clock times stay; day-words become dates.
 
 Return ONLY JSON. Empty array if there are no real commitments:
-{"commitments":[{"direction":"you_owe|awaiting","doer":"user | the other party's name/email","description":"short imperative, e.g. 'Send the Q3 proposal'","due_date":"YYYY-MM-DD or null","counterparty":"name/email or null","initiative":"short label or null","steps":["short sub-part", "..."]}]}`;
+{"commitments":[{"direction":"you_owe|awaiting","doer":"user | the other party's name/email","quote":"the exact words from this message","explicit_promise":true,"description":"short imperative, e.g. 'Send the Q3 proposal'","due_date":"YYYY-MM-DD or null","counterparty":"name/email or null","initiative":"short label or null","steps":["short sub-part", "..."]}]}`;
 
     try {
       const { client: ai, model } = await getAIClient(userId, 'summarization', client);
-      const res = await aiCreate(ai, { model, messages: [{ role: 'user', content: prompt }], max_tokens: 500, temperature: 0.2 });
+      const res = await aiCreate(ai, { model, messages: [{ role: 'user', content: prompt }], max_tokens: 700, temperature: 0.2 });
       const parsed = parseJson(res.choices?.[0]?.message?.content ?? '');
       let list = (parsed.commitments ?? []) as ExtractedCommitment[];
       // THE DIRECTION FLOOR (W7.4) — direction is WHO DOES IT, decided by ONE pure law

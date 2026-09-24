@@ -153,7 +153,8 @@ async function main() {
       /suggestWorkerForMove\(supabase, userId, entityId, \{ next_move: ent\.next_move \}, \{ deferOnMiss: true \}\)/.test(rv));
 
     // pure — the anchor
-    const prep = [{ kind: 'reply_draft', by: 'Sam Coworker' }] as never;
+    // ⟲ RE-POINTED (W15.2 · NO EMPTY READY): the fixture drafts carry words — an empty draft is not live.
+    const prep = [{ kind: 'reply_draft', by: 'Sam Coworker', content: 'Thanks — confirming the date.' }] as never;
     const a1 = anchorOf('inbox_item', { source_data: { from_name: 'Acme Ops', understanding: { ask: 'confirm the date' } } }, prep);
     const a2 = anchorOf('commitment', { description: 'Send the deck', counterparty: 'Acme' }, []);
     const a3 = anchorOf('meeting', { title: 'Sync' }, []);
@@ -161,7 +162,7 @@ async function main() {
       a1.who === 'Acme Ops' && a1.ask === 'confirm the date' && a1.prepared === 'Sam Coworker'
       && a2.who === 'Acme' && a2.ask === 'Send the deck' && a2.prepared === null
       && a3.who === null && a3.ask === null
-      && anchorOf('inbox_item', null, [{ kind: 'nudge_draft', by: null }] as never).prepared === 'draft');
+      && anchorOf('inbox_item', null, [{ kind: 'nudge_draft', by: null, content: 'A quick nudge.' }] as never).prepared === 'draft');
     gate('B9 pure: kinds map to one link kind + one loose key; the title and activity fall back honestly',
       linkKindOf('followup') === 'commitment' && linkKindOf('awareness') === 'inbox_item' && linkKindOf('meeting') === 'meeting'
       && looseRoomKeyOf('inbox_item', 'x') === 'inbox:x' && looseRoomKeyOf('commitment', 'y') === 'commitment:y'

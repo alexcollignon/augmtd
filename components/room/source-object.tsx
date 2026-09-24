@@ -12,13 +12,15 @@
 // in-flight shared. A surface that has already warmed a thread (the triage deck, one card ahead)
 // hands this mount an instant first paint.
 //
-// THE IN-FLIGHT RULE: show what is served, never a spinner-only hole. With nothing read yet and
-// nothing handed in, the mount renders NOTHING and fills in when the door answers — an empty
-// bordered frame that later grows content is a layout lie; a card that arrives is not.
+// THE IN-FLIGHT RULE (amended W15.1): show what is served at once. With nothing read yet the mount
+// stands the kit's SKELETON at exactly the card's max height (SOURCE_CARD_MAX_PX) — the card that
+// replaces it can never be taller, so a host's actions below are never shoved down on arrival.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useMemo, useState } from 'react';
 import { ThreadCardView } from '@/components/thread';
+// W15.1 · THE ONE THREAD COMPONENT's loading frame — the card's own max height, no layout shift.
+import { SourceObjectSkeleton } from '@/components/thread/source-object-card';
 import type { ThreadCard } from '@/components/thread/types';
 import EventCard from '@/components/home/event-card';
 import { AttachmentLightbox, type LightboxFile } from '@/components/ui/attachment-lightbox';
@@ -97,34 +99,43 @@ export function MeetingSourceMount({ meeting, onOpen }: { meeting: MeetingSource
 // (weeks after the promise) — SourceObjectMount reads the thread door, whose tail is the newest. The
 // commitment's object is the ONE message it was extracted from (`commitments.source_id`, read by
 // lib/commitments/source.ts emailSourceOf and served on the commitment's payload); the rest of the
-// conversation is one click away — "Later in this conversation →" opens the thread drawer.
+// conversation is one click away — the card's ONE door, "Open thread" (W15.1 · one label).
 /** The served shape (lib/commitments/source.ts `EmailSource`) — the payload is the contract. */
-export type EmailSourceFacts = { id: string; threadId: string | null; subject: string | null; from: string | null; receivedAt: string | null; excerpt: string | null };
+export type EmailSourceFacts = { id: string; threadId: string | null; subject: string | null; from: string | null; receivedAt: string | null; excerpt: string | null;
+  /** W15.4 · why this item exists, in the source's own words ("You wrote: “…”") — lib/commitments/source.ts sourceQuoteOf. */
+  quote?: string | null };
 
-/** The door label — one wording, so the gate asserts the mapping and not a scattered literal. */
-export const LATER_IN_CONVERSATION_LABEL = 'Later in this conversation →';
-
-/** The pure producer: served facts → the kit's `source` card (the message's own words). */
-export function emailSourceCard(m: EmailSourceFacts, onOpen?: () => void): ThreadCard {
+/** The pure producer: served facts → the kit's `source` card (the message's own words). The door's
+ *  words are the kit's (OPEN_THREAD_LABEL) — a host passes the handler, never a label. `quote` is
+ *  the kit's optional highlighted line (W15.4 supplies the user's own promise). */
+export function emailSourceCard(m: EmailSourceFacts, onOpen?: () => void, quote?: string | null): ThreadCard {
   return {
     kind: 'source', id: `source-email-${m.id}`, source: 'email',
     who: m.from, when: whenLabel(m.receivedAt),
     ...(m.subject ? { title: m.subject } : {}),
     ...(m.excerpt ? { excerpt: m.excerpt } : {}),
-    ...(onOpen ? { onOpen, openLabel: LATER_IN_CONVERSATION_LABEL } : {}),
+    ...(quote ? { quote } : {}),
+    ...(onOpen ? { onOpen } : {}),
   };
 }
 
-export function EmailSourceMount({ source, onOpen }: { source: EmailSourceFacts; onOpen?: () => void }) {
-  return <ThreadCardView card={emailSourceCard(source, onOpen)} />;
+export function EmailSourceMount({ source, onOpen, quote }: { source: EmailSourceFacts; onOpen?: () => void; quote?: string | null }) {
+  return <ThreadCardView card={emailSourceCard(source, onOpen, quote ?? source.quote ?? null)} />;
 }
 
-export function SourceObjectMount({ itemId, onOpenThread, openLabel }: {
+// ── THE THREAD'S OWN MOUNT (W15.1 · ONE THREAD COMPONENT) ────────────────────────────────────────
+// The door's tail renders through the kit's ONE source card: the newest message's own words, the
+// older served one folded to a line, "+N earlier" for the rest of the conversation (the door's own
+// count), a fixed max height, and ONE door label. While the door is being read the mount stands a
+// skeleton of exactly the card's max height (THE IN-FLIGHT RULE, amended W15.1: a stable frame
+// beats a card that arrives and shoves the host's actions down).
+export function SourceObjectMount({ itemId, onOpenThread, quote }: {
   /** The inbox item whose thread IS the object under the ask. */
   itemId: string;
   /** The one door — the host's own (a room focuses; the deep-dive raises its drawer). */
   onOpenThread?: () => void;
-  openLabel?: string;
+  /** The kit's optional highlighted line, above the message. */
+  quote?: string | null;
 }) {
   const [data, setData] = useState<ThreadDoorData | null>(() => peekThreadDoor(itemId));
   // THE ONE VIEWER: one index into the WHOLE context, so ‹ › are honest (T25.9b).
@@ -146,7 +157,7 @@ export function SourceObjectMount({ itemId, onOpenThread, openLabel }: {
   const [showMail, setShowMail] = useState(false);
   useEffect(() => { setShowMail(false); }, [itemId]);
 
-  if (!data) return null;
+  if (!data) return <SourceObjectSkeleton />;
   const who = data.fromName?.trim() || data.fromAddress?.trim() || null;
   const invite = data.invite;
   const isInvite = !!(invite && (invite.spec || invite.card));
@@ -157,9 +168,12 @@ export function SourceObjectMount({ itemId, onOpenThread, openLabel }: {
         kind: 'source', id: `source-${itemId}`, source: 'email',
         who, when: whenLabel(data.receivedAt),
         ...(data.subject ? { title: data.subject } : {}),
-        messages: data.tail.map((m) => ({ id: m.id, author: m.author, body: m.body })),
+        messages: data.tail.map((m) => ({ id: m.id, author: m.author, body: m.body, when: whenLabel(m.at) })),
+        // "+N earlier" — the conversation beyond the served tail, counted by the door (never guessed).
+        ...(data.count > data.tail.length ? { earlierCount: data.count - data.tail.length } : {}),
+        ...(quote ? { quote } : {}),
         files: files.map((f, i) => ({ name: f.name, size: f.size ?? null, onOpen: () => setOpenAt(i) })),
-        ...(onOpenThread ? { onOpen: onOpenThread, openLabel: openLabel ?? 'Thread →' } : {}),
+        ...(onOpenThread ? { onOpen: onOpenThread } : {}),
       }} />
       {openAt !== null && files.length > 0 && (
         <AttachmentLightbox files={files} index={openAt} onIndex={setOpenAt} onClose={() => setOpenAt(null)} />

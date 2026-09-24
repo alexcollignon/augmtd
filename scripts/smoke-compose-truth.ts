@@ -225,7 +225,9 @@ console.log('\nC · regenerate ONCE with the failure named, else serve the hones
       && /setWithheld\(held\);/.test(card));
     gate('F2 the served words ride VERBATIM as the card\'s bodyNote (no second home for the text — no withheld literal in the card)',
       // ⟲ W13: the same line; when nothing is withheld, the card's own re-vet note may take the slot.
-      /\.\.\.\(withheld && !dirty && !sent \? \{ bodyNote: withheld \} : unattachedClaim \? \{ bodyNote: UNATTACHED_CLAIM_NOTE \} : \{\}\),/.test(card)
+      // ⟲ W15.2: an EMPTY (not withheld) body takes the slot next with the plain empty line — the
+      // withheld words still ride first and verbatim.
+      /\.\.\.\(withheld && !dirty && !sent \? \{ bodyNote: withheld \}\s*: readiness === 'empty' && !redrafting \? \{ bodyNote: EMPTY_DRAFT_NOTE \}\s*: unattachedClaim \? \{ bodyNote: UNATTACHED_CLAIM_NOTE \} : \{\}\),/.test(card)
       && !/I held back a draft/.test(card) && !/I held back a draft/.test(kit));
     gate('F3 a held-back draft is NOT the unfillable dead end — the editor stays live for the user\'s own words',
       /setUnfilled\(!words && !\(d\?\.to\?\.length\) && !held\);/.test(card)

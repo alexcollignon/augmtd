@@ -76,7 +76,9 @@ import { BULK_VERBS, deedBoundFor, type BulkDeed, type BulkVerb } from '@/lib/de
 // import for anything rendering the ledger.
 import { heldIntro, heldReceipts } from '@/lib/home/held-words';
 // Q9 · THE TRIAGE DECK — the SECOND RENDER of the waiting band (never a second derivation of it).
-import { TriageDeck, type TriageRow } from '@/components/triage/triage-deck';
+import { TriageDeck, TriageDeckSkeleton, type TriageRow } from '@/components/triage/triage-deck';
+import { TRIAGE_VIEW_ALL, TRIAGE_ONE_AT_A_TIME } from '@/lib/triage/words';
+import { TRIAGE_VIEW_KEY, initialWaitingShape, type WaitingShape } from '@/lib/triage/view-shape';
 // THE LIST'S SHAPE (W5b): the fold, the honest footer, and which handed rows the list reads.
 import { foldHeldRows, foldCountWord, heldFooter, listHanded, type HeldFold } from '@/lib/home/held-list';
 // W8.3 · the pure bulk-label law (client-safe, gate-assertable) and the band's declared bound.
@@ -346,13 +348,14 @@ function ClassRow({ c, open, onToggle, deed, busy, error, picked, onPick, onPick
 }
 
 // ── Q9 · THE DECK IS THE DEFAULT, THE LIST IS A CHOICE ──────────────────────────────────────────
-// "'When you're ready · N →' opens INTO the deck (a quiet 'view as list' toggle keeps the ledger;
-// Watched/Handled bands stay list-shaped below either view)." The choice is the reader's and it
-// STICKS — stamped through the house cache idiom, so the next visit opens where they left it. The
-// Home's door line does not change at all: it still opens ?view=held, which now hosts either shape.
-const VIEW_KEY = 'aug-triage-view-v1';
-type WaitingShape = 'deck' | 'list';
-const loadShape = (): WaitingShape => (loadLS<WaitingShape>(VIEW_KEY) === 'list' ? 'list' : 'deck');
+// "'When you're ready · N →' opens INTO the deck (a quiet toggle keeps the ledger; Watched/Handled
+// bands stay list-shaped below either view)." W15.3 (owner walk, Sep 24 — "why not this as only
+// option") sharpens it: THE HOME'S DOOR ALWAYS OPENS THE CARD, and the list is the secondary
+// "View all". The reader's own last choice is a per-viewer preference honoured only when the ADDRESS
+// names the lens (a refresh, a deep link) — never a surprise behind the door (lib/triage/view-shape.ts).
+const VIEW_KEY = TRIAGE_VIEW_KEY;
+const loadShape = (fromHome: boolean): WaitingShape =>
+  initialWaitingShape({ fromHome, stored: loadLS<WaitingShape>(VIEW_KEY) });
 
 export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = null, fromHome = false, onBack, onRefresh }: {
   ledger: HeldLedger | null; deckHeld: DeckHeldRow[];
@@ -397,7 +400,8 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
   // (`fromHome`, recorded by the door itself) unless the reader picked cards from the ledger.
   const [deckFromList, setDeckFromList] = useState(false);
   const closeReturnsHome = fromHome && !deckFromList;
-  useEffect(() => { setShape(loadShape()); }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the ORIGIN is read once, at the open
+  useEffect(() => { setShape(loadShape(fromHome)); }, []);
   const chooseShape = useCallback((s: WaitingShape) => {
     setShape(s); setExited(false); setReceipt(null); saveLS(VIEW_KEY, s);
     // Choosing the cards FROM the ledger re-homes the way out: Close goes back to the list.
@@ -585,7 +589,7 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
                 {/* THE QUIET TOGGLE — one word, no segmented control, no colour until hover. */}
                 <button onClick={() => chooseShape(shape === 'deck' ? 'list' : 'deck')}
                   className="ml-auto flex-shrink-0 text-[12px] text-neutral-300 transition-colors hover:text-indigo-600">
-                  {shape === 'deck' ? 'View as list' : 'One at a time'}
+                  {shape === 'deck' ? TRIAGE_VIEW_ALL : TRIAGE_ONE_AT_A_TIME}
                 </button>
               </div>
               {bands?.waiting.sentence && <p className="px-3 text-[12px] text-neutral-400">{bands.waiting.sentence}</p>}
@@ -595,12 +599,10 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
           {deckMode && !deckShown ? (
             // THE PLACE-HOLDING CARD — the deck's own shape, in the deck's own chrome, while the
             // first served day is still on its way. It claims nothing: no count, no verbs, no rows.
-            <div className="mt-2 px-3">
-              <div className="rounded-2xl border border-neutral-200/70 bg-white px-5 py-6">
-                <div className="h-3 w-28 animate-pulse rounded bg-neutral-100" />
-                <div className="mt-3 h-3.5 w-3/4 animate-pulse rounded bg-neutral-100" />
-                <div className="mt-2 h-3 w-1/2 animate-pulse rounded bg-neutral-100" />
-              </div>
+            // W15.3: it is the deck's OWN skeleton — the header's height, the card area, the one
+            // decision frame at its full height — so the first card lands exactly where it stood.
+            <div className="px-1">
+              <TriageDeckSkeleton />
             </div>
           ) : deckShown ? (
             // THE DECK — a SECOND RENDER of these exact rows, in this exact order. It is handed the

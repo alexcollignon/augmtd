@@ -41,6 +41,10 @@ export type LooksDoneRecord = {
   /** "Not yet" — the evidence sig the user refused. Equal to `sig` → the state is down. */
   refusedSig?: string | null;
   refusedAt?: string | null;
+  /** W15.2 · "Not yet" on a HELD BOOKING the machine derived at read (lib/work/scheduled.ts — the
+   *  meeting the work was scheduled for has passed): the calendar event ids refused. Sticky per event;
+   *  a record carrying only these has no live sig (`sig: ''`) and never raises the state itself. */
+  refusedBookings?: string[];
 };
 
 export const looksDoneSigOf = (evidence: ReadonlyArray<{ type: string; id: string }>): string =>
@@ -106,11 +110,11 @@ export async function noteLooksDone(
     if (!hit) {
       // A delivered verdict closes the row (the state reads open work only); an unqualified one
       // retires a stale claim — but a refusal record is kept (it is the user's word).
-      if (prev && !prev.refusedSig) await deletePlans(client, userId, LOOKS_DONE_KIND, key);
+      if (prev && !prev.refusedSig && !prev.refusedBookings?.length) await deletePlans(client, userId, LOOKS_DONE_KIND, key);
       return;
     }
     const sig = looksDoneSigOf(evidence);
-    const rec: LooksDoneRecord = { sig, evidence: hit, verdict, at: new Date().toISOString(), refusedSig: prev?.refusedSig ?? null, refusedAt: prev?.refusedAt ?? null };
+    const rec: LooksDoneRecord = { sig, evidence: hit, verdict, at: new Date().toISOString(), refusedSig: prev?.refusedSig ?? null, refusedAt: prev?.refusedAt ?? null, ...(prev?.refusedBookings?.length ? { refusedBookings: prev.refusedBookings } : {}) };
     if (prev && prev.sig === rec.sig && prev.evidence?.id === hit.id && prev.verdict === verdict) return; // unchanged
     await upsertPlan(client, userId, LOOKS_DONE_KIND, key, rec as never);
   } catch { /* the state is an enhancement — the debt stays exactly as it was */ }
@@ -121,7 +125,20 @@ export async function refuseLooksDone(client: SupabaseClient, userId: string, ki
   const key = `${kind}:${id}`;
   const prior = await readPlan(client, userId, LOOKS_DONE_KIND, key);
   const prev = (prior?.tasks ?? null) as LooksDoneRecord | null;
-  if (!prev?.sig) return { error: 'nothing to refuse' };
-  const r = await upsertPlan(client, userId, LOOKS_DONE_KIND, key, { ...prev, refusedSig: prev.sig, refusedAt: new Date().toISOString() } as never);
+  if (!looksDoneLive(prev)) {
+    // W15.2 · the state may stand on a HELD BOOKING the machine derived at read (no record wrote
+    // it): refuse exactly that event, keeping whatever the record already holds.
+    const { workStateOf } = await import('@/lib/work/machine');
+    const st = await workStateOf(client, userId, { kind, id });
+    if (st.state !== 'looks_done' || !st.heldEventId) {
+      if (!prev?.sig) return { error: 'nothing to refuse' };
+    } else {
+      const now = new Date().toISOString();
+      const base: LooksDoneRecord = prev ?? { sig: '', evidence: { type: 'calendar', id: st.heldEventId, at: now, by: 'user', name: null, title: '', deed: 'meeting_held' }, verdict: 'held_booking', at: now };
+      const rb = await upsertPlan(client, userId, LOOKS_DONE_KIND, key, { ...base, refusedBookings: [...new Set([...(base.refusedBookings ?? []), st.heldEventId])], refusedAt: now } as never);
+      return { error: rb.error?.message ?? null };
+    }
+  }
+  const r = await upsertPlan(client, userId, LOOKS_DONE_KIND, key, { ...prev, refusedSig: prev!.sig, refusedAt: new Date().toISOString() } as never);
   return { error: r.error?.message ?? null };
 }

@@ -75,3 +75,5 @@ export { BUNDLE_NAMES_VERSION } from '@/lib/home/name-bundles';
 export { CONVERSATION_DELTA_VERSION } from '@/lib/work/conversation-delta';
 /** The working circle's inference rule (W11.2) — the version slot of the `working_circle` cache (a bump re-infers). */
 export { CIRCLE_VERSION } from '@/lib/evidence/circle';
+/** Commitment extraction (W15.4 THE QUOTE LAW: every commitment quotes its source; a user-authored you_owe is an explicit first-person promise). */
+export { COMMITMENT_EXTRACTION_VERSION } from '@/lib/commitments/extract';

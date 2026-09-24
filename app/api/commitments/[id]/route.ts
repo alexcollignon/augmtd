@@ -192,6 +192,14 @@ export async function GET(
       } catch { /* additive — a gate we can't describe never breaks the room */ }
     }
 
+    // W15.4 · WHY THIS ITEM EXISTS — the quoted promise/ask in the source's own words (the one read;
+    // null before the source_quote migration or when nothing was quoted).
+    let sourceQuote: string | null = null;
+    try {
+      const { sourceQuoteOf } = await import('@/lib/commitments/source');
+      sourceQuote = (await sourceQuoteOf(supabase, user.id, String(c.id)))?.line ?? null;
+    } catch { /* additive — the card renders without it */ }
+
     return NextResponse.json({
       id: c.id,
       direction: c.direction,
@@ -208,7 +216,7 @@ export async function GET(
       threadId: c.thread_id ?? null,
       status: c.status,
       createdAt: c.created_at ?? null,
-      sourceContext: sourceKind ? { kind: sourceKind, subject: sourceSubject, snippet: sourceSnippet, from: sourceFrom, when: sourceWhen, ...(sourceEmailId ? { emailId: sourceEmailId, threadId: sourceThreadId } : {}) } : null,
+      sourceContext: sourceKind ? { kind: sourceKind, subject: sourceSubject, snippet: sourceSnippet, from: sourceFrom, when: sourceWhen, ...(sourceEmailId ? { emailId: sourceEmailId, threadId: sourceThreadId } : {}), ...(sourceQuote ? { quote: sourceQuote } : {}) } : null,
     });
   } catch (error) {
     console.error('Commitment fetch error:', error);

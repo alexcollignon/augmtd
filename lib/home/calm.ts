@@ -29,6 +29,7 @@
 
 import type { DoItem } from '@/lib/home/agenda';
 import { decodeEntities } from '@/lib/core/text';
+import { isScheduledWord } from '@/lib/work/scheduled'; // W15.2 (client-safe, zero imports)
 
 /** THE DENSITY LAW's number. Above the fold the Home holds at most this many rows. */
 export const CALM_MAX_WHISPERS = 5;
@@ -174,7 +175,8 @@ export function ladderReceiptKind(preparedKind: string | null, stateWord: string
   if (w === LADDER_DECISION_WORD) return 'decision';
   if (w === LADDER_REVIEW_WORD) return preparedKind === 'deliverable' || preparedKind === 'paste_pack' ? preparedKind : 'deliverable';
   if (w === LADDER_SEND_WORD) return preparedKind && SEND_RECEIPT_KINDS.has(preparedKind) ? preparedKind : null;
-  if (LADDER_NO_RECEIPT_WORDS.has(w)) return false;
+  // W15.2 · a SCHEDULED row speaks its booking, never a receipt (its when is the word).
+  if (LADDER_NO_RECEIPT_WORDS.has(w) || isScheduledWord(w)) return false;
   return preparedKind;
 }
 

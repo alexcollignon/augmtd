@@ -1337,6 +1337,82 @@
    "note": "Sep 23 (owner account, read-only census): one client conversation held ~20 open commitments accumulated message by message (Aug 3 → Sep 16) — one counterparty alone 7 open; another person under two name forms (full vs short surname); a third partly filed under a bare address; one commitment due two days BEFORE its source email with a null counterparty. Dry-run of scripts/repair-conversation-hoard.ts (zero AI) on that account: 74 live commitments · 12 counterparty name variants to fold · 1 due before its source · 7 thread groups with ≥2 live rows (top three: 12/8/4 live rows, 55 delta passes). Platform census (read-only): 117 thread groups with ≥2 live rows (486 rows) across 4 users → 1,031 delta passes (245 later messages left behind by the 30/group cap, reported) → the --judge repair is ≈ €4–6 for --all (≈ €0.004/pass + a fulfillment judgment per delivered nomination). W9.4 (read-only 14-day census, Sep 23): 2,342 messages (1,695 inbound, 647 outbound); 204 landed on a conversation with open work. The old keyword gate kept 20 inbound open-work messages from the delta — 3 because they carried no English keyword (fixed here), 17 because the sync call site never calls extraction for mail its triage filed as noise/FYI (lib/email-sync/sync-emails.ts `emailClass === 'process'`, outside this fence — open). Extraction calls 443 → 1,062–1,147 (every sent message now extracts: 202 → 641); delta passes 184 → 204. Cost ≈ €0.05 → €0.10/day on gpt-5-mini (standard), ≈ €0.14 → €0.29/day on Haiku 4.5 (Bedrock tiers), platform-wide. Fixed by W9.4 (uncommitted). Follow-up (mintNew + triage facts; the sync inbound site always calls the entry): extraction 441 → 1,060 calls/14d, delta 183 → 203, ≈ €0.047 → €0.095/day (gpt-5-mini), €0.14 → €0.27/day (Haiku 4.5); the triage fact alone keeps 792 noise/FYI messages/14d from minting."
   },
   {
+   "id": "a-promise-is-quoted",
+   "name": "A PROMISE IS QUOTED OR IT ISN'T A PROMISE",
+   "aliases": [
+    "THE QUOTE FLOOR (promiseQuoteFloor)",
+    "THE PROMISE LAW",
+    "source_quote",
+    "sourceQuoteOf"
+   ],
+   "tier": 2,
+   "domain": "judge-prepare-deck",
+   "statement": "Every commitment extracted from a source (sent mail, inbound mail, meetings) carries `quote`: the EXACT words in the source message that make it — the user's own promise (you_owe from their mail), the user's own ask (awaiting from their mail), the counterparty's ask or promise (inbound), the meeting line (meetings). At the ONE write door (writeCommitments), after the direction floor and before dedup/insert, code checks the quote EXISTS in the message's OWN words (topMessageOf — never the quoted chain; the transcript for a meeting) with THE SAME checker the conversation delta uses (quoteInText: accent/case/quote-mark/whitespace folded, ≥6 chars per fragment, in order). No verifiable quote → no commitment (logged + counted by reason). A USER-AUTHORED you_owe additionally needs the extraction's judgment that the quote is an EXPLICIT FIRST-PERSON commitment to a deliverable or an action (`explicit_promise: true`) — reasoned by the model with the quote as its proof, never a keyword list; a pitch, a capability description, an offer or invitation, a pleasantry or an uncommitted plan is not a promise. The quote is stored on the row (`commitments.source_quote`) and served by THE ONE source reader (lib/commitments/source.ts `sourceQuoteOf` → lead + text + line: \"You wrote: '…'\" · \"<Name> asked: '…'\" · \"Said in the meeting: '…'\"); hosts compose nothing. Code works before the migration (the writer retries without the column; the reader answers null). A meeting caller that hands no transcript is the legacy path: its rows land 'suggested' (the review gate), unquoted, and are counted.",
+   "homes": [
+    "lib/commitments/extract.ts",
+    "lib/commitments/source.ts",
+    "scripts/repair-unquoted-promises.ts",
+    "supabase/migrations/20260924_commitment_source_quote.sql"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-promise-quotes",
+     "ids": [
+      "Q1-Q10",
+      "W1-W8",
+      "S1-S8",
+      "R4",
+      "R7"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "promiseQuoteFloor · missingQuoteColumn · writeCommitments · writeMeetingCommitments · sourceQuoteFrom · sourceQuoteOf · judgeVerdict",
+     "note": "W15.4: in-memory table client — no quote / a paraphrase / a quote from the quoted chain → no row; the owner's case (a pitch in the user's own sent reply) mints nothing; the user's explicit promise + their own quoted ask land with their quotes; before the migration the same row lands without the column; a meeting line quoted from the handed transcript lands suggested, a paraphrase does not; the legacy meeting caller lands suggested + unquoted; the reader serves \"You wrote\" / \"<Name> asked\" / \"Said in the meeting\", user-scoped, null before the migration (pure twin: tests/unit/promise-quotes.test.ts)"
+    },
+    {
+     "suite": "smoke-promise-quotes",
+     "ids": [
+      "P1-P8",
+      "S9",
+      "R1-R3",
+      "R5-R6",
+      "R8-R9",
+      "J1-J3"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "the floor sits inside the one write door after the direction floor, reads the message's own words, reuses quoteInText (no second checker), logs + counts drops; the extraction prompt states the quote law + the promise law and its output shape carries quote/explicit_promise; COMMITMENT_EXTRACTION_VERSION registered; the migration is additive; the repair is guarded (write-refusing client unless --apply; --apply needs --judge and --yes; a conditional flip stamped unquoted_promise + a reversible commitment_dismissed row; the factory's classification tier with the cut declared; paged listing); the zero-AI proxy is imported by no production module"
+    }
+   ],
+   "status": "holding-uncommitted",
+   "fixed_by": "W15.4",
+   "fn": "promiseQuoteFloor · sourceQuoteFrom · quoteInText",
+   "version_key": "COMMITMENT_EXTRACTION_VERSION",
+   "collides_with": [
+    {
+     "law": "one-conversation-one-live-item",
+     "precedence": "the quote floor runs FIRST, on the candidates; the delta then reads the survivors against the conversation's open work — an unquoted candidate is never a delta candidate. Both quote through ONE checker (quoteInText)"
+    },
+    {
+     "law": "untrusted-input-is-data",
+     "precedence": "the quote is the source's own words stored as DATA and rendered as text in a quote slot — never markup, never an instruction; the model's quote is only kept when code finds it in the message"
+    },
+    {
+     "law": "one-fact-one-home",
+     "precedence": "the quote lives on the commitment row (source_quote) and is read only through sourceQuoteOf — no activity-row or item-plan copy"
+    },
+    {
+     "law": "human-in-the-loop",
+     "precedence": "the repair's dismissals are reversible (commitment_dismissed via /api/restore), conditional, owner-gated (--judge --apply --yes); the proxy never dismisses"
+    },
+    {
+     "law": "excerpt-honesty",
+     "precedence": "the repair judge clips through clipForPrompt with EXCERPT_RULE; the extraction's pre-existing body clip is out of this law's fence"
+    }
+   ],
+   "note": "Sep 24 (owner): \"why items on my sent emails?\" — a you_owe \"Send a concrete example of the workspace setup\" was extracted from the user's own SENT reply whose own words were a pitch closing on a question (\"Want me to send over a concrete example?\"). Since W9.4 every user-authored message is extracted (~3× the calls). Read-only census (open you_owe commitments extracted from user-authored mail since Sep 23, all accounts): 23 open you_owe email rows, 14 from user-authored mail across 4 accounts; ZERO-AI PROXY (a first-person commitment phrase in the message's own words — a census signal, not the rule) passes 3 / fails 11 — the failures read as questions/offers, requests to the other party, or already-done statements. The --judge repair on that scope: 14 classification calls ≈ €0.03. Fixed by W15.4 (uncommitted)."
+  },
+  {
    "id": "pinning-law",
    "name": "THE PINNING LAW",
    "aliases": [
@@ -7297,6 +7373,344 @@
     }
    ],
    "note": "Sep 24 (owner, live Home): the five held a recent demo request, a WEEKS-old client task, an automated marketplace notice, a domain-sale pitch and a task about a provider the company no longer uses — 'some of the items here are old … the order/priority also matters a bit'. Cause: rank 1 was `fresh` = machine.surfaced (first judged within the day), and the not-judged backfill judged hundreds of old items that morning. Read-only census on the reference account through the real brief route (guarded client, zero writes, zero AI): before — five rank-1 'fresh' rows of which three were 24–52 days old (one overdue since Aug 26); after — five rows all arrived within 36h, 94 rows refused as stale (held, not deleted)."
+  },
+  {
+   "id": "one-decision-per-screen",
+   "name": "ONE DECISION PER SCREEN",
+   "aliases": [
+    "THE ONE DECISION CARD",
+    "THE ACTIONS ARE PINNED",
+    "THE CARD OPENS FIRST",
+    "SKELETON IS THE CARD"
+   ],
+   "tier": 2,
+   "domain": "deck · surfaces",
+   "statement": "\"When you're ready\" opens one decision at a time: the Home's door ALWAYS opens the card, and the list is the secondary \"View all\" (a per-viewer choice in browser storage, honoured only when the address names the lens). Every decision — whatever the item's kind (email, commitment, meeting action, notice, invite, any future source) — renders in THE ONE DECISION CARD: one fixed outer height that fits the viewport (a height, never a floor or a cap), a bounded head, the evidence scrolling INSIDE the card, and the action row (Dismiss / Done + Keep / Open / Later) in a pinned fixed-height slot outside the scroll region, so no content length and no late-arriving evidence ever moves the verbs or asks the page to scroll for them. The card reserves its full height from first paint: every waiting state (the lens placeholder, the evidence still reading, the stack still being counted, the end of the stack) is the same frame. Keyboard shortcuts are unchanged.",
+   "homes": [
+    "components/triage/decision-frame.tsx",
+    "components/triage/triage-deck.tsx",
+    "components/home/held-quiet.tsx",
+    "lib/triage/view-shape.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-decision-card",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "D1.1-D1.3",
+      "D2.1-D2.5",
+      "D3.1-D3.4",
+      "D4.1-D4.2",
+      "D5.1"
+     ],
+     "note": "W15.3: initialWaitingShape on fixtures (the door always opens the card; the address honours the viewer's choice); server renders of the REAL deck with short, long, still-reading and every-kind rows share ONE outer class; the actions slot follows the scroll region and holds every verb; every waiting state carries the frame's exact class; the key map is Q9v2's; tests/unit/decision-card.test.ts"
+    },
+    {
+     "suite": "smoke-decision-card",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "D1.4-D1.6",
+      "D2.6",
+      "D3.5",
+      "D4.3",
+      "D5.2-D5.3",
+      "D6.1-D6.2"
+     ],
+     "note": "W15.3: the lens reads its shape through the one rule in an effect (try/catch cache); the head clamps; no floor survives; the lens placeholder is the deck's own skeleton; both keyboard handlers unchanged; ONE evidence mount line (W15.1 swaps the renderer inside it); the frame knows no kind"
+    }
+   ],
+   "status": "holding-uncommitted",
+   "fixed_by": "W15.3",
+   "fn": "initialWaitingShape · DecisionCardFrame (server render)",
+   "collides_with": [
+    {
+     "law": "presentation-law",
+     "precedence": "the decision card is a FRAME, not a second object card: the evidence inside it is still the object's one renderer (W15.1's one thread component); the frame only fixes the box and seats the verbs outside it"
+    },
+    {
+     "law": "no-mutation-and-address",
+     "precedence": "the first paint is the card's full geometry — evidence arriving fills the scroll region in place, never re-lays the page; the lens's ?view=held address still owns the shape it names"
+    },
+    {
+     "law": "the-list-says-only-what-was-judged",
+     "precedence": "the list's rows, counts and words are untouched — this law decides only which shape the door opens and the card's geometry; ONE COUNT still speaks for both"
+    },
+    {
+     "law": "stamped-cache-law",
+     "precedence": "the shape preference is a per-viewer reading convenience, not action data: no stamp, never shared, and it can never override the Home door's default"
+    }
+   ],
+   "note": "Sep 24 (owner walk on \"When you're ready\"): preferred the one-at-a-time card over the list (\"why not this as only option\"); the card first painted short, then the evidence loaded and pushed Dismiss/Done down (visible delay + layout shift); \"we should have a more standardized component, so there's no expansion beyond a viewport height — I don't want the user to scroll for the buttons\". Cause: the Sep-21 card area was a min-height FLOOR (a tall card or late evidence grew past it), the verbs' tails (Later whens, posture offer) opened beneath the pills, and a v1 \"list\" stamp reopened the list from the door. Fixed by W15.3 (uncommitted)."
+  },
+  {
+   "id": "one-thread-component",
+   "name": "ONE THREAD COMPONENT",
+   "aliases": [
+    "OPEN THREAD",
+    "ONE LABEL",
+    "THE CARD IS A GLANCE",
+    "OWN WORDS ON THE CARD"
+   ],
+   "tier": 2,
+   "domain": "surfaces · kit",
+   "statement": "Every source/thread card on every surface (an email thread, a commitment's own source message, a meeting source, an invite's mail, the triage evidence, a forward's folded object, a project room's opening) is the kit's ONE component (components/thread/source-object-card.tsx), mounted directly or through the room mounts (components/room/source-object.tsx) — never a host-specific variant or host-authored excerpt markup. Its door to the conversation reads ONE label, \"Open thread\" (OPEN_THREAD_LABEL — a host passes the handler, never words; the email card's thread door reads the same). It prints the NEWEST message's own words only (the house reply parser + wrapped attribution tails + signature blocks stripped, blank-line runs collapsed, through the render floor as plain text), folds older messages to one-line rows (sender · date · first line) under a served \"+N earlier\" count that opens the thread, never grows past a fixed max height (the body clips under a measured fade; head, door and files stay in view), and loads as a skeleton of exactly that height. A host may pass one short highlighted `quote` line, rendered above the message.",
+   "homes": [
+    "components/thread/source-object-card.tsx",
+    "components/thread/source-text.ts",
+    "components/room/source-object.tsx",
+    "components/thread/thread-cards.tsx",
+    "lib/inbox/thread-door.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-thread-card",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "C2",
+      "C3",
+      "C5",
+      "C6"
+     ],
+     "note": "W15.1: ownWords on EN/PT/DE/FR fixtures (reply tails incl. wrapped, Outlook blocks, signatures, footers, blank runs); server renders of the kit card: max-height = SOURCE_CARD_MAX_PX and the skeleton at exactly that height, head/door before the clipped body, quote above the message, one-line older rows, '+N earlier' a button only with a handler, no raw HTML, never EXCERPT_MARK; tests/unit/source-text.test.ts"
+    },
+    {
+     "suite": "smoke-thread-card",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "C1",
+      "C4"
+     ],
+     "note": "W15.1: no 'Later in this conversation' / 'Thread →' literal in components (comments aside); the email card's door reads OPEN_THREAD_LABEL; every host (item-rail, item-detail, forward-card, triage-deck, decision-card) mounts the one component; the source-text render floor is called by the kit card alone"
+    }
+   ],
+   "status": "holding-uncommitted",
+   "fixed_by": "W15.1",
+   "fn": "ownWords · SourceObjectCard / SourceObjectSkeleton (server render)",
+   "collides_with": [
+    {
+     "law": "presentation-law",
+     "precedence": "this law IS the presentation law's source kind made compact: one rendering per object kind stands; W15.1 fixes that rendering's label, words and geometry for every host at once"
+    },
+    {
+     "law": "one-object-one-door",
+     "precedence": "the door decides WHICH object the card shows (a commitment's own source message, W11.1) — this law only decides how any object card renders it; the own-source rule wins over 'newest message'"
+    },
+    {
+     "law": "excerpt-honesty",
+     "precedence": "the kit never clips by length (the host's display clip did, boundary + '…'); the own-words floor is structural (quoted history, signatures, blank runs) and the fixed height is a visual clip under a fade with the full text one click away — EXCERPT_MARK never renders"
+    },
+    {
+     "law": "one-decision-per-screen",
+     "precedence": "the decision card is the frame, this card is the evidence inside it: the frame fixes the outer box and pins the verbs; this card's own max height only bounds the evidence within it"
+    },
+    {
+     "law": "no-mutation-and-address",
+     "precedence": "the loading skeleton stands at the card's max height so arriving content never grows the page; a shorter card may settle smaller, never taller"
+    }
+   ],
+   "note": "Sep 24 (owner walk on the item page): the source/thread card's door read 'Later in this conversation →' on some cards and 'Thread →' on others; the card was LONG with every message in full, quoted history, blank-line runs, 'On Thu … wrote:' tails and signatures. Owner: components must be AGNOSTIC across every scenario. Fixed by W15.1 (uncommitted)."
+  },
+  {
+   "id": "every-item-can-be-closed",
+   "name": "EVERY ITEM CAN BE CLOSED",
+   "aliases": [
+    "THE HEADER'S DONE · DISMISS",
+    "DONE LEADS WHEN IT LOOKS DONE",
+    "ONE DOOR PER KIND TO CLOSE"
+   ],
+   "tier": 2,
+   "domain": "rooms",
+   "statement": "Every item room (every inbox kind — a mail reply, a meeting-extracted action, an invite, any future inbox source — every commitment and every follow-up) carries ONE persistent action group in its header, on the right beside Details: Done · Dismiss. Each deed goes through the item kind's EXISTING resolution door (inbox: complete 'already handled' / dismiss; commitment and follow-up: the commitment PATCH) — logged, undoable from Activity, its asks settled by the door; the door table (lib/work/item-actions.ts resolveRequestOf) is the one home, and a new kind is a row there, never a new close path. A prepared primary (Send, Review invite, a decision) stays THE primary and the pair renders secondary; when the machine reads looks_done, or settled on an item still open, Done is the emphasised deed. ONE CTA ROW: no other control on the page repeats either deed (the ⋯ menu keeps the less common verbs; the looks-done strip keeps only its evidence line and Not yet). A handoff gate's card owns its own close (approving IS done).",
+   "homes": [
+    "lib/work/item-actions.ts",
+    "components/home/item-detail.tsx"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-item-actions",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "IA1-IA4",
+      "IB1-IB2"
+     ],
+     "note": "W15.2: the door table per kind (URLs, methods, bodies) over the existing routes; the emphasis rule over every machine state; tests/unit/item-actions.test.ts"
+    },
+    {
+     "suite": "smoke-item-actions",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "IA5-IA9",
+      "IB3",
+      "IC1-IC3"
+     ],
+     "note": "W15.2: each room kind hands the frame its pair through resolveRequestOf; the frame renders it beside Details before ⋯; no room's ⋯ menu carries done/dismiss; the looks-done strip has no second Done"
+    }
+   ],
+   "fn": "resolveRequestOf · resolveEmphasisOf (lib/work/item-actions.ts)",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W15.2",
+   "collides_with": [
+    {
+     "law": "human-in-the-loop",
+     "precedence": "the header pair is an explicit click through a logged, undoable door — settlement stays state, never a send; nothing closes without the click"
+    },
+    {
+     "law": "looks-done-confirm",
+     "precedence": "looks-done keeps its evidence line and Not yet; its Done moved into the header's pair (emphasised) — one Done per page"
+    },
+    {
+     "law": "the-machine",
+     "precedence": "the emphasis reads the machine's served state only; the pair never changes the ladder"
+    }
+   ]
+  },
+  {
+   "id": "scheduled-is-not-overdue",
+   "name": "SCHEDULED IS NOT OVERDUE",
+   "aliases": [
+    "THE SCHEDULED STATE",
+    "A BOOKED DEED WAITS FOR ITS DAY",
+    "THE HELD BOOKING LOOKS DONE"
+   ],
+   "tier": 2,
+   "domain": "judge-prepare-deck",
+   "statement": "An open item whose deed is a booked future event is `scheduled` (\"scheduled — Wed, Sep 30, 11:00\", the event's own zone), derived AT READ with zero AI by both machine readers from truth that exists: a non-cancelled calendar event the item's counterparty sits in (an attendee who did not decline, or the organizer — by address, by full name, or by the commitment's source-message party) on a MEETING-SHAPED obligation (its own words in the four corpus languages, or the judged verb `schedule`), within 60 days; or a judged revisit date on live work. It ranks below every rung where the user holds real work (a decision, a live ask, a staged Send keep the primary) and above ready/motion/unjudged/committed. A scheduled row never takes a top-five seat before its event's day (held, never deleted — refusal `scheduled`), never reads overdue or due (its clause is the machine's word with its when; its room shows no Due/Overdue), and speaks no receipt. Once the event has ended after the obligation arose (within 14 days), the item LOOKS DONE (\"you met Sep 30\") — Done / Not yet, with Not yet sticky for that event. The word's one home is lib/work/scheduled.ts (client-safe), read by STATE_WORDS.",
+   "homes": [
+    "lib/work/scheduled.ts",
+    "lib/work/machine.ts",
+    "lib/home/attention.ts",
+    "lib/home/calm.ts",
+    "app/api/home/brief/route.ts",
+    "app/api/items/view/route.ts",
+    "lib/evidence/looks-done.ts",
+    "components/home/item-detail.tsx"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-item-actions",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "SC1-SC19"
+     ],
+     "note": "W15.2: the word + its when; the meeting-shape and counterparty matcher (declined/cancelled/stranger/non-meeting refused; held vs upcoming vs before-the-obligation); the ladder rung order; seat refusal before the day and seating on it; the clause never says overdue; no receipt; tests/unit/item-actions.test.ts"
+    },
+    {
+     "suite": "smoke-item-actions",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "SC22-SC26"
+     ],
+     "note": "W15.2: workStatesFor and workStateOf over an in-memory PostgREST fake with calendar rows — a booked call reads scheduled (by address and via the source message's sender), a held meeting reads looks done, a send obligation is untouched, single == batch"
+    },
+    {
+     "suite": "smoke-item-actions",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "SC20-SC21"
+     ],
+     "note": "W15.2: the brief serves the word with its when and spreads the seat facts after the due facts; the room serves the when and drops Due/Overdue on a scheduled commitment"
+    }
+   ],
+   "fn": "bookedEventFor · meetingShaped · scheduledSeatOf · scheduledWordOf (lib/work/scheduled.ts) · deriveState · bookingFactsOf (lib/work/machine.ts) · seatVerdict (lib/home/attention.ts)",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W15.2",
+   "collides_with": [
+    {
+     "law": "time-truth",
+     "precedence": "a booked future event is never served as a missed deadline; the due date stays stored, the served words say scheduled until the event passes"
+    },
+    {
+     "law": "the-top-five-are-what-matters-now",
+     "precedence": "one more seat refusal (scheduled, before the event's day) — held, never deleted; on the day it seats by the same bands, never as overdue"
+    },
+    {
+     "law": "looks-done-confirm",
+     "precedence": "a held booking derives looks_done at read with the same Done / Not yet; a Not yet on a derived booking is recorded per event (refusedBookings) and never refuses other evidence"
+    },
+    {
+     "law": "the-machine",
+     "precedence": "a new rung of the ONE ladder (deriveState); both readers feed it the same booking read — no second derivation"
+    }
+   ]
+  },
+  {
+   "id": "no-empty-ready",
+   "name": "NO EMPTY READY",
+   "aliases": [
+    "SETTLED ITEMS DROP THEIR ACTION CARDS",
+    "AN EMPTY DRAFT IS NEVER READY",
+    "NO SEND ON SETTLED WORK"
+   ],
+   "tier": 2,
+   "domain": "surfaces · kit",
+   "statement": "A card's commit row is a claim. A draft card says \"reply ready\" / \"ready to send\" and carries Send ONLY with recipients AND words (lib/prepare/card-readiness.ts draftReadinessOf — every email-card lane); with no words it shows the honest empty state (W12.3's held-back line verbatim when the door withheld the words, else the plain empty line) with the editor open, and Send appears the moment words exist. THE ONE READER agrees: a reply/nudge artifact with no visible words is never live (so the machine never offers Send on it), and every artifact on a CLOSED item (an explicit closed-status list per table) is stamped settled — never live, never re-prepared, never a reason to regenerate words. A room whose machine reads settled mounts no action card and no decision (one gate in the rail for every card kind, plus each room's own list); the conversation and the drawer's history stay readable.",
+   "homes": [
+    "lib/prepare/card-readiness.ts",
+    "lib/prepare/read.ts",
+    "components/home/email-card.tsx",
+    "components/home/item-rail.tsx",
+    "components/home/item-detail.tsx"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-item-actions",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "ST1-ST3",
+      "ST5",
+      "EM1-EM3"
+     ],
+     "note": "W15.2: the card predicate; the reader's settled/empty floors and their reasons; settled never regenerates nor re-prepares; tests/unit/item-actions.test.ts + tests/unit/machine.test.ts (empty never send-shaped)"
+    },
+    {
+     "suite": "smoke-item-actions",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "ST4"
+     ],
+     "note": "W15.2: preparedStatesFor over a fake — a closed commitment's pool nudge and a completed inbox row's draft are in `all` but not live; an open twin stays live"
+    },
+    {
+     "suite": "smoke-item-actions",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "ST6-ST7",
+      "EM4-EM6"
+     ],
+     "note": "W15.2: the rail's settled gate; each room's list; the email card's Send/receipt ride `sendable`; rooms mount reply/follow-up cards only over words"
+    }
+   ],
+   "fn": "draftReadinessOf · mayClaimReady (lib/prepare/card-readiness.ts) · emptyTextArtifact · itemStatusClosed · isLiveArtifact (lib/prepare/read.ts)",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W15.2",
+   "collides_with": [
+    {
+     "law": "a-claim-renders",
+     "precedence": "this law is A CLAIM RENDERS at the card's own commit row: a readiness word with no words behind it is a claim with nothing to render"
+    },
+    {
+     "law": "one-reader-per-object",
+     "precedence": "the settled and empty floors live in THE ONE READER's live predicate — the machine, the deck chip, the room and the card agree"
+    }
+   ]
   }
  ],
  "lessons": [

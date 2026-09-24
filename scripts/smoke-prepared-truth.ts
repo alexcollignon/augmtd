@@ -139,7 +139,8 @@ console.log('\nB · prepared words never claim an undone deed');
   gate('B7 THE ONE READER derives falseClaim + outsideWindow and its live predicate honors both (single AND batched readers stamp)',
     // ⟲ RE-POINTED (W7.3): + `misaddressed` (TRUE ADDRESSEES) and the commitment selects gained
     // `counterparty` — what an addressed draft must agree with.
-    /export function isLiveArtifact\(a: PreparedArtifact\): boolean \{\s*return !a\.stale && !a\.expired && !a\.outsideWindow && !a\.falseClaim && !a\.misaddressed;/.test(rd)
+    // ⟲ RE-POINTED (W15.2): + the settled and empty-words floors; every earlier floor still required.
+    /export function isLiveArtifact\(a: PreparedArtifact\): boolean \{\s*return !a\.stale && !a\.expired && !a\.outsideWindow && !a\.falseClaim && !a\.misaddressed\s*&& !a\.settled && !emptyTextArtifact\(a\);/.test(rd)
     && /export function stampTruth</.test(rd)
     && (rd.match(/stampTruth\(/g) ?? []).length >= 2
     // ⟲ RE-POINTED (W11.1): + `thread_id` (the signature floor finds the thread's mailbox).

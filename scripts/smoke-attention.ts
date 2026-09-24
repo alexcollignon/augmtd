@@ -1500,7 +1500,9 @@ function walkGates() {
       && /<button onClick=\{onBack\}/.test(held));
     ok('   …and the deck\'s exit is never persisted (no store ever holds `exited`)',
       !/saveLS\([^)]*exited|sessionStorage\.setItem\([^)]*exit/i.test(held)
-      && /VIEW_KEY = 'aug-triage-view-v1'/.test(held));
+      // ⟲ RE-POINTED (W15.3): the key moved to lib/triage/view-shape.ts (v2 — a v1 "list" stamp was
+      // made under the old contract, where it also reopened from the door).
+      && /const VIEW_KEY = TRIAGE_VIEW_KEY;/.test(held));
   }
 
   console.log('\nAS2 · THE DOOR ALWAYS RENDERS · ONE ROW, ONE HOME');

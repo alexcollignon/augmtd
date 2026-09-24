@@ -52,11 +52,15 @@ import { ItemRail, pushDealTurn, type RailView } from '@/components/home/item-ra
 // retired into it. The people typeahead it shared with the forward now lives in ONE module.
 import { InviteCard } from '@/components/home/invite-card';
 import { EmailCard } from '@/components/home/email-card';
-import { MeetingSourceMount, SourceObjectMount, type MeetingSourceFacts } from '@/components/room/source-object';
+import { MeetingSourceMount, SourceObjectMount, EmailSourceMount, type MeetingSourceFacts } from '@/components/room/source-object';
 // THE PREPARED FORWARD's kit card + its host (W3-C) — the local ForwardPreviewCard retired into it.
 import ForwardCard from '@/components/home/forward-card';
 import { panelPlan, applyPanelPlan } from '@/lib/room/render-plan';
 import { resolveDecisionObject, type DecisionObject } from '@/lib/room/decision-object';
+// W15.2 · EVERY ITEM CAN BE CLOSED — the header's Done · Dismiss (each through its kind's own door) and
+// SCHEDULED's word. Both modules are client-safe (zero imports).
+import { ITEM_DEED_WORDS, resolveRequestOf, resolveEmphasisOf, type ItemDeed } from '@/lib/work/item-actions';
+import { scheduledWordOf } from '@/lib/work/scheduled';
 import dynamic from 'next/dynamic';
 
 // THE RUN'S RECEIPTS — REUSED, never forked (the record drawer is the one read-only story of a
@@ -537,6 +541,12 @@ type RoomChrome = {
    *  header word. Done = the item's own resolution door (logged, undoable); Not yet = the sticky
    *  refusal (POST /api/work/looks-done). Absent unless the machine's state is `looks_done`. */
   confirm?: LooksDoneConfirm | null;
+  /** W15.2 · EVERY ITEM CAN BE CLOSED — the header's persistent action group (right side, beside
+   *  Details): Done · Dismiss, each through THIS item kind's existing resolution door (logged,
+   *  undoable — lib/work/item-actions.ts). SECONDARY beside a prepared primary; Done is emphasised
+   *  when the machine reads looks_done / settled. Null only where the kind's own card owns closing
+   *  (a handoff gate: approving IS done) or the item is already resolved. */
+  resolve?: RoomResolve | null;
   /** THE MACHINE'S ONE WORD — the same vocabulary the deck and the deep-dive already speak. */
   stateWord: string | null;
   stateTone?: string;
@@ -588,6 +598,8 @@ function clipTitle(text: string, max: number): string {
 // (the item's existing resolution door — logged, undoable) · Not yet (the sticky refusal, until new
 // evidence). The words' one home is lib/evidence/looks-done-word.ts / the served line — nothing here
 // composes them.
+// W15.2 · ONE CTA ROW: Done lives in the HEADER's action group now (emphasised on looks_done) — this
+// strip keeps the evidence line and the one deed only it can do, Not yet. Never a second Done.
 type LooksDoneConfirm = { line: string | null; kind: 'commitment' | 'inbox'; id: string; onDone: () => void | Promise<void> };
 export const LOOKS_DONE_NOT_YET_ROUTE = '/api/work/looks-done';
 function looksDoneConfirmOf(view: ItemViewData | null, kind: 'commitment' | 'inbox', id: string, onDone: () => void | Promise<void>): LooksDoneConfirm | null {
@@ -597,7 +609,7 @@ function looksDoneConfirmOf(view: ItemViewData | null, kind: 'commitment' | 'inb
 }
 function LooksDoneStrip({ confirm }: { confirm: LooksDoneConfirm }) {
   const { kind, id } = confirm;
-  const [busy, setBusy] = useState<null | 'done' | 'not_yet'>(null);
+  const [busy, setBusy] = useState<null | 'not_yet'>(null);
   const [answered, setAnswered] = useState(false);
   if (answered) return null;
   const notYet = async () => {
@@ -607,17 +619,39 @@ function LooksDoneStrip({ confirm }: { confirm: LooksDoneConfirm }) {
       if (res.ok) setAnswered(true);
     } finally { setBusy(null); }
   };
-  const done = async () => { setBusy('done'); try { await confirm.onDone(); } finally { setBusy(null); } };
   return (
     <div className="flex-shrink-0 flex items-center gap-3 px-5 py-2 bg-white border-b border-neutral-200/80">
       {confirm.line && <p className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-600">{confirm.line}</p>}
       {!confirm.line && <div className="flex-1" />}
       <div className="flex-shrink-0 flex items-center gap-2">
-        <button onClick={done} disabled={!!busy}
-          className="aug-focus inline-flex items-center rounded-lg h-8 px-3 text-[12px] font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 transition-colors">Done</button>
         <button onClick={notYet} disabled={!!busy}
           className="aug-focus inline-flex items-center rounded-lg h-8 px-3 text-[12px] font-medium text-neutral-600 border border-neutral-200 hover:border-neutral-300 disabled:opacity-60 transition-colors">Not yet</button>
       </div>
+    </div>
+  );
+}
+
+// ── W15.2 · THE HEADER'S ACTION GROUP — Done · Dismiss on EVERY item room ─────────────────────────
+type RoomResolve = { onDone: () => void | Promise<void>; onDismiss: () => void | Promise<void>; emphasis: 'done' | 'none' };
+function ResolveGroup({ resolve }: { resolve: RoomResolve }) {
+  const [busy, setBusy] = useState<ItemDeed | null>(null);
+  const fire = async (deed: ItemDeed) => {
+    if (busy) return;
+    setBusy(deed);
+    try { await (deed === 'done' ? resolve.onDone() : resolve.onDismiss()); } finally { setBusy(null); }
+  };
+  const quiet = 'border border-neutral-200 bg-white text-neutral-600 hover:border-neutral-300 hover:text-neutral-800';
+  const lead = 'border border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700';
+  return (
+    <div role="group" aria-label="Close this item" className="flex-shrink-0 flex items-center gap-1.5" data-resolve-group>
+      <button data-deed="done" onClick={() => void fire('done')} disabled={!!busy} title="Mark this done — undo lives in Activity"
+        className={`aug-focus inline-flex items-center rounded-lg h-8 px-3 text-[12px] font-medium transition-colors disabled:opacity-60 ${resolve.emphasis === 'done' ? lead : quiet}`}>
+        {busy === 'done' ? 'Marking…' : ITEM_DEED_WORDS.done}
+      </button>
+      <button data-deed="dismiss" onClick={() => void fire('dismiss')} disabled={!!busy} title="Dismiss — undo lives in Activity"
+        className={`aug-focus inline-flex items-center rounded-lg h-8 px-3 text-[12px] font-medium transition-colors disabled:opacity-60 ${quiet}`}>
+        {busy === 'dismiss' ? 'Dismissing…' : ITEM_DEED_WORDS.dismiss}
+      </button>
     </div>
   );
 }
@@ -693,6 +727,8 @@ function ItemRoomFrame({ room, rail, stage }: { room: RoomChrome; rail: React.Re
               this door and the project room's can never say different things about the same drawer. */}
           <FiledIcon />{FILED_LABEL}
         </button>
+        {/* W15.2 · EVERY ITEM CAN BE CLOSED — Done · Dismiss, beside Details, on every item room. */}
+        {room.resolve && <ResolveGroup resolve={room.resolve} />}
         {room.verbs.length > 0 && (
           <div className="relative flex-shrink-0">
             {/* The SAME three-dot idiom as the project room's header (one header grammar; the
@@ -833,6 +869,8 @@ const SEND_SHAPED = ['reply_draft', 'nudge_draft', 'invite', 'forward'];
 function machineWordOf(view: ItemViewData | null): string | null {
   const m = view?.machineState;
   if (!m?.word || MACHINE_SILENT.has(m.state)) return null;
+  // W15.2 · SCHEDULED speaks its when ("scheduled — Wed, Sep 30, 11:00"; the served line is the when).
+  if (m.state === 'scheduled') return scheduledWordOf(m.line);
   if (m.state === 'awaiting_approval' && (view?.prepared ?? []).some((p) => SEND_SHAPED.includes(p.kind))) return null;
   return m.word;
 }
@@ -844,11 +882,16 @@ const MACHINE_TONE: Record<string, string> = {
   awaiting_input: 'text-amber-600',
   awaiting_decision: 'text-amber-600',
   looks_done: 'text-amber-600', // W11.1 — it wants the person's confirmation
+  scheduled: 'text-neutral-500', // W15.2 — booked; nothing is due before its day
   ready: 'text-indigo-500',
   awaiting_approval: 'text-indigo-500',
 };
 const machineToneOf = (view: ItemViewData | null): string =>
   MACHINE_TONE[view?.machineState?.state ?? ''] ?? 'text-neutral-400';
+
+// W15.2 · SETTLED ITEMS DROP THEIR ACTION CARDS — the machine says the work is settled (closed, or
+// judged owed-nothing): no prepared card mounts (no Send on settled work); the history stays readable.
+const roomSettled = (view: ItemViewData | null): boolean => view?.machineState?.state === 'settled';
 
 // ── THE ROOM'S FACES — derived from what the view ALREADY serves (no second store, no new read):
 // the coworkers who prepared work here, then the human this work is with. Collect more than the
@@ -1741,7 +1784,9 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     if (dismissing || itemDismissed) return;
     setDismissing(true);
     try {
-      const res = await fetch(`/api/inbox/${id}/dismiss`, { method: 'POST' });
+      // W15.2 · the kind's ONE dismiss door (lib/work/item-actions.ts).
+      const door = resolveRequestOf('email', id, 'dismiss');
+      const res = await fetch(door.url, door.init);
       if (res.ok) {
         setItemResolution('dismissed');
         setItemDismissed(true);
@@ -1796,10 +1841,9 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     if (dismissing || itemDismissed) return;
     setDismissing(true);
     try {
-      const res = await fetch(`/api/inbox/${id}/complete`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resolution_reason: 'already_handled' }),
-      });
+      // W15.2 · the kind's ONE done door (lib/work/item-actions.ts) — "already handled", undoable.
+      const door = resolveRequestOf('email', id, 'done');
+      const res = await fetch(door.url, door.init);
       if (res.ok) {
         setItemResolution('done');
         setItemDismissed(true);
@@ -1824,8 +1868,9 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
   // ONE derivation of the prepared-artifact cards — the rail renders them at the stream's edge;
   // EMBEDDED (no own rail) renders the same cards in-stage (the "says prepared, isn't" bug, Aug 4).
   type StreamArtifact = { key: string; label: string; by?: string | null; onOpen: () => void; anchorKey?: string; node?: React.ReactNode };
-  const artifactList: StreamArtifact[] = itemDismissed ? [] : [
-    ...(!sent && !!draft && verdict?.work !== 'decide' && objectKind === 'email_thread' ? [{
+  // W15.2 · a SETTLED item's room mounts no action card (the machine's word, one predicate).
+  const artifactList: StreamArtifact[] = itemDismissed || roomSettled(view) ? [] : [
+    ...(!sent && !!draft?.trim() && verdict?.work !== 'decide' && objectKind === 'email_thread' ? [{
       key: 'reply', label: 'Reply drafted — ready to review',
       by: view?.prepared?.find((p) => p.kind === 'reply_draft')?.by ?? null,
       // THE PREP ANCHOR KEY (W2.1): the writer's own shape (`prep:inbox:<id>`) — `prep:<id>` never matched.
@@ -1947,6 +1992,8 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     stateTone: machineToneOf(view),
     // W11.1 · LOOKS DONE — Done is this item's own resolution door (markHandled: logged, undoable).
     confirm: itemDismissed ? null : looksDoneConfirmOf(view, 'inbox', id, markHandled),
+    // W15.2 · Done · Dismiss in the header, through this kind's own doors (markHandled / dismissItem).
+    resolve: itemDismissed ? null : { onDone: markHandled, onDismiss: dismissItem, emphasis: resolveEmphasisOf(view?.machineState?.state) },
     faces: facesOf(view, thread?.fromName ?? thread?.fromAddress),
     membership: <AddToProjectControl kind="inbox" id={id} projectId={thread?.projectId ?? null} projectName={thread?.projectName ?? null} suggestName={thread?.initiative ?? null} compact />,
     // THE PROJECT DOOR rides the ONE band (the rail's second name row died with it).
@@ -1956,8 +2003,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
         { key: 'reply', label: 'Reply', onClick: startReplyExchange },
         { key: 'forward', label: 'Forward', onClick: openForward },
       ] : []),
-      { key: 'done', label: 'Already handled', onClick: markHandled },
-      { key: 'dismiss', label: 'Dismiss', onClick: dismissItem, danger: true },
+      // W15.2 · ONE CTA ROW: Done and Dismiss are the header's group — the menu keeps the less common verbs.
       { key: 'moot', label: 'No longer relevant', onClick: markNoLongerRelevant, danger: true },
     ],
     // THE ONE CONTEXT DRAWER: the conversation reads HERE (the shared renderer, full — the drawer
@@ -2602,7 +2648,7 @@ type CommitmentData = {
   status?: string | null;
   createdAt: string | null;
   /** W11.1: an email source carries its OWN message id + thread (lib/commitments/source.ts emailSourceOf). */
-  sourceContext: { kind: 'email' | 'meeting'; subject: string | null; snippet: string | null; from: string | null; when: string | null; emailId?: string | null; threadId?: string | null } | null;
+  sourceContext: { kind: 'email' | 'meeting'; subject: string | null; snippet: string | null; from: string | null; when: string | null; emailId?: string | null; threadId?: string | null; quote?: string | null } | null;
   /** THE GATED WORK (lib/workflows/handoff-context.ts `HandoffContext`) — served ONLY on a
    *  source='handoff' commitment whose run reads; null everywhere else. Additive: the card
    *  degrades to its pre-block form when it's absent (a stale localStorage shape, an older
@@ -2697,7 +2743,10 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
     if (acting) return;
     setActing(true);
     try {
-      await fetch(`/api/commitments/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+      // W15.2 · the kind's ONE resolution door (lib/work/item-actions.ts) — PATCH, logged, undoable.
+      const door = resolveRequestOf('commitment', id, status === 'done' ? 'done' : 'dismiss');
+      const res = await fetch(door.url, door.init);
+      if (!res.ok) { setActing(false); toast('Could not update it — try again.'); return; }
       setDone(status);
       // THE RECEIPT REACHES EVERY PRESENTATION (Sep 7): the docked footer used to be the only place
       // that said what happened, and on the loose door the stage may be down when the ⋯ fires the
@@ -2709,7 +2758,9 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
     }
   };
 
-  const overdue = !!(data?.dueDate && data.dueDate < new Date().toISOString().slice(0, 10));
+  // W15.2 · SCHEDULED IS NOT OVERDUE — a booked deed shows its when (the machine's word), never "Due"/"Overdue".
+  const scheduled = view?.machineState?.state === 'scheduled';
+  const overdue = !scheduled && !!(data?.dueDate && data.dueDate < new Date().toISOString().slice(0, 10));
   const src = data?.sourceContext;
 
   // ── THE HANDOFF GATE (processes arc Phase B; owner walk, Aug 18). A source='handoff' commitment
@@ -2788,7 +2839,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   const markDoneAfterSend = () => {
     toast('Sent.', { action: { label: 'Mark this done', onClick: () => { void act('done'); } } });
   };
-  const emailCardNode = (!isHandoff && !done && (nudgeArt || draftSummoned)) ? (
+  const emailCardNode = (!isHandoff && !done && !roomSettled(view) && (nudgeArt || draftSummoned)) ? (
     <div className="flex w-full flex-col gap-2">
       {(view?.steps?.length ?? 0) >= 2 && <MotionChecklist steps={view!.steps!} commitmentId={id} />}
       <EmailCard compose={{ kind: 'commitment', id }} onSent={markDoneAfterSend} />
@@ -2797,7 +2848,8 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   // The drawer door (the card's Prepared/Source sections) — the stageSignal idiom.
   const [drawerReq, setDrawerReq] = useState<{ tab: string; v: number } | null>(null);
   const openDrawerAt = (tab: string) => setDrawerReq((r) => ({ tab, v: (r?.v ?? 0) + 1 }));
-  const commitArtifacts = (isHandoff || done) ? [] : [
+  // W15.2 · a SETTLED commitment's room mounts no action card (the machine's word, one predicate).
+  const commitArtifacts = (isHandoff || done || roomSettled(view)) ? [] : [
     // W5c: mounts from the LIVE invite ONLY (see EmailDetail's twin) — never hollow. A plan step
     // ("Send calendar invite to X") is a PLAN, not prepared work: it mounted an empty card under a
     // "prepared" label after the verdict had moved on (re-walk, Sep 23: the step outlived a
@@ -2841,13 +2893,16 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
     meta: (
       <>
         {data?.counterparty && <span className="truncate">{data.direction === 'awaiting' ? 'Waiting on' : 'You owe'} {data.counterparty.split('<')[0].trim()}</span>}
-        {data?.dueDate && <span className={`flex-shrink-0 ${overdue ? 'text-rose-500 font-medium' : 'text-neutral-400'}`}>· {overdue ? 'Overdue' : 'Due'} {fmtWeekdayDate(data.dueDate)}</span>}
+        {data?.dueDate && !scheduled && <span className={`flex-shrink-0 ${overdue ? 'text-rose-500 font-medium' : 'text-neutral-400'}`}>· {overdue ? 'Overdue' : 'Due'} {fmtWeekdayDate(data.dueDate)}</span>}
       </>
     ),
     stateWord: machineWordOf(view),
     stateTone: machineToneOf(view),
     // W11.1 · LOOKS DONE — Done is THIS commitment's own resolution door (act('done'): logged, undoable).
     confirm: isHandoff || done ? null : looksDoneConfirmOf(view, 'commitment', id, () => act('done')),
+    // W15.2 · Done · Dismiss in the header, through the commitment door. A handoff gate's card owns its
+    // close (Approve / Hold back — approving IS done), so the pair is structurally absent there.
+    resolve: isHandoff || done ? null : { onDone: () => act('done'), onDismiss: () => act('dismissed'), emphasis: resolveEmphasisOf(view?.machineState?.state) },
     faces: facesOf(view, data?.counterparty),
     membership: <AddToProjectControl kind="commitment" id={id} compact />,
     // THE PROJECT DOOR rides the ONE band (the rail's second name row died with it).
@@ -2857,8 +2912,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
     verbs: isHandoff || done ? [] : [
       // W7.3: the verb SUMMONS THE ONE EMAIL CARD into the conversation — never a split stage.
       { key: 'draft', label: data?.counterparty ? `Draft email → ${data.counterparty.replace(/<[^>]*>/g, '').trim()}` : 'Draft an email', onClick: () => { setDraftSummoned(true); setInviteOpen(false); } },
-      { key: 'done', label: 'Mark done', onClick: () => act('done') },
-      { key: 'dismiss', label: 'Dismiss', onClick: () => act('dismissed'), danger: true },
+      // W15.2 · ONE CTA ROW: Done and Dismiss are the header's group, never repeated here.
     ],
     // W7.3: the commitment's SOURCE reads in the drawer (the email door's Thread idiom) — its
     // meeting or email context, the one place filed truth lives. No header handle opens a pane.
@@ -2889,7 +2943,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
       // the commitment's payload) — the object card, never the thread's newest message.
       sourceEmail={src?.kind === 'email' && src.emailId ? {
         id: src.emailId, threadId: src.threadId ?? null, subject: src.subject, from: src.from,
-        receivedAt: src.when, excerpt: src.snippet,
+        receivedAt: src.when, excerpt: src.snippet, quote: src.quote ?? null,
       } : null}
       decision={commitDecision ? {
         ...commitDecision,
@@ -3003,18 +3057,8 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
                 <h2 className={SECTION_LABEL}>
                   {src.kind === 'meeting' ? 'From this meeting' : 'From this email'}
                 </h2>
-                <div className={`${CARD} px-4 py-3.5`}>
-                  <div className="flex items-center gap-1.5 text-[10px] font-medium text-neutral-400 mb-1.5">
-                    {src.kind === 'meeting'
-                      ? <CalendarDaysIcon className="w-3 h-3 text-violet-400" />
-                      : <EnvelopeIcon className="w-3 h-3 text-indigo-400" />}
-                    {src.from && <span className="text-neutral-500">{src.from}</span>}
-                    {src.when && <span className="ml-auto tabular-nums text-neutral-300">{fmtDateTime(src.when)}</span>}
-                  </div>
-                  {src.subject && <p className="text-[13.5px] font-semibold text-neutral-800 leading-snug">{src.subject}</p>}
-                  {src.snippet && <p className="text-[13px] text-neutral-600 mt-1.5 leading-relaxed">{src.snippet}</p>}
-                  {!src.subject && !src.snippet && <p className="text-[13px] text-neutral-400">No further context available.</p>}
-                </div>
+                {/* W15.1 · ONE THREAD COMPONENT — the kit's one source card, never local markup. */}
+                <CommitmentSourceMessage src={src} />
               </section>
             ) : (isHandoff && handoff) || !embedded ? null : (
               // THE FALSE LINE (owner, Aug 20): a handoff gate HAS a linked source — the parked
@@ -3337,6 +3381,17 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
     setTimeout(() => setCopied(false), 1500);
   };
 
+  // W15.2 · EVERY ITEM CAN BE CLOSED — the follow-up's Done / Dismiss through ITS kind's door.
+  const [closed, setClosed] = useState<ItemDeed | null>(null);
+  const resolveFollowUp = async (deed: ItemDeed) => {
+    const door = resolveRequestOf('followup', id, deed);
+    const res = await fetch(door.url, door.init).catch(() => null);
+    if (!res?.ok) { toast('Could not update it — try again.'); return; }
+    setClosed(deed);
+    toast(deed === 'done' ? 'Marked done.' : 'Dismissed.');
+    setTimeout(() => router.back(), 700);
+  };
+
   const title = thread?.subject || 'Follow-up';
   const who = thread?.counterparty || thread?.fromName;
 
@@ -3372,12 +3427,12 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
     meta: who ? <span className="truncate">Waiting on {who.split('<')[0].trim()}</span> : undefined,
     stateWord: machineWordOf(view),
     stateTone: machineToneOf(view),
-    // W11.1 · LOOKS DONE — Done is the inbox item's own resolution door (the complete route the email
-    // room's "Already handled" fires: logged, undoable from Activity).
-    confirm: sent ? null : looksDoneConfirmOf(view, 'inbox', id, async () => {
-      const res = await fetch(`/api/inbox/${id}/complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resolution_reason: 'already_handled' }) });
-      if (res.ok) setTimeout(() => router.back(), 700);
-    }),
+    // W11.1 · LOOKS DONE — Not yet keys on the item's own machine key. W15.2: a follow-up IS a
+    // (waiting-on) COMMITMENT — its id is a commitment id, so its machine key and its doors are the
+    // commitment's (the inbox complete route this used to fire could never find the row).
+    confirm: sent || closed ? null : looksDoneConfirmOf(view, 'commitment', id, () => resolveFollowUp('done')),
+    // W15.2 · Done · Dismiss in the header, through the commitment door (logged, undoable).
+    resolve: sent || closed ? null : { onDone: () => resolveFollowUp('done'), onDismiss: () => resolveFollowUp('dismiss'), emphasis: resolveEmphasisOf(view?.machineState?.state) },
     faces: facesOf(view, who),
     membership: <AddToProjectControl kind="inbox" id={id} compact />,
     // THE PROJECT DOOR rides the ONE band (the rail's second name row died with it).
@@ -3403,8 +3458,9 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
   return (
     <DeepDiveShell embedded={embedded} room={room} rail={
       <ItemRail kind="followup" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} onDraft={(d) => { setDraft(d); setDraftV((v) => v + 1); }}
-        artifacts={[
-          ...(!sent && !!draft ? [{
+        // W15.2 · a SETTLED / closed follow-up mounts no action card; an EMPTY draft never claims "drafted".
+        artifacts={sent || closed || roomSettled(view) ? [] : [
+          ...(!!draft?.trim() ? [{
             key: 'nudge', label: 'Follow-up drafted — ready to review',
             by: view?.prepared?.find((p) => p.kind === 'nudge_draft' || p.kind === 'deliverable')?.by ?? null,
             onOpen: () => { setComposerOpen(true); setInviteOpen(false); }, anchorKey: prepAnchorKey('commitment', id), // one stage at a time
@@ -3569,35 +3625,22 @@ function CommitmentSourceSection({ src, meeting, laterItemId }: { src: Commitmen
   if (meeting) return <MeetingSourceMount meeting={meeting} onOpen={() => router.push(`/meetings/${meeting.addressId}`)} />;
   if (!src) return null;
   // W11.1 · ONE OBJECT, ONE DOOR: the source message FIRST (the one the promise came from), then — in
-  // this same drawer — the rest of the conversation, read through the thread's own door.
+  // this same drawer — the rest of the conversation, read through the thread's own door. W15.1 · ONE
+  // THREAD COMPONENT: both render through the kit's one source card (no drawer-local markup, no
+  // caption of its own — the thread card's own head says whose message it is and when).
   return (
     <div className="space-y-3">
       <CommitmentSourceMessage src={src} />
-      {src.kind === 'email' && laterItemId ? (
-        <div>
-          <p className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400">Later in this conversation</p>
-          <SourceObjectMount itemId={laterItemId} />
-        </div>
-      ) : null}
+      {src.kind === 'email' && laterItemId ? <SourceObjectMount itemId={laterItemId} /> : null}
     </div>
   );
 }
 
 function CommitmentSourceMessage({ src }: { src: NonNullable<CommitmentData['sourceContext']> }) {
-  return (
-    <div className={`${CARD} px-4 py-3.5`}>
-      <div className="flex items-center gap-1.5 text-[10px] font-medium text-neutral-400 mb-1.5">
-        {src.kind === 'meeting'
-          ? <CalendarDaysIcon className="w-3 h-3 text-violet-400" />
-          : <EnvelopeIcon className="w-3 h-3 text-indigo-400" />}
-        {src.from && <span className="text-neutral-500">{src.from}</span>}
-        {src.when && <span className="ml-auto tabular-nums text-neutral-300">{fmtDateTime(src.when)}</span>}
-      </div>
-      {src.subject && <p className="text-[13.5px] font-semibold text-neutral-800 leading-snug">{src.subject}</p>}
-      {src.snippet && <p className="text-[13px] text-neutral-600 mt-1.5 leading-relaxed">{src.snippet}</p>}
-      {!src.subject && !src.snippet && <p className="text-[13px] text-neutral-400">No further context available.</p>}
-    </div>
-  );
+  if (!src.subject && !src.snippet) return <p className="text-[13px] text-neutral-400">No further context available.</p>;
+  return src.kind === 'meeting'
+    ? <MeetingSourceMount meeting={{ id: src.emailId ?? 'commitment-source', addressId: '', title: src.subject ?? 'The meeting', startISO: src.when, attendees: [], excerpt: src.snippet }} />
+    : <EmailSourceMount source={{ id: src.emailId ?? 'commitment-source', threadId: src.threadId ?? null, subject: src.subject, from: src.from, receivedAt: src.when, excerpt: src.snippet, quote: src.quote ?? null }} />;
 }
 
 function MotionChecklist({ steps, commitmentId }: { steps: Array<{ id: string; text: string; done: boolean }>; commitmentId: string }) {

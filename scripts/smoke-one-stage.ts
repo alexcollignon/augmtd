@@ -67,7 +67,8 @@ console.log('\nA · ONE STAGE — a commitment\'s message is the ONE EmailCard i
     /<EmailCard compose=\{\{ kind: 'commitment', id \}\}/.test(commitSeg)
     && /\.\.\.\(emailCardNode \? \[\{\s*\n\s*key: 'nudge',/.test(commitSeg)
     && /node: emailCardNode,/.test(commitSeg)
-    && /\(!isHandoff && !done && \(nudgeArt \|\| draftSummoned\)\)/.test(commitSeg));
+    // ⟲ RE-POINTED (W15.2): + a SETTLED commitment mounts no card (the machine's word).
+    && /\(!isHandoff && !done && !roomSettled\(view\) && \(nudgeArt \|\| draftSummoned\)\)/.test(commitSeg));
   gate('A3 the stage exists ONLY for a parked gate; the "Source" handle is gone for every other commitment',
     /const stageOpen = sourceOpen \|\| \(isHandoff && inviteOpen\) \|\| gateStanding;/.test(commitSeg)
     && /\.\.\.\(isHandoff \? \{ onSummonStage: \(\) => setSourceOpen\(true\), sourceLabel: 'The ask' \} : \{\}\)/.test(commitSeg)
@@ -126,7 +127,7 @@ console.log('\nC · TRUE ADDRESSEES — one ladder, stamped at production, withd
   gate('C2 THE ONE READER stamps `misaddressed` in BOTH readers, reads legacy nudge titles, and the live predicate honors it',
     /export function stampAddressees<T extends PreparedArtifact>/.test(rd) && (rd.match(/stampAddressees\(/g) ?? []).length >= 2
     && /addresseeOfStamp\(meta\.addressee\) \?\? addresseeFromNudgeTitle\(d\.title as string\)/.test(rd)
-    && /return !a\.stale && !a\.expired && !a\.outsideWindow && !a\.falseClaim && !a\.misaddressed;/.test(rd)
+    && /return !a\.stale && !a\.expired && !a\.outsideWindow && !a\.falseClaim && !a\.misaddressed\s*&& !a\.settled && !emptyTextArtifact\(a\);/.test(rd) // ⟲ W15.2: + settled · empty words
     && /if \(a\.misaddressed\) return 'it was addressed to the wrong person';/.test(rd)
     && /a\.falseClaim \|\| a\.misaddressed\)/.test(src('lib/room/grounding.ts')));
   const pass_ = src('lib/prepare/pass.ts');

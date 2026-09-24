@@ -119,13 +119,14 @@ const MARKER = 'ZZ-smoke self-resolution probe';
   check('user A · "Alex Collignon" resolves to SELF via the sent-mail alias', alex.isSelf,
     alex.person ? `→ "${alex.person.name}"` : 'unresolved');
   check('user A · a real counterparty does NOT resolve to self',
-    !resolveIdentity(personsA, 'Spartak Fedotov <spartak.fedotovv@gmail.com>').isSelf);
+    !resolveIdentity(personsA, 'Sam Rivera <sam.rivera@example.com>').isSelf);
 
   // ── O1 LIVE — write-time resolution through the REAL writer: a synthetic "awaiting Alex Collignon"
   // lands as you_owe with a null counterparty (you cannot wait on yourself). Cleaned up after. ──
   await writeCommitments(A, [
-    { direction: 'awaiting', description: `${MARKER} — send the follow-up`, counterparty: 'Alex Collignon' } as never,
-  ], { source: 'email', sourceId: `smoke-${MARKER}` }, sb as never);
+    { direction: 'awaiting', description: `${MARKER} — send the follow-up`, counterparty: 'Alex Collignon', quote: 'please send the follow-up today' } as never,
+    // ⟲ W15.4: a commitment is written only with a quote found in the message's own words.
+  ], { source: 'email', sourceId: `smoke-${MARKER}`, message: { text: 'Hi, please send the follow-up today.', authoredByUser: false } }, sb as never);
   const { data: probe } = await sb.from('commitments').select('id, direction, counterparty')
     .eq('user_id', A).eq('source_id', `smoke-${MARKER}`).maybeSingle();
   check('write-time: awaiting-on-self lands as you_owe + null counterparty',
@@ -138,7 +139,7 @@ const MARKER = 'ZZ-smoke self-resolution probe';
   // system; human-only work routes to no one. ──
   const { routeTasks } = await import('../lib/prepare/route-suggestion');
   const routes = await routeTasks(sb, A, [
-    'Prepare and send onboarding kit to Spartak',
+    'Prepare and send onboarding kit to Sam',
     'Send the signed contract back to the landlord',
     'Approve the vendor invoice before Friday',
     'Research how three competitors price their AI offering',
@@ -211,8 +212,8 @@ const MARKER = 'ZZ-smoke self-resolution probe';
   // rejects that) and must not promise timing nothing verifies. A sane welcome-reply for a
   // welcome-reply task is the honest pass case.
   const sane = await evaluateDeliverable(sb, A, {
-    content: 'Hi Spartak,\n\nGreat news on the signed contract — welcome aboard! I\'m putting your onboarding kit together now and will follow up with it in a separate email.\n\nBest,\nAlexandre',
-    task: 'Reply to Spartak — welcome him aboard and confirm the onboarding kit is coming', recipient: 'Spartak Fedotov <spartak.fedotovv@gmail.com>', kind: 'reply',
+    content: 'Hi Sam,\n\nGreat news on the signed contract — welcome aboard! I\'m putting your onboarding kit together now and will follow up with it in a separate email.\n\nBest,\nAlex',
+    task: 'Reply to Sam — welcome him aboard and confirm the onboarding kit is coming', recipient: 'Sam Rivera <sam.rivera@example.com>', kind: 'reply',
   });
   check('O4 live · a sane draft for the real recipient PASSES review', sane.verdict === 'pass',
     `verdict=${sane.verdict}${sane.objection ? ` · "${sane.objection.slice(0, 60)}"` : ''}`);
