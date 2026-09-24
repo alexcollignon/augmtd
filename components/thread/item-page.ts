@@ -24,6 +24,12 @@
 //            INSIDE it. A widget whose target the door does not hold LIVE is never chosen (the served
 //            `prepared` list is already the one reader's live set). Never a standalone MOVE /
 //            "Review …" button card.
+//            W17 · NO WAITING — when THIS OPEN is producing the widget's artifact right now (the
+//            email door drafting a reply the judgment owes), the ACTION seat is RESERVED: the
+//            preparing slot (components/thread/preparing-slot.tsx) in the widget's own shape, then
+//            the widget itself in the SAME seat when it lands (an append into a reserved slot — the
+//            no-mutation law's slot rule, lib/room/no-mutation.ts mayFillSlot). Nothing is reserved
+//            for work this open is not making: an unknown shape is never promised.
 //
 // PURE and client-safe (two pure helpers + type-only imports): the rail renders what this returns; the gate
 // (scripts/smoke-item-page.ts) renders fixtures of every kind × state through it.
@@ -121,6 +127,10 @@ export type ItemPageFacts = {
   origin?: FallbackOrigin | null;
   /** The door's source object, if any: the one thread component, or the event widget. */
   source: ItemSourceWidget | null;
+  /** W17 · THE RESERVED SLOT — the artifact THIS OPEN is producing (`inFlight`), or produced
+   *  (`inFlight: false`, kept so the landed artifact takes the seat even while the machine's frozen
+   *  state still reads `preparing`). Null = this open produces nothing; nothing is reserved. */
+  slot?: { artifact: ItemArtifactKind; inFlight: boolean } | null;
 };
 
 export type ItemPagePlan = {
@@ -132,6 +142,9 @@ export type ItemPagePlan = {
   artifact: ItemArtifactKind | null;
   /** Present exactly when `action === 'confirm'`: the evidence as one plain line + the two words. */
   confirm: { line: string | null; doneLabel: string; keepLabel: string } | null;
+  /** W17 · the RESERVED action seat while its artifact is being made: the widget kind whose shape
+   *  the preparing slot wears. Null whenever an action is chosen or nothing is in flight. */
+  pending: { widget: ItemActionWidget; artifact: ItemArtifactKind } | null;
 };
 
 /** A sentence that CLAIMS preparation, points at a control, or asks the reader something is not the
@@ -187,8 +200,13 @@ export const actionWidgetOf = (machine: ItemPageFacts['machine'], mounted: ItemA
 
 /** THE COMPOSITION — pure. */
 export function composeItemPage(f: ItemPageFacts): ItemPagePlan {
-  const chosen = actionOf(f.machine, f.mounted, f.gateOpen === true);
+  // W17 · the table first; else the artifact THIS OPEN reserved a seat for, once it has landed.
+  const slotArt = f.slot?.artifact ?? null;
+  const chosen = actionOf(f.machine, f.mounted, f.gateOpen === true)
+    ?? (slotArt && f.mounted[slotArt] === true && f.machine?.state !== 'settled' ? { widget: WIDGET_OF_ARTIFACT[slotArt], artifact: slotArt } : null);
   const action = chosen?.widget ?? null;
+  const pending = !chosen && slotArt && f.slot?.inFlight === true && f.machine?.state !== 'settled'
+    ? { widget: WIDGET_OF_ARTIFACT[slotArt], artifact: slotArt } : null;
   return {
     header: { statusPill: null, doneEmphasis: action === 'confirm' },
     clara: claraSentenceOf(f),
@@ -198,6 +216,7 @@ export function composeItemPage(f: ItemPageFacts): ItemPagePlan {
     confirm: action === 'confirm'
       ? { line: f.machine?.line ?? null, doneLabel: CONFIRM_WORDS.done, keepLabel: CONFIRM_WORDS.keep }
       : null,
+    pending,
   };
 }
 
@@ -213,6 +232,10 @@ export type ItemPageParts = {
    *  W16.2: a widget that IS a kit kind is handed as its CARD (the confirm widget: `kind: 'confirm'`)
    *  and rendered by the kit's own renderer; `node` remains for hosts that mount a built component. */
   action?: { node?: ReactNode; card?: ThreadCard | null; by?: string | null } | null;
+  /** W17 · the preparing slot for `plan.pending`, mounted by the host (components/thread/
+   *  preparing-slot.tsx in the pending widget's shape). It takes the ACTION seat — the same thread
+   *  item id the landed widget will hold, so the widget fills the seat instead of appending below it. */
+  pending?: ReactNode | null;
 };
 
 /** Clara's bubble (one sentence + the source widget under it), then the ONE action widget. The
@@ -229,6 +252,15 @@ export function itemPageItems(plan: ItemPagePlan, parts: ItemPageParts): ThreadI
     ...node,
   });
   const card = actionCardOf(plan, parts.action ?? null);
+  if (!card && plan.pending && parts.pending) {
+    // W17 · THE RESERVED SEAT — id 'action', exactly the seat the landed widget takes.
+    out.push({
+      type: 'actor_bubble', id: 'action', actorId: seat.id, actorName: seat.name,
+      ...(seat.roleLabel ? { actorRoleLabel: seat.roleLabel } : {}),
+      cards: [{ kind: 'custom', id: `action-pending-${plan.pending.widget}`, node: parts.pending }],
+    });
+    return out;
+  }
   if (card) {
     const by = parts.action?.by ?? null;
     out.push({

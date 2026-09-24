@@ -287,9 +287,18 @@ console.log('\nF · W5c: hidden artifacts re-prepare, leave the brief, and never
     inviteMounts.join(' | '));
   const commitSeg = detail.slice(detail.indexOf('function CommitmentDetail('), detail.indexOf('function InputStationCard('));
   gate('F8b THE DECISION RENDERS ON THE COMMITMENT DOOR: a decide verdict + THE DECISION BRIEF reach the rail as the ONE DecisionCard (brief options supersede the judge\'s labels; object from the door\'s own prepared list); the lead strip still filters decision artifacts',
-    /const decisionBriefC = prepArts\.find\(\(p\) => p\.decision && p\.decision\.options\.length >= 2\)/.test(commitSeg)
-    && /verdict\?\.work === 'decide'/.test(commitSeg) && /itemKind: 'commitment' as const,/.test(commitSeg)
-    && /object: resolveDecisionObject\(view\?\.prepared \?\? null\)/.test(commitSeg)
+    // ⟲ RE-POINTED (W17 · no-waiting): the brief-over-labels rule, the decide gate and the object resolve
+    // moved into ONE shared derivation (lib/room/decision-object decisionSpecOf) both doors call over the
+    // view payload alone — asserted at its home, same rules.
+    /decisionSpecOf\(\{ verdict, prepared: view\?\.prepared \?\? null \}/.test(commitSeg)
+    && /itemKind: 'commitment' as const,/.test(commitSeg)
+    && (() => {
+      const dobj = src('lib/room/decision-object.ts');
+      return /if \(f\.verdict\?\.work !== 'decide'\) return null;/.test(dobj)
+        && /const brief = \(f\.prepared \?\? \[\]\)\.find\(\(p\) => p\.decision && p\.decision\.options\.length >= 2\)/.test(dobj)
+        && /const options = briefOpts\.length >= 2 \? briefOpts : verdictOpts\.length >= 2 \? verdictOpts : null;/.test(dobj)
+        && /object: resolveDecisionObject\(f\.prepared \?\? null\)/.test(dobj);
+    })()
     // ⟲ RE-POINTED (W7.2 ONE OBJECT, ONE DOOR): the door's own source object (`sourceItemId`) now
     // rides the mount between the artifacts and the decision — same mount, one more fact.
     // ⟲ RE-POINTED (W7.3): + the meeting source object (`sourceMeeting`) rides the same mount.

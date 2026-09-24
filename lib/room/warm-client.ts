@@ -15,16 +15,57 @@
 //     fake-warm class). The open JOINS a warm still in flight (`fetchItemView`) — never a second
 //     request for the same room.
 //
+// W17 · THE WARM IS THE WHOLE PAGE (law `no-waiting`): a hover warms the view — which now carries
+// the action widget's own words (the cached verdict, the prepared draft) — AND the kind's object read
+// (the email's thread · the commitment's facts · the meeting · the follow-up thread) into the SAME
+// instant-load keys the deep-dive paints from (`itemObjectKey`). A click then opens a finished page.
+//
 // POLITE by design (the Aug 7 contention lesson): the view warm waits 150ms of hover intent, runs
 // ONE at a time, and never re-warms a view whose cache is still inside half its freshness window.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { ROOM_CACHE_MAX_AGE_MS } from '@/lib/room/no-mutation';
+import { loadThreadRaw } from '@/lib/inbox/thread-door';
 
 export type ItemViewKind = 'email' | 'meeting' | 'commitment' | 'followup' | 'awareness';
 
 /** THE ONE CACHE KEY the deep-dive's view hydrates from (item-detail `useItemView`). */
 export const itemViewKey = (kind: ItemViewKind, id: string) => `aug-item-view-${kind}-${id}`;
+
+/** THE ONE INSTANT-LOAD KEY of each kind's OBJECT read (the deep-dive hydrates from it pre-paint; the
+ *  click frame names the item from it). */
+export function itemObjectKey(kind: ItemViewKind, id: string): string {
+  if (kind === 'commitment') return `aug-item-commitment-${id}`;
+  if (kind === 'meeting') return `aug-item-meeting-${id}`;
+  if (kind === 'followup') return `aug-item-followup-${id}`;
+  return `aug-item-thread-${id}`;
+}
+
+/** Warm the kind's object read into its key (zero AI: every one of these doors is a read). */
+export function warmItemObject(kind: ItemViewKind, id: string): Promise<unknown> {
+  const key = itemObjectKey(kind, id);
+  if (kind === 'commitment') return fetchOpenObject(`/api/commitments/${id}`, key);
+  if (kind === 'email' || kind === 'awareness') {
+    // THE ONE THREAD READ (lib/inbox/thread-door) — the deep-dive's own read joins or reuses it.
+    return loadThreadRaw(id).then((d) => { if (d && !d.error) { try { saveLS(key, d); } catch { /* private mode */ } } return d; });
+  }
+  const url = kind === 'meeting' ? `/api/meetings/${id}/full` : `/api/commitments/${id}/thread`;
+  return fetch(url).then((r) => (r.ok ? r.json() : null)).then((d) => {
+    if (d && !d.error) { try { saveLS(key, d); } catch { /* private mode */ } }
+    return d;
+  }).catch(() => null);
+}
+
+/** The object warm, ONCE per item per tab, and only when its key is not already held (a prior open or
+ *  warm) — the hover path's ONE object warm (components/work/work-row.tsx no longer keeps its own). */
+const _objWarmed = new Set<string>();
+export function warmItemObjectOnce(kind: ItemViewKind, id: string): Promise<unknown> {
+  const key = itemObjectKey(kind, id);
+  if (_objWarmed.has(key)) return Promise.resolve(null);
+  _objWarmed.add(key);
+  try { if (loadLS(key) != null) return Promise.resolve(null); } catch { /* private mode */ }
+  return warmItemObject(kind, id).catch(() => null);
+}
 
 /** An `/item/<id>?kind=…` href → the view the deep-dive will read for it (kind absent → email). */
 export function viewTargetOf(href: string | null | undefined): { kind: ItemViewKind; id: string } | null {
@@ -149,8 +190,9 @@ async function drainViewQueue(): Promise<void> {
   try {
     while (_viewQueue.length) {
       const t = _viewQueue.shift()!;
-      if (loadLS(itemViewKey(t.kind, t.id), { maxAgeMs: VIEW_WARM_TTL_MS }) != null) continue;
-      await fetchItemView(t.kind, t.id, { warm: true });
+      if (loadLS(itemViewKey(t.kind, t.id), { maxAgeMs: VIEW_WARM_TTL_MS }) != null) { void warmItemObjectOnce(t.kind, t.id); continue; }
+      // W17 · the WHOLE page: the view (with the action widget's words) and the object, in one beat.
+      await Promise.all([fetchItemView(t.kind, t.id, { warm: true }), warmItemObjectOnce(t.kind, t.id)]);
     }
   } finally { _viewDraining = false; }
 }
@@ -162,8 +204,9 @@ export function prefetchItemView(href: string | null | undefined, opts: { immedi
   if (!t) return;
   const key = itemViewKey(t.kind, t.id);
   if (_viewFlight.has(key) || _viewWarmTimers.has(key)) return;
-  if (loadLS(key, { maxAgeMs: VIEW_WARM_TTL_MS }) != null) return; // still fresh — nothing to warm
-  if (opts.immediate) { void fetchItemView(t.kind, t.id, { warm: true }); return; }
+  // still fresh — the view needs nothing; its object may still be cold (W17: the whole page warms)
+  if (loadLS(key, { maxAgeMs: VIEW_WARM_TTL_MS }) != null) { void warmItemObjectOnce(t.kind, t.id); return; }
+  if (opts.immediate) { void fetchItemView(t.kind, t.id, { warm: true }); void warmItemObjectOnce(t.kind, t.id); return; }
   _viewWarmTimers.set(key, setTimeout(() => {
     _viewWarmTimers.delete(key);
     if (_viewQueue.some((q) => itemViewKey(q.kind, q.id) === key)) return;

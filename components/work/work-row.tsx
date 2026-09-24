@@ -29,7 +29,6 @@ import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { fmtMonthDay } from '@/lib/utils/format-date';
 import { AnchoredPopover } from '@/components/ui/anchored-popover';
 import { prefetchItemView, queueBriefWarm } from '@/lib/room/warm-client';
-import { loadThreadRaw } from '@/lib/inbox/thread-door';
 
 // ── A row control that SAYS WHAT IT DOES, in words (owner walk, Sep 15: "longer labels in front of
 // action buttons in home"). The label used to slide out on each control's own hover (`group/act`,
@@ -232,37 +231,17 @@ export function useCommitmentAct(id?: string, onCleared?: (id: string) => void, 
   return { removed, exiting, acting, act };
 }
 
-// Hover = intent to open → warm the deep-dive's data cache so the click paints instantly. The href
+// Hover = intent to open → warm the deep-dive's WHOLE page so the click paints instantly. The href
 // encodes id + kind: /item/<id>?kind=email|meeting|commitment|followup (kind absent → email).
-const PREFETCH_PLAN: Record<string, (id: string) => { key: string; url: string }> = {
-  email:      (id) => ({ key: `aug-item-thread-${id}`,     url: `/api/inbox/${id}/thread` }),
-  followup:   (id) => ({ key: `aug-item-followup-${id}`,   url: `/api/commitments/${id}/thread` }),
-  meeting:    (id) => ({ key: `aug-item-meeting-${id}`,    url: `/api/meetings/${id}/full` }),
-  commitment: (id) => ({ key: `aug-item-commitment-${id}`, url: `/api/commitments/${id}` }),
-};
-const _prefetchedItems = new Set<string>();
-export function prefetchItem(href: string | null | undefined) {
+// W17 · ONE WARM (law `no-waiting`): lib/room/warm-client warms the view (with the action widget's own
+// words) AND the kind's object read into the keys the deep-dive paints from — this row used to warm the
+// object a second time itself (two commitment requests per hover). It only states intent now.
+export function prefetchItem(href: string | null | undefined, opts: { immediate?: boolean } = {}) {
   if (!href) return;
-  // W3.7 ROOM SPEED: the room's own outcome read warms too (the SAME cache key the deep-dive paints
-  // from, and a flight the open joins) — the thread alone left the room's brief and cards cold.
-  prefetchItemView(href);
-  try {
-    const m = href.match(/\/item\/([^/?#]+)/);
-    if (!m) return;
-    const id = m[1];
-    const kind = new URLSearchParams(href.split('?')[1] || '').get('kind') || 'email';
-    const dedupeKey = `${kind}:${id}`;
-    if (_prefetchedItems.has(dedupeKey)) return;
-    _prefetchedItems.add(dedupeKey);
-    const plan = (PREFETCH_PLAN[kind] ?? PREFETCH_PLAN.email)(id);
-    if (loadLS(plan.key) != null) return; // already warm from a prior open
-    // W3.7: the email thread warms through THE ONE THREAD READ (lib/inbox/thread-door) — the open's
-    // own read then joins this flight (or serves it, while fresh) instead of fetching it again.
-    const landing: Promise<unknown> = (kind === 'email' || !PREFETCH_PLAN[kind])
-      ? loadThreadRaw(id)
-      : fetch(plan.url).then((r) => (r.ok ? r.json() : null));
-    landing.then((d) => { if (d && !(d as { error?: unknown }).error) saveLS(plan.key, d); }).catch(() => {});
-  } catch { /* non-fatal */ }
+  // W17: a press (mousedown/touch) is `immediate` — the click is already coming, so the warm skips its
+  // 150ms hover-intent wait and the open joins a flight that started at the press.
+  if (opts.immediate) prefetchItemView(href, { immediate: true });
+  else prefetchItemView(href);
 }
 
 // The initiative-cluster tag — "<initiative> · 9". An actionable item's PROJECT context. Presentation
@@ -361,7 +340,9 @@ export function useRowActions(item: DoItem, cbs: RowActionCallbacks = {}) {
   // Hover = intent to open → warm the deep-dive cache + the route JS so the click is instant.
   // Mousedown fires it too — fast clicks and touch get no hover dwell.
   const prefetch = () => { prefetchItem(item.href); router.prefetch?.(item.href, { kind: PrefetchKind.AUTO }); warmProjectPicker(); };
-  return { isCommit, isDeal, removed, exiting, busy: acting || commit.acting, done, drop, open, prefetch };
+  // W17 · THE PRESS IS THE CLICK'S FIRST HALF: mousedown/touchstart warm with no intent wait.
+  const prefetchNow = () => { prefetchItem(item.href, { immediate: true }); router.prefetch?.(item.href, { kind: PrefetchKind.AUTO }); warmProjectPicker(); };
+  return { isCommit, isDeal, removed, exiting, busy: acting || commit.acting, done, drop, open, prefetch, prefetchNow };
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -483,7 +464,7 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
   /** A session-only dismiss (slipping deals) — replaces the endpoint call; ✓ hides (nothing to complete). */
   dismissOverride?: () => void;
 }) {
-  const { isCommit, isDeal, removed, exiting, busy, done, drop, open, prefetch } =
+  const { isCommit, isDeal, removed, exiting, busy, done, drop, open, prefetch, prefetchNow } =
     useRowActions(item, { onDismissInbox, onClearedCommitment, onUndoInbox, onUndoCommitment, dismissOverride });
   const [localTag, setLocalTag] = useState<string | null>(null); // optimistic project tag (tracked-only)
 
@@ -499,7 +480,7 @@ export function WorkRow({ item, emphasis = false, hideInitiative = false, readon
     // ONE LINE PER ROW (work-surface correction — the real list-wise anatomy, not padding): the
     // SECOND LINE IS DEAD. Everything a row says fits one truncating line — [icon] primary · ask
     // · muted-second — with the meta pinned right. The whole curated pool fits one screen.
-    <div onMouseEnter={prefetch} onFocus={prefetch} onMouseDown={prefetch} onTouchStart={prefetch} className={flat
+    <div onMouseEnter={prefetch} onFocus={prefetch} onMouseDown={prefetchNow} onTouchStart={prefetchNow} className={flat
       ? `group bg-white transition-all duration-300 ease-out hover:bg-neutral-50/70 ${exiting ? 'opacity-0' : 'opacity-100'} ${emphasis ? 'bg-indigo-50/40' : ''}`
       : `group rounded-lg border bg-white transition-all duration-300 ease-out hover:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.07)] ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'} ${emphasis ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-neutral-200/60 hover:border-neutral-300'}`}>
       <div role="button" tabIndex={0} onClick={open}

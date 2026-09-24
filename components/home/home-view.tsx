@@ -940,7 +940,8 @@ function BundleGroup({ title, why, items, state, emphasis = false, onDismissInbo
         <div className="px-3 pb-2.5 -mt-0.5 pl-[2.35rem]">
           <button
             onClick={(e) => { e.stopPropagation(); if (moveHref) router.push(moveHref); else setOpen(true); }}
-            onMouseEnter={() => prefetchItem(moveHref)}
+            onMouseEnter={() => prefetchItem(moveHref)} onFocus={() => prefetchItem(moveHref)}
+            onMouseDown={() => prefetchItem(moveHref, { immediate: true })}
             className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 text-[12px] font-medium text-indigo-700 transition-colors max-w-full"
             title={state.nextMove.reason}
           >
@@ -1001,7 +1002,7 @@ function PeekRow({ e, onPromote, onDismissInbox, onClearedCommitment, onUndoInbo
   const canAct = !!target || e.kind === 'deal';
   const exiting = isCommit ? commit.exiting : inboxExit.exiting;
   return (
-    <div onMouseEnter={() => prefetchItem(href)} className={`group w-full flex items-center gap-2.5 rounded-lg border border-neutral-200/60 bg-white/60 px-3 py-2 transition-all duration-300 ease-out hover:bg-white hover:border-neutral-300 ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'}`}>
+    <div onMouseEnter={() => prefetchItem(href)} onFocus={() => prefetchItem(href)} onMouseDown={() => prefetchItem(href, { immediate: true })} className={`group w-full flex items-center gap-2.5 rounded-lg border border-neutral-200/60 bg-white/60 px-3 py-2 transition-all duration-300 ease-out hover:bg-white hover:border-neutral-300 ${exiting ? 'opacity-0 scale-[0.98]' : 'opacity-100'}`}>
       <button onClick={onClick} className="min-w-0 flex-1 flex items-center gap-2.5 text-left cursor-pointer">
         <span className={`flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-md ${d.ring} ${d.overdue ? 'text-rose-500' : d.text}`}><d.Icon className="w-3.5 h-3.5" /></span>
         <span className="min-w-0 flex-1 flex items-baseline gap-1.5">
@@ -1183,7 +1184,7 @@ function WhisperLine({ w, whyNow, handlers }: {
   };
 }) {
   const { item } = w;
-  const { removed, exiting, busy, done, drop, open, prefetch } = useRowActions(item, handlers);
+  const { removed, exiting, busy, done, drop, open, prefetch, prefetchNow } = useRowActions(item, handlers);
   // W11.2 · LOOKS DONE — ONE click each way, on the row itself: Mark done is the row's OWN resolution
   // door (logged, undoable — the same ✓ every row carries); Keep open is the sticky refusal for the
   // evidence standing now (POST /api/work/looks-done), after which the row reads as plain work.
@@ -1205,7 +1206,7 @@ function WhisperLine({ w, whyNow, handlers }: {
   const { Icon } = DO_META[item.source];
   return (
     <div
-      onMouseEnter={prefetch} onFocus={prefetch} onMouseDown={prefetch} onTouchStart={prefetch}
+      onMouseEnter={prefetch} onFocus={prefetch} onMouseDown={prefetchNow} onTouchStart={prefetchNow}
       aria-busy={opening || undefined} data-opening={opening ? '' : undefined}
       className={`group relative flex items-center gap-2.5 rounded-[10px] px-3 py-2 transition-all duration-200 ease-out hover:bg-white hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)] ${opening ? 'bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)]' : ''} ${exitCls(exiting)}`}
     >
@@ -1459,6 +1460,26 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
     if (coldStartRef.current === null) coldStartRef.current = !loadLS<Brief>('aug-home-brief-v1', { maxAgeMs: 15 * 60_000 });
   }, []);
   const entrance = useOrbEntrance(loading, coldStartRef);
+  // LENS_PREFETCH_AFTER_PAINT (W17) — the Timeline warm, once per mount, after the first paint.
+  const lensWarmedRef = useRef(false);
+  useEffect(() => {
+    if (loading || lensWarmedRef.current) return;
+    const run = () => {
+      if (lensWarmedRef.current) return;
+      lensWarmedRef.current = true;
+      fetch('/api/home/timeline').then((r) => (r.ok ? r.json() : null)).then((d) => {
+        if (!d) return;
+        saveLS('aug-timeline-gantt-v3', { ganttGroups: d.ganttGroups ?? [], looseGroup: d.looseGroup ?? null, todayStr: d.todayStr });
+      }).catch(() => {});
+    };
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };
+    if (w.requestIdleCallback) {
+      const id = w.requestIdleCallback(run, { timeout: 2000 });
+      return () => w.cancelIdleCallback?.(id);
+    }
+    const t = setTimeout(run, 300);
+    return () => clearTimeout(t);
+  }, [loading]);
   const [expanded, setExpanded] = useState<string | null>(null);
   // (The global ask ledger's Home surfacing was user-rejected July 29 — see the note above the
   //  deck. /api/room/asks remains the data spine for the approved row-chip design.)
@@ -1492,15 +1513,10 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
   const [sessionCleared, setSessionCleared] = useState(0); // this session's Done/Dismiss/Send → ring `cleared`
   // LENS PREFETCH (instant-feel): warm the Timeline payload in the background once the dashboard
   // has settled, so switching lenses hydrates from localStorage instead of a skeleton.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      fetch('/api/home/timeline').then((r) => (r.ok ? r.json() : null)).then((d) => {
-        if (!d) return;
-        saveLS('aug-timeline-gantt-v3', { ganttGroups: d.ganttGroups ?? [], looseGroup: d.looseGroup ?? null, todayStr: d.todayStr });
-      }).catch(() => {});
-    }, 300);
-    return () => clearTimeout(t);
-  }, []);
+  // W17 · SLOW READS OFF THE CRITICAL PATH: "settled" is now a FACT, not a guess. It used to fire on
+  // a 300ms timer — which, on a cold open, put a second heavy read in flight beside the one read the
+  // first paint waits on. It now waits for the paint (`loading` false) and then for an idle beat.
+  // The declaration sits below `loading`; this effect keys on it (see LENS_PREFETCH_AFTER_PAINT).
 
   const [activityOpen, setActivityOpen] = useState(false); // right-side Activity slide-over
   // THE CALM HOME's one door: everything past the served five lives behind it — and behind it is now

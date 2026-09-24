@@ -18,3 +18,6 @@ export { composeItemPage, actionOf, actionWidgetOf, claraSentenceOf, itemPageIte
 export type { ItemActionWidget, ItemArtifactKind, ItemArtifactsMounted, ItemPageFacts, ItemPagePlan, ItemPageState, ItemSourceWidget } from './item-page';
 export { ConfirmCard } from './confirm-card';
 export type { ConfirmCardProps } from './confirm-card';
+// W17 · NO WAITING — the ONE placeholder for a widget still being made (shape per widget kind, no spinner).
+export { PreparingSlot, PreparingShape, preparingLineOf, PREPARING_WORDS, PREPARING_CYCLE_MS, PREPARING_PULSE } from './preparing-slot';
+export type { PreparingShapeKind } from './preparing-slot';

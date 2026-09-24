@@ -27,6 +27,8 @@ import { ThreadShell, ThreadCardView } from '@/components/thread';
 import type { ThreadCard, ThreadItem } from '@/components/thread';
 // W16 · THE ITEM PAGE IS A FEW KIT WIDGETS — the ONE composition every item door renders through.
 import { composeItemPage, itemPageItems, type ItemArtifactKind, type ItemArtifactsMounted } from '@/components/thread/item-page';
+// W17 · NO WAITING — the ONE placeholder for a widget this open is still making.
+import { PreparingSlot } from '@/components/thread/preparing-slot';
 import { useCosSeat } from '@/hooks/use-cos-seat';
 import { moveTargetId, mergedArtifactKey, stageOfArtifactKey } from '@/lib/room/presentation';
 // THE DECISION'S ONE HOST (W3-C, Sep 22) — the kit's `decision` card with the steer door behind
@@ -388,7 +390,7 @@ function Chip({ icon, label, onClick }: { icon?: React.ReactNode; label: string;
   );
 }
 
-export function ItemRail({ kind, id, view, pending = false, onDraft, decision: decisionIn, artifacts: artifactsIn, onOpenHref, onStage, onHistory, sourceItemId, sourceMeeting, sourceEmail, onOpenThread, gate, sourceEvent }: {
+export function ItemRail({ kind, id, view, pending = false, onDraft, decision: decisionIn, artifacts: artifactsIn, onOpenHref, onStage, onHistory, sourceItemId, sourceMeeting, sourceEmail, onOpenThread, gate, sourceEvent, slot }: {
   kind: RailKind; id: string; view: RailView;
   /** THE STRUCTURAL FRAME (UX arc): true while the view is still loading — the rail mounts its
    *  shell (header, turns, composer) immediately and shows a quiet shimmer instead of anchor
@@ -471,6 +473,10 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   /** W16 · a meeting with a calendar event on file: its source widget is the kit's EVENT widget
    *  (time · attendees · join) instead of the source card. */
   sourceEvent?: React.ReactNode | null;
+  /** W17 · NO WAITING — THE RESERVED SLOT: the artifact THIS OPEN is producing (the email door drafting
+   *  the reply the judgment owes). While in flight the ACTION seat shows the preparing slot in the
+   *  widget's own shape; the landed artifact takes the same seat (components/thread/item-page.ts). */
+  slot?: { artifact: ItemArtifactKind; inFlight: boolean } | null;
 }) {
   // ══ W15.2 · SETTLED ITEMS DROP THEIR ACTION CARDS (one gate for every card kind) ════════════════
   // When THE MACHINE says this item's work is settled (closed, or judged owed-nothing), no prepared
@@ -1680,6 +1686,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
       brief: composed ?? null, who: view.anchor?.who ? spokenName(view.anchor.who) : null,
       ask: view.anchor?.ask ?? null, title: null, origin: view.anchor?.origin ?? null,
       source: sourceEvent ? 'event' : objectCard ? 'source' : null,
+      slot: itemSettled ? null : slot ?? null,
     });
     const own = plan.artifact && !['ask', 'decision', 'gate', 'input_gate', 'booked_event'].includes(plan.artifact) ? byArtifact(plan.artifact) : null;
     return { plan, card: own };
@@ -1709,6 +1716,8 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
       source: sourceEvent ? <div className="pt-0.5">{sourceEvent}</div> : objectCard ? <div className="pt-0.5">{objectCard}</div> : null,
       // W16.2 · a kit-kind widget rides as its CARD (the confirm widget → `kind: 'confirm'`).
       action: actionNode || card?.card ? { node: actionNode, card: card?.card ?? null, by: card?.by ?? null } : null,
+      // W17 · the reserved seat, in the pending widget's own shape (never a spinner).
+      pending: plan.pending ? <PreparingSlot widget={plan.pending.widget} who={seatName} /> : null,
     }));
     // THE READER'S OWN EXCHANGE — from their first word on (answers, and what an answer presents).
     itemExchange.forEach((t, i) => {

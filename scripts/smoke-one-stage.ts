@@ -97,9 +97,13 @@ console.log('\nB · NO INTERNAL TEXT — the judge\'s reason and the internal pl
   const offenders = [...walk('components'), ...walk('app')].filter((f) => /\.tsx$/.test(f))
     .filter((f) => /\bverdict\??\.reason\b/.test(code(f.replace(ROOT + '/', ''))));
   gate('B1 NO component renders the judge\'s private reason (`verdict.reason` appears in no .tsx code)', offenders.length === 0, offenders.join(', '));
-  gate('B2 decision questions come from the DECISION BRIEF\'s own title, else the item\'s own words — both doors',
-    /title: decisionBriefC\?\.title \|\| data\?\.description \|\| null,/.test(commitSeg)
-    && /title: decisionBrief\?\.title \|\| subject \|\| null,/.test(detail));
+  // ⟲ RE-POINTED (W17 · no-waiting, owner report Sep 24): the item's own words are NO LONGER the fallback
+  // title — the header and the source widget already show them. The question is the DECISION BRIEF's own
+  // title, only when it adds something (decisionTitleOf); else the card carries none. Never the reason.
+  gate('B2 decision questions come from the DECISION BRIEF\'s own title only when it adds something — never the item\'s words repeated, never the reason — both doors',
+    /decisionSpecOf\(\{ verdict, prepared: view\?\.prepared \?\? null \}, \[data\?\.description, src\?\.subject\]\)/.test(commitSeg)
+    && /decisionSpecOf\(\{ verdict, prepared: view\?\.prepared \?\? null \}, \[subject, thread\?\.subject, seed\?\.title\]\)/.test(detail)
+    && /title: decisionTitleOf\(brief\?\.title \?\? null, shown\),/.test(src('lib/room/decision-object.ts')));
   gate('B3 the commitment door keeps no reason in its verdict state (the options only)',
     /useState<\{ work: string; options\?: Array<\{ label: string \}> \} \| null>\(null\)/.test(commitSeg));
   gate('B4 the motion checklist reads ONLY the extractor\'s clauses (motionClausesOf) — never the identified-tasks plan',
@@ -199,7 +203,8 @@ console.log('\nD · the meeting is the source object (the kit\'s existing `sourc
   gate('D2 the door serves it in the SAME flight as the rest (no new round trip) and only for a meeting-born commitment',
     // ⟲ RE-POINTED (W16.2): the same flight also carries the source message's authorship (one small
     // read, zero AI — the direction-true fallback); the meeting source still rides it, no new round trip.
-    /const \[room, machine, sourceItemId, sourceMeeting, sourceAuthor\] = await Promise\.all\(\[/.test(view)
+    // ⟲ RE-POINTED (W17): + the cached judgment (the served verdict) in the same flight.
+    /const \[room, machine, sourceItemId, sourceMeeting, sourceAuthor, verdict\] = await Promise\.all\(\[/.test(view)
     && /String\(itemRow\.source \?\? ''\) !== 'meeting'/.test(view) && /sourceMeeting,\s*\n/.test(view));
   gate('D3 the rail seats it in the object card\'s ONE seat when the door has no mail object; its door is the meeting page',
     /\) : \(!objectItemId && door\.kind === 'item' && sourceMeeting\) \? \(/.test(rail)

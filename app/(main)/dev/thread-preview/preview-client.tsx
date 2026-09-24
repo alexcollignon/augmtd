@@ -370,9 +370,9 @@ const DECISION_OPEN: ThreadCard = {
 const DECISION_NO_OBJECT: ThreadCard = {
   ...(DECISION_OPEN as Extract<ThreadCard, { kind: 'decision' }>),
   id: 'dec-no-object',
-  // NOTHING ON THE PAGE ⇒ NOTHING RECOMMENDED — no marked route, no chip, and the honest sentence.
+  // NOTHING ON THE PAGE ⇒ NOTHING RECOMMENDED — no marked route, no chip. W17: and no filler line —
+  // the card is its options alone.
   objectNode: undefined,
-  quietLine: 'Nothing is attached to review yet.',
   options: (DECISION_OPEN as Extract<ThreadCard, { kind: 'decision' }>).options
     .map((o) => ({ id: o.id, label: o.label, ...(o.consequence ? { consequence: o.consequence } : {}) })),
 };

@@ -15,9 +15,9 @@
 //      already serves (`/api/items/view` → `prepared`, which is THE ONE PREPARED READER over
 //      source_data lanes AND the item_deliverables pool). No new fetch, no new shape, no guess.
 //   2. WITH NO OBJECT, NOTHING IS RECOMMENDED. The options still render — a decision with a missing
-//      object is still the user's to make — but the card says plainly that there is nothing
-//      attached to review and marks NO option as the recommended/primary path. Approving something
-//      sight-unseen is never the path we point at.
+//      object is still the user's to make — and NO option is marked as the recommended/primary path.
+//      Approving something sight-unseen is never the path we point at. (W17: the card no longer
+//      SAYS that nothing is attached — the options alone are the card.)
 //
 // Why "nothing is recommended" rather than "the approve option is demoted": picking approvals out
 // of a label list means a verb vocabulary, in every language the judge writes in. The structural
@@ -53,17 +53,11 @@ export type DecisionObject = {
   preview: string | null;
 };
 
-/** THE HONEST SENTENCE, spoken by the card itself when nothing resolves — not the prepared object
- *  this module resolves, and not the SOURCE object the host mounts beside it (clause 1). ONE copy
- *  (a law with N hand-copies decays into a site list — the excerpt-law lesson).
- *
- *  ⚠️ ITS SECOND HALF IS DEAD COPY (THE OPENING CONTRACT, clause 2, owner walk Sep 19): it used to
- *  end by telling the reader to ask the machine to assemble the object — on a decision whose object
- *  was the inbound message the room was already holding. THE MACHINE PULLS IT, ALWAYS; a sentence
- *  that hands the reader the machine's own job is never the answer. What survives is the fact, spoken plainly, for the only
- *  case left: nothing prepared, and no source either. */
-export const NO_DECISION_OBJECT_LINE =
-  'Nothing is attached to review yet.';
+// (W17 · THE FILLER LINE IS RETIRED — owner report, Sep 24: "Nothing is attached to review yet." sat
+//  under a Consent / Decline decision whose object is the email the page already shows. With no
+//  PREPARED object the card now shows its options and nothing else — no line about what is absent.
+//  Rule 2 still holds structurally: with no object, nothing is recommended. The export is gone so no
+//  surface can speak it again; scripts/smoke-no-waiting.ts renders the card and fails on the words.)
 
 /** Enough bytes to be a thing, rather than a marker or a title echo. */
 const MIN_OBJECT_CHARS = 40;
@@ -117,3 +111,54 @@ export function resolveDecisionObject(prepared: PreparedLike[] | null | undefine
 /** THE STRUCTURAL HALF of rule 2, as a predicate every surface reads: may this card mark a
  *  recommended/primary option? Only with its object on the page. */
 export const mayRecommend = (object: DecisionObject | null | undefined): boolean => !!object;
+
+// ── W17 · THE CARD'S TITLE ADDS SOMETHING, OR IS ABSENT ─────────────────────────────────────────────
+// The page's header already names the item (the email's subject · the commitment's words) and the
+// source widget under Clara's sentence shows the message itself. A decision card titled with that same
+// subject is the third copy of one line. The card keeps a title only when it is the DECISION BRIEF's
+// own question and says something the page does not already say.
+
+const norm = (s: string | null | undefined): string =>
+  String(s ?? '').replace(/^\s*((re|fwd?|aw|wg)\s*:\s*)+/i, '').replace(/[\s\p{P}]+/gu, ' ').trim().toLowerCase();
+
+/** The decision card's title: the brief's own question, unless it merely repeats a line the page
+ *  already shows (the header title · the source's subject). Pure. */
+export function decisionTitleOf(briefTitle: string | null | undefined, shown: Array<string | null | undefined>): string | null {
+  const t = String(briefTitle ?? '').trim();
+  if (!t) return null;
+  const n = norm(t);
+  if (!n) return null;
+  return shown.some((x) => { const m = norm(x); return !!m && (m === n || m.includes(n) || n.includes(m)); }) ? null : t;
+}
+
+/** A decision's facts as the view door serves them — the verdict (served-verdict.ts) + THE ONE
+ *  READER's prepared list. Structural so this module keeps zero imports. */
+export type DecisionViewFacts = {
+  verdict: { work: string; options?: Array<{ label: string }> } | null | undefined;
+  prepared: Array<PreparedLike & { decision?: { options: Array<{ label: string; tradeoff?: string | null }>; recommendation: string | null; why: string | null } | null }> | null | undefined;
+};
+
+/** The decision as the page's ONE widget renders it — derived from the VIEW PAYLOAD ALONE (W17: the
+ *  first paint carries it; no second request is needed to learn what the card says). The DECISION
+ *  BRIEF's options (with trade-offs) supersede the verdict's bare labels; the object resolves from the
+ *  same prepared list; the title follows decisionTitleOf. Null when the item is not a decision with at
+ *  least two routes. Pure — both item doors (email · commitment) call it. */
+export function decisionSpecOf(f: DecisionViewFacts, shown: Array<string | null | undefined>): {
+  title: string | null;
+  options: Array<{ label: string; tradeoff?: string | null }>;
+  recommendation: { label: string; why?: string | null } | null;
+  object: DecisionObject | null;
+} | null {
+  if (f.verdict?.work !== 'decide') return null;
+  const brief = (f.prepared ?? []).find((p) => p.decision && p.decision.options.length >= 2) ?? null;
+  const briefOpts = brief?.decision?.options ?? [];
+  const verdictOpts = f.verdict.options ?? [];
+  const options = briefOpts.length >= 2 ? briefOpts : verdictOpts.length >= 2 ? verdictOpts : null;
+  if (!options) return null;
+  return {
+    title: decisionTitleOf(brief?.title ?? null, shown),
+    options,
+    recommendation: brief?.decision?.recommendation ? { label: brief.decision.recommendation, why: brief.decision.why } : null,
+    object: resolveDecisionObject(f.prepared ?? null),
+  };
+}

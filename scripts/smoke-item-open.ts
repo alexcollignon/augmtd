@@ -103,7 +103,9 @@ async function main() {
       && /startOpenReads\(kindProp \?\? kindOfSearch\(window\.location\.search\), id\);/.test(frame));
     const detail = src(DETAIL);
     gate('B2 the commitment door reads its facts through the SAME flight (joins/takes the frame\'s read); a post-deed reload reads afresh',
-      /const read: Promise<CommitmentData \| null> = reload === 0\s*\? \(fetchOpenObject\(`\/api\/commitments\/\$\{id\}`, `aug-item-commitment-\$\{id\}`\)/.test(detail)
+      // ⟲ RE-POINTED (W17): the instant-load key has ONE producer now (warm-client itemObjectKey) — the
+      // hover warm writes the very key the door paints from.
+      /const read: Promise<CommitmentData \| null> = reload === 0\s*\? \(fetchOpenObject\(`\/api\/commitments\/\$\{id\}`, itemObjectKey\('commitment', id\)\)/.test(detail)
       && !/fetch\(`\/api\/commitments\/\$\{id\}`\)\s*\n\s*\.then\(r => \(r\.ok \? r\.json\(\) : Promise\.reject\(\)\)\)/.test(detail));
     gate('B3 the deep-dive\'s view open still goes through THE ONE FLIGHT (and a user deed never joins it)',
       /const landing = reason === 'open'\s*\? fetchItemView\(kind, id\)/.test(detail));
@@ -140,9 +142,13 @@ async function main() {
   console.log('\nC · the judge and the plan never hold the first paint');
   {
     const detail = src(DETAIL);
-    gate('C1 both judge reads wait for the open\'s view read to settle (bounded) — never beside the first paint\'s one read',
-      /viewSettled\('email', id\)\.then\(\(\) => \(alive \? fetch\(`\/api\/items\/judge\?kind=inbox&id=\$\{id\}`\)/.test(detail)
-      && /viewSettled\('commitment', id\)\s*\.then\(\(\) => \(alive \? fetch\(`\/api\/items\/judge\?kind=commitment&id=\$\{id\}`\)/.test(detail)
+    // ⟲ RE-POINTED (W17 · law `no-waiting`): the judge no longer holds ANY paint — the view serves the
+    // cached verdict the first paint needs, so the judge is a refresh that starts BESIDE the view (no
+    // chain) and only fills a page that painted no verdict (scripts/smoke-no-waiting.ts B2–B3).
+    gate('C1 both judge reads start at the open beside the view (never chained behind it) and never hold the paint',
+      !/viewSettled\(/.test(detail)
+      && /fetch\(`\/api\/items\/judge\?kind=inbox&id=\$\{id\}`\)/.test(detail)
+      && /fetch\(`\/api\/items\/judge\?kind=commitment&id=\$\{id\}`\)/.test(detail)
       && (detail.match(/\/api\/items\/judge\?/g) ?? []).length === 2);
     gate('C2 nothing on the open path POSTs a plan (the deep-dive only PATCHes a checklist tick; the frame never asks)',
       !/'\/api\/items\/plan',\s*\{\s*method: 'POST'/.test(detail) && !/api\/items\/(plan|judge)/.test(src(FRAME)));
@@ -182,7 +188,8 @@ async function main() {
       && /const anyVerdictP = Promise\.resolve\(/.test(view) && /const itemRowP = Promise\.resolve\(/.test(view));
     gate('D4 an early exit never leaves a started read unhandled',
       // ⟲ RE-POINTED (W16.2): the new started read (the source's authorship) is in the handled set too.
-      /for \(const p of \[roomP, machineP, sourceItemIdP, sourceMeetingP, sourceAuthorP\]\) void p\.catch\(\(\) => \{\}\);/.test(view));
+      // ⟲ RE-POINTED (W17): …and the cached-judgment read (the served verdict).
+      /for \(const p of \[roomP, machineP, sourceItemIdP, sourceMeetingP, sourceAuthorP, judgmentP\]\) void p\.catch\(\(\) => \{\}\);/.test(view));
     gate('D5 the view still schedules its AI only under after() and serves last-good (W8.4 floor intact)',
       /const onOpen = \(work: \(\) => Promise<unknown>\) => \{ if \(!warm\) after\(/.test(view)
       // ⟲ RE-POINTED (W13.5): last-good is read once and passed through the serve-time truth before the paint.

@@ -449,22 +449,33 @@ export async function buildTodayZone(
   // A5.1 — FEATURE OFF: the organ does not exist for this user. No key, no vocabulary.
   if (features[TODAY_ZONE_FEATURE] === false) return undefined;
   // A5.2 — ON, NOT CONNECTED: still absent. The connect offer is the CoS's voice in the thread.
-  if (!await calendarConnected(client, userId)) return undefined;
-
-  const tz = await userTimezone(client, userId);
+  // W17 · NO WAITING — the connection check, the zone, the day's events and the day anchors each
+  // need only the user, so they are read in ONE wave (they used to be four round trips in a line).
+  // The ladder is still decided by the connection fact: an unconnected account's events are read
+  // and dropped, never served. Only the prep records wait — they need the chosen events' keys.
   // The read window: from the start of the user's local day out to +48h (the tail needs tomorrow).
   // Bounded and indexed (user_id, start_time) — no full listing, so no 1000-row cap to page around.
   const from = new Date(now.getTime() - 24 * 60 * 60_000).toISOString();
   const to = new Date(now.getTime() + 48 * 60 * 60_000).toISOString();
-  let raw: RawEvent[] = [];
-  try {
-    const { data } = await client.from('calendar_events')
-      .select('id, title, start_time, end_time, is_all_day, attendees, status')
-      .eq('user_id', userId)
-      .gte('start_time', from).lte('start_time', to)
-      .order('start_time', { ascending: true }).limit(200);
-    raw = (data ?? []) as RawEvent[];
-  } catch { return undefined; } // a failed read is not a claim about the day
+  const eventsP: Promise<RawEvent[] | null> = (async () => {
+    try {
+      const { data } = await client.from('calendar_events')
+        .select('id, title, start_time, end_time, is_all_day, attendees, status')
+        .eq('user_id', userId)
+        .gte('start_time', from).lte('start_time', to)
+        .order('start_time', { ascending: true }).limit(200);
+      return (data ?? []) as RawEvent[];
+    } catch { return null; } // a failed read is not a claim about the day
+  })();
+  const [connected, tz, events, anchors] = await Promise.all([
+    calendarConnected(client, userId),
+    userTimezone(client, userId),
+    eventsP,
+    readDayAnchors(client, userId, now),
+  ]);
+  if (!connected) return undefined;
+  if (events === null) return undefined;
+  const raw: RawEvent[] = events;
 
   const chosen = selectDayEvents(raw, tz, now, selfEmail);
   // A4 — NOTHING TRUE TO SAY: an empty day is an absent zone, never "No meetings today".
@@ -480,9 +491,9 @@ export async function buildTodayZone(
   } catch { /* no records → no prep claim, which is the honest default */ }
 
   // THE DAY ANCHOR (Sep 18): the attention layer's OWN served rows, recorded by the brief at the one
-  // choke point and read here — never re-derived (see lib/home/day-anchors' header for why a second
-  // derivation would be a second budget). A missing or stale record is simply no raised rows.
-  const anchors = await readDayAnchors(client, userId, now);
+  // choke point and read (in the wave above) — never re-derived (see lib/home/day-anchors' header
+  // for why a second derivation would be a second budget). A missing or stale record is simply no
+  // raised rows.
 
   return { events: chosen.map((e) => toDayEvent(e, tz, selfEmail, preps, anchors)) };
 }
@@ -494,37 +505,52 @@ export async function buildInMotionZone(
   // A5.1 — FEATURE OFF: workflows do not exist for this user, so neither does the zone.
   if (features[IN_MOTION_ZONE_FEATURE] === false) return undefined;
 
-  const tz = await userTimezone(client, userId);
-  let runs: RawRun[] = [];
-  let wfs: RawWorkflow[] = [];
-  try {
-    // Live runs only. A parked run can be old, so no time floor on those; the statuses ARE the
-    // filter (the indexed ones), and the cap is far above any real live-run count.
-    const [runsRes, wfRes] = await Promise.all([
-      client.from('workflow_runs')
-        .select('id, workflow_id, status, step_outputs, started_at, created_at')
-        .eq('user_id', userId).in('status', ['queued', 'running', 'awaiting_approval'])
-        .order('created_at', { ascending: false }).limit(50),
-      client.from('workflows')
-        .select('id, name, agent_id, steps, status, trigger, next_run_at')
-        .eq('user_id', userId).limit(500),
-    ]);
-    runs = (runsRes.data ?? []) as RawRun[];
-    wfs = (wfRes.data ?? []) as RawWorkflow[];
-  } catch { return undefined; }
-
-  const wfById = new Map(wfs.map((w) => [w.id, w]));
+  // W17 · NO WAITING — the zone, the live runs, the workflows, the faces and the delivered pointer
+  // each need only the user: ONE wave, where they used to be four round trips in a line.
   // The owning coworker's face — the same agent_id → custom_agents resolution the presence route
   // uses. When the agents organ is off there simply are no coworkers, and rows go face-less.
-  let agents: Agent[] = [];
-  if (features.agents !== false) {
+  const agentsP: Promise<Agent[]> = features.agents === false ? Promise.resolve([]) : (async () => {
     try {
       const { data } = await client.from('custom_agents')
         .select('id, name, worker_role')
         .eq('user_id', userId).eq('is_worker', true).eq('is_active', true).limit(50);
-      agents = (data ?? []) as Agent[];
-    } catch { /* face-less rows are honest; an invented face is not */ }
-  }
+      return (data ?? []) as Agent[];
+    } catch { return []; /* face-less rows are honest; an invented face is not */ }
+  })();
+  // A6's ONE permitted arrival reference — a POINTER, never a row: the newest delivered runs that
+  // have not been reviewed. Same predicate as the nav badge and the ledger's row pills (status
+  // succeeded · reviewed_at null · last 30 days), so three surfaces can never disagree.
+  const deliveredP: Promise<DeliveredPointer | undefined> = (async () => {
+    try {
+      const since = new Date(now.getTime() - 30 * 86_400_000).toISOString();
+      const { count } = await client.from('workflow_runs')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId).eq('status', 'succeeded').is('reviewed_at', null)
+        .gte('created_at', since);
+      return count && count > 0 ? { count, href: '/workflows' } : undefined;
+    } catch { return undefined; /* no pointer is better than a wrong one */ }
+  })();
+  const liveP: Promise<{ runs: RawRun[]; wfs: RawWorkflow[] } | null> = (async () => {
+    try {
+      // Live runs only. A parked run can be old, so no time floor on those; the statuses ARE the
+      // filter (the indexed ones), and the cap is far above any real live-run count.
+      const [runsRes, wfRes] = await Promise.all([
+        client.from('workflow_runs')
+          .select('id, workflow_id, status, step_outputs, started_at, created_at')
+          .eq('user_id', userId).in('status', ['queued', 'running', 'awaiting_approval'])
+          .order('created_at', { ascending: false }).limit(50),
+        client.from('workflows')
+          .select('id, name, agent_id, steps, status, trigger, next_run_at')
+          .eq('user_id', userId).limit(500),
+      ]);
+      return { runs: (runsRes.data ?? []) as RawRun[], wfs: (wfRes.data ?? []) as RawWorkflow[] };
+    } catch { return null; }
+  })();
+  const [tz, live, agents, delivered] = await Promise.all([userTimezone(client, userId), liveP, agentsP, deliveredP]);
+  if (!live) return undefined;
+  const { runs, wfs } = live;
+
+  const wfById = new Map(wfs.map((w) => [w.id, w]));
   const agentById = new Map(agents.map((a) => [a.id, a]));
 
   const rows = deriveInMotionRows(
@@ -532,19 +558,6 @@ export async function buildInMotionZone(
     (wf) => (Array.isArray(wf?.steps) ? wf!.steps as WorkflowStep[] : null),
     tz, now,
   );
-
-  // A6's ONE permitted arrival reference — a POINTER, never a row: the newest delivered runs that
-  // have not been reviewed. Same predicate as the nav badge and the ledger's row pills (status
-  // succeeded · reviewed_at null · last 30 days), so three surfaces can never disagree.
-  let delivered: DeliveredPointer | undefined;
-  try {
-    const since = new Date(now.getTime() - 30 * 86_400_000).toISOString();
-    const { count } = await client.from('workflow_runs')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', userId).eq('status', 'succeeded').is('reviewed_at', null)
-      .gte('created_at', since);
-    if (count && count > 0) delivered = { count, href: '/workflows' };
-  } catch { /* no pointer is better than a wrong one */ }
 
   // A4 — the zone earns its seat: no rows AND no pointer is an absent zone.
   if (!rows.length && !delivered) return undefined;

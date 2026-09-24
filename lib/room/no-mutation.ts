@@ -6,8 +6,9 @@
 //    view; a recompute lands on the NEXT open, or arrives as an APPENDED message."
 //
 // Allowed live behaviour, exhaustively: appending new timeline items · filling a skeleton that
-// never showed content · streaming an in-flight reply · explicitly-live run status the user is
-// watching (the workflow drawer's "step N/M") · changes the user's own action just caused.
+// never showed content · filling a RESERVED SLOT (W17 — below) · streaming an in-flight reply ·
+// explicitly-live run status the user is watching (the workflow drawer's "step N/M") · changes the
+// user's own action just caused.
 //
 // This module is the ONE mechanism every loader consults before letting a landing payload replace
 // what is already painted. The sig-gated `after()` recompose pattern is untouched and correct —
@@ -84,3 +85,21 @@ export function hasContent(count: number | null | undefined): boolean {
  *  skeleton, which the landing fetch then FILLS (allowed) instead of swapping content under the
  *  reader. Younger than this → paint it and hold the recompute for the next open. */
 export const ROOM_CACHE_MAX_AGE_MS = 15 * 60_000;
+
+// ── W17 · THE RESERVED SLOT (law `no-waiting`, docs/laws-registry.json) ──────────────────────────────
+// "First paint carries what is known; a slot still being made is reserved, never a pop." A widget this
+// open is PRODUCING (a reply being drafted) paints as the preparing slot — components/thread/
+// preparing-slot.tsx, in the widget's own shape, saying what is being made — in the seat the widget
+// will hold. The landing widget then REPLACES THE PLACEHOLDER ONLY: that is a skeleton fill with words
+// on it, never a change to content the reader met. PRECEDENCE: this law yields nothing to `no-waiting`
+// on painted content — a slot may be filled (or retired, when production yields nothing), but a
+// painted WIDGET is never swapped for a later arrival; that arrival is the next open's first paint.
+
+/** What the action seat holds right now. */
+export type SlotPaint = 'empty' | 'placeholder' | 'widget';
+
+/** May a landing widget take the seat? Only an empty seat or a reserved placeholder — a painted
+ *  widget keeps its seat for this open (the arrival is cached for the next one). */
+export function mayFillSlot(painted: SlotPaint): boolean {
+  return painted !== 'widget';
+}

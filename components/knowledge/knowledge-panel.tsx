@@ -1178,7 +1178,12 @@ export default function KnowledgePanel() {
           <AnchoredPopover anchorRef={pendingAnchor} open={pendingOpen}
             onClose={() => { setPendingOpen(false); setConfirmPendingAll(false); }} align="left" width={320}>
             <div className="rounded-xl border border-neutral-200 bg-white shadow-lg p-1">
-              {pendingList.loading && <p className="px-2 py-2 text-[12px] text-neutral-400">Loading…</p>}
+              {/* W17 · NO SPINNER WORDS: the list not yet read holds its rows' place. */}
+              {pendingList.loading && (
+                <div className="space-y-1 px-2 py-2" aria-hidden>
+                  {[0, 1, 2].map((i) => <div key={i} className="h-4 rounded bg-neutral-100 animate-pulse motion-reduce:animate-none" />)}
+                </div>
+              )}
               {pendingList.failed && <p className="px-2 py-2 text-[12px] text-neutral-400">Couldn&apos;t load these right now.</p>}
               {!pendingList.loading && !pendingList.failed && pendingList.files.length === 0 && (
                 <p className="px-2 py-2 text-[12px] text-neutral-400">Nothing is processing any more.</p>

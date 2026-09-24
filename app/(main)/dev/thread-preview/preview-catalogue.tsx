@@ -33,6 +33,8 @@ import {
   type ThreadCard, type ThreadCardKind, type ThreadItem,
 } from '@/components/thread';
 import { THREAD_CARD_KINDS } from '@/components/thread/types';
+// W17 · NO WAITING — the ONE placeholder for a widget still being made (shape per widget kind).
+import { PreparingSlot } from '@/components/thread/preparing-slot';
 // THE HOSTS — the very components the room, the deep-dive and the Home band mount.
 import ApprovalCard from '@/components/home/approval-card';
 import InputCard from '@/components/home/input-card';
@@ -1063,17 +1065,28 @@ const SECTIONS: Section[] = [
         }} />,
       },
       {
-        label: 'decision · open, nothing to review (so nothing is recommended)',
+        // W17 · no object → the options alone (no filler line), and no title when the page's header and
+        // source widget already name the item (lib/room/decision-object decisionTitleOf).
+        label: 'decision · open, nothing to review — options alone, no filler, no repeated title',
         node: <ThreadCardView card={{
           kind: 'decision', id: 'cat-de-2', state: 'open',
-          question: 'Jordan needs an answer on the shortlist before Thursday’s board.',
-          quietLine: 'Nothing is attached to review yet.',
           options: [
             { id: 'o1', label: 'Advance all four to interviews' },
             { id: 'o2', label: 'Advance two, ask for more on the rest' },
           ],
           onConfirm: noop, onDismiss: noop,
         }} />,
+      },
+      {
+        // W17 · a widget the open is still MAKING holds its seat in its own shape — the preparing slot
+        // (components/thread/preparing-slot.tsx), never a spinner, never a gap that pops.
+        label: 'reserved seat · the preparing slot in the decision’s shape, and the reply’s',
+        node: (
+          <div className="flex flex-col gap-3">
+            <PreparingSlot widget="decision" who="Clara" />
+            <PreparingSlot widget="email" who="Clara" />
+          </div>
+        ),
       },
       {
         label: 'decision · open, armed (the second click is the deed)',

@@ -139,11 +139,13 @@ async function main() {
       // SAME flight — one small read, zero AI, no new round trip.
       // ⟲ RE-POINTED (W16.2): + the source message's authorship (THE ONE SOURCE READER, for the
       // direction-true fallback) in the SAME flight — one small read, zero AI, no new round trip.
-      /const \[room, machine, sourceItemId, sourceMeeting, sourceAuthor\] = await Promise\.all\(\[roomP, machineP, sourceItemIdP, sourceMeetingP, sourceAuthorP\]\)/.test(view)
+      // ⟲ RE-POINTED (W17 · no-waiting): + the cached judgment (the served verdict), STARTED beside wave 1
+      // and awaited in the SAME flight — one indexed read, zero AI, no new round trip.
+      /const \[room, machine, sourceItemId, sourceMeeting, sourceAuthor, verdict\] = await Promise\.all\(\[roomP, machineP, sourceItemIdP, sourceMeetingP, sourceAuthorP, judgmentP\]\)/.test(view)
       // ⟲ RE-POINTED (W8.4): no compose runs on the paint path any more — the last-good read is what
       // starts before the wave (the vacuous `indexOf('const paintP')` would have passed at -1).
       && view.indexOf('const lastGoodP = readRoomResponse(') > 0
-      && view.indexOf('const lastGoodP = readRoomResponse(') < view.indexOf('const [room, machine, sourceItemId, sourceMeeting, sourceAuthor] = await Promise.all(['));
+      && view.indexOf('const lastGoodP = readRoomResponse(') < view.indexOf('const [room, machine, sourceItemId, sourceMeeting, sourceAuthor, verdict] = await Promise.all(['));
     gate('B5 the perf watchdog: phase marks + ONE `[items/view] slow` line past a threshold',
       /const VIEW_SLOW_MS = [\d_]+;/.test(view) && /\[items\/view\] slow \$\{totalMs\}ms/.test(view)
       && /mark\('wave1'\)/.test(view) && /mark\('wave2'\)/.test(view));
@@ -184,7 +186,9 @@ async function main() {
       && /export const itemViewKey = \(kind: ItemViewKind, id: string\) => `aug-item-view-\$\{kind\}-\$\{id\}`;/.test(wc));
     gate('C2 hover/focus warms the view (prefetchItem → prefetchItemView: intent-delayed, serial, fresh-skip)',
       /prefetchItemView\(href\);/.test(row) && /setTimeout\(\(\) => \{\s*_viewWarmTimers\.delete\(key\);/.test(wc)
-      && /async function drainViewQueue\(\)/.test(wc) && /if \(loadLS\(key, \{ maxAgeMs: VIEW_WARM_TTL_MS \}\) != null\) return;/.test(wc));
+      // ⟲ RE-POINTED (W17 · no-waiting): a fresh view still skips its own warm, but the page's OBJECT read
+      // may still be cold — the fresh-skip now warms the object once instead of returning bare.
+      && /async function drainViewQueue\(\)/.test(wc) && /if \(loadLS\(key, \{ maxAgeMs: VIEW_WARM_TTL_MS \}\) != null\) \{ void warmItemObjectOnce\(t\.kind, t\.id\); return; \}/.test(wc));
     gate('C3 THE FRESHNESS FLOOR stays on the view (ACTION content never paints from a cache older than 15 min — the no-mutation pairing)',
       /loadLS<ItemViewData>\(key, \{ maxAgeMs: ROOM_CACHE_MAX_AGE_MS \}\)/.test(detail)
       && /export const ROOM_CACHE_MAX_AGE_MS = 15 \* 60_000;/.test(src('lib/room/no-mutation.ts')));
@@ -193,7 +197,9 @@ async function main() {
       /loadThreadRaw\(id, \{ maxAgeMs: THREAD_FRESH_MS \}\)/.test(detail)
       && !/fetch\(`\/api\/inbox\/\$\{id\}\/thread`\)/.test(detail)
       && /export function loadThreadRaw\(/.test(door) && /return loadThreadRaw\(itemId\)\.then\(\(\) => _cache\.get\(itemId\) \?\? EMPTY\);/.test(door)
-      && /\? loadThreadRaw\(id\)/.test(row));
+      // ⟲ RE-POINTED (W17 · no-waiting): the hover warm's object read has ONE owner now — lib/room/
+      // warm-client warmItemObject goes through THE ONE READER; the row only states intent.
+      && /return loadThreadRaw\(id\)\.then\(/.test(src('lib/room/warm-client.ts')) && !/fetch\(`\/api\/inbox\/\$\{id\}\/thread`\)/.test(row));
     const rail = src('components/home/item-rail.tsx');
     gate('C5 turns keyed ONCE: the rail\'s turns fetch waits for the view-resolved room key (no loose-key fetch while pending)',
       /useEffect\(\(\) => \{\s*if \(pending\) return;\s*let alive = true;\s*fetch\(`\/api\/room\/turns\?key=\$\{encodeURIComponent\(roomKey\)\}`\)/.test(rail)

@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { projectHref } from '@/lib/room/project-href';
+import { phaseClock } from '@/lib/utils/server-timing';
 
 export async function GET(request: NextRequest) {
   try {
@@ -19,6 +20,32 @@ export async function GET(request: NextRequest) {
     // ?all=1 — the All-conversations view's read (deeper scan, more rows); default = the sidebar's.
     const all = request.nextUrl.searchParams.get('all') === '1';
 
+    // W17 · NO WAITING — THE SIDEBAR'S READS RUN IN TWO WAVES. This route used to be eleven
+    // round trips in a line; most of them needed only the user or only the recent keys. Wave 1:
+    // everything that needs only the user (the pins, the turns, the coworker roster, the runs
+    // badge). Wave 2: every lane that needs the keys, each an independent flight (labels · item
+    // projects · chat titles · coworker threads · unread counts). Each lane keeps its own
+    // honest-or-absent failure, exactly as before.
+    const clock = phaseClock();
+    const workersP = (async () => {
+      try {
+        const { data } = await supabase.from('custom_agents')
+          .select('id, name').eq('user_id', user.id).eq('is_worker', true);
+        return (data ?? []) as Array<{ id: string; name: string }>;
+      } catch { return null; }
+    })();
+    // THE RUNS BADGE (coherence slice #1 — the Claude "9 new" pattern): succeeded runs the user
+    // hasn't opened yet. Same fact that feeds auto-pause (reviewed_at) — one mechanic, not three.
+    const workflowsUnreadP = (async () => {
+      try {
+        const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+        const { count } = await supabase.from('workflow_runs')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', user.id).eq('status', 'succeeded')
+          .is('reviewed_at', null).gte('created_at', since);
+        return count ?? 0;
+      } catch { return 0; /* the badge is an enhancement */ }
+    })();
     const [entsRes, turnsRes] = await Promise.all([
       supabase.from('work_entities').select('id, name, priority')
         .eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').eq('tracked', true).limit(20),
@@ -59,29 +86,18 @@ export async function GET(request: NextRequest) {
     const entKeys = keys.filter((k) => !k.includes(':'));
     const inboxIds = keys.filter((k) => k.startsWith('inbox:')).map((k) => k.slice(6));
     const commitIds = keys.filter((k) => k.startsWith('commitment:')).map((k) => k.slice(11));
-    const [entL, inbL, comL] = await Promise.all([
+    clock.mark('wave1');
+    const labelsP = Promise.all([
       entKeys.length ? supabase.from('work_entities').select('id, name, status, tracked').in('id', entKeys).eq('user_id', user.id) : Promise.resolve({ data: [] }),
       inboxIds.length ? supabase.from('inbox_items').select('id, work_title').in('id', inboxIds).eq('user_id', user.id) : Promise.resolve({ data: [] }),
       commitIds.length ? supabase.from('commitments').select('id, description').in('id', commitIds).eq('user_id', user.id) : Promise.resolve({ data: [] }),
     ]);
-    const label = new Map<string, string>();
-    // THE PROJECT WORD IS EARNED (owner, Aug 8 — "a bunch show as project, but it's not a
-    // user-created project"): tracked = a human decision → "project"; a machine-recognized
-    // container is "suggested" (the portfolio's own word), never presented as a project.
-    const trackedEnt = new Set<string>();
-    for (const e of (entL.data ?? []) as Array<{ id: string; name: string; status: string; tracked?: boolean }>) {
-      if (e.status !== 'active') continue;
-      label.set(e.id, e.name);
-      if (e.tracked) trackedEnt.add(e.id);
-    }
-    for (const i of (inbL.data ?? []) as Array<{ id: string; work_title: string | null }>) label.set(`inbox:${i.id}`, String(i.work_title ?? 'Email'));
-    for (const c of (comL.data ?? []) as Array<{ id: string; description: string }>) label.set(`commitment:${c.id}`, String(c.description));
 
     // THE HOVER EXPAND names the PROJECT an item room belongs to ("email · in Acme Corp") — the
     // entity link joined against TRACKED projects only (the P15 chip law: a machine-recognized
     // untracked container never wears a tag).
     const itemProject = new Map<string, string>();
-    try {
+    const itemProjectP = (async () => { try {
       const itemIds = [...inboxIds, ...commitIds];
       if (itemIds.length) {
         const { data: links } = await supabase.from('entity_links').select('item_id, item_kind, entity_id')
@@ -99,26 +115,14 @@ export async function GET(request: NextRequest) {
           }
         }
       }
-    } catch { /* the name is an enhancement — the kind word still shows */ }
-
-    const hrefOf = (k: string) =>
-      !k.includes(':') ? projectHref(k)
-      : k.startsWith('inbox:') ? `/item/${k.slice(6)}`
-      : k.startsWith('commitment:') ? `/item/${k.slice(11)}?kind=commitment`
-      : k.startsWith('meeting:') ? `/item/${k.slice(8)}?kind=meeting` : null;
-
-    const recent = keys
-      .map((k) => ({ key: k, label: label.get(k) ?? null, href: hrefOf(k) }))
-      .filter((r): r is { key: string; label: string; href: string } => !!r.label && !!r.href)
-      .map((r) => ({ ...r, label: r.label.slice(0, 48) }))
-      .slice(0, 5);
+    } catch { /* the name is an enhancement — the kind word still shows */ } })();
 
     // THE CHAT HISTORY (the durable Home chat's list): past `chat:` rooms, titled by their own
     // first user turn — unless the user RENAMED them (item_plans kind 'room_title' overrides).
     const chatKeys = keys.filter((k) => k.startsWith('chat:')).slice(0, all ? 40 : 8);
     let chats: Array<{ key: string; label: string; at: string }> = [];
     const projectOf = new Map<string, string>();
-    if (chatKeys.length) {
+    const chatsP = (async () => { if (chatKeys.length) {
       const [{ data: chatTurns }, { data: titleRows }, { data: scopeRows }] = await Promise.all([
         supabase.from('room_turns')
           .select('room_key, role, text, created_at')
@@ -147,16 +151,11 @@ export async function GET(request: NextRequest) {
       chats = chatKeys
         .map((k) => { const f = firstByKey.get(k); return f ? { key: k, label: customTitle.get(k) ?? f.label, at: f.at } : null; })
         .filter((c): c is { key: string; label: string; at: string } => !!c);
-    }
+    } })();
 
-    // COWORKER CONVERSATIONS (the absorption, brick 2): a chat with a coworker IS a conversation —
-    // it lists beside chat rooms and item rooms and opens in the ONE Home panel (key
-    // `worker:<threadId>:<agentId>`). CHAT threads only (workflow_id null — run/report threads
-    // stay in Activity); temporary threads excluded (the not-saved promise holds in listings too).
     let workerConvos: Array<{ key: string; kind: 'coworker'; label: string; href: null; at: string | null }> = [];
-    try {
-      const { data: workers } = await supabase.from('custom_agents')
-        .select('id, name').eq('user_id', user.id).eq('is_worker', true);
+    const workerConvosP = (async () => { try {
+      const workers = await workersP;
       if (workers?.length) {
         const nameOf = new Map((workers as Array<{ id: string; name: string }>).map((w) => [w.id, String(w.name).split(' ')[0]]));
         const { data: wts } = await supabase.from('work_threads')
@@ -190,7 +189,73 @@ export async function GET(request: NextRequest) {
             ...(nameOf.get(t.agent_id) ? { sub: `with ${nameOf.get(t.agent_id)}` } : {}),
           }));
       }
-    } catch { /* coworker listing is an enhancement — the merged list still serves */ }
+    } catch { /* coworker listing is an enhancement — the merged list still serves */ } })();
+
+    // ══ THE PROJECT RAISES ITS HAND (owner, Sep 7 — "it worked while you were away and has
+    // something for you"): per PROJECT room, how many LIVE turns landed since the reader last saw
+    // it that the reader did NOT write. Narrations + coworker speech only — the room's turns are
+    // already curated deltas, so "not mine, and new" IS the meaningfulness filter.
+    //
+    // HONEST OR ABSENT: a room with no read marker (never opened) serves NO count — day one must
+    // never paint "everything is unread". Cost shape: TWO slim indexed reads for the whole sidebar
+    // — one markers read (item_plans by kind+keys), one turns read bounded by the OLDEST marker,
+    // row-capped, then counted per room in JS (never one count query per room).
+    //
+    // ⚠️ COWORKER DMs ARE DELIBERATELY SKIPPED: their messages live in `work_messages`, a different
+    // store with no marker of its own, so an honest DM badge needs its own read fact. Rather than
+    // invent a second mechanic here, the roster rows stay badge-free until that fact exists — an
+    // absent badge is honest, an approximated one is a lying door. (This is where it would go.)
+    const unread: Record<string, number> = {};
+    const unreadP = (async () => { try {
+      const projectKeys = [...new Set([
+        ...pinned.map((p) => p.id),
+        ...keys.filter((k) => !k.includes(':')),
+      ])].slice(0, 12);
+      const { readRoomMarkers } = await import('@/lib/room/read-marker');
+      const markers = await readRoomMarkers(supabase, user.id, projectKeys);
+      const marked = projectKeys.filter((k) => markers.has(k));
+      if (marked.length) {
+        const oldest = marked.map((k) => markers.get(k)!).sort()[0];
+        const { data: fresh } = await supabase.from('room_turns')
+          .select('room_key, created_at')
+          .eq('user_id', user.id).is('archived_at', null)
+          .in('room_key', marked).neq('role', 'user').gt('created_at', oldest)
+          .order('created_at', { ascending: false }).limit(300);
+        for (const t of (fresh ?? []) as Array<{ room_key: string; created_at: string }>) {
+          const at = markers.get(t.room_key);
+          if (!at || !(t.created_at > at)) continue;
+          if ((unread[t.room_key] ?? 0) >= 10) continue; // the badge renders 9+; counting past it buys nothing
+          unread[t.room_key] = (unread[t.room_key] ?? 0) + 1;
+        }
+      }
+    } catch { /* the badge is an enhancement — silence, never a placeholder */ } })();
+
+    const [[entL, inbL, comL], , , , workflowsUnread] = await Promise.all([labelsP, itemProjectP, chatsP, workerConvosP, workflowsUnreadP, unreadP]);
+    clock.mark('wave2');
+    const label = new Map<string, string>();
+    // THE PROJECT WORD IS EARNED (owner, Aug 8 — "a bunch show as project, but it's not a
+    // user-created project"): tracked = a human decision → "project"; a machine-recognized
+    // container is "suggested" (the portfolio's own word), never presented as a project.
+    const trackedEnt = new Set<string>();
+    for (const e of (entL.data ?? []) as Array<{ id: string; name: string; status: string; tracked?: boolean }>) {
+      if (e.status !== 'active') continue;
+      label.set(e.id, e.name);
+      if (e.tracked) trackedEnt.add(e.id);
+    }
+    for (const i of (inbL.data ?? []) as Array<{ id: string; work_title: string | null }>) label.set(`inbox:${i.id}`, String(i.work_title ?? 'Email'));
+    for (const c of (comL.data ?? []) as Array<{ id: string; description: string }>) label.set(`commitment:${c.id}`, String(c.description));
+
+    const hrefOf = (k: string) =>
+      !k.includes(':') ? projectHref(k)
+      : k.startsWith('inbox:') ? `/item/${k.slice(6)}`
+      : k.startsWith('commitment:') ? `/item/${k.slice(11)}?kind=commitment`
+      : k.startsWith('meeting:') ? `/item/${k.slice(8)}?kind=meeting` : null;
+
+    const recent = keys
+      .map((k) => ({ key: k, label: label.get(k) ?? null, href: hrefOf(k) }))
+      .filter((r): r is { key: string; label: string; href: string } => !!r.label && !!r.href)
+      .map((r) => ({ ...r, label: r.label.slice(0, 48) }))
+      .slice(0, 5);
 
     // THE MERGED CONVERSATIONS (the sidebar's Recent + the All-conversations view): every
     // conversed-in room — chat rooms, item/entity rooms, AND coworker chats — in one
@@ -221,58 +286,7 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => new Date(b.at ?? 0).getTime() - new Date(a.at ?? 0).getTime())
       .slice(0, all ? 40 : 8);
 
-    // ══ THE PROJECT RAISES ITS HAND (owner, Sep 7 — "it worked while you were away and has
-    // something for you"): per PROJECT room, how many LIVE turns landed since the reader last saw
-    // it that the reader did NOT write. Narrations + coworker speech only — the room's turns are
-    // already curated deltas, so "not mine, and new" IS the meaningfulness filter.
-    //
-    // HONEST OR ABSENT: a room with no read marker (never opened) serves NO count — day one must
-    // never paint "everything is unread". Cost shape: TWO slim indexed reads for the whole sidebar
-    // — one markers read (item_plans by kind+keys), one turns read bounded by the OLDEST marker,
-    // row-capped, then counted per room in JS (never one count query per room).
-    //
-    // ⚠️ COWORKER DMs ARE DELIBERATELY SKIPPED: their messages live in `work_messages`, a different
-    // store with no marker of its own, so an honest DM badge needs its own read fact. Rather than
-    // invent a second mechanic here, the roster rows stay badge-free until that fact exists — an
-    // absent badge is honest, an approximated one is a lying door. (This is where it would go.)
-    const unread: Record<string, number> = {};
-    try {
-      const projectKeys = [...new Set([
-        ...pinned.map((p) => p.id),
-        ...keys.filter((k) => !k.includes(':')),
-      ])].slice(0, 12);
-      const { readRoomMarkers } = await import('@/lib/room/read-marker');
-      const markers = await readRoomMarkers(supabase, user.id, projectKeys);
-      const marked = projectKeys.filter((k) => markers.has(k));
-      if (marked.length) {
-        const oldest = marked.map((k) => markers.get(k)!).sort()[0];
-        const { data: fresh } = await supabase.from('room_turns')
-          .select('room_key, created_at')
-          .eq('user_id', user.id).is('archived_at', null)
-          .in('room_key', marked).neq('role', 'user').gt('created_at', oldest)
-          .order('created_at', { ascending: false }).limit(300);
-        for (const t of (fresh ?? []) as Array<{ room_key: string; created_at: string }>) {
-          const at = markers.get(t.room_key);
-          if (!at || !(t.created_at > at)) continue;
-          if ((unread[t.room_key] ?? 0) >= 10) continue; // the badge renders 9+; counting past it buys nothing
-          unread[t.room_key] = (unread[t.room_key] ?? 0) + 1;
-        }
-      }
-    } catch { /* the badge is an enhancement — silence, never a placeholder */ }
-
-    // THE RUNS BADGE (coherence slice #1 — the Claude "9 new" pattern): succeeded runs the user
-    // hasn't opened yet. Same fact that feeds auto-pause (reviewed_at) — one mechanic, not three.
-    let workflowsUnread = 0;
-    try {
-      const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
-      const { count } = await supabase.from('workflow_runs')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', user.id).eq('status', 'succeeded')
-        .is('reviewed_at', null).gte('created_at', since);
-      workflowsUnread = count ?? 0;
-    } catch { /* the badge is an enhancement */ }
-
-    return NextResponse.json({ pinned, recent, chats, conversations, workflowsUnread, unread });
+    return NextResponse.json({ pinned, recent, chats, conversations, workflowsUnread, unread }, { headers: clock.headers() });
   } catch (e) {
     console.error('[rooms/recent]', e);
     return NextResponse.json({ pinned: [], recent: [] });

@@ -36,6 +36,8 @@ import { isChangeSpec, type ChangeSpec } from '@/lib/present/change';
 import type { BulkDeed as BulkDeedLike } from '@/lib/deeds/words';
 import type { PreparedInviteLike } from '@/lib/prepare/invite-card';
 import { ThreadShell } from '@/components/thread';
+// W17 · the ONE placeholder primitive (shape per wait; no spinner).
+import { PreparingShape } from '@/components/thread/preparing-slot';
 import type { ThreadCard, ThreadItem } from '@/components/thread';
 // THE TRACE's shape and its validator — the words live there too, and only the kit reads them.
 import { isTraceEntry, type TraceEntry } from '@/lib/work/trace';
@@ -49,6 +51,8 @@ import { projectHref } from '@/lib/room/project-href';
 // lib/entities/ask.ts). A chip resolves by id here, never by its position in the served array.
 import { ASK_TAG_LETTERS, askTagRe, bracketTags, indexByTag, resolveAskRefs } from '@/lib/home/ask-refs';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { peekChatTurns, fetchChatTurns } from '@/components/home/chat-turns-warm';
+import { mergeThreadLanding, readThreadCache, threadCacheOf } from '@/lib/home/thread-cache';
 import { ROLE_LABELS, ROLE_SPECIALTIES, ROLE_STARTERS, GENERIC_STARTERS, INTAKE_STARTERS } from '@/lib/workers/roles';
 // (BriefingBlock removed from the chat — Phase 3 F2: the prose brief duplicated the deck; the
 // composeBriefing machinery survives as the deck's ordering anchor + the daily report.)
@@ -329,7 +333,10 @@ function writeChatAddress(key: string | null) {
 //   • the thread's last-painted TURNS (`aug-dm-turns-v1-<agentId>`) — the reopen paints the last
 //     known conversation immediately and the server load appends behind it;
 //   • the presence roster the SIDEBAR already writes — the header's role subtitle, no new read.
-const DM_TURNS_LS = (agentId: string) => `aug-dm-turns-v1-${agentId}`;
+// v2 (W17): the cache is a RECORD `{ total, turns }` (lib/home/thread-cache) — the v1 bare tail
+// could not say where it sat in the thread, and the index merge re-appended turns already on screen
+// for any DM longer than the tail.
+const DM_TURNS_LS = (agentId: string) => `aug-dm-turns-v2-${agentId}`;
 // A cache is a first paint, never an archive: the tail is what a reopen looks at.
 const DM_TURNS_CACHED = 30;
 
@@ -363,6 +370,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // thread-shaped skeleton the DM waits under, never a blank pane and never a dead click.
   const [chatRoom, setChatRoom] = useState<string | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
+  // W17: the room a landing belongs to must still be the room on screen — a read for a room the
+  // reader already left (another chat, a DM, New, Home) writes to nothing.
+  const chatRoomRef = useRef<string | null>(null);
+  useEffect(() => { chatRoomRef.current = chatRoom; }, [chatRoom]);
   // The seat, hydrated from the ageless cache and refreshed once per mount (a reseat lands on the
   // next visit — the face of the voice is not something that may change under a reader mid-answer).
   const cosSeat = useCosSeat();
@@ -583,7 +594,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     workerRoomRef.current = null; setDmActor(null); setDmLoading(false); // a chief chat room leaves worker mode
     // The pane is taken NOW, off the key alone (the DM door's shape): the conversation exists, the
     // reader asked for it, and the wait belongs INSIDE the room — not in front of it.
-    setChatRoom(key); setChatLoading(true); setTurns([]);
+    setChatRoom(key); setChatLoading(true); setTurns([]); chatRoomRef.current = key;
     writeChatAddress(key); // THE ADDRESS LAW: the opened conversation owns its URL
     if (key.startsWith('chat:')) {
       setScope(null); setScopeHint(null);
@@ -593,22 +604,35 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         .then((d) => { if (d?.scope?.id) setScope({ id: d.scope.id, name: d.scope.name }); })
         .catch(() => {});
     }
-    fetch(`/api/room/turns?key=${encodeURIComponent(key)}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('turns'))))
-      .then((d) => {
-        if (!Array.isArray(d?.turns)) throw new Error('turns');
+    // W17 · THE CHAT OPENS FROM ITS LAST PAINT (components/home/chat-turns-warm): a conversation
+    // this tab has read before (or a row the reader hovered) paints its turns NOW, before the
+    // request is sent — the skeleton is only for a room this tab has never seen. The open's own
+    // read (the one that stamps the read marker) then lands BEHIND the paint through the one merge
+    // (lib/home/thread-cache): painted turns keep their seat; only genuinely new turns append.
+    const cache = peekChatTurns(key);
+    const cachedPaint = cache?.turns.length ? mapServerTurns(cache.turns as never) : null;
+    const paintedCache = cache && cachedPaint ? { total: cache.total, turns: cachedPaint } : null;
+    if (cachedPaint) { setTurns(cachedPaint); setChatLoading(false); }
+    fetchChatTurns(key)
+      .then((raw) => (raw ? raw : Promise.reject(new Error('turns'))))
+      .then((raw) => {
+        if (chatRoomRef.current !== key) return; // the reader moved on — this landing is not theirs
         setChatLoading(false);
         // AN EMPTY ROOM IS AN OPEN ROOM: `turns: []` is served truth, so the pane stands with its
         // composer and simply has nothing to say yet — a skeleton that never resolves would be
         // the deterministic forever-nothing this door was built to end.
-        setTurns(mapServerTurns(d.turns));
+        const loaded = mapServerTurns(raw as never);
+        setTurns((prev) => (paintedCache ? mergeThreadLanding(paintedCache, prev, loaded) : loaded));
         try { localStorage.setItem(CHAT_KEY_LS, key); } catch { /* no LS */ }
       }).catch(() => {
-        // THE FAILURE SPEAKS (openArtifact's idiom): a door that dies silently is a dead click the
-        // reader can only fix by guessing. The key is deliberately NOT stored — a conversation we
-        // could not read is not a room the next turn should append to.
+        if (chatRoomRef.current !== key) return;
+        // THE FAILURE SPEAKS: a dead click is fixable only by guessing. The key is NOT stored.
         setChatLoading(false);
-        setTurns([{ role: 'assistant', text: "Couldn't open that conversation — try again." }]);
+        const failed: Turn = { role: 'assistant', text: "Couldn't open that conversation — try again." };
+        // Behind a CACHED paint the painted turns stay (no mutation after paint) and the failure
+        // APPENDS beneath them — silence would let the reader type into a room their next turn is
+        // not saved to (the key was never claimed).
+        setTurns((prev) => (cachedPaint ? [...prev, failed] : [failed]));
       });
   };
   // ── THE CARD CONTRACT, THE SECOND HALF: the pointers are filled from the coworker thread ──────
@@ -718,7 +742,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     // coworker painted goes up NOW, before the request is even sent. The load below then lands
     // behind it under the no-mutation law — the painted turns keep their seat and only genuinely
     // new ones append (a DM is an append-only log, so freezeRows' semantics ARE the merge).
-    const painted = loadLS<Turn[]>(DM_TURNS_LS(agentId));
+    const paintedCache = readThreadCache<Turn>(loadLS(DM_TURNS_LS(agentId)));
+    const painted = paintedCache?.turns ?? null;
     if (painted?.length) {
       setTurns(painted);
       // A name is never invented: the pane already knows it when the reader clicked a coworker,
@@ -877,16 +902,16 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // truthful merge — and the cache is written from this same load, so a divergence can only be
       // a tail. Nothing already read moves under the reader; a genuinely fresh open (nothing
       // painted) simply takes the server's turns whole.
-      setTurns((prev) => (prev.length && painted?.length
-        ? (loaded.length > prev.length ? [...prev, ...loaded.slice(prev.length)] : prev)
-        : loaded));
+      // W17: the positional merge (lib/home/thread-cache) — older history folds in ABOVE the painted
+      // tail, genuinely new turns append at the foot, nothing on screen is repeated or rewritten.
+      setTurns((prev) => (prev.length && painted?.length ? mergeThreadLanding(paintedCache, prev, loaded) : loaded));
       setDmLoading(false);
       setTimeout(() => focusComposer(), 120);
       workerRoomRef.current = { id: agentId, name };
       setDmActor({ id: agentId, name });
       setScope(null); setScopeHint(null); // a coworker DM is addressed, never project-scoped from here
       saveLS(dmKey(agentId), tid);
-      if (!synthesized) saveLS(DM_TURNS_LS(agentId), loaded.slice(-DM_TURNS_CACHED));
+      if (!synthesized) saveLS(DM_TURNS_LS(agentId), threadCacheOf(loaded, DM_TURNS_CACHED));
       try { localStorage.setItem(CHAT_KEY_LS, key); } catch { /* no LS */ }
     } catch { setDmLoading(false); /* the click already opened the pane — an empty load stays honest */ }
   };
@@ -1814,15 +1839,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // is painted — a skeleton beside real content is a second claim about the same thread.
   // ONE SKELETON, BOTH LANES (Sep 18): the chat door waits under exactly this shape too — a second
   // placeholder for the same wait would be a second claim about the same pane.
+  // W17 · THE ONE PLACEHOLDER (components/thread/preparing-slot.tsx PreparingShape `thread`): the same
+  // bubbles, the kit's urgent pulse, reduced motion honoured — and no words (a read is not work in motion).
   const openingSkeleton = (dmLoading || chatLoading) && !hasThread ? (
-    <div className="space-y-5 py-2" aria-hidden>
-      {[0, 1, 2].map((i) => (
-        <div key={i} className={`flex gap-2.5 ${i === 1 ? 'justify-end' : ''}`}>
-          {i !== 1 && <span className="h-7 w-7 flex-shrink-0 animate-pulse rounded-full bg-neutral-200/70" />}
-          <span className={`h-[52px] animate-pulse rounded-2xl bg-neutral-200/50 ${i === 1 ? 'w-[42%]' : 'w-[62%]'}`} />
-        </div>
-      ))}
-    </div>
+    <PreparingShape shape="thread" />
   ) : null;
   // THE CONVERSATION IS A PAGE (owner, Aug 6 — "conversation-focused page, not a component"; a
   // hover-out must NEVER collapse a live conversation): once turns exist and the panel is open,

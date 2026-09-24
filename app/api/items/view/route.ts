@@ -10,6 +10,10 @@
 //   • inviteTaskId — an open prepared-calendar-invite step, so the detail can offer ONE contextual
 //     "Schedule" action (approve-gated card) without a step panel
 //   • entity   — the linked entity (provenance chip + the steer endpoint's memory target)
+//   • verdict  — W17 · NO WAITING: the item's CACHED judgment (lib/room/served-verdict — verb,
+//     component, executor, option labels; never the reason). The machine state below already stands
+//     on it; serving it lets the page's action widget (the decision's routes, the forward card, the
+//     reply gate) paint WITH this read instead of after a second request to the judge.
 //
 // HARD RULE (P0): no AI call in this GET — the plan is read AS CACHED (generation stays on the
 // existing POST /api/items/plan, pre-generated in the background from the Home).
@@ -35,6 +39,8 @@ import { originOf } from '@/lib/room/opening-fallback';
 import { anchorOf, activityAtOf, linkKindOf, looseRoomKeyOf, looseTitleOf, ANCHOR_ROW_SELECT, foldAnchorRow } from '@/lib/room/item-anchor';
 import { deriveGap, isOpenStep, isSendBlocked, motionClausesOf } from '@/lib/home/item-gaps';
 import type { ItemPlanKind, ItemPlanTask } from '@/lib/home/item-plan';
+import { readPlan } from '@/lib/store/item-plans';
+import { servedVerdictOf } from '@/lib/room/served-verdict';
 
 // W0.5 TIME BUDGET: four after() blocks below do AI-bearing background work (recognizeItem,
 // prepareOneItem, ensureRoomBrief/ensureLooseRoomBrief) — the platform default kills them mid-work,
@@ -47,6 +53,16 @@ const INVITE_PHRASE = /\b(calendar invite|calendar event|send (?:an? )?invite|bo
 // THE PERF WATCHDOG (W3.7 ROOM SPEED — the home/brief pattern): coarse phase marks, logged as ONE
 // line only when an open runs slow, so a regression on the room's critical path is never silent.
 const VIEW_SLOW_MS = 1_500;
+
+/** W17 · THE PHASES, VISIBLE — every response carries its phase marks as a `Server-Timing` header
+ *  (DevTools → Network → Timing), each phase as its own duration since the previous mark. */
+function serverTimingOf(marks: Array<[string, number]>): string {
+  let prev = 0;
+  return marks.map(([label, at]) => {
+    const dur = Math.max(0, at - prev); prev = at;
+    return `${label.replace(/[^a-z0-9_-]/gi, '_')};dur=${dur}`;
+  }).join(', ');
+}
 
 export async function GET(request: NextRequest) {
   const t0 = Date.now();
@@ -81,6 +97,11 @@ export async function GET(request: NextRequest) {
       ? Promise.resolve(null as PreparedState | null)
       : preparedState(supabase, user.id, { kind: linkKind, id }).catch(() => null);
     const linkP = Promise.resolve(supabase.from('entity_links').select('entity_id').eq('user_id', user.id).eq('item_kind', linkKind).eq('item_id', id).not('entity_id', 'is', null).maybeSingle());
+    // W17 · NO WAITING — THE CACHED JUDGMENT, beside wave 1 (one indexed select on the row the machine
+    // reads): served narrowed, so the first paint carries the action widget's own words.
+    const judgmentP = (linkKind === 'inbox_item' || linkKind === 'commitment')
+      ? readPlan(supabase, user.id, 'judgment', `${linkKind === 'inbox_item' ? 'inbox' : 'commitment'}:${id}`).then((row) => servedVerdictOf(row?.tasks ?? null)).catch(() => null)
+      : Promise.resolve(null);
     // ANY membership verdict (incl. a remembered refusal) — decides whether to recognize-on-open below.
     const anyVerdictP = Promise.resolve(supabase.from('entity_links').select('item_id').eq('user_id', user.id).eq('item_kind', linkKind).eq('item_id', id).maybeSingle());
     // The open item itself — the ANCHOR the rail leads with (P5b: the rail narrates THIS item first).
@@ -162,7 +183,7 @@ export async function GET(request: NextRequest) {
       return (await emailSourceOf(supabase, user.id, String(itemRow.source_id)))?.authoredByUser ?? null;
     });
     // Awaited below; marked handled here so an early exit (a throw in wave 1) never leaves one unhandled.
-    for (const p of [roomP, machineP, sourceItemIdP, sourceMeetingP, sourceAuthorP]) void p.catch(() => {});
+    for (const p of [roomP, machineP, sourceItemIdP, sourceMeetingP, sourceAuthorP, judgmentP]) void p.catch(() => {});
 
     const [planRes, prepState, linkRes, anyVerdict, itemRowRes] = await Promise.all([planP, prepP, linkP, anyVerdictP, itemRowP]);
     const preparedArts = prepState?.all ?? [];
@@ -242,7 +263,7 @@ export async function GET(request: NextRequest) {
 
     // ── WAVE 2 — THE RAIL + THE MACHINE + THE DOOR'S OWN OBJECT (each STARTED above on its own
     // input — W11.4), in ONE flight, awaited here beside the brief's last-good read.
-    const [room, machine, sourceItemId, sourceMeeting, sourceAuthor] = await Promise.all([roomP, machineP, sourceItemIdP, sourceMeetingP, sourceAuthorP]);
+    const [room, machine, sourceItemId, sourceMeeting, sourceAuthor, verdict] = await Promise.all([roomP, machineP, sourceItemIdP, sourceMeetingP, sourceAuthorP, judgmentP]);
     // W16.2 · the anchor's ORIGIN — pure, from the row's own facts + the source reader's authorship.
     const anchorOrigin = originOf({
       kind: linkKind, source: linkKind === 'inbox_item' ? (itemRow?.source as string | undefined) ?? 'email' : itemRow?.source ?? null,
@@ -323,8 +344,11 @@ export async function GET(request: NextRequest) {
       } catch { return true; }
     })();
     const totalMs = Date.now() - t0;
+    mark('total');
     if (totalMs > VIEW_SLOW_MS) console.log(`[items/view] slow ${totalMs}ms — ${marks.map(([l, m]) => `${l}:${m}ms`).join(' · ')}`);
     return NextResponse.json({
+      // W17 · THE CACHED JUDGMENT, narrowed (lib/room/served-verdict) — the action widget's own words.
+      verdict,
       // A CLAIM RENDERS (W2.1): the door serves only what THE ONE READER calls LIVE — a superseded
       // draft or a past-time invite never reaches a card (the full list stays server-side for the
       // ground trip above). `invite` rides so the card can show the STORED proposed time.
@@ -374,7 +398,7 @@ export async function GET(request: NextRequest) {
         const inv = preparedArts.filter(isLiveArtifact).find((a) => a.kind === 'invite');
         return inv ? inv.sendReady !== false : null;
       })(),
-    });
+    }, { headers: { 'Server-Timing': serverTimingOf(marks) } });
   } catch (e) {
     console.error('[items/view]', e);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
