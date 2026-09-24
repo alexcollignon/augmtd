@@ -32,12 +32,30 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (request.nextUrl.searchParams.get('warm') !== '1') {
       after(async () => { try { await joinCompose(uid, id, () => ensureRoomBrief(supabase, uid, id)); } catch { /* non-fatal */ } });
     }
-    const [{ entity, siblings }, r] = await Promise.all([buildRoomView(supabase, uid, id, null), lastGoodP]);
+    // W13.5 · SERVE-TIME TRUTH (lib/room/serve-truth): the entity's CURRENT board (THE ONE READER,
+    // batched) is read beside the room view, and last-good is re-validated against it BEFORE the
+    // paint — a MOVE whose object is no longer live is dropped, a brief whose claims no longer render
+    // is not served (the room's own fallback speaks; the recompose appends).
+    const { entityServeBoard, serveTimeTruth } = await import('@/lib/room/serve-truth');
+    const [{ entity, siblings }, lastGood, board] = await Promise.all([
+      buildRoomView(supabase, uid, id, null), lastGoodP, entityServeBoard(supabase, uid, id),
+    ]);
     if (!entity) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    const served = r ? { ...entity, brief: r.text, move: r.move, offers: r.offers, briefAt: r.at } : entity;
-    // Pending = nothing CURRENT painted (no last-good, or an older version) — the same rule the item
-    // door serves (app/api/items/view).
-    const briefPending = !r || !!r.staleVersion;
+    // An unreadable board serves last-good as before (the net is a protection, never a blocker).
+    // The decision/ask cards are not read here — unknown → true, so only a disproven claim withholds.
+    const serve = board ? serveTimeTruth(lastGood, { board, hasDecision: true, hasAsk: true })
+      : { response: lastGood, withheld: false, moveDropped: false, dropped: [] as string[] };
+    if (serve.withheld || serve.moveDropped) {
+      console.log(`[entities/room] serve-time truth ${id}: ${serve.withheld ? 'withheld last-good' : 'dropped a dead MOVE'}`);
+    }
+    const r = serve.response;
+    // buildRoomView carries its OWN last-good read on `entity` — never served past the net: the door's
+    // brief fields are exactly what the serve-time truth let through (nothing, when it withheld).
+    const served = r ? { ...entity, brief: r.text, move: r.move, offers: r.offers, briefAt: r.at }
+      : { ...entity, brief: null, move: null, offers: [], briefAt: null };
+    // Pending = nothing CURRENT painted (no last-good, or an older version, or a withheld last-good) —
+    // the same rule the item door serves (app/api/items/view).
+    const briefPending = !r || !!r.staleVersion || serve.withheld;
     return NextResponse.json({
       anchor: null, gap: null, entity: served, siblings,
       briefPending,

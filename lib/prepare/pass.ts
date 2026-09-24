@@ -1140,9 +1140,29 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
     // W9.1 THE USER'S HAND WINS: a send drafted beside the user's own message would SHADOW it (the
     // reader serves the newest commitment draft) — their words stand; the file is theirs to attach.
     if (isPoolRowHandHeld('reply_draft', prior)) return { did: 'none', reason: 'your edit stands — the engine never overwrites your words' };
+    // ── W13.5 · A WITHDRAWN SEND IS RETIRED WHEN THE LANE LANDS ELSEWHERE: THE ONE READER withdrew the
+    // machine doc-send (a file matched under an older staging law, riding the base, words that fail
+    // the vet) and today's verifier did NOT re-prove a send — it asked, or offered the base. The
+    // withdrawn draft is filed into the version chain through THE ONE superseding writer (never
+    // deleted; the user's hand and a sent row are never touched), so the reader stops holding a
+    // non-live artifact and the on-open trip is not due again on every open. A re-proven send
+    // replaces it in place (writeDeliverable dedupes on task_id). ──
+    const retireWithdrawn = async (reason: string): Promise<void> => {
+      if (!sendWithdrawn) return;
+      try {
+        // The machine doc-send itself (not merely the newest draft — a nudge may sit above it).
+        const { data: sendRow, error: sendErr } = await admin.from('item_deliverables').select('metadata')
+          .eq('user_id', userId).eq('kind', 'commitment').eq('entity_id', w.entityId).eq('task_id', 'prepare-pass-docsend')
+          .filter('metadata->>version_of', 'is', null).limit(1).maybeSingle();
+        const fid = ((sendRow?.metadata ?? {}) as { attachment?: { fileId?: unknown } }).attachment?.fileId;
+        if (sendErr || typeof fid !== 'string') return;
+        const { supersedeDraftsRiding } = await import('@/lib/prepare/requirements');
+        await supersedeDraftsRiding(admin, userId, 'commitment', w.entityId, [fid], reason);
+      } catch { /* non-fatal — the reader still withholds it */ }
+    };
     const cCands = await resolveFileUniversal(admin, { userId, entityId: w.entity?.id ?? null }, w.title, 4).catch(() => []);
     const cTop = cCands.find((c) => c.source === 'kb');
-    if (!cTop || cTop.score < 0.7) { await askForFile(admin, userId, w, `the document itself`); return { did: 'none', reason: 'could not find the document — asked in the room' }; }
+    if (!cTop || cTop.score < 0.7) { await retireWithdrawn('withdrawn send — no file found for it now'); await askForFile(admin, userId, w, `the document itself`); return { did: 'none', reason: 'could not find the document — asked in the room' }; }
     // W6 — the ONE evidence-quoting verifier (cross-entity rejected structurally; the quote is
     // code-checked): a wrong attach is worse than none.
     // W13 · A STAGED FILE IS THE DELIVERABLE, OR IT ISN'T STAGED: the request's own date + words ride
@@ -1150,8 +1170,8 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
     const { verifyArtifactMatch: verifyC, requestFactsOf: reqFactsC } = await import('@/lib/prepare/requirements');
     const reqC = await reqFactsC(admin, userId, { kind: 'commitment', id: w.entityId });
     const cJudge = await verifyC(admin, userId, { task: w.title, candidate: cTop, entityId: w.entity?.id ?? null, emailExcerpt: reqC.excerpt, requestAt: reqC.requestAt, requestText: reqC.requestText });
-    if (!cJudge.match && cJudge.role === 'base') return await offerBase(admin, userId, w, 'commitment', cTop, reqC.requestAt);
-    if (!cJudge.match) { await askForFile(admin, userId, w, `the document itself`); return { did: 'none', reason: 'no confident file match — asked in the room' }; }
+    if (!cJudge.match && cJudge.role === 'base') { await retireWithdrawn('withdrawn send — the file is the base of new work, not the deliverable'); return await offerBase(admin, userId, w, 'commitment', cTop, reqC.requestAt); }
+    if (!cJudge.match) { await retireWithdrawn('withdrawn send — its file is not proven to be the deliverable'); await askForFile(admin, userId, w, `the document itself`); return { did: 'none', reason: 'no confident file match — asked in the room' }; }
     // TRUE ADDRESSEES (W7.3): the send is addressed by THE ONE LADDER and stamped with it.
     const { resolveCommitmentAddressee: resolveC, recipientsLabel: labelC, addresseeStamp: stampC } = await import('@/lib/prepare/addressee');
     const cAddr = await resolveC(admin, userId, w.entityId);

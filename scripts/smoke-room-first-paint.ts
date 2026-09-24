@@ -68,9 +68,15 @@ console.log('\nA · (a) the composed brief reaches the first paint (compose befo
     // APPENDED on the client's one re-check (A7/A8 — the append rule is unchanged). smoke-room-voice
     // owns the "no await on compose" floor.
     /const lastGoodP = readRoomResponse\(supabase, user\.id, looseKey, \{ allowStaleVersion: true \}\)/.test(view)
-    && /onOpen\(\(\) => joinCompose\(uid, looseKey, \(\) => ensureLooseRoomBrief\(supabase, uid, looseKey, anchorForBrief\)\)\);/.test(view)
+    // ⟲ RE-POINTED (W13.5 THE RE-PREPARE TRIP ON WITHDRAWAL): the same joinCompose + ensureLooseRoomBrief
+    // still runs only under onOpen/after(), now chained AFTER the budgeted on-open trip (when one is due)
+    // so the appended opening reads the corrected board.
+    && /onOpen\(async \(\) => \{\s*\n\s*if \(tripDue\) \{[^\n]*reprepareTrip[^\n]*\}\s*\n\s*await joinCompose\(uid, looseKey, \(\) => ensureLooseRoomBrief\(supabase, uid, looseKey, anchorForBrief\)\);/.test(view)
     && /const onOpen = \(work: \(\) => Promise<unknown>\) => \{ if \(!warm\) after\(/.test(view)
-    && !/await[^;\n]*ensureLooseRoomBrief/.test(view) && !/briefBeforePaint\(/.test(view)
+    // ⟲ (W13.5): the one awaited compose lives INSIDE the onOpen/after() block (chained after the trip);
+    // outside that block nothing awaits a compose — the GET path still never does.
+    && !/await[^;\n]*ensureLooseRoomBrief/.test(view.replace(/onOpen\(async \(\) => \{\s*\n\s*if \(tripDue\)[\s\S]*?anchorForBrief\)\);\s*\n\s*\}\);/, ''))
+    && (view.match(/ensureLooseRoomBrief\(/g) ?? []).length === 1 && !/briefBeforePaint\(/.test(view)
     && !/ensureRoomBrief\(supabase, uid, eid\)/.test(view)
     // the old after()-only compose is gone
     && !/after\(async \(\) => \{\s*try \{ const \{ ensureRoomBrief \}/.test(view)
@@ -82,7 +88,10 @@ console.log('\nA · (a) the composed brief reaches the first paint (compose befo
     && /\{ \.\.\.room\.entity, brief: null, move: null, offers: \[\], briefAt: null \}/.test(view)
     && /const looseBrief = r\?\.text \?\? null;/.test(view)
     // ⟲ RE-POINTED (W8.4): pending = nothing current painted (no last-good, or an older version).
-    && /const briefPending = !r \|\| !!r\.staleVersion;/.test(view) && /\n      briefPending,\n/.test(view)
+    // ⟲ RE-POINTED (W13.5 SERVE-TIME TRUTH): `r` is last-good AFTER the serve-time net; pending also
+    // covers a withheld last-good and a re-prepare trip about to correct the board.
+    && /const r = serve\.response \?/.test(view)
+    && /const briefPending = !r \|\| !!r\.staleVersion \|\| serve\.withheld \|\| tripDue;/.test(view) && /\n      briefPending,\n/.test(view)
     && /briefStaleVersion: true/.test(view));
 
   const room = src('app/api/entities/[id]/room/route.ts');
@@ -94,7 +103,9 @@ console.log('\nA · (a) the composed brief reaches the first paint (compose befo
     /readRoomResponse\(supabase, uid, id, \{ allowStaleVersion: true \}\)/.test(room)
     && /after\(async \(\) => \{ try \{ await joinCompose\(uid, id, \(\) => ensureRoomBrief\(supabase, uid, id\)\); \} catch/.test(room)
     && /brief: r\.text, move: r\.move, offers: r\.offers, briefAt: r\.at/.test(room)
-    && /const briefPending = !r \|\| !!r\.staleVersion;/.test(room) && /\n      briefPending,\n/.test(room));
+    // ⟲ RE-POINTED (W13.5 SERVE-TIME TRUTH): `r` is last-good after the net; a withheld one is pending.
+    && /const r = serve\.response;/.test(room)
+    && /const briefPending = !r \|\| !!r\.staleVersion \|\| serve\.withheld;/.test(room) && /\n      briefPending,\n/.test(room));
 
   const detail = src('components/home/item-detail.tsx');
   const eroom = src('components/entities/entity-room.tsx');

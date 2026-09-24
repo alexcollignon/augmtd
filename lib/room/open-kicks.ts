@@ -20,6 +20,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { preparedState, isLiveArtifact, type PreparedArtifact } from '@/lib/prepare/read';
 import { anchorOf, linkKindOf, looseRoomKeyOf, looseTitleOf, ANCHOR_ROW_SELECT, foldAnchorRow } from '@/lib/room/item-anchor';
+import { createSingleFlight } from '@/lib/room/single-flight';
 
 type LinkKind = 'inbox_item' | 'commitment' | 'meeting';
 
@@ -43,14 +44,40 @@ export async function recognizeOnOpen(client: SupabaseClient, uid: string, linkK
   } catch { /* non-fatal — the cron hooks are the backstop */ }
 }
 
+/** W13.5 · THE TRIP IS DUE when THE ONE READER holds any prepared artifact that is not LIVE — a
+ *  withdrawal (falseClaim · stagingStale · baseAsAnswer · wrongIdentity ride `falseClaim`), a
+ *  superseded/outside-window/misaddressed artifact, or an expired one. ONE predicate for both open
+ *  paths (the view door and the joined-warm kick). Pure. */
+export function needsReprepareTrip(arts: PreparedArtifact[]): boolean {
+  return arts.some((a) => !isLiveArtifact(a));
+}
+
+/** THE TRIP'S BUDGET (W13.5): at most ONE re-prepare per item per window, in-process (the crons and
+ *  the stored artifacts are the cross-instance backstop). A trip whose lane lands on an ask/base
+ *  retires the withdrawn artifact (lib/prepare/pass prepareDocSend), so the next open is not due at
+ *  all; the window only stops a burst of opens from re-buying the same verify while it runs. */
+export const REPREPARE_TRIP_WINDOW_MS = 10 * 60 * 1000;
+const _tripFlight = createSingleFlight<void>();
+
 /** THE GROUND LAW's on-open trip: something prepared here is not LIVE (superseded, outside the stated
- *  window, a false claim, expired) — re-prepare so the next read serves work built from the present.
- *  Idempotent; every lane re-checks the ground and no-ops once re-prepared. */
+ *  window, a false claim, expired, withdrawn by the reader) — re-prepare so the next read serves work
+ *  built from the present. Idempotent; every lane re-checks the ground and no-ops once re-prepared.
+ *  Budgeted: one trip per item per REPREPARE_TRIP_WINDOW_MS (concurrent callers join the flight). */
 export async function reprepareTrip(
   client: SupabaseClient, uid: string, linkKind: LinkKind, id: string,
   row: { work_title?: string; description?: string; created_at?: string } | null, entityId: string | null,
 ): Promise<void> {
   if (linkKind !== 'inbox_item' && linkKind !== 'commitment') return;
+  await _tripFlight.run(`${uid}|${linkKind}|${id}`, async () => {
+    await runReprepareTrip(client, uid, linkKind, id, row, entityId);
+    return { value: undefined, memoMs: REPREPARE_TRIP_WINDOW_MS };
+  }).catch(() => {});
+}
+
+async function runReprepareTrip(
+  client: SupabaseClient, uid: string, linkKind: 'inbox_item' | 'commitment', id: string,
+  row: { work_title?: string; description?: string; created_at?: string } | null, entityId: string | null,
+): Promise<void> {
   try {
     const { prepareOneItem } = await import('@/lib/prepare/pass');
     const title = String(row?.work_title ?? row?.description ?? 'this item');
@@ -87,15 +114,18 @@ export async function kickOpenedItem(
   const row = foldAnchorRow(linkKind, rowRes.data) as Record<string, unknown>;
   const arts: PreparedArtifact[] = st?.all ?? [];
   const recognize = !verdictRes.error && !verdictRes.data;
-  const trip = arts.some((a) => !isLiveArtifact(a));
+  const trip = needsReprepareTrip(arts);
   const roomKey = looseRoomKeyOf(linkKind, id);
   const a = anchorOf(linkKind, row, arts);
   const anchorForBrief = { title: looseTitleOf(linkKind, row), who: a.who, ask: a.ask, prepared: a.prepared };
   const { ensureLooseRoomBrief, joinCompose } = await import('@/lib/room/brief');
+  // W13.5: the trip runs BEFORE the compose (the opening is written against the corrected board).
   const [composed] = await Promise.all([
-    joinCompose(uid, roomKey, () => ensureLooseRoomBrief(client, uid, roomKey, anchorForBrief)).catch(() => null),
+    (async () => {
+      if (trip) await reprepareTrip(client, uid, linkKind, id, row as never, (linkRes.data?.entity_id as string | undefined) ?? null);
+      return joinCompose(uid, roomKey, () => ensureLooseRoomBrief(client, uid, roomKey, anchorForBrief)).catch(() => null);
+    })(),
     recognize ? recognizeOnOpen(client, uid, linkKind, id) : Promise.resolve(),
-    trip ? reprepareTrip(client, uid, linkKind, id, row as never, (linkRes.data?.entity_id as string | undefined) ?? null) : Promise.resolve(),
   ]);
   return { composed: !!composed, recognized: recognize, tripped: trip };
 }

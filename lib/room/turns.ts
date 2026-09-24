@@ -90,14 +90,57 @@ export async function writeRoomTurn(
         return;
       }
     }
-    await client.from('room_turns').insert({
+    const row = {
       user_id: userId, room_key: roomKey, role: turn.role, text: turn.text,
       refs: turn.refs?.length ? turn.refs : null,
       component: turn.component ?? null,
       author: turn.author ?? null,
       dedupe_key: turn.dedupeKey ?? null,
-    });
+    };
+    const { error: insErr } = await client.from('room_turns').insert(row);
+    // ── AN ARCHIVED TURN NEVER HOLDS ITS KEY HOSTAGE (stabilization W13.5 — found live: an engine
+    // `requires:<item>` ask was archived, the requirement was still missing, and every later re-post
+    // of the ask silently vanished). The dedupe unique index (user_id, room_key, dedupe_key —
+    // supabase/migrations/20260725_room_turns.sql) predates `archived_at` and is not partial on it,
+    // while the lookup above matches LIVE rows only — so the insert collided with the archived row
+    // and the error was swallowed: an archived key was burnt for good (census Sep 24: 84 archived
+    // engine asks). THE FIX, zero migration: the archived holder RELEASES the key (it stays in its
+    // session as history under `<key>#archived:<its archived_at>`), and the live write lands.
+    if (insErr && turn.dedupeKey && isUniqueViolation(insErr)) {
+      const released = await releaseArchivedKey(client, userId, roomKey, turn.dedupeKey);
+      if (released) await client.from('room_turns').insert(row);
+    }
   } catch { /* non-fatal — the in-memory store still renders this session */ }
+}
+
+/** Postgres unique_violation (23505), as PostgREST reports it. Pure. */
+export function isUniqueViolation(err: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  return !!err && (err.code === '23505' || /duplicate key value/i.test(String(err.message ?? '')));
+}
+
+/** The archived spelling of a released key — unique per archive batch, and never matched by a live
+ *  lookup (no writer ever keys on it). Pure; exported for the gate. */
+export function archivedKeyOf(dedupeKey: string, archivedAt: string | null | undefined): string {
+  return `${dedupeKey}#archived:${archivedAt ?? 'unknown'}`;
+}
+
+/** Release a dedupe key held only by ARCHIVED turns (never a live one). Returns true when a holder was
+ *  renamed. Non-fatal; a live holder is never touched (the caller's live lookup would have found it). */
+export async function releaseArchivedKey(
+  client: SupabaseClient, userId: string, roomKey: string, dedupeKey: string,
+): Promise<boolean> {
+  try {
+    const { data, error } = await client.from('room_turns').select('id, archived_at')
+      .eq('user_id', userId).eq('room_key', roomKey).eq('dedupe_key', dedupeKey).not('archived_at', 'is', null);
+    if (error || !data?.length) return false;
+    let n = 0;
+    for (const r of data as Array<{ id: string; archived_at: string | null }>) {
+      const { error: upErr } = await client.from('room_turns').update({ dedupe_key: archivedKeyOf(dedupeKey, r.archived_at) })
+        .eq('id', r.id).eq('user_id', userId).not('archived_at', 'is', null);
+      if (!upErr) n++;
+    }
+    return n > 0;
+  } catch { return false; }
 }
 
 const mapRows = (rows: Array<Record<string, unknown>>): RoomTurn[] =>
