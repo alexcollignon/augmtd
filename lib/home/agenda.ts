@@ -33,6 +33,10 @@ export type DoItem = {
    *  The deck folds it into `second`; THE CALM HOME needs it whole to word a whisper's receipt
    *  (lib/home/calm.ts). Derived from the SAME machineWord() call — never a second vocabulary. */
   stateWord?: string | null;
+  /** W16.3 · THE MACHINE's single state (the served MachineHint's `state`) — the held list / triage
+   *  card choose their "ready" pill through the item page's own table from it (components/thread/
+   *  item-page.ts receiptKindOfItem), so a card never promises a widget the page would not show. */
+  machineState?: string | null;
 };
 export type Priority = {
   id: string; source: 'email' | 'meeting'; posture: 'needs_reply' | 'to_do' | 'waiting_on';

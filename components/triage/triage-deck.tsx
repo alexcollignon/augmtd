@@ -73,9 +73,11 @@ import type { HeldClassId } from '@/lib/home/attention';
 import {
   TRIAGE_KEYS, TRIAGE_VERBS, TRIAGE_EXIT_LABEL, TRIAGE_HINTS, TRIAGE_UNDO_LABEL,
   TRIAGE_SOURCE_WORD, TRIAGE_THREADED, TRIAGE_VIEW_ALL,
-  laterOptions, whenWords, triageReceipt, triageEnd, initialOf, verbsOfRank,
+  laterOptions, whenWords, triageReceipt, triageEnd, initialOf, verbsOfRank, readyWordOf,
   type TriageTally, type TriageVerb, type TriageMessage,
 } from '@/lib/triage/words';
+// W16.3 · the card's why-line is printed as a sentence (its words' one home: lib/home/held-words.ts).
+import { sentenceCase } from '@/lib/home/held-words';
 // THE ONE THREAD-DOOR READER (lib/inbox/thread-door.ts) — shared with the room's object card, so
 // the tail a deck warms is the tail a room shows, read once.
 import { loadThreadTail, loadThreadDoor, peekThreadDoor } from '@/lib/inbox/thread-door';
@@ -107,10 +109,10 @@ export type TriageRow = {
   why: string;
   excerpt: string | null;
   dueDate: string | null;
-  /** The prepared artifact's kind, when one stands ('reply_draft' | 'invite'). A row handed over by
-   *  the Home carries none: it may say a prepared WORD (below) but it never promises a renderer. */
+  /** W16.3 · the prepared kind the ITEM PAGE would mount as its one widget (components/thread/
+   *  item-page.ts receiptKindOfItem) — worded by `readyWordOf`, never mounted here. Null → no pill. */
   prepared: string | null;
-  /** The prepared RECEIPT as a word ("drafted", "reply prepared") — a chip, never a mount. */
+  /** Legacy word slot — no longer printed (the pill is worded from `prepared` by one table). */
   preparedWord?: string | null;
   /** The held class — the subject of a posture, when one is keepable. */
   cls: HeldClassId | null;
@@ -195,11 +197,14 @@ function TriageCard({ row }: { row: TriageRow }) {
   // THE WHY-HELD CLAUSE — the ledger's own served sentence, and nothing else. W8.3: the judge's
   // reason once rode here ("The stated deadline (2026-08-07) passed 47 days ago…") — the brain talking
   // to itself on screen (THE NO-INTERNAL-TEXT LAW). The deck context no longer carries it at all.
-  const whyLine = row.why;
-  // THE CONTEXTUAL CHIP — the prepared state where one was served, else the held class's own word.
-  // It never invents a state: a row with neither wears nothing.
-  const chip = row.preparedWord ?? (row.prepared === 'reply_draft' ? 'draft ready'
-    : row.prepared === 'invite' ? 'invite ready' : null);
+  // W16.3 · THE WHY IS IN THE READER'S WORDS ("Waiting for you", "Due Sep 13", "Sam asked you on
+  // Sep 22", "Looks done — confirm") — composed by the one home (lib/home/held-words.ts rowWhyOf) and
+  // printed as a sentence here; never the machinery's words.
+  const whyLine = sentenceCase(row.why);
+  // W16.3 · THE PILL IS THE ITEM PAGE'S WIDGET: `row.prepared` is the kind the item page would mount
+  // (components/thread/item-page.ts receiptKindOfItem over the machine's state + the one reader's live
+  // kinds), worded by ONE table. A withdrawn draft has no kind here, so the card says nothing.
+  const chip = readyWordOf(row.prepared);
 
   // W15.3 · THE ONE DECISION CARD — every kind of row gets the same fixed-height frame: the head is
   // bounded (its lines clamp), the evidence scrolls INSIDE the card, and the verbs sit outside it.
@@ -218,7 +223,7 @@ function TriageCard({ row }: { row: TriageRow }) {
           <div className="flex min-w-0 flex-1 flex-col">
             {row.who && <span className="truncate text-[13px] font-medium text-neutral-800">{row.who}</span>}
             <span className="flex items-center gap-1.5 text-[11px] text-neutral-400">
-              {[sourceWord, project, row.dueDate ? whenWords(row.dueDate) : null].filter(Boolean).map((t, i) => (
+              {[sourceWord, project].filter(Boolean).map((t, i) => (
                 <span key={i} className="flex items-center gap-1.5">
                   {i > 0 && <span aria-hidden>·</span>}
                   <span className={t === project ? 'truncate' : undefined}>{t}</span>

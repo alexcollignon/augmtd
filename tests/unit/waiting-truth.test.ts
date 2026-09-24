@@ -30,7 +30,8 @@ describe('unjudged rows never claim', () => {
   });
   it('a past-dated unjudged row says its date passed, in plain words', () => {
     const f = row({ neverJudged: true, judgedCurrent: false, sd: u({ ownership: 'you_owe', deadline: '2026-07-16' }) });
-    expect(whyHeldOf(classifyHeld(f), f, TODAY)).toBe('its stated date (Jul 16) has passed — never judged');
+    // ⟲ W16.3 · plain words (no "judged"); the same fact — the date passed and nothing was looked at.
+    expect(whyHeldOf(classifyHeld(f), f, TODAY)).toBe('its date (Jul 16) has passed — not looked at yet');
   });
   it('urgent counts only the judged waiting rows', () => {
     const past = row({ neverJudged: true, judgedCurrent: false, sd: u({ ownership: 'you_owe', deadline: '2026-07-16' }) });

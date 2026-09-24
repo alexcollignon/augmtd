@@ -75,13 +75,24 @@ export const TRIAGE_ONE_AT_A_TIME = 'One at a time';
 /** The undo pill's word — it appears only when there is something to undo (the frame's own test). */
 export const TRIAGE_UNDO_LABEL = 'Undo';
 
-/** THE ROW'S OWN KIND, in one plain word. A card says WHAT it is looking at — a mail, an obligation
- *  the reader made, a deal going quiet — because the verbs mean slightly different things for each
- *  and the reader is deciding at speed. Mapped from the row's own `DoItem.source`; an unmapped
- *  source says nothing rather than guessing a noun. */
+/** THE ROW'S OWN KIND, in one plain word. A card says WHAT it is looking at, because the verbs mean
+ *  slightly different things for each and the reader is deciding at speed. Mapped from the row's own
+ *  `DoItem.source`; an unmapped source says nothing rather than guessing a noun.
+ *  W16.3 (owner walk, Sep 24): the words are the reader's — "Email", "Commitment", "From a meeting" —
+ *  never the platform's lane tokens ("mail", "meeting action"). */
 export const TRIAGE_SOURCE_WORD: Record<string, string> = {
-  reply: 'mail', notice: 'mail', commitment: 'commitment', deal: 'deal', meeting: 'meeting action',
+  reply: 'Email', notice: 'Email', commitment: 'Commitment', deal: 'Deal', meeting: 'From a meeting',
 };
+
+/** W16.3 · THE CARD'S "READY" PILL — ONE word per prepared kind. The kind itself is chosen by the item
+ *  page's own table (components/thread/item-page.ts `receiptKindOfItem`), so a card wears a pill
+ *  exactly when opening the item shows that prepared widget. A kind with no row says nothing. */
+export const TRIAGE_READY_WORDS: Record<string, string> = {
+  reply_draft: 'draft ready', nudge_draft: 'follow-up ready', invite: 'invite ready',
+  forward: 'forward ready', deliverable: 'ready to review', paste_pack: 'words ready',
+};
+export const readyWordOf = (kind: string | null | undefined): string | null =>
+  (kind && Object.prototype.hasOwnProperty.call(TRIAGE_READY_WORDS, kind) ? TRIAGE_READY_WORDS[kind] : null);
 
 /** WHICH ROWS HAVE A THREAD AT ALL. Only an inbox row has one (the ledger's pool is pending mail),
  *  so only an inbox row's card reaches for the thread door — a commitment card shows the founding

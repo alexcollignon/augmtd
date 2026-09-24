@@ -114,8 +114,12 @@ function walk(dir: string, out: string[] = []): string[] {
   // ═══ E · ONE READER — the held ledger / triage deck ═══
   console.log('E · attention reads through the one reader:');
   const att = code('lib/home/attention.ts');
+  // ⟲ RE-POINTED (W16.3 — stricter): the ledger's pill no longer reads source_data at all; it is the
+  // item page's widget over the ONE READER's IO verdict (preparedStatesFor via workStatesFor — which
+  // applies the addressee floor AND the mailbox-identity/ground floors the pure path could not).
   gate('E1 the held ledger reads the ONE READER\'s live verdict, never the raw source_data list',
-    /liveFromSourceData\(/.test(att) && !/preparedFromSourceData/.test(att));
+    /receiptKindOfItem\(truth\.state, truth\.liveKinds\)/.test(att) && !/preparedFromSourceData|liveFromSourceData/.test(att)
+    && /liveKinds: \(st\?\.all \?\? \[\]\)\.filter\(isLiveArtifact\)/.test(code('lib/work/machine.ts')));
   gate('E2 the user\'s forms ride from the derivation into the pure ledger (held-members → held-cache → buildHeldLedger)',
     /loadUserForms\(client, userId\)/.test(code('lib/deeds/held-members.ts')) && /user: derived\.userForms/.test(code('lib/deeds/held-cache.ts')));
   const U = { name: 'Samuel Rivera', aliases: ['sam@acme.test'] };

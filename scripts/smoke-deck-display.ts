@@ -113,7 +113,8 @@ console.log('\nDD2 · NOISE NEVER WEARS A DRAFT, NEVER LEADS THE BAND');
       body: 'Can you send it?', understanding: { role: 'addressed', relevance: 'reply', ownership: 'you_owe' }, draft: { body: 'Sure', generated_at: '2026-09-20T00:00:00Z' } } },
     isEcho: false, judgedNone: false, calendarAdjacent: true, budgetOverflow: true,
   };
-  const realRow = buildHeldLedger([real], '2026-09-23').bands.waiting.rows[0];
+  // ⟲ W16.3 · the receipt is the ITEM PAGE's widget over the served machine truth (the one reader's live kinds).
+  const realRow = buildHeldLedger([real], '2026-09-23', { itemPage: { r1: { state: 'awaiting_approval', liveKinds: ['reply_draft'] } } }).bands.waiting.rows[0];
   ok('   …while real correspondence keeps its draft receipt and its brought-forward seat',
     realRow?.prepared === 'reply_draft' && realRow?.cls === 'brought_forward', JSON.stringify(realRow));
 }

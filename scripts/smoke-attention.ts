@@ -881,16 +881,17 @@ function qualityGates() {
     // only, so the intro claims a JUDGMENT ("judged things"), never "real … all alive", and its date
     // fact is "due today or past due", never "a deadline that has landed" (smoke-waiting-truth A13).
     ok('the intro states the gradient in the served numbers',
-      /12 judged things wait behind today's 5/.test(intro) && /none due yet\./.test(intro) && !/all alive/.test(intro)
+      // ⟲ W16.3 · plain words ("waiting for you") — never "judged … today's 5".
+      /12 more things are waiting for you/.test(intro) && /none due yet\./.test(intro) && !/all alive|judged/.test(intro)
       && /Everything else is handled: 5 filed quietly, 3 more being watched/.test(intro)
       && /Nothing is deleted, and anything comes back\./.test(intro), intro);
     ok('   …"none due yet" is NEVER spoken over a due or past-due row',
       /2 of them are due today or past due/.test(heldIntro({ ...l, bands: { ...l.bands, waiting: { ...l.bands.waiting, urgent: 2 } } }, 0)));
     ok('   …the deck\'s own held rows count into the waiting number',
-      /14 judged things wait/.test(heldIntro(l, 2)));
+      /14 more things are waiting for you/.test(heldIntro(l, 2)));
     ok('   …and an empty account says so rather than composing a hollow claim',
       heldIntro({ total: 0, classes: [], servedCount: 0, bands: { waiting: { count: 0, urgent: 0, rows: [], hasMore: false }, watched: { count: 0, rows: [], hasMore: false }, handled: { count: 0, classes: [] } } } as any, 0)
-      === 'Nothing is being held back right now.');
+      === 'Nothing is waiting right now.');
     const receipts = heldReceipts(l);
     ok('the receipts footer states the bound AND Q3\'s earned claim',
       /read from 900 pending items/.test(receipts) && /filed 312 this month/.test(receipts)
@@ -1589,14 +1590,17 @@ function walkGates() {
       && /\[sourceWord, project, row\.dueDate \? whenWords\(row\.dueDate\) : null\]\.filter\(Boolean\)/.test(deck)
       // ⟲ RE-POINTED (W8.3 — NO INTERNAL TEXT reaches the triage card): the why line is the ledger's
       // served clause alone; the judge's reason no longer joins it.
-      && /const whyLine = row\.why;/.test(deck) && /\{whyLine && <p/.test(deck)
+      // ⟲ W16.3: the served clause is printed as a sentence (sentenceCase) — still the clause alone.
+      && /const whyLine = sentenceCase\(row\.why\);/.test(deck) && /\{whyLine && <p/.test(deck)
       && /threaded && tail && tail\.length > 0 \?/.test(deck)
       && /\) : row\.excerpt \? \(/.test(deck));
     ok('   …the kind comes from ONE table, and an unmapped source says nothing',
       /export const TRIAGE_SOURCE_WORD: Record<string, string>/.test(words)
       && /const sourceWord = TRIAGE_SOURCE_WORD\[row\.item\.source\] \?\? null;/.test(deck));
+    // ⟲ RE-POINTED (W16.3 — stricter): the chip is worded from the kind the ITEM PAGE would mount
+    // (one table), never from a free-standing word — still a chip, never a renderer.
     ok('   …a prepared WORD is a chip, never a promise of a renderer',
-      /const chip = row\.preparedWord \?\?/.test(deck)
+      /const chip = readyWordOf\(row\.prepared\);/.test(deck)
       && /\{chip && \(/.test(deck)
       && /preparedWord\?: string \| null;/.test(deck));
     // RE-POINTED Sep 18 (THE ROW LEADS WITH WHO): the handed `who` was `it.primary`, which is null

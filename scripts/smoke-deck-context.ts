@@ -101,13 +101,18 @@ console.log('\nDC3 · FOUNDING CONTEXT');
   // ⟲ RE-POINTED (W8.3): the why line is the ledger's served clause ALONE — the judge's reason never
   // joins it (the no-internal-text law; smoke-waiting-truth asserts the same from its side).
   ok('   …a meeting-born one names its meeting; the why line is the served clause alone (no judge reason)',
-    /From \$\{ctx\.meeting\.title\}/.test(card) && /const whyLine = row\.why;/.test(card) && !/ctx\??\.reason/.test(card));
+    /From \$\{ctx\.meeting\.title\}/.test(card)
+    // ⟲ W16.3: the served clause is printed as a sentence (sentenceCase) — still the served clause alone.
+    && /const whyLine = sentenceCase\(row\.why\);/.test(card) && !/ctx\??\.reason/.test(card));
   ok('the project reference rides the card\'s source line (served, tracked-only, never doubled)',
     /project: whisperProject\(it, facts\.title\)/.test(home)
     && /initiative: r\.project \?\? null/.test(held)
     && /const project = \(row\.item\.initiative \?\? ''\)\.trim\(\) \|\| null;/.test(card));
   ok('the LIVE prepared kind reaches the row from THE ONE READER\'s served kind (never re-read)',
-    /preparedKind: it\.prepared \? \(it\.preparedKind \?\? null\) : null/.test(home)
+    // ⟲ W16.3 (stricter): the one reader's served lead kind reaches the row ONLY through the item
+    // page's table over the machine's state (a kind the page would not mount is no receipt).
+    /receiptKindOfItem\(it\.machineState \?\? null, it\.prepared \? \[it\.preparedKind \?\? null\] : \[\]\)/.test(home)
+    && /preparedKind: pageKind,/.test(home)
     && /prepared: d\.preparedKind \?\? null/.test(held)
     && !/import\([^)]*prepare\/read|from '@\/lib\/prepare\/read'|from\('item_deliverables'\)/.test(reader));
   // ⟲ RE-POINTED (W8.3): the item's OWN source leads (source email → its inbox row), the thread is
