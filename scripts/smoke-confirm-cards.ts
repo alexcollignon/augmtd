@@ -252,7 +252,11 @@ console.log('\nC9 · THE PRESENTATION — one host, the kit’s approval kind, e
     && /\/api\/changes\/\$\{spec\.id\}\/\$\{verb\}/.test(host) && /\/api\/changes\/\$\{id\}`/.test(host));
   const types = read('components/thread/types.ts');
   const kinds = [...((types.match(/export const THREAD_CARD_KINDS: ThreadCardKind\[\] = \[[\s\S]*?\];/) ?? [''])[0]).matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
-  gate('C9.2 NO new card kind — the contract still has 15 kinds and none named change', kinds.length === 15 && !kinds.includes('change'));
+  // ⟲ RE-POINTED (W16.2 · CONFIRM IS A REAL KIT WIDGET): 15 → 16 — the looks-done `confirm` kind joined
+  // the contract (with its catalogue specimen, smoke-threads T37). This gate's law is unchanged: a
+  // CHANGE rides the kit's existing `approval` kind — no kind named change, and no kind beyond the named 16.
+  gate('C9.2 NO new card kind for a change — the contract has the named 16 kinds (15 + W16.2 confirm) and none named change',
+    kinds.length === 16 && kinds.includes('confirm') && !kinds.includes('change'));
   const mounts = [...sourceFiles('components'), ...sourceFiles('app')].filter((f) => /<ChangeCard\b/.test(read(f)));
   gate('C9.3 the host is mounted by the Home chat, the room rail and the catalogue — and nowhere draws a second one',
     ['components/home/home-ask.tsx', 'components/home/item-rail.tsx', 'app/(main)/dev/thread-preview/preview-catalogue.tsx'].every((f) => mounts.includes(f)) && mounts.length === 3, mounts.join(', '));

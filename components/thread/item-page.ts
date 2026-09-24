@@ -30,8 +30,9 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { ReactNode } from 'react';
 import { clipForDisplay } from '@/lib/utils/clip-for-prompt';
-import { fallbackOpeningLine } from '@/lib/room/opening-fallback';
-import type { ThreadItem } from './types';
+import { fallbackOpeningLine, type FallbackOrigin } from '@/lib/room/opening-fallback';
+import { CONFIRM_WORDS } from '@/lib/evidence/looks-done-word';
+import type { ThreadItem, ThreadCard, ConfirmWidgetCard } from './types';
 // THE ONE READER's prepared kinds (lib/prepare/read.ts) — type-only, so this module stays pure and client-safe.
 import type { PreparedKind } from '@/lib/prepare/read';
 
@@ -44,8 +45,8 @@ import type { PreparedKind } from '@/lib/prepare/read';
 //   · ARTIFACTS_OF_STATE — which artifact kinds a machine state may put forward, in lead order.
 // The chooser walks the state's row and takes the FIRST artifact the door has MOUNTED.
 
-/** Every kit widget kind an item page may carry as its ONE action (components/thread/types.ts kinds +
- *  the kit's confirm widget, components/thread/confirm-card.tsx). */
+/** Every kit widget kind an item page may carry as its ONE action — each a kit card kind of
+ *  components/thread/types.ts (W16.2: `confirm` is a first-class kind, rendered by confirm-card.tsx). */
 export type ItemActionWidget = 'email' | 'invite' | 'forward' | 'input' | 'decision' | 'deliverable' | 'doc' | 'frame' | 'approval' | 'event' | 'confirm';
 export const ITEM_ACTION_WIDGETS: readonly ItemActionWidget[] = ['email', 'invite', 'forward', 'input', 'decision', 'deliverable', 'doc', 'frame', 'approval', 'event', 'confirm'];
 /** The SOURCE widget: the one thread component (`source`), or — for a meeting with a calendar event on
@@ -95,8 +96,9 @@ export const ARTIFACTS_OF_STATE: Record<ItemPageState, readonly ItemArtifactKind
   committed: [], parked: [], preparing: [], unjudged: [], settled: [],
 };
 
-/** THE CONFIRM WIDGET'S WORDS — plain, the deed named (never "Not yet"). One home. */
-export const CONFIRM_WORDS = { done: 'Mark done', keep: 'Keep open' } as const;
+/** THE CONFIRM WIDGET'S WORDS — plain, the deed named (never "Not yet"). W16.2: their ONE home is
+ *  lib/evidence/looks-done-word.ts (the Home row speaks the same two words); re-exported here. */
+export { CONFIRM_WORDS };
 
 /** What the door has MOUNTED live right now, by artifact kind (never a withdrawn target — the host
  *  passes only what the one reader served and its own card renders). */
@@ -114,6 +116,9 @@ export type ItemPageFacts = {
   who: string | null;
   ask: string | null;
   title: string | null;
+  /** W16.2 · whose words made this item (served on the view's anchor — lib/room/opening-fallback.ts
+   *  originOf): the fallback sentence is direction-true from it. Null → no direction is claimed. */
+  origin?: FallbackOrigin | null;
   /** The door's source object, if any: the one thread component, or the event widget. */
   source: ItemSourceWidget | null;
 };
@@ -137,11 +142,11 @@ export const CLARA_MAX_CHARS = 180;
 
 /** Clara's ONE sentence — the first sentence of the composition when it states the situation
  *  plainly (no prep claim, no control, not a question); else the item's own facts; else null. */
-export function claraSentenceOf(f: Pick<ItemPageFacts, 'brief' | 'who' | 'ask' | 'title'>): string | null {
+export function claraSentenceOf(f: Pick<ItemPageFacts, 'brief' | 'who' | 'ask' | 'title' | 'origin'>): string | null {
   const brief = String(f.brief ?? '').replace(/\s+/g, ' ').trim();
   const first = (brief.match(SENTENCE) ?? [])[0]?.trim() ?? '';
   if (first && !CLAIM.test(first) && !/\?\s*$/.test(first)) return clipForDisplay(first, CLARA_MAX_CHARS);
-  const fb = fallbackOpeningLine({ who: f.who, ask: f.ask ?? f.title, preparedClause: null });
+  const fb = fallbackOpeningLine({ who: f.who, ask: f.ask ?? f.title, preparedClause: null, origin: f.origin ?? null });
   return fb ? clipForDisplay(fb, CLARA_MAX_CHARS) : null;
 }
 
@@ -187,8 +192,10 @@ export type ItemPageParts = {
   shimmer?: ReactNode | null;
   /** The SOURCE widget, mounted by the host (the one thread component). */
   source?: ReactNode | null;
-  /** The ONE action widget, mounted by the host for `plan.action` — with the face that prepared it. */
-  action?: { node: ReactNode; by?: string | null } | null;
+  /** The ONE action widget, mounted by the host for `plan.action` — with the face that prepared it.
+   *  W16.2: a widget that IS a kit kind is handed as its CARD (the confirm widget: `kind: 'confirm'`)
+   *  and rendered by the kit's own renderer; `node` remains for hosts that mount a built component. */
+  action?: { node?: ReactNode; card?: ThreadCard | null; by?: string | null } | null;
 };
 
 /** Clara's bubble (one sentence + the source widget under it), then the ONE action widget. The
@@ -204,14 +211,30 @@ export function itemPageItems(plan: ItemPagePlan, parts: ItemPageParts): ThreadI
     ...(!parts.shimmer && plan.clara ? { text: plan.clara } : {}),
     ...node,
   });
-  if (plan.action && parts.action?.node) {
-    const by = parts.action.by ?? null;
+  const card = actionCardOf(plan, parts.action ?? null);
+  if (card) {
+    const by = parts.action?.by ?? null;
     out.push({
       type: 'actor_bubble', id: 'action',
       actorId: by ?? seat.id, actorName: by ? by.split(' ')[0] : seat.name,
       ...(!by && seat.roleLabel ? { actorRoleLabel: seat.roleLabel } : {}),
-      cards: [{ kind: 'custom', id: `action-${plan.action}`, node: parts.action.node }],
+      cards: [card],
     });
   }
   return out;
+}
+
+/** THE ONE ACTION AS A KIT CARD (W16.2). The confirm widget is a first-class kit kind: the plan's
+ *  `confirm` renders ONLY as `kind: 'confirm'` (the host's card, its words forced to the plan's) —
+ *  never through the `custom` slot. Any other widget is the host's card when handed one, else its
+ *  built node in the slot. Nothing handed → no widget. Pure. */
+export function actionCardOf(plan: ItemPagePlan, action: ItemPageParts['action']): ThreadCard | null {
+  if (!plan.action || !action) return null;
+  if (plan.action === 'confirm') {
+    const c = action.card;
+    if (!c || c.kind !== 'confirm') return null;
+    return { ...(c as ConfirmWidgetCard), id: `action-${plan.action}`, line: plan.confirm?.line ?? c.line ?? null };
+  }
+  if (action.card) return { ...action.card, id: `action-${plan.action}` };
+  return action.node ? { kind: 'custom', id: `action-${plan.action}`, node: action.node } : null;
 }

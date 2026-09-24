@@ -22,6 +22,12 @@
  *  what arrived. A counterparty asks for a thing; they do not ask you to "decide". */
 const MACHINE_FRAMED = /^(decide|choose|determine|assess|evaluate|weigh|consider|review|triage|judge)\b/;
 
+/** W16.2 · WHOSE WORDS MADE THIS ITEM — the fallback's direction, from the item's OWN data only
+ *  (never AI): the user's own promise (their own sent mail) · the counterparty's ask (a received
+ *  message) · awaiting (the counterparty owes it) · a meeting. Null → unknown, and no direction is
+ *  claimed. Derived once by `originOf` and served on the item view's anchor. */
+export type FallbackOrigin = 'own_promise' | 'their_ask' | 'awaiting' | 'meeting';
+
 export type FallbackFacts = {
   /** The counterparty as the page names them (spoken form), or null. */
   who: string | null;
@@ -29,7 +35,41 @@ export type FallbackFacts = {
   ask: string | null;
   /** "I drafted a reply below" — ONLY when the reply card is mounted in this stream; else null. */
   preparedClause?: string | null;
+  /** W16.2 · whose words made the item (`originOf`). Absent/null → the direction-free ladder. */
+  origin?: FallbackOrigin | null;
 };
+
+/**
+ * W16.2 · THE ORIGIN, FROM THE ITEM'S OWN FACTS — pure. Found live: a commitment the USER promised in
+ * their own sent mail opened with "<X> is asking you to …" — a direction the item's data contradicts.
+ *   awaiting (the counterparty does it)            → 'awaiting'
+ *   born in a meeting                              → 'meeting'
+ *   the source message is the user's own (W7.6)    → 'own_promise'
+ *   the source message was received                → 'their_ask'
+ *   anything else                                  → null (no direction claimed)
+ */
+export function originOf(f: {
+  kind: 'inbox_item' | 'commitment' | 'meeting';
+  /** The row's `source` ('email' · 'meeting' · …). */
+  source: string | null | undefined;
+  /** A commitment's direction ('you_owe' · 'awaiting'). */
+  direction?: string | null;
+  /** The source message's authorship (THE ONE SOURCE READER, lib/commitments/source.ts
+   *  emailSourceOf → `authoredByUser`); null = not read / unreadable. */
+  authoredByUser?: boolean | null;
+  /** An inbox item carries a sender (a received message). */
+  hasSender?: boolean;
+}): FallbackOrigin | null {
+  if (f.kind === 'meeting') return null;
+  if (f.kind === 'commitment' && f.direction === 'awaiting') return 'awaiting';
+  if (f.source === 'meeting') return 'meeting';
+  if (f.kind === 'commitment') {
+    if (f.source !== 'email') return null;
+    return f.authoredByUser === true ? 'own_promise' : f.authoredByUser === false ? 'their_ask' : null;
+  }
+  // an inbox item is a RECEIVED message (the user's own echo never becomes one — lib/inbox/self-echo)
+  return f.hasSender ? 'their_ask' : null;
+}
 
 /** The ask as a clause: first letter lowered, trailing stops dropped. */
 function clauseOf(ask: string | null | undefined): string | null {
@@ -37,11 +77,17 @@ function clauseOf(ask: string | null | undefined): string | null {
   return a ? a.charAt(0).toLowerCase() + a.slice(1) : null;
 }
 
+const mentions = (text: string, who: string) => text.toLowerCase().includes(who.toLowerCase());
+
 /**
  * The one fallback line, or null (the quiet seat). Never a membership claim; never a template that
- * reads the title back as an order.
- *   who + their ask         → "<who> is asking you to <ask>."
- *   who + our framing       → "From <who> — <ask>."          (their seat and our frame, never fused)
+ * reads the title back as an order; never a direction the item's own data does not carry (W16.2).
+ *   origin own_promise      → "You told <who> you'd <ask>."   ("You said you'd <ask>." with no who,
+ *                                                              or when the ask already names them)
+ *   origin their_ask        → "<who> asked you to <ask>."     (our framing: "From <who> — <ask>.")
+ *   origin awaiting         → "Waiting on <who> to <ask>."    ("Still waiting: <ask>." with no who)
+ *   origin meeting          → "From the meeting: <ask>."
+ *   no origin, who + ask    → "From <who> — <ask>."           (no direction claimed)
  *   ask alone               → "Still open: <ask>."
  *   only a mounted draft    → "<I drafted a reply below>."
  *   nothing                 → null
@@ -51,8 +97,14 @@ export function fallbackOpeningLine(f: FallbackFacts): string | null {
   const who = f.who?.trim() || null;
   const prep = f.preparedClause?.trim() || null;
   const tail = prep ? ` — ${prep}` : '';
+  const origin = f.origin ?? null;
+  if (ask && origin === 'own_promise') {
+    return who && !mentions(ask, who) ? `You told ${who} you'd ${ask}${tail}.` : `You said you'd ${ask}${tail}.`;
+  }
+  if (ask && origin === 'awaiting') return who ? `Waiting on ${who} to ${ask}${tail}.` : `Still waiting: ${ask}${tail}.`;
+  if (ask && origin === 'meeting') return `From the meeting: ${ask}${tail}.`;
   if (who && ask) {
-    return MACHINE_FRAMED.test(ask) ? `From ${who} — ${ask}${tail}.` : `${who} is asking you to ${ask}${tail}.`;
+    return origin === 'their_ask' && !MACHINE_FRAMED.test(ask) ? `${who} asked you to ${ask}${tail}.` : `From ${who} — ${ask}${tail}.`;
   }
   if (ask) return `Still open: ${ask}${tail}.`;
   if (prep) return `${prep.charAt(0).toUpperCase()}${prep.slice(1)}.`;

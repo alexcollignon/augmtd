@@ -197,7 +197,9 @@ console.log('\nD · the meeting is the source object (the kit\'s existing `sourc
     && /excerpt: summary \? clipForDisplay\(summary, MEETING_SOURCE_EXCERPT_CHARS\) : null,/.test(cs)
     && /addressId: String\(mt\.calendar_event_id \?\? mt\.id\),/.test(cs));
   gate('D2 the door serves it in the SAME flight as the rest (no new round trip) and only for a meeting-born commitment',
-    /const \[room, machine, sourceItemId, sourceMeeting\] = await Promise\.all\(\[/.test(view)
+    // ⟲ RE-POINTED (W16.2): the same flight also carries the source message's authorship (one small
+    // read, zero AI — the direction-true fallback); the meeting source still rides it, no new round trip.
+    /const \[room, machine, sourceItemId, sourceMeeting, sourceAuthor\] = await Promise\.all\(\[/.test(view)
     && /String\(itemRow\.source \?\? ''\) !== 'meeting'/.test(view) && /sourceMeeting,\s*\n/.test(view));
   gate('D3 the rail seats it in the object card\'s ONE seat when the door has no mail object; its door is the meeting page',
     /\) : \(!objectItemId && door\.kind === 'item' && sourceMeeting\) \? \(/.test(rail)

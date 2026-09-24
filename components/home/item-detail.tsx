@@ -31,11 +31,10 @@ import { prepAnchorKey } from '@/lib/room/presentation';
 // the FacePile, the Filed handle, the summoned drawer. Same parts, same file, never a lookalike.
 // W16 · THE ITEM PAGE IS A FEW KIT WIDGETS — the header carries no face pile, no state pill and no
 // project chip (the state speaks through the ONE widget; project linking lives in Details).
-import { ConfirmCard } from '@/components/thread/confirm-card';
+import { ThreadCardView, type ConfirmWidgetCard } from '@/components/thread';
 import { actionWidgetOf, type ItemArtifactKind } from '@/components/thread/item-page';
 // W16 · a meeting source with a calendar event on file is the kit's EVENT widget (time · attendees · join).
 import EventCard from '@/components/home/event-card';
-import type { AnswerableState } from '@/components/thread/types';
 import { FiledIcon } from '@/components/room/filed-icon';
 import { PastePackCard } from '@/components/prepared/paste-pack-card';
 import { BackLink, AttachmentLightbox, type LightboxFile } from '@/components/ui';
@@ -606,27 +605,29 @@ function looksDoneConfirmOf(view: ItemViewData | null, kind: 'commitment' | 'inb
   if (m?.state !== 'looks_done') return null;
   return { line: m.line ?? null, kind, id, onDone };
 }
-function ConfirmHost({ confirm }: { confirm: LooksDoneConfirm }) {
+/** W16.2 · THE CONFIRM WIDGET IS A KIT KIND — this host composes the kit's `confirm` card with its
+ *  two doors; the kit draws it (and stands down / settles in place — components/thread/confirm-card).
+ *  Mark done = the item kind's own resolution door; Keep open = the sticky refusal. */
+function confirmCardOf(confirm: LooksDoneConfirm): ConfirmWidgetCard {
   const { kind, id } = confirm;
-  const [state, setState] = useState<AnswerableState>('open');
-  const [settledLine, setSettledLine] = useState<string | undefined>(undefined);
-  const done = async () => {
-    setState('busy');
+  return {
+    kind: 'confirm', id: 'confirm', line: confirm.line,
     // The kind's own door narrates its receipt and leaves the page; the card only stands down meanwhile.
-    try { await confirm.onDone(); } finally { setState('open'); }
+    onDone: async () => { await confirm.onDone(); },
+    onKeep: async () => {
+      try {
+        const res = await fetch(LOOKS_DONE_KEEP_OPEN_ROUTE, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, id, action: 'not_yet' }) });
+        return res.ok;
+      } catch { return false; }
+    },
+    keptLine: 'Kept open — it comes back if something new arrives.',
   };
-  const keep = async () => {
-    setState('busy');
-    try {
-      const res = await fetch(LOOKS_DONE_KEEP_OPEN_ROUTE, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, id, action: 'not_yet' }) });
-      if (res.ok) { setSettledLine('Kept open — it comes back if something new arrives.'); setState('settled'); } else setState('open');
-    } catch { setState('open'); }
-  };
-  return <ConfirmCard line={confirm.line} state={state} onDone={() => void done()} onKeep={() => void keep()} settledLine={settledLine} />;
 }
 /** The confirm widget as an item-page artifact (the rail's one composition picks it on looks_done). */
 function confirmArtifactOf(confirm: LooksDoneConfirm | null) {
-  return confirm ? [{ key: 'confirm', label: 'Looks done', onOpen: () => {}, artifactKind: 'looks_done' as const, node: <ConfirmHost confirm={confirm} /> }] : [];
+  if (!confirm) return [];
+  const card = confirmCardOf(confirm);
+  return [{ key: 'confirm', label: 'Looks done', onOpen: () => {}, artifactKind: 'looks_done' as const, card, node: <ThreadCardView card={card} /> }];
 }
 /** W16 · Done is emphasised ONLY when the page's one widget is the confirm widget — the same pure
  *  choice the rail renders (components/thread/item-page.ts actionWidgetOf). */

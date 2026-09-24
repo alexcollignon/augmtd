@@ -43,7 +43,7 @@ import { roomKeyForDoor, targetOwnedByDoor, cardMayBindTarget, objectIdForDoor, 
 import { collapseSelfVoice } from '@/lib/room/self-voice';
 import { askBaseOf } from '@/lib/room/ask-base';
 import { nameOncePerSentence } from '@/lib/room/opening-discipline';
-import { fallbackOpeningLine, prepareNoneLine } from '@/lib/room/opening-fallback';
+import { fallbackOpeningLine, prepareNoneLine, type FallbackOrigin } from '@/lib/room/opening-fallback';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 // W8.4 · NO RAW ISO ON SCREEN — the ONE short-date grammar.
 import { fmtMonthDay } from '@/lib/utils/format-date';
@@ -78,7 +78,8 @@ type RailKind = 'email' | 'followup' | 'commitment' | 'meeting' | 'awareness' | 
 
 export type RailView = {
   // The open item — what the rail's opening message narrates FIRST (P5b: item-anchored, never generic).
-  anchor?: { who: string | null; ask: string | null; prepared: string | null } | null;
+  /** W16.2 · `origin` — whose words made the item (lib/room/opening-fallback originOf, served). */
+  anchor?: { who: string | null; ask: string | null; prepared: string | null; origin?: FallbackOrigin | null } | null;
   /** THE ONE RESPONDER for a LOOSE room (no entity) — composed server-side; the anchor stitch
    *  is only the fallback until the first compose lands. Linked rooms carry it on entity.*. */
   brief?: string | null;
@@ -424,6 +425,9 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
    *  default is false and the object mounts ABOVE them. A future card that quotes the thread sets
    *  it and the object stands down, without this room guessing from a key name. */
   artifacts?: Array<{ key: string; label: string; by?: string | null; onOpen: () => void; anchorKey?: string; node?: React.ReactNode; showsSource?: boolean;
+    /** W16.2 · the artifact AS A KIT CARD, when its widget is a kit kind (the looks-done `confirm`
+     *  card) — the item page renders the card through the kit's renderer, never the `custom` slot. */
+    card?: ThreadCard | null;
     /** W16 · which ARTIFACT this card renders on an item page (a prepared kind, a document, a frame,
      *  the looks-done evidence…). The item door's ONE table (components/thread/item-page.ts) maps it to
      *  its kit widget and picks at most one, by the machine's state. */
@@ -1183,7 +1187,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     // fused, the item's own ask in a colleague's words ("Still open: …", never "This needs you to
     // <title>"), and NO membership claim at all — the header's connection line is membership's
     // only voice, so the untied-work claim (made from absence) can never sit under a "connects to …" chip.
-    const line = fallbackOpeningLine({ who, ask: a?.ask ?? null, preparedClause: prep });
+    const line = fallbackOpeningLine({ who, ask: a?.ask ?? null, preparedClause: prep, origin: a?.origin ?? null });
     // A person is introduced once per sentence; the second mention is "they"/"their".
     return line ? nameOncePerSentence(line, [who]) : null;
   })();
@@ -1674,7 +1678,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     const plan = composeItemPage({
       machine: view.machineState ?? null, gateOpen: !!gate?.node, mounted,
       brief: composed ?? null, who: view.anchor?.who ? spokenName(view.anchor.who) : null,
-      ask: view.anchor?.ask ?? null, title: null,
+      ask: view.anchor?.ask ?? null, title: null, origin: view.anchor?.origin ?? null,
       source: sourceEvent ? 'event' : objectCard ? 'source' : null,
     });
     const own = plan.artifact && !['ask', 'decision', 'gate', 'input_gate', 'booked_event'].includes(plan.artifact) ? byArtifact(plan.artifact) : null;
@@ -1703,7 +1707,8 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
         </div>
       ) : null,
       source: sourceEvent ? <div className="pt-0.5">{sourceEvent}</div> : objectCard ? <div className="pt-0.5">{objectCard}</div> : null,
-      action: actionNode ? { node: actionNode, by: card?.by ?? null } : null,
+      // W16.2 · a kit-kind widget rides as its CARD (the confirm widget → `kind: 'confirm'`).
+      action: actionNode || card?.card ? { node: actionNode, card: card?.card ?? null, by: card?.by ?? null } : null,
     }));
     // THE READER'S OWN EXCHANGE — from their first word on (answers, and what an answer presents).
     itemExchange.forEach((t, i) => {

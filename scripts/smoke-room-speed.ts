@@ -137,11 +137,13 @@ async function main() {
       // read, zero AI) — same wave, no new round trip.
       // ⟲ RE-POINTED (W7.3): + the meeting source object (a meeting-born commitment's source) in the
       // SAME flight — one small read, zero AI, no new round trip.
-      /const \[room, machine, sourceItemId, sourceMeeting\] = await Promise\.all\(\[/.test(view)
+      // ⟲ RE-POINTED (W16.2): + the source message's authorship (THE ONE SOURCE READER, for the
+      // direction-true fallback) in the SAME flight — one small read, zero AI, no new round trip.
+      /const \[room, machine, sourceItemId, sourceMeeting, sourceAuthor\] = await Promise\.all\(\[roomP, machineP, sourceItemIdP, sourceMeetingP, sourceAuthorP\]\)/.test(view)
       // ⟲ RE-POINTED (W8.4): no compose runs on the paint path any more — the last-good read is what
       // starts before the wave (the vacuous `indexOf('const paintP')` would have passed at -1).
       && view.indexOf('const lastGoodP = readRoomResponse(') > 0
-      && view.indexOf('const lastGoodP = readRoomResponse(') < view.indexOf('const [room, machine, sourceItemId, sourceMeeting] = await Promise.all(['));
+      && view.indexOf('const lastGoodP = readRoomResponse(') < view.indexOf('const [room, machine, sourceItemId, sourceMeeting, sourceAuthor] = await Promise.all(['));
     gate('B5 the perf watchdog: phase marks + ONE `[items/view] slow` line past a threshold',
       /const VIEW_SLOW_MS = [\d_]+;/.test(view) && /\[items\/view\] slow \$\{totalMs\}ms/.test(view)
       && /mark\('wave1'\)/.test(view) && /mark\('wave2'\)/.test(view));

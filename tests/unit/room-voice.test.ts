@@ -43,7 +43,9 @@ describe('a refused composition is cached as refused for its sig', () => {
 
 describe('the fallback never contradicts a served fact', () => {
   it('speaks the item\'s own ask in a colleague\'s words, or nothing', () => {
-    expect(fallbackOpeningLine({ who: 'Sam', ask: 'Send the signed form' })).toBe('Sam is asking you to send the signed form.');
+    // ⟲ W16.2 — direction-true: "asked you to" only for THEIR ask; no origin → no direction claimed.
+    expect(fallbackOpeningLine({ who: 'Sam', ask: 'Send the signed form', origin: 'their_ask' })).toBe('Sam asked you to send the signed form.');
+    expect(fallbackOpeningLine({ who: 'Sam', ask: 'Send the signed form' })).toBe('From Sam — send the signed form.');
     expect(fallbackOpeningLine({ who: 'Sam', ask: 'Decide whether to engage' })).toBe('From Sam — decide whether to engage.');
     expect(fallbackOpeningLine({ who: null, ask: 'Share updated report' })).toBe('Still open: share updated report.');
     expect(fallbackOpeningLine({ who: null, ask: null })).toBeNull();

@@ -181,7 +181,8 @@ async function main() {
       /const planP = Promise\.resolve\(supabase\.from\('item_plans'\)/.test(view) && /const linkP = Promise\.resolve\(/.test(view)
       && /const anyVerdictP = Promise\.resolve\(/.test(view) && /const itemRowP = Promise\.resolve\(/.test(view));
     gate('D4 an early exit never leaves a started read unhandled',
-      /for \(const p of \[roomP, machineP, sourceItemIdP, sourceMeetingP\]\) void p\.catch\(\(\) => \{\}\);/.test(view));
+      // ⟲ RE-POINTED (W16.2): the new started read (the source's authorship) is in the handled set too.
+      /for \(const p of \[roomP, machineP, sourceItemIdP, sourceMeetingP, sourceAuthorP\]\) void p\.catch\(\(\) => \{\}\);/.test(view));
     gate('D5 the view still schedules its AI only under after() and serves last-good (W8.4 floor intact)',
       /const onOpen = \(work: \(\) => Promise<unknown>\) => \{ if \(!warm\) after\(/.test(view)
       // ⟲ RE-POINTED (W13.5): last-good is read once and passed through the serve-time truth before the paint.

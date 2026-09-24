@@ -12,36 +12,46 @@
 //
 // PRESENTATIONAL like the rest of the kit: no fetch, no route, no mutation — the host owns both
 // doors. The three answerable states are the kit's (`AnswerableState`): open · busy · settled.
+//
+// W16.2 · A FIRST-CLASS KIT KIND: `{ kind: 'confirm', … }` (components/thread/types.ts
+// ConfirmWidgetCard), rendered by the kit's renderer (thread-cards.tsx) and specimened in the
+// catalogue. The words live in ONE home shared with the Home row (lib/evidence/looks-done-word.ts).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-import React from 'react';
+import React, { useState } from 'react';
 import { cn } from '@/lib/cn';
-import type { AnswerableState } from './types';
-import { CONFIRM_WORDS } from './item-page';
+import type { AnswerableState, ConfirmWidgetCard } from './types';
+import { CONFIRM_WORDS } from '@/lib/evidence/looks-done-word';
 
-export type ConfirmCardProps = {
-  /** The evidence, one plain line (served — lib/evidence/looks-done.ts looksDoneLine). */
-  line: string | null;
-  state?: AnswerableState;
-  onDone?: () => void;
-  onKeep?: () => void;
-  /** The settled state's one receipt line. */
-  settledLine?: string;
-};
+export type ConfirmCardProps = Omit<ConfirmWidgetCard, 'kind' | 'id'>;
 
 const BTN = 'aug-focus text-[12px] font-medium transition-colors disabled:cursor-default disabled:opacity-60 px-3 py-1.5 rounded-lg';
 
-export function ConfirmCard({ line, state = 'open', onDone, onKeep, settledLine }: ConfirmCardProps) {
+export function ConfirmCard({ line, state: driven, onDone, onKeep, settledLine, keptLine }: ConfirmCardProps) {
+  // Self-driven when the host hands no `state`: busy while a deed's promise runs; a Keep open that
+  // resolves true settles in place on `keptLine`. A host-driven `state` always wins.
+  const [own, setOwn] = useState<{ state: AnswerableState; line?: string }>({ state: 'open' });
+  const state = driven ?? own.state;
+  const receipt = driven ? settledLine : own.line ?? settledLine;
+  const run = (fn: (() => unknown) | undefined, settles: boolean) => {
+    if (!fn || state !== 'open') return;
+    let out: unknown;
+    try { out = fn(); } catch { return; }
+    if (driven || !(out instanceof Promise)) return;
+    setOwn({ state: 'busy' });
+    out.then((v) => setOwn(settles && v === true ? { state: 'settled', line: keptLine } : { state: 'open' }),
+      () => setOwn({ state: 'open' }));
+  };
   const settled = state === 'settled';
   return (
     <div data-widget="confirm" className={cn('rounded-xl border border-neutral-200/80 bg-white w-full max-w-[480px] flex flex-col gap-2.5 p-3.5', settled && 'bg-neutral-50/60')}>
       <div className="text-[13px] leading-[1.5] text-neutral-800">{line || 'This looks done.'}</div>
       {settled ? (
-        settledLine ? <div className="text-[12.5px] text-neutral-500">{settledLine}</div> : null
+        receipt ? <div className="text-[12.5px] text-neutral-500">{receipt}</div> : null
       ) : (
         <div className={cn('flex items-center gap-2.5', state === 'busy' && 'pointer-events-none opacity-60')}>
-          <button type="button" data-deed="mark-done" onClick={onDone} disabled={!onDone}
+          <button type="button" data-deed="mark-done" onClick={() => run(onDone, false)} disabled={!onDone}
             className={cn(BTN, 'bg-indigo-600 text-white hover:bg-indigo-700')}>{CONFIRM_WORDS.done}</button>
-          <button type="button" data-deed="keep-open" onClick={onKeep} disabled={!onKeep}
+          <button type="button" data-deed="keep-open" onClick={() => run(onKeep, true)} disabled={!onKeep}
             className={cn(BTN, 'border border-neutral-200/80 text-neutral-600 hover:bg-neutral-50')}>{CONFIRM_WORDS.keep}</button>
         </div>
       )}

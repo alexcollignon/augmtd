@@ -132,7 +132,9 @@ console.log('\nA · (a) the composed brief reaches the first paint (compose befo
     // ⟲ RE-POINTED (W8.4 THE ROOM SPEAKS TRUE): the item door's fallback is the ONE pure ladder
     // (lib/room/opening-fallback.ts) — the item's own ask or nothing; the "standalone" claim made
     // from absence is gone (smoke-room-voice holds the ladder's fixtures).
-    && /: anchorLine\);/.test(rail) && /fallbackOpeningLine\(\{ who, ask: a\?\.ask \?\? null, preparedClause: prep \}\)/.test(rail)
+    // ⟲ RE-POINTED (W16.2 — the fallback is DIRECTION-TRUE): the same one ladder, now also handed the
+    // served origin (whose words made the item); the one-voice law is unchanged.
+    && /: anchorLine\);/.test(rail) && /fallbackOpeningLine\(\{ who, ask: a\?\.ask \?\? null, preparedClause: prep, origin: a\?\.origin \?\? null \}\)/.test(rail)
     && !/keep it standalone/.test(rail));
 }
 

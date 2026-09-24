@@ -94,12 +94,18 @@ async function main() {
     gate('C2 pure: never the title template ("This needs you to <title>"); the ask speaks as a colleague would, or nothing',
       lines.every((l) => !/^This needs you to/.test(l))
       && fallbackOpeningLine({ who: null, ask: 'Share updated report' }) === 'Still open: share updated report.'
-      && fallbackOpeningLine({ who: 'Sam', ask: 'Send the signed form' }) === 'Sam is asking you to send the signed form.'
+      // ⟲ RE-POINTED (W16.2 — DIRECTION-TRUE): "<who> asked you to …" only when the item's own data
+      // says it was THEIR ask (origin their_ask); with no origin no direction is claimed ("From <who> — …").
+      // Stricter: the old unconditional "<who> is asking you to …" was false on the user's own promise.
+      && fallbackOpeningLine({ who: 'Sam', ask: 'Send the signed form', origin: 'their_ask' }) === 'Sam asked you to send the signed form.'
+      && fallbackOpeningLine({ who: 'Sam', ask: 'Send the signed form' }) === 'From Sam — send the signed form.'
+      && fallbackOpeningLine({ who: 'Sam', ask: 'Decide whether to engage', origin: 'their_ask' }) === 'From Sam — decide whether to engage.'
       && fallbackOpeningLine({ who: 'Sam', ask: 'Decide whether to engage' }) === 'From Sam — decide whether to engage.'
       && fallbackOpeningLine({ who: null, ask: null }) === null);
     const rail = src('components/home/item-rail.tsx');
     gate('C3 the rail speaks through the ONE ladder; the standalone claim and the title template are gone from its source',
-      /const line = fallbackOpeningLine\(\{ who, ask: a\?\.ask \?\? null, preparedClause: prep \}\);/.test(rail)
+      // ⟲ RE-POINTED (W16.2): the same one ladder, handed the served origin too.
+      /const line = fallbackOpeningLine\(\{ who, ask: a\?\.ask \?\? null, preparedClause: prep, origin: a\?\.origin \?\? null \}\);/.test(rail)
       && !/keep it standalone/.test(rail) && !/isn't tied to a bigger body of work/.test(rail)
       && !/`This needs you to \$\{askText\}/.test(rail)
       && /: anchorLine\);/.test(rail));

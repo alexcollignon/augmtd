@@ -83,6 +83,9 @@ export interface ThreadAction {
  *                 HANDLE — glyph · title · type · pages · version · owner — and NEVER as the
  *                 document. "Docs can get big" is solved by never putting the doc in the thread:
  *                 the deed is REVIEW, and Review raises the side panel (the player).
+ *   confirm     → THE LOOKS-DONE QUESTION (W16.2): the evidence as one plain line ("You replied on
+ *                 Sep 23") and two plain deeds — "Mark done" · "Keep open" (words: lib/evidence/
+ *                 looks-done-word.ts CONFIRM_WORDS, the Home row's words too). Settles in place.
  *   custom      → THE CARD SLOT: a host mounts its own already-built rich component (email draft
  *                 card, decision card, frame card) through `node`, rather than the kit rebuilding
  *                 it. The escape hatch exists so ports are mounts, not rewrites.
@@ -94,7 +97,7 @@ export interface ThreadAction {
  */
 export type ThreadCardKind =
   | 'deliverable' | 'approval' | 'input' | 'frame' | 'proposal' | 'invite' | 'email' | 'bulk' | 'doc'
-  | 'source' | 'collection' | 'event' | 'decision' | 'forward' | 'custom';
+  | 'source' | 'collection' | 'event' | 'decision' | 'forward' | 'confirm' | 'custom';
 
 /** The icon tile on the compact card kinds — a shape, never a claim about a module. */
 export type ThreadCardIcon = 'mail' | 'document' | 'file' | 'calendar';
@@ -278,6 +281,32 @@ export interface ProposalCard extends CardBase {
   onSay?: (say: string) => void;
   /** The reader's own click is in flight — the card stands down rather than firing twice. */
   busy?: boolean;
+}
+
+/**
+ * THE CONFIRM CARD (W16.2 · law `the-item-page-is-a-few-widgets`) — the machine's `looks_done` state
+ * as ONE small question: the work's own conversation shows it delivered, the judge did not close it.
+ * It was a kit component mounted through `custom`; it is now a kind the renderer owns, with a
+ * catalogue specimen per state.
+ *
+ *   the line     the served evidence, one plain line (lib/evidence/looks-done.ts looksDoneLine)
+ *   the deeds    "Mark done" (the item's own resolution door — logged, undoable) · "Keep open" (the
+ *                sticky refusal until new evidence arrives). The host owns both doors.
+ *   the settled  no verbs, one receipt line.
+ *
+ * PRESENTATIONAL: no fetch, no route. `state` given ⇒ the host drives it; absent ⇒ the card stands
+ * down while a handler's promise runs, and `onKeep` resolving `true` settles it on `keptLine`.
+ */
+export interface ConfirmWidgetCard extends CardBase {
+  kind: 'confirm';
+  line: string | null;
+  state?: AnswerableState;
+  onDone?: () => void | Promise<unknown>;
+  onKeep?: () => void | boolean | Promise<boolean | void>;
+  /** The settled state's one receipt line (a host-driven `settled`). */
+  settledLine?: string;
+  /** The receipt a self-driven card settles on when `onKeep` resolves true. */
+  keptLine?: string;
 }
 
 export interface CustomCard extends CardBase {
@@ -883,12 +912,12 @@ export interface ForwardCard extends CardBase {
 export type ThreadCard =
   | DeliverableCard | ApprovalCard | InputCard
   | FrameCard | ProposalCard | InviteCard | EmailCard | BulkCard | DocCard | SourceCard
-  | CollectionCard | EventCard | DecisionCard | ForwardCard | CustomCard;
+  | CollectionCard | EventCard | DecisionCard | ForwardCard | ConfirmWidgetCard | CustomCard;
 
 /** The full kind set, for hosts and gates that must enumerate the grammar. */
 export const THREAD_CARD_KINDS: ThreadCardKind[] = [
   'deliverable', 'approval', 'input', 'frame', 'proposal', 'invite', 'email', 'bulk', 'doc',
-  'source', 'collection', 'event', 'decision', 'forward', 'custom',
+  'source', 'collection', 'event', 'decision', 'forward', 'confirm', 'custom',
 ];
 
 /** At most TWO verbs on a row — a collection row is a line, not a toolbar. Enforced in the kit. */
