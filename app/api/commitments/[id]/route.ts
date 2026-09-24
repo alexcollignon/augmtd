@@ -341,6 +341,8 @@ export async function PATCH(
     // A historical mirror the aging sweep once surfaced (W2.3: no longer written) archives with it —
     // never a hard delete; a no-op once the repair sweep has run.
     await settleMirrorRows(supabase, user.id, id, { reason: status === 'done' ? 'user_marked' : 'user_dismissed', stampAt: nowIso });
+    // W14.2 · ASKS LIVE AND DIE WITH THEIR WORK — the resolution takes its asks (undo restores them).
+    await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(supabase, user.id, 'commitment', id)).catch(() => 0);
 
     // Activity timeline (non-fatal).
     const desc = (commitment?.description && String(commitment.description).trim()) || 'a commitment';

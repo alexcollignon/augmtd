@@ -558,6 +558,7 @@ export async function reassignHandoff(
         await admin.from('commitments').update({
           status: 'completed', resolved_reason: 'reassigned', resolved_at: nowIso,
         }).eq('id', old.id);
+        await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(admin, from.userId, 'commitment', String(old.id))).catch(() => 0); // W14.2 · its asks go with it
         const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
         const roomKey = await roomKeyForItem(admin, from.userId, 'commitment', String(old.id));
         // TOLD ONCE, THEN FOLDS (proactive-reach W4 census, fix #10). This line is a courtesy, not

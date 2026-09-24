@@ -211,7 +211,7 @@ async function afterClose(client: SupabaseClient, userId: string, work: OpenWork
       metadata: { reason, resolvedAt: stampAt, auto: true, via: 'evidence', judged: why.slice(0, 200), ...(attribution ? { attribution } : {}) },
     });
   } catch { /* non-fatal */ }
-  import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, isCommitment ? 'commitment' : 'inbox_item', work.id)).catch(() => {});
+  await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, isCommitment ? 'commitment' : 'inbox_item', work.id)).catch(() => 0); // W14.2: awaited — a fire-and-forget settle dies with the function
   import('@/lib/work/apply-verdict').then(({ narrateResolution }) => narrateResolution(client, userId, { kind: isCommitment ? 'commitment' : 'inbox', id: work.id }, attribution ? `${work.description} — ${attribution}` : work.description, false)).catch(() => {});
   import('@/lib/home/bust-brief').then(({ softBustBrief }) => softBustBrief(client, userId)).catch(() => {});
 }

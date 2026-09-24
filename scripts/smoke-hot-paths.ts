@@ -325,7 +325,9 @@ async function pure() {
   const dcr = read('lib/triage/deck-context-read.ts');
   ok('the deck-context thread listing is body-free; bodies are read for the chosen emails only',
     /const EMAIL_COLS = 'id, thread_id, from_name, from_address, received_at, is_from_user';/.test(dcr) && /select\('id, body'\)\.eq\('user_id', userId\)\.in\('id', bodyIds\)/.test(dcr));
-  ok('the prepared batch reader reads PREPARED_KEYS and hydrates an invite\'s words', /keys: PREPARED_KEYS/.test(read('lib/prepare/read.ts')) && /some\(\(a\) => a\.kind === 'invite'\)/.test(read('lib/prepare/read.ts')));
+  // ⟲ RE-POINTED (W14.1): the ONE reader reads READER_FACT_KEYS (PREPARED + the notice law's facts +
+  // the thread for the exact ground) — still a projection, never the whole source_data.
+  ok('the prepared batch reader reads a declared lean key set and hydrates an invite\'s words', /keys: READER_FACT_KEYS/.test(read('lib/prepare/read.ts')) && /const READER_FACT_KEYS: readonly string\[\] = \[\.\.\.ONE_READER_KEYS, 'thread_id'\];/.test(read('lib/prepare/read.ts')) && /some\(\(a\) => a\.kind === 'invite'\)/.test(read('lib/prepare/read.ts')));
   ok('the anchor row (the view door, the warm, the open kick) folds through foldAnchorRow',
     ['app/api/items/view/route.ts', 'lib/room/open-kicks.ts', 'lib/room/warm-briefs.ts'].every((f) => /foldAnchorRow\(linkKind,/.test(read(f))));
 

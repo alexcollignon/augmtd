@@ -51,6 +51,12 @@ export type WorkMachineState = {
   liveAsk?: boolean;
   /** W11.2 — on `looks_done`: the evidence line (who · what · when), lib/evidence/looks-done.ts. */
   looksDoneLine?: string;
+  /** W14.1 · THE LADDER'S OWN LEAD — the kind of the prepared artifact this state RESTS ON (a decision
+   *  brief · the send-shaped artifact · the document), or null when the state rests on no artifact
+   *  (an ask, motion, a sent stamp). A row's receipt words itself by THIS kind (lib/home/calm.ts
+   *  `ladderReceiptKind` derives the same from the served state word), never by `leadKindOf`'s own
+   *  ranking — which put a live decision brief above a document the ladder reads as "ready to review". */
+  leadKind?: string | null;
 };
 
 // ── THE MOOT ASK BY CODE (stabilization W3.5 (d); lib/room/ask-mootness is the ONE predicate) ──
@@ -198,19 +204,20 @@ export function deriveState(input: DeriveInputs): WorkMachineState {
   // a real account read "preparing" for 17 days while the door showed a live decision).
   const decisionMaterial = !!decisionBrief || (Array.isArray(v.options) && v.options.length >= 2);
 
-  if (input.sentStamp) return { state: 'committed', verdictWork: v.work, primary: 'none' };
+  if (input.sentStamp) return { state: 'committed', verdictWork: v.work, primary: 'none', leadKind: null };
 
-  // ── The ladder (most-specific first; the spec's order). ──
-  if (v.work === 'decide' && decisionMaterial && !sendShaped) return { state: 'awaiting_decision', verdictWork: v.work, primary: 'decide' };
+  // ── The ladder (most-specific first; the spec's order). W14.1: every rung that rests on an artifact
+  // names its kind (`leadKind`) — the row's receipt is worded by the rung, never by a second ranking. ──
+  if (v.work === 'decide' && decisionMaterial && !sendShaped) return { state: 'awaiting_decision', verdictWork: v.work, primary: 'decide', leadKind: 'decision' };
   // René sweep: the OPEN ASK outranks a staged send — the system itself says inputs are missing;
   // offering Send as the primary invites sending work with known holes (12 of 19 live asks on a
   // real account sat demoted behind a Send button). The draft stays available on the door.
-  if (input.liveAsk) return { state: 'awaiting_input', verdictWork: v.work, primary: 'supply' };
-  if (sendShaped) return { state: 'awaiting_approval', verdictWork: v.work, primary: 'send' };
+  if (input.liveAsk) return { state: 'awaiting_input', verdictWork: v.work, primary: 'supply', leadKind: null };
+  if (sendShaped) return { state: 'awaiting_approval', verdictWork: v.work, primary: 'send', leadKind: sendShaped.kind };
   // A staged-but-unfireable send (timeless invite, recipientless forward) needs the user's input
   // even without a checklist turn — the artifact card says what's missing.
-  if (sendBlocked) return { state: 'awaiting_input', verdictWork: v.work, primary: 'supply' };
-  if (document) return { state: 'ready', verdictWork: v.work, primary: 'review' };
+  if (sendBlocked) return { state: 'awaiting_input', verdictWork: v.work, primary: 'supply', leadKind: sendBlocked.kind };
+  if (document) return { state: 'ready', verdictWork: v.work, primary: 'review', leadKind: document.kind };
   // THE GROUND LAW: superseded work with nothing fresh yet = honest motion (the pass is
   // re-preparing from the new inbound) — never the staleness downgrade below.
   if (superseded) return { state: 'preparing', verdictWork: v.work, primary: 'none' };
@@ -312,15 +319,15 @@ export async function workStateOf(
   } catch { return none; }
 }
 
-/** Derive a whole DECK's worth of states from batched reads — 3 queries total, no per-item
- *  fan-out (the brief route serves ~60 rows; per-item workStateOf would be ~300 queries).
+/** Derive a whole DECK's worth of states from batched reads — a handful of queries total, no
+ *  per-item fan-out (the brief route serves ~60 rows; per-item workStateOf would be ~300 queries).
  *
- *  STALENESS APPROXIMATION (documented, safe direction): the exact ground check needs one
- *  emails query per thread — too hot for the deck. Here an artifact is stale when the item's
- *  `last_activity_at` postdates its `prepared_from.receivedAt` (+5s slack). last_activity_at
- *  is stamped from inbound received_at on every sync path, so this over-triggers only on rare
- *  same-thread user activity — and over-stale renders "in motion" instead of a wrong "ready
- *  to send": the error direction costs a label, never trust. */
+ *  STALENESS — ONE GROUND PATH (W14.1, replacing the Aug-14 last_activity_at APPROXIMATION): the
+ *  batched reader (`preparedStatesFor`) runs the EXACT ground check for the whole deck in one paged
+ *  emails read (`groundsFor`), for inbox items AND commitments, and `preparedState` is that same
+ *  reader over one item — so the deck and the room can no longer disagree on staleness (census H:
+ *  the approximation never judged a commitment stale, and Home said "ready to send" on a nudge the
+ *  room had withdrawn as superseded). */
 export async function workStatesFor(
   client: SupabaseClient, userId: string,
   items: Array<{ kind: 'inbox' | 'commitment'; id: string; /** prefetched row, when the caller holds it */ row?: { status?: string | null; source_data?: unknown; last_activity_at?: string | null } }>,
@@ -366,7 +373,7 @@ export async function workStatesFor(
     }
 
     // ONE READER PER OBJECT (W2.1): the batched reader owns the pool read, the source_data read,
-    // the kind mapping, the staleness approximation AND the sent stamp — this loop only consumes.
+    // the kind mapping, the exact ground (W14.1) AND the sent stamp — this loop only consumes.
     const { preparedStatesFor } = await import('@/lib/prepare/read');
     const prepStates = await preparedStatesFor(client, userId, items.map((i) => {
       const row = i.row ?? rows.get(keyOf(i));

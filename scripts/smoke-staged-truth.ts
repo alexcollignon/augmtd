@@ -140,7 +140,8 @@ console.log('\nA · a file is the deliverable only when it is the deliverable IN
     && /return \{ match: role === 'deliverable', evidence, kind, role \};/.test(reqs));
   gate('A19 the resolver reads the REQUEST (a commitment\'s SOURCE message date) and unstages only on a positive demotion (an AI outage never unstages)',
     /const request = await requestFactsOf\(admin, userId, \{ kind: args\.itemKind, id: args\.itemId \}\);/.test(reqs)
-    && /if \(pick\.demoted\) await unstageRequirement\(/.test(reqs)
+    // ⟲ RE-POINTED (W14.1): + a carried file the same code rules make the base (still positive-only).
+    && /if \(pick\.demoted \|\| carriedBase\) await unstageRequirement\(/.test(reqs)
     && /c\.source === 'email' && c\.source_id/.test(reqs));
   gate('A20 a staged row carries its kind, its FILE\'s date and the request\'s date',
     /requirementKind: pick\.kind \?\? null, fileAt: effectiveFileAt\(cand\), requestAt: request\.requestAt/.test(reqs));
@@ -206,7 +207,8 @@ console.log('\nB · a claim that the work is done needs the WORK staged — a ba
   gate('B9 a draft riding a file that is NOT the base keeps the old behaviour; the user\'s own words are never judged',
     !onNew.falseClaim && !handOnBase.falseClaim);
   gate('B10 the reader wires the base ids into both readers (single + batch) and the vet reads stagedIsWork',
-    /const bases = baseFileIdsOf\(pool\); if \(facts && bases\.length\) facts = \{ \.\.\.facts, baseFileIds: bases \};/.test(read)
+    // ⟲ RE-POINTED (W14.1): the single reader IS the batched reader over one item — one wiring.
+    /const states = await preparedStatesFor\(client, userId, \[\{ kind, id: item\.id \}\]\);/.test(read)
     && /const bases = baseFileIdsOf\(pool\);\n\s+const baseFacts = itemFacts && bases\.length/.test(read)
     && /stagedIsWork: !!a\.attachment && !onBase/.test(read));
 }
@@ -318,7 +320,8 @@ console.log('\nC · the staged file shows as a chip, Send attaches exactly the c
       && standingCandidateOf({ metadata: rowMeta({ via: 'typed' }) }, null) === null);
     gate('E6 THE RESOLVER re-verifies on its next touch: it reads the standing rows, puts the file FIRST in the same pick (the pointer row is never its own candidate), and rules with reverifyDecision',
       /const standingRows = await standingRequireRows\(admin, userId, \{ itemKind: args\.itemKind, itemId: args\.itemId, labels: requires\.map\(\(r\) => r\.label\) \}\)/.test(reqs)
-      && /standing: row \? standingCandidateOf\(row, standingDates\.get\(fid\) \?\? null\) : null,/.test(reqs)
+      // ⟲ RE-POINTED (W14.1): a label with no standing row reads the file its own unstaged/withdrawn draft carried.
+      && /standing: row \? standingCandidateOf\(row, standingDates\.get\(fid\) \?\? null\) : \(carriedByLabel\.get\(r\.label\) \?\? null\),/.test(reqs)
       && /!\(c\.source === 'pool' && standingRowIds\.has\(c\.id\)\)/.test(reqs)
       && /const eligible = \[\.\.\.\(standing \? \[standing\] : \[\]\), \.\.\.candidates\.filter\(\(c\) => stageEligible\(c, input\.entityId\)\)\]\.slice\(0, 3\);/.test(reqs)
       && /const action: ReverifyAction \| null = standingRow && standingAtt \? reverifyDecision\(\{/.test(reqs));
@@ -428,7 +431,7 @@ console.log('\nC · the staged file shows as a chip, Send attaches exactly the c
       && /const reused = reusableAskText\(standing, labels, \{ tail: tail\.trim\(\), base: bases \}\);/.test(pass)
       && /select\('text, component, archived_at'\)/.test(pass) && !/priorText \|\| await composeAskSpeech/.test(pass));
     gate('G6 words already written are served TRUE on this paint (the floor) and re-spoken after it — the durable lie never paints',
-      /return NextResponse\.json\(\{ turns: await truthfulAskTurns\(turns as never\[\]\), readAt \}\)/.test(turnsRoute)
+      /const served = await servedNarrationTurns\(supabase, user\.id, turns\);\s*return NextResponse\.json\(\{ turns: await truthfulAskTurns\(served as never\[\]\), readAt \}\)/.test(turnsRoute) /* ⟲ W14.2: the same turns pass the narration floor first */
       && /export async function truthfulAskTurns</.test(legacy) && /isLegacyAskSpeech\(t\.text\) \|\| await askSpeechIsFalse\(t\.text\)/.test(legacy));
     gate('G7 the doc-send lane asks under the VERDICT\'s own labels (the generic label only for an inventory-less send)',
       JSON.stringify(docSendAskLabels({ requires: [{ label: LBL }] })) === JSON.stringify([LBL])
@@ -449,7 +452,7 @@ console.log('\nC · the staged file shows as a chip, Send attaches exactly the c
       baseOfferLine([OLD_REPORT.filename]) === `${BASE_OFFER_PREFIX}: ${OLD_REPORT.filename}` && baseOfferLine([]) === ''
       && JSON.stringify(askBaseOf({ items: ['x'], base: [OLD_REPORT.filename] })) === JSON.stringify([OLD_REPORT.filename]) && askBaseOf({ items: ['x'] }).length === 0
       && /title: baseOfferLine\(\[args\.base\.filename\]\)\.slice\(0, 100\),/.test(req)
-      && /const standingBases = await standingBaseRows\(admin, userId,/.test(req) && /const base = labelBase \?\? standingBase;/.test(req)
+      && /const standingBases = await standingBaseRows\(admin, userId,/.test(req) && /const base = labelBase \?\? standingBase \?\? carriedBase;/.test(req) /* ⟲ RE-POINTED (W14.1): + the carried file */
       && /state: \{ items: labels\.map\(\(l\) => l\.slice\(0, 120\)\), taskId: null, \.\.\.\(bases\.length \? \{ base: bases \} : \{\}\) \}/.test(pass)
       && /\.\.\.\(baseLineText \? \{ meta: baseLineText \} : \{\}\),/.test(src('components/home/input-card.tsx'))
       && /\.\.\.\(a\.base\?\.length \? \{ base: a\.base \} : \{\}\),/.test(src('components/home/item-rail.tsx'))

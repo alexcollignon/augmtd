@@ -115,7 +115,7 @@ console.log('\nH · THE NOT-JUDGED LANE — the heartbeat judges what the list s
   const route = code('app/api/cron/judgment-sweep/route.ts');
   const fan = code('lib/work/sweep-fanout.ts');
   gate('H17 the cron reports the lane\'s tally (incl. leftBehind) and the per-user record stamps it',
-    /notJudged\.leftBehind \+= r\.notJudged\.leftBehind/.test(route) && /notJudged \},/.test(route)
+    /notJudged\.leftBehind \+= r\.notJudged\.leftBehind/.test(route) && /notJudged(, asks)? \},/.test(route) // ⟲ W14.2: the ask lane's tally rides beside it
     && /notJudged: \{ population: r\.notJudged\.population, visited: r\.notJudged\.visited, leftBehind: r\.notJudged\.leftBehind/.test(fan));
 
   const bf = src('scripts/backfill-not-judged.ts');

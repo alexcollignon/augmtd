@@ -90,13 +90,14 @@ export async function syncStandingCommitment(
     // sitting with the wrong person — close it honestly. Only OPEN rows move; a dismissed row is a
     // human decision and stays exactly where the human left it.
     if (owner.explicit) {
-      const { data: strays } = await admin.from('commitments').select('id')
+      const { data: strays } = await admin.from('commitments').select('id, user_id')
         .eq('source', 'workflow').eq('source_id', wf.id).eq('status', 'open')
         .neq('user_id', owner.userId).limit(10);
-      for (const s of (strays ?? []) as Array<{ id: string }>) {
+      for (const s of (strays ?? []) as Array<{ id: string; user_id: string }>) {
         await admin.from('commitments').update({
           status: 'completed', resolved_reason: 'ownership moved', resolved_at: new Date().toISOString(),
         }).eq('id', s.id);
+        await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(admin, String(s.user_id), 'commitment', s.id)).catch(() => 0); // W14.2 · its asks go with it
       }
     }
 
@@ -111,6 +112,7 @@ export async function syncStandingCommitment(
         await admin.from('commitments').update({
           status: 'dismissed', resolved_reason: 'standing task paused or unscheduled', resolved_at: new Date().toISOString(),
         }).eq('id', existing.id);
+        await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(admin, owner.userId, 'commitment', String(existing.id))).catch(() => 0); // W14.2 · its asks go with it
       }
       return;
     }
@@ -397,9 +399,9 @@ export async function settleApprovalAsk(
 export async function sweepOrphanedRunAsks(admin: SupabaseClient): Promise<number> {
   let closed = 0;
   try {
-    const { data: asks } = await admin.from('commitments').select('id, source_id')
+    const { data: asks } = await admin.from('commitments').select('id, source_id, user_id')
       .eq('source', DECISION_SOURCE).eq('status', 'open').limit(200);
-    const rows = ((asks ?? []) as Array<{ id: string; source_id: string | null }>)
+    const rows = ((asks ?? []) as Array<{ id: string; source_id: string | null; user_id: string }>)
       .filter((a) => !!a.source_id);
     if (!rows.length) return 0;
     const { data: runs } = await admin.from('workflow_runs').select('id')
@@ -411,6 +413,7 @@ export async function sweepOrphanedRunAsks(admin: SupabaseClient): Promise<numbe
         status: 'dismissed', resolved_reason: 'the run no longer exists',
         resolved_at: new Date().toISOString(),
       }).eq('id', a.id);
+      await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(admin, String(a.user_id), 'commitment', a.id)).catch(() => 0); // W14.2 · its asks go with it
       closed++;
     }
   } catch { /* never break the dispatcher */ }
@@ -557,14 +560,15 @@ export async function syncAllStandingCommitments(admin: SupabaseClient): Promise
     }
     // Workflows DELETED out-of-band: close orphaned standing rows whose workflow no longer exists.
     const alive = new Set(wfs.map((w) => String(w.id)));
-    const openStanding = await fetchAllRows<{ id: string; source_id: string | null }>((from, to) => admin.from('commitments')
-      .select('id, source_id').eq('source', 'workflow').eq('status', 'open')
+    const openStanding = await fetchAllRows<{ id: string; source_id: string | null; user_id: string }>((from, to) => admin.from('commitments')
+      .select('id, source_id, user_id').eq('source', 'workflow').eq('status', 'open')
       .order('id', { ascending: true }).range(from, to));
     for (const c of openStanding) {
       if (c.source_id && !alive.has(c.source_id)) {
         await admin.from('commitments').update({
           status: 'dismissed', resolved_reason: 'standing task removed', resolved_at: new Date().toISOString(),
         }).eq('id', c.id);
+        await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(admin, String(c.user_id), 'commitment', c.id)).catch(() => 0); // W14.2 · its asks go with it
       }
     }
   } catch { /* never break the dispatcher */ }

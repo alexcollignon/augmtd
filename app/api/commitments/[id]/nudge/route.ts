@@ -211,6 +211,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     .update({ status: 'done', last_nudged_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('id', id).eq('user_id', user.id).in('status', NUDGEABLE);
   if (flipErr) console.error('[nudge] sent, but the commitment did not close:', flipErr.message);
+  else {
+    // W14.2 · the closed commitment's asks settle; the nudge narration follows its (now sent) artifact.
+    await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(supabase, user.id, 'commitment', id)).catch(() => 0);
+    await import('@/lib/prepare/narration').then(({ settlePrepNarration }) => settlePrepNarration(supabase, user.id, { kind: 'commitment', id }, { retired: 1 })).catch(() => 0);
+  }
 
   // Activity timeline (non-fatal).
   const who = (commitment.counterparty && String(commitment.counterparty).trim()) || 'a contact';

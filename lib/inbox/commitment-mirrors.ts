@@ -75,7 +75,12 @@ export async function settleMirrorRows(
           updated_at: new Date().toISOString(),
         })
         .eq('id', r.id).eq('user_id', userId).eq('status', 'pending');
-      if (!error) n++;
+      if (!error) {
+        n++;
+        // W14.2 (census Sep 24: 8 of 9 live asks on closed items sat on retired mirrors) — the
+        // retired row's asks die with it.
+        await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'inbox_item', r.id)).catch(() => 0);
+      }
     }
     return n;
   } catch { return 0; } // a historical row is derived state — a missed flip is repaired by the sweep

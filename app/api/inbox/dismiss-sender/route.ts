@@ -39,6 +39,8 @@ export async function POST(request: NextRequest) {
           .eq('id', row.id)
           .eq('user_id', user.id)
           .eq('status', 'pending');
+        // W14.2 · the dismissed item's asks die with it (archive, never delete).
+        await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(supabase, user.id, 'inbox_item', row.id)).catch(() => 0);
       }
     }
 

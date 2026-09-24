@@ -73,6 +73,8 @@ export async function POST(
         { status: 500 }
       );
     }
+    // W14.2 · not-my-task dismisses the item — its asks die with it (archive, never delete).
+    if (action === 'not_my_task') await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(supabase, user.id, 'inbox_item', id)).catch(() => 0);
 
     // Log learning signal and trigger context update
     await ContextService.logConfirmation(

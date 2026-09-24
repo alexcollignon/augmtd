@@ -112,7 +112,7 @@ export async function resolveThreadOnReply(opts: {
       }
 
       out.resolvedItems++;
-      import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'inbox_item', it.id)).catch(() => {});
+      await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'inbox_item', it.id)).catch(() => 0); // W14.2: awaited — a fire-and-forget settle dies with the function
       const subject = it.work_title || (it.source_data?.subject as string) || 'a thread';
       // marked_done → reversible via /api/restore (inbox_item → status='pending'), reappears on Home.
       await logActivity(client, userId, {
@@ -185,7 +185,7 @@ export async function resolveThreadOnReply(opts: {
       await logC(client, userId, pendingC, {
         base: 'done_elsewhere', itemKind: 'commitment', itemId: c.id, door: 'reply_external',
       }).catch(() => 0);
-      import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', c.id)).catch(() => {});
+      await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', c.id)).catch(() => 0); // W14.2: awaited — a fire-and-forget settle dies with the function
       // commitment_done → reversible via /api/restore (commitment → status='open'), reappears on Home.
       await logActivity(client, userId, {
         type: 'commitment_done',

@@ -33,6 +33,10 @@ export const maxDuration = 300;
 // job did not land (no base URL, no secret, a refused or timed-out POST) — logged, claimed, and
 // guarded by the same wall clock it always had.
 //
+// W14.2 · THE ASK LANE rides every per-user pass too (lib/room/ask-lifecycle.ts `runAskLifecycleLane`,
+// zero AI): closed items' asks settle, hidden-moot asks archive, false asks are re-spoken with the
+// deterministic floor, orphaned prep narrations archive — capped, and what the caps leave is counted.
+//
 // W8.6 · THE NOT-JUDGED LANE rides every per-user pass (lib/work/judgment-sweep.ts
 // `runNotJudgedLane`): the rows the held list files as "Not yet judged" are judged here, kind floor
 // first (zero AI), newest first, under stated per-user caps; its tally — including what the caps
@@ -69,6 +73,8 @@ export async function GET(request: NextRequest) {
   let proofChecked = 0, proofReaffirmed = 0, proofDemoted = 0, proofLeftBehind = 0;
   // W8.6 · the not-judged lane's own tally (population, what it judged, what its caps left).
   const notJudged = { population: 0, visited: 0, fresh: 0, cached: 0, failed: 0, resolved: 0, expiryOwned: 0, leftBehind: 0, skipped: 0 };
+  // W14.2 · the ask/narration lane's own tally (zero AI) — reported, never folded into the judgments.
+  const asks = { closedSettled: 0, mootArchived: 0, falseRespoken: 0, falseUnfixable: 0, narrationsSettled: 0, leftBehind: 0, skipped: 0 };
   for (const uid of fallbackUsers) {
     if (Date.now() + Math.min(budgetMs, 20_000) > routeDeadline) { usersLeftBehind++; continue; }
     try {
@@ -87,6 +93,9 @@ export async function GET(request: NextRequest) {
       notJudged.fresh += r.notJudged.fresh; notJudged.cached += r.notJudged.cached; notJudged.failed += r.notJudged.failed;
       notJudged.resolved += r.notJudged.resolved; notJudged.expiryOwned += r.notJudged.expiryOwned;
       notJudged.leftBehind += r.notJudged.leftBehind; if (r.notJudged.skipped) notJudged.skipped++;
+      asks.closedSettled += r.asks.closedSettled; asks.mootArchived += r.asks.mootArchived; asks.falseRespoken += r.asks.falseRespoken;
+      asks.falseUnfixable += r.asks.falseUnfixable; asks.narrationsSettled += r.asks.narrationsSettled; asks.leftBehind += r.asks.leftBehind;
+      if (r.asks.skipped) asks.skipped++;
       if (r.visited > 0) usersTouched++;
     } catch { /* non-fatal per user — the rotation carries the account to the next run */ }
   }
@@ -98,6 +107,6 @@ export async function GET(request: NextRequest) {
     dispatched: sent.accepted.length, dispatchFailed: sent.failed.length, dispatchReason: sent.reason ?? null,
     fallback: { ran: fallbackRan, candidates, visited, fresh, cached, failed, resolved, anchorPassed, leftBehind, graduated, graduationLeftBehind,
       proofOfLife: { checked: proofChecked, reaffirmed: proofReaffirmed, demoted: proofDemoted, leftBehind: proofLeftBehind },
-      notJudged },
+      notJudged, asks },
     usersTouched, usersLeftBehind, budgetMs, activeUsers: users.length });
 }

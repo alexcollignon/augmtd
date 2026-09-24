@@ -27,6 +27,7 @@ import { deckEligible, fromEmailOf, type DeckFloors, type DeckItem } from '@/lib
 import {
   whyNowOf, rankAttention, classifyHeld, bandOf, internalDomainsOf, isInternalBridge, selectGraduates,
   buildHeldLedger, ATTENTION_BUDGET, MAX_ADJACENCY_PROMOTIONS, HELD_MEMBERS_PER_CLASS,
+  seatClockOf, kindFlooredForSeat,
   type AttentionRow, type HeldFacts, type HeldClassId, type HeldBandId,
 } from '@/lib/home/attention';
 import { readLeanPool, rulesReadBody, hydrateSource, CLASSIFY_KEYS, PREPARED_KEYS, DEED_KEYS } from '@/lib/home/lean-source';
@@ -244,6 +245,15 @@ export async function deriveHeld(
         key: `${source[0]}-${x.it.id}`, entityId: String(x.it.id), source,
         whyNow: whyNowOf({ source, who, dueDate: due, overdue: !!due && due < todayISO, dueToday: due === todayISO, meeting: adj }, now),
         calendarAdjacent: !!adj, overdue: !!due && due < todayISO, dueToday: due === todayISO, dueDate: due,
+        // W14.3 · THE SAME SEAT FACTS the brief hands the choke (lib/home/attention.ts THE ORDER), so
+        // a stale row or a floored notice the Home refused is never counted as "served" here — it
+        // stays in the ledger under its honest class instead of vanishing from both. (No thread read
+        // on this path: an answered pitch is conservatively held — it may show here AND seat there.)
+        ...(() => {
+          const row = x.it as { last_activity_at?: string | null; created_at?: string | null };
+          const at = row.last_activity_at ?? row.created_at ?? null;
+          return { activityAt: at, ...seatClockOf({ activityAt: at, dueDate: due }, now), kindFloored: kindFlooredForSeat(x.it) };
+        })(),
       } satisfies AttentionRow;
     })
     .sort((a, b) => (weights.get(b.entityId) ?? 20) - (weights.get(a.entityId) ?? 20));

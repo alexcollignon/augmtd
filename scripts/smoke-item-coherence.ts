@@ -265,7 +265,9 @@ console.log('\nH · a machine draft signed as ANOTHER of the user\'s mailboxes i
     && isLiveArtifact(stampTruth([art({})], { ...facts, mailbox: null })[0]));
   const rd = src('lib/prepare/read.ts');
   gate('H8 both readers load the facts — only for a machine draft, only when the user has ≥2 mailboxes (else nothing further is read)',
-    /if \(facts && needsIdentityCheck\(out\)\) \{\s*const boxes = await loadMailboxIdentities\(client, userId\);/.test(rd)
+    // ⟲ RE-POINTED (W14.1): the single reader IS the batched reader over one item, so the one gated
+    // load below serves both.
+    /const states = await preparedStatesFor\(client, userId, \[\{ kind, id: item\.id \}\]\);/.test(rd)
     && /const boxes = checkKeys\.length \? await loadMailboxIdentities\(client, userId\) : null;/.test(rd)
     && /\.size >= 2 \? out : null;/.test(rd));
   gate('H9 no corpus re-draft: DRAFT_LAW_VERSION untouched by W11.1', !/W11\.1/.test(src('lib/inbox/attachment-context.ts')));

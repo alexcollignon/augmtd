@@ -218,11 +218,12 @@
     "TWO READERS, ONE LADDER",
     "ONE DERIVATION",
     "ONE READER'S RULE",
-    "ONE PREPARED READER"
+    "ONE PREPARED READER",
+    "ONE READER, ONE ANSWER (W14.1)"
    ],
    "tier": 1,
    "domain": "truth",
-   "statement": "Every surface reading the state of an item, commitment, project or run goes through that object's one reader; a forked reader is a build error.",
+   "statement": "Every surface reading the state of an item, commitment, project or run goes through that object's one reader; a forked reader is a build error. W14.1 · ONE READER, ONE ANSWER: the single prepared reader IS the batched reader over one item (`preparedState` = `preparedStatesFor([item])`) — one notice law over both lanes, one staging proof, one EXACT ground check (`groundsFor`, for inbox items AND commitments; the last_activity approximation is retired), the whole pool (no cap) — so a Home row and a room can never disagree about the same object's prepared state.",
    "homes": [
     "lib/work/machine.ts",
     "lib/prepare/read.ts",
@@ -263,11 +264,19 @@
      "status": "planned",
      "wave": "W2.1",
      "note": "prepared-state census on live accounts: grounding, chip, machine, room, Home-ask agree per item"
+    },
+    {
+     "suite": "smoke-reader-parity",
+     "ids": [
+      "H1-H6"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai"
     }
    ],
    "version_key": null,
    "status": "holding-uncommitted",
-   "fixed_by": "W2.1, W2.2",
+   "fixed_by": "W2.1, W2.2, W14.1",
    "broken_by": null,
    "collides_with": []
   },
@@ -414,7 +423,7 @@
    ],
    "tier": 1,
    "domain": "truth",
-   "statement": "Nothing — chip, brief, narration, chat answer — claims prepared work that no surface renders; a claim without a card does not compose.",
+   "statement": "Nothing — chip, brief, narration, chat answer — claims prepared work that no surface renders; a claim without a card does not compose. W14.1: the inbox reader's obligation is the understanding's (`inboxTruthFacts` — you_owe opens the completion and chase vets, as on a you_owe commitment), and a machine reply draft's attachment on an inbox item is re-proven like a commitment doc-send's (an unstamped file match no current-law resolver row proves is withdrawn, and the re-prepare trip re-verifies it).",
    "homes": [
     "app/api/home/brief/route.ts",
     "components/home/item-detail.tsx",
@@ -430,7 +439,8 @@
     "app/api/items/view/route.ts",
     "lib/room/legacy-ask-speech.ts",
     "app/api/room/turns/route.ts",
-    "lib/prepare/narration.ts"
+    "lib/prepare/narration.ts",
+    "lib/room/ask-lifecycle.ts"
    ],
    "gates": [
     {
@@ -535,11 +545,30 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W13.6 THE LIVE ASK RENDERS: the doc-send lane asks under the verdict's own labels (never moot by construction); a placeholder label never reads as outlived; the brief's grounding reads asks through the SAME moot predicate the rail does (the composer never speaks an ask the page hides); the lifted/folded ask card keeps Attach · Type it · Point me to it · Go ahead; every door that takes an artifact away settles its prep narration; an inverted chase is withdrawn by the reader and retired with the send. tests/unit/ask-truth.test.ts runs the composer's refusal, THE ONE RESOLVER's base offer and the narration settle over in-memory fakes"
+    },
+    {
+     "suite": "smoke-ask-lifecycle",
+     "ids": [
+      "A4-A6",
+      "D2-D4"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W14.2: stored false ask words are re-spoken true by the sweep; an orphaned narration's claim is never served"
+    },
+    {
+     "suite": "smoke-reader-parity",
+     "ids": [
+      "A1-A2",
+      "B1-B6"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai"
     }
    ],
    "version_key": null,
    "status": "holding-uncommitted",
-   "fixed_by": "W2.1, W13.6",
+   "fixed_by": "W2.1, W13.6, W14.2, W14.1",
    "broken_by": null,
    "collides_with": [
     {
@@ -1453,7 +1482,7 @@
    ],
    "tier": 2,
    "domain": "rooms",
-   "statement": "A prep narration folds into its artifact card by dedupe key and survives only while the current verdict's lane holds that artifact — an orphaned narration never stands alone. W13.6: whichever door takes the artifact away — a verdict strip, the one superseding writer, the reader's withdrawal — archives the narration when the item holds nothing live.",
+   "statement": "A prep narration folds into its artifact card by dedupe key and survives only while the current verdict's lane holds that artifact — an orphaned narration never stands alone. W13.6: whichever door takes the artifact away — a verdict strip, the one superseding writer, the reader's withdrawal — archives the narration when the item holds nothing live. W14.2: the READER withdraws at read time, so the turn door decides before the paint — a prep:<kind>:<id> narration is served only while THE ONE READER holds a live artifact for that item — and the send doors, apply-verdict's strip (archive, never delete) and the judgment sweep settle it durably (a sent artifact is a positive finding).",
    "homes": [
     "lib/work/apply-verdict.ts",
     "lib/prepare/pass.ts",
@@ -1462,7 +1491,12 @@
     "lib/prepare/narration.ts",
     "lib/prepare/requirements.ts",
     "lib/room/open-kicks.ts",
-    "lib/room/grounding.ts"
+    "lib/room/grounding.ts",
+    "app/api/room/turns/route.ts",
+    "lib/room/ask-lifecycle.ts",
+    "app/api/inbox/[id]/send-reply/route.ts",
+    "app/api/commitments/[id]/nudge/route.ts",
+    "app/api/items/execute/route.ts"
    ],
    "gates": [
     {
@@ -1483,15 +1517,24 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W13.6: every door that takes an artifact off the board settles the item's prep narration through ONE function (settlePrepNarration — THE ONE READER holds nothing live AND something was withdrawn or just retired → archived, never deleted): the one superseding writer, the withdrawn-draft retirement, the reader-withdrawal re-prepare trip. tests/unit/ask-truth.test.ts runs the settle and the retirement over fakes"
+    },
+    {
+     "suite": "smoke-ask-lifecycle",
+     "ids": [
+      "D1-D10"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W14.2: the render floor over THE ONE READER (withheld when nothing live, served when a draft is live), the sweep's durable archive, the send doors and apply-verdict's archive-not-delete strip"
     }
    ],
-   "fn": "narrationOrphaned · prepNarrationKeys · settlePrepNarration (lib/prepare/narration.ts; tests/unit/ask-truth.test.ts)",
+   "fn": "narrationOrphaned · prepNarrationKeys · settlePrepNarration (lib/prepare/narration.ts; tests/unit/ask-truth.test.ts) · prepItemOfKey · withholdOrphanNarrations · servedNarrationTurns (W14.2)",
    "version_key": null,
    "status": "holding-uncommitted",
    "broken_by": null,
    "collides_with": [],
-   "fixed_by": "W13.6",
-   "note": "Sep 22 finding (was broken-live): Sep 22: apply-verdict deletes on `prep:<kind>:<id>` while pass.ts, item-detail and entity-room anchor on `prep:<id>` — the fold never matches, narrations orphan. The Sep 22 key mismatch is closed (apply-verdict archiveItemNarrations archives both `prep:<kind>:<id>` and the work-spine `prep:commit:<id>`). W13.6 (owner walk after W13.5): \"Clara found the file and drafted the send\" stood live after its doc-send was filed into the version chain — the law was enforced only at the verdict-driven strip. Fixed by W13.6 (uncommitted)."
+   "fixed_by": "W13.6, W14.2",
+   "note": "Sep 22 finding (was broken-live): Sep 22: apply-verdict deletes on `prep:<kind>:<id>` while pass.ts, item-detail and entity-room anchor on `prep:<id>` — the fold never matches, narrations orphan. The Sep 22 key mismatch is closed (apply-verdict archiveItemNarrations archives both `prep:<kind>:<id>` and the work-spine `prep:commit:<id>`). W13.6 (owner walk after W13.5): \"Clara found the file and drafted the send\" stood live after its doc-send was filed into the version chain — the law was enforced only at the verdict-driven strip. Fixed by W13.6 (uncommitted). W14.2 census (Sep 24): 16 live prep:* narrations over items whose reader held nothing live (wrong identity 5, superseded by a newer inbound 3, expired 1, false claim/staging 2, sent/filed elsewhere 5) — settled only from superseding doors. Fixed by W14.2 (uncommitted): read-time floor + send/strip/sweep settles."
   },
   {
    "id": "one-narrator-law",
@@ -1714,13 +1757,16 @@
     "THE WORK-ITEM LIFECYCLE",
     "DERIVED AT READ TIME",
     "TWO READERS ONE LADDER",
-    "poolRowsToArtifacts"
+    "poolRowsToArtifacts",
+    "THE RECEIPT KIND FOLLOWS THE LADDER (W14.1)"
    ],
    "tier": 2,
    "domain": "judge-prepare-deck",
-   "statement": "The work-item lifecycle is derived at read time from existing truth through one pure ladder shared by the single and batch readers — never a stored state.",
+   "statement": "The work-item lifecycle is derived at read time from existing truth through one pure ladder shared by the single and batch readers — never a stored state. W14.1: every rung that rests on an artifact names its kind (`leadKind`), and a deck row's receipt is worded by that rung (lib/home/calm `ladderReceiptKind` over the served state word) — never by the reader's own `leadKindOf` ranking (\"decision laid out\" beside a room's \"ready to review\").",
    "homes": [
-    "lib/work/machine.ts"
+    "lib/work/machine.ts",
+    "lib/home/calm.ts",
+    "lib/home/attention.ts"
    ],
    "gates": [
     {
@@ -1732,9 +1778,17 @@
      "suite": "smoke-compute",
      "kind": "pure",
      "cost": "zero-ai"
+    },
+    {
+     "suite": "smoke-reader-parity",
+     "ids": [
+      "H7-H9"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai"
     }
    ],
-   "fn": "deriveState",
+   "fn": "deriveState · ladderReceiptKind",
    "version_key": null,
    "status": "holding",
    "broken_by": null,
@@ -2088,11 +2142,12 @@
     "RELATED IS NOT IS, IN TIME",
     "THE BASE IS NOT THE ANSWER (stagingRole)",
     "THE STAGING LAW IS VERSIONED (STAGING_LAW_VERSION)",
-    "THE LAW HEALS ITSELF (reverifyStaleStaging)"
+    "THE LAW HEALS ITSELF (reverifyStaleStaging)",
+    "THE CARRIED FILE (carriedDraftFiles)"
    ],
    "tier": 2,
    "domain": "judge-prepare-deck",
-   "statement": "Only the item's own pool material or a same-entity file auto-stages; evidence is quoted and code-checked; a global hit becomes a named suggestion in the ask, never a staged attachment. W13.1: a staged file is the deliverable IN TIME and of the right KIND, or it is not staged. The requirement's kind (`existing` — a document sent as it is · `new_work` — new or revised content still to be produced, even INTO an existing document) is a reasoned field judged in the same pick that matches the file (a kind the judge's inventory states wins); the dates are code-checked against the REQUEST message (a commitment's source email): the file's effective date is the EARLIEST it can be (its own name's date, when we first saw it, its conversation's date). New work is never satisfied by a file from on or before the request — that file is offered as the BASE (staged as context under `base:<label>`, never `require:`), the requirement stays an ask/produce; an older file satisfies an existing-artifact ask only when the request names it. A resolver-staged row the law now refuses is unstaged through ONE writer (the pointer row goes, the user's file is never touched, the reason is recorded), and only on a positive demotion — an AI outage never unstages. W13.2: the law is VERSIONED and heals itself — the platform, never an operator. Every resolver-staged `require:` row carries the staging-law version it was verified under (`metadata.stagingLaw`, no migration); a row stamped with an older law, or unstamped, is never read as settled and is re-verified by THE ONE RESOLVER on its next touch (the prepare pass before its lanes, the judge's serving edge, the draft doors): its FILE is put first in the same reasoned pick (the kind rides that call), and the ruling is code's — the same file verified restamps in place (not new supply), another file replaces it, a demotion or a stale row the pick cleanly does not verify is unstaged through the one writer, and an unanswered pick holds (the row stands, still stale, still read as staged — an AI failure never unstages). Bounded: REVERIFY_PER_PASS items per pass (the rest counted and said), one item per open. The repair script is an optional accelerator that calls the same function. W13.6: the base is OFFERED, never lost — for new work the document the content goes into is the reasoned match (code then makes an older one the base), a stale row the current pick cannot verify on a new-work requirement becomes the base when the request names its older file, and the room's ask names it (\"Current version (to update): <file>\").",
+   "statement": "Only the item's own pool material or a same-entity file auto-stages; evidence is quoted and code-checked; a global hit becomes a named suggestion in the ask, never a staged attachment. W13.1: a staged file is the deliverable IN TIME and of the right KIND, or it is not staged. The requirement's kind (`existing` — a document sent as it is · `new_work` — new or revised content still to be produced, even INTO an existing document) is a reasoned field judged in the same pick that matches the file (a kind the judge's inventory states wins); the dates are code-checked against the REQUEST message (a commitment's source email): the file's effective date is the EARLIEST it can be (its own name's date, when we first saw it, its conversation's date). New work is never satisfied by a file from on or before the request — that file is offered as the BASE (staged as context under `base:<label>`, never `require:`), the requirement stays an ask/produce; an older file satisfies an existing-artifact ask only when the request names it. A resolver-staged row the law now refuses is unstaged through ONE writer (the pointer row goes, the user's file is never touched, the reason is recorded), and only on a positive demotion — an AI outage never unstages. W13.2: the law is VERSIONED and heals itself — the platform, never an operator. Every resolver-staged `require:` row carries the staging-law version it was verified under (`metadata.stagingLaw`, no migration); a row stamped with an older law, or unstamped, is never read as settled and is re-verified by THE ONE RESOLVER on its next touch (the prepare pass before its lanes, the judge's serving edge, the draft doors): its FILE is put first in the same reasoned pick (the kind rides that call), and the ruling is code's — the same file verified restamps in place (not new supply), another file replaces it, a demotion or a stale row the pick cleanly does not verify is unstaged through the one writer, and an unanswered pick holds (the row stands, still stale, still read as staged — an AI failure never unstages). Bounded: REVERIFY_PER_PASS items per pass (the rest counted and said), one item per open. The repair script is an optional accelerator that calls the same function. W13.6: the base is OFFERED, never lost — for new work the document the content goes into is the reasoned match (code then makes an older one the base), a stale row the current pick cannot verify on a new-work requirement becomes the base when the request names its older file, and the room's ask names it (\"Current version (to update): <file>\"). W14.1: the inbox doc-send writers stamp the draft's attachment (`stagingStamp()` on `source_data.draft`) and THE ONE READER re-proves an unstamped machine attachment (withdrawn unless a current-law resolver row stages the same file; the user's edit is never judged); and the resolver's standing-file lookup also reads the file carried by the item's own unstaged/withdrawn machine draft (`carriedDraftFiles`) — re-judged first by the same pick, made the base by the same rules (new work · predates the request · named by it), so the base is offered even when no `require:` row survived.",
    "homes": [
     "app/api/items/judge/route.ts",
     "lib/knowledge/resolve.ts",
@@ -2174,9 +2229,18 @@
      "cost": "zero-ai",
      "fn": "standingAsBase · docSendAskLabels · baseOfferLine · askBaseOf",
      "note": "W13.6 THE BASE IS OFFERED: for new work the document the content goes INTO is the pick's match (TARGET_RULE, both picks) and code demotes an older one to the base; a stale row the pick does not verify on a new-work requirement (the verdict's kind, else the pick's own) whose older file the request names becomes the BASE (never dropped as 'unproven'); the base row is titled and the ask card's meta line reads 'Current version (to update): <file>'; the resolver keeps offering a standing base so it and the lane post the same ask"
+    },
+    {
+     "suite": "smoke-reader-parity",
+     "ids": [
+      "B1-B6",
+      "G1-G6"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai"
     }
    ],
-   "fn": "pickArtifacts · verifyArtifactMatch · stagingRole · stagedRowVerdict · unstageRequirement (tests/unit/staged-truth.test.ts) · W13.2: STAGING_LAW_VERSION · stagingLawStale · servingEdgeShouldResolve · reverifyDecision · reverifyStaleStaging · reverifyItemStaging (tests/unit/staging-self-heal.test.ts — resolveRequirements outcome over an in-memory pool with a stubbed model) · W13.5: writeRoomTurn releases an archived key (releaseArchivedKey · isUniqueViolation) · editorMaySettle (tests/unit/room-truth.test.ts — the ask stands over an archived one) · W13.6: standingAsBase · standingBaseRows · docSendAskLabels · baseOfferLine (tests/unit/ask-truth.test.ts — the unproven new-work row becomes the base row and the ask carries it)",
+   "fn": "pickArtifacts · verifyArtifactMatch · stagingRole · stagedRowVerdict · unstageRequirement (tests/unit/staged-truth.test.ts) · W13.2: STAGING_LAW_VERSION · stagingLawStale · servingEdgeShouldResolve · reverifyDecision · reverifyStaleStaging · reverifyItemStaging (tests/unit/staging-self-heal.test.ts — resolveRequirements outcome over an in-memory pool with a stubbed model) · W13.5: writeRoomTurn releases an archived key (releaseArchivedKey · isUniqueViolation) · editorMaySettle (tests/unit/room-truth.test.ts — the ask stands over an archived one) · W13.6: standingAsBase · standingBaseRows · docSendAskLabels · baseOfferLine (tests/unit/ask-truth.test.ts — the unproven new-work row becomes the base row and the ask carries it) · proveStagingByPool · draftStagingStale · carriedDraftFileRows · labelForCarriedFile",
    "version_key": "STAGING_LAW_VERSION",
    "status": "holding-uncommitted",
    "broken_by": null,
@@ -2194,7 +2258,7 @@
      "precedence": "the self-heal only ever re-verifies and unstages a RESOLVER pointer row — never a typed supply, a user drop, or the user's file; a draft the user edited is never withdrawn or regenerated by it (the reader never judges hand-held words)"
     }
    ],
-   "fixed_by": "W13.1, W13.2, W13.5, W13.6",
+   "fixed_by": "W13.1, W13.2, W13.5, W13.6, W14.1",
    "note": "W13.1 (owner live walk on prod after W12): a you_owe commitment asking to ADD detail to slides 7&8 of an interim report staged the PRE-EXISTING report as the requirement (plus a doc-send draft carrying it), and the reply said the report 'now includes' the new slides. No JUDGE_VERSION bump: the judge prompt is unchanged — the kind is reasoned inside the requirements pick. Rows staged before W13 carry no kind: scripts/repair-stale-staging.ts (dry-run, zero AI) lists decisive violations and suspects; --apply --yes --judge (owner-gated) judges the suspects and unstages the new-work ones. W13.2 (owner principle — the platform corrects itself): rows staged under the old law were read as settled by the judge's serving edge and never re-checked; only the one-shot repair fixed them. The staging law is now versioned and every older-law row re-verifies on its next touch (bounded; an AI failure never unstages); the repair became an optional accelerator over the same function. Fixed by W13.2 (uncommitted). W13.6 (owner walk after W13.5): the live new-work requirement ended 'unproven' with NO base — the pick, asked whether the client's own interim report IS the new slides' details, rightly said no, so the resolver dropped it; the commitment doc-send lane's verifier said the same and asked for \"the document itself\". The pick now names the target document for new work and code decides its role; the unproven path keeps a named older file as the base."
   },
   {
@@ -4282,7 +4346,6 @@
    "id": "ask-supersession",
    "name": "ASK SUPERSESSION",
    "aliases": [
-    "ASKS LIVE AND DIE WITH THEIR WORK (SPEC LAW 3)",
     "settleAsksForItem",
     "ONE ARTIFACT = ONE ASK",
     "ONE ASK PER ITEM",
@@ -4291,7 +4354,7 @@
    ],
    "tier": 2,
    "domain": "rooms",
-   "statement": "An ask is settled at every resolution door (checklist strips, text stays), one artifact carries one merged ask, a coworker's ask supersedes the engine's both ways, and an ask never blocks work-with-what-you-have.",
+   "statement": "An ask is settled at every resolution door (the checklist affordance dies, text stays — W14.2: re-keyed, restorable, see asks-live-and-die-with-their-work), one artifact carries one merged ask, a coworker's ask supersedes the engine's both ways, and an ask never blocks work-with-what-you-have.",
    "homes": [
     "lib/room/turns.ts",
     "lib/prepare/requirements.ts",
@@ -4321,7 +4384,73 @@
    "version_key": null,
    "status": "holding",
    "broken_by": null,
-   "collides_with": []
+   "collides_with": [
+    {
+     "law": "asks-live-and-die-with-their-work",
+     "precedence": "the lifecycle law owns WHEN an ask dies and comes back (resolution, moot, undo); this law owns HOW asks merge and supersede while they live"
+    }
+   ]
+  },
+  {
+   "id": "asks-live-and-die-with-their-work",
+   "name": "ASKS LIVE AND DIE WITH THEIR WORK",
+   "aliases": [
+    "SPEC LAW 3",
+    "THE UNDO RESTORES THE ASK",
+    "A HIDDEN ASK IS NOT A LIVE ONE",
+    "THE FALSE ASK IS RE-SPOKEN",
+    "THE ASK LANE",
+    "restoreAsksForItem"
+   ],
+   "tier": 2,
+   "domain": "rooms",
+   "statement": "An input-checklist ask stands only while the work it serves is open and it is true: every door that closes an item (dismiss, done, archive, delete, move, rule, send, verdict, mirror retirement, workflow close) settles the item's asks — awaited, archived never deleted, re-keyed and stamped so THE ONE reopen (the Undo, single and batch) restores exactly what a resolution settled; every verdict write archives the engine asks the machine hides as moot (the same askIsMoot + verdictRequireLabels facts — a hidden-but-live ask must not exist); and the judgment sweep, fanned per user, is the net — closed items' asks settle, moot asks archive, asks whose stored words claim readiness are re-spoken with the deterministic floor (zero AI), bounded and reported.",
+   "homes": [
+    "lib/room/ask-lifecycle.ts",
+    "lib/room/ask-settle.ts",
+    "lib/room/turns.ts",
+    "lib/work/apply-verdict.ts",
+    "lib/work/judgment-sweep.ts",
+    "lib/activity/reopen.ts",
+    "lib/tools/item-actions.ts",
+    "lib/inbox/commitment-mirrors.ts",
+    "app/api/cron/judgment-sweep/route.ts",
+    "app/api/room/asks/route.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-ask-lifecycle",
+     "ids": [
+      "A1-A9",
+      "B1-B7",
+      "C1-C13",
+      "E1-E4"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W14.2: runs the lane, the settle/restore round trip through the ONE resolver and the ONE reopen, and applyVerdictConsequences over an in-memory PostgREST fixture (tests/fixtures/fake-postgrest.ts); tests/unit/ask-lifecycle.test.ts exercises the pure predicates"
+    }
+   ],
+   "fn": "decideAsk · askHiddenAsMoot · settledAskComponent · restoredAskComponent · restorableBy · falseAskFloor · runAskLifecycleLane (lib/room/ask-lifecycle.ts); settleAsksForItem · restoreAsksForItem (lib/room/turns.ts); tests/unit/ask-lifecycle.test.ts",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W14.2",
+   "collides_with": [
+    {
+     "law": "ask-supersession",
+     "precedence": "this law decides WHEN an ask dies/returns; ask-supersession decides merge + supersession while it lives"
+    },
+    {
+     "law": "a-claim-renders",
+     "precedence": "an ask's words are a claim: the floor that renders them true on the paint (truthfulAskTurns) is A CLAIM RENDERS; making the STORED words true is this law's sweep"
+    },
+    {
+     "law": "human-in-the-loop",
+     "precedence": "settlement is logged, undoable state — the Undo restores the ask with the item (human-in-the-loop's undoable-settlement clause wins; a settle is never a deed)"
+    }
+   ],
+   "note": "W14.2 read-only census (Sep 24, 4 live accounts): 24 live asks whose stored words failed askClaimsReadiness (written before W13.6 — repaired only on open); 3 live asks hidden as moot that nothing archived (editorMaySettle refuses engine asks; apply-verdict settled only on a class change); 9 live asks on closed items (8 on commitment mirrors retired without a settle, 1 on a verdict dismissal whose fire-and-forget settle never ran). Fixed by W14.2 (uncommitted); stored rows change when the new code runs on prod (the sweep's next cycle)."
   },
   {
    "id": "person-bridge-law",
@@ -7100,6 +7229,74 @@
      "precedence": "looks_done is derived at read time from a record the settle door wrote — one ladder, both readers; a judged-none item is settled whatever the record says"
     }
    ]
+  },
+  {
+   "id": "the-top-five-are-what-matters-now",
+   "name": "THE TOP FIVE ARE WHAT MATTERS NOW",
+   "aliases": [
+    "FRESH MEANS ARRIVED",
+    "STALENESS DEMOTES",
+    "THE SEAT CLOCK",
+    "THE ORDER WITHIN A BAND"
+   ],
+   "tier": 2,
+   "domain": "deck · attention",
+   "statement": "The Home's five seats rank against the WORK's own clock, never the judge's. FRESH MEANS ARRIVED: `fresh` is the item's own newest activity inside 36h (inbox: last_activity_at › newest inbound › created_at; commitment: its source message's arrival, else created_at, lifted by newer thread activity) — never judgment time, so a backfill that judges old work does not make it fresh. THE SEAT TESTS refuse (HELD, never deleted): our own mail, a row proved quiet, the KIND FLOOR asked at serve time for every inbox row whatever law cached its verdict (a notice with no you_owe, an unanswered pitch/newsletter, the platform's own mail), and STALENESS — no activity for 21+ days and no stated deadline within 7 days. THE BANDS: today's meeting › fresh arrival › overdue or due today WITH signs of life (activity in 14 days or a deadline within 7) › everything else (looks-done below all real work). WITHIN A BAND: soonest due › prepared before needs-shaping › most recent activity › the judged priority weight. The held ledger's own cut reads the same seat facts.",
+   "homes": [
+    "lib/home/attention.ts",
+    "app/api/home/brief/route.ts",
+    "lib/deeds/held-members.ts",
+    "lib/work/kind-floor.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-seat-order",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "S1a-S1f",
+      "S2a-S2j",
+      "S3a-S3e",
+      "S4a-S4h",
+      "S5a-S5g"
+     ],
+     "note": "W14.3: seatClockOf / seatVerdict / attentionRank / rankAttention / kindFlooredForSeat on fixtures — judged-today-but-old is not fresh; the four bands; the order within a band; 21-day stale never seats; notices and pitches never seat; a fresh arrival outranks an old overdue without life; tests/unit/seat-order.test.ts"
+    },
+    {
+     "suite": "smoke-seat-order",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "S1g-S1k",
+      "S3f",
+      "S5h-S5i",
+      "S6a-S6b"
+     ],
+     "note": "W14.3: the brief's fresh fact is the seat clock over the row's own activity (never machine.surfaced); commitment arrival via paged source/thread reads; the kind floor asked per inbox row with the thread's engagement; the held ledger's own cut carries the same facts"
+    }
+   ],
+   "status": "holding-uncommitted",
+   "fixed_by": "W14.3",
+   "fn": "seatClockOf · seatVerdict · attentionRank · rankAttention · kindFlooredForSeat",
+   "collides_with": [
+    {
+     "law": "attention-quality-laws",
+     "precedence": "the BUDGET LAW's five and the seat contract stand; this law re-states the RANK (bands + the order within one) and adds two seat refusals (kind floor, staleness). A refused row is held and the held ledger's BAND LAW still places it by class + facts"
+    },
+    {
+     "law": "the-list-says-only-what-was-judged",
+     "precedence": "the same kind-floor predicate at a second serve seat: the ledger re-reads it only for older-law verdicts, the SEAT reads it for every inbox row (a seat is a stronger claim than a waiting row); neither re-promotes what the other floored"
+    },
+    {
+     "law": "notice-law",
+     "precedence": "the notice law decides deck eligibility first (its you_owe dunning carve-out stands: an automated you_owe action notice may still seat); the seat's kind floor only ever ADDS a refusal"
+    },
+    {
+     "law": "time-truth",
+     "precedence": "a stale row is never spoken as current: it cannot seat, and its held class speaks its own honest account; an overdue row seats only with signs of life"
+    }
+   ],
+   "note": "Sep 24 (owner, live Home): the five held a recent demo request, a WEEKS-old client task, an automated marketplace notice, a domain-sale pitch and a task about a provider the company no longer uses — 'some of the items here are old … the order/priority also matters a bit'. Cause: rank 1 was `fresh` = machine.surfaced (first judged within the day), and the not-judged backfill judged hundreds of old items that morning. Read-only census on the reference account through the real brief route (guarded client, zero writes, zero AI): before — five rank-1 'fresh' rows of which three were 24–52 days old (one overdue since Aug 26); after — five rows all arrived within 36h, 94 rows refused as stale (held, not deleted)."
   }
  ],
  "lessons": [

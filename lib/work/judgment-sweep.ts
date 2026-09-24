@@ -54,6 +54,7 @@ import { userTimezone, localNow } from '@/lib/utils/user-time';
 import { parseWho } from '@/lib/entities/people';
 import { kindFloor } from '@/lib/work/kind-floor';
 import type { WorkItem } from '@/lib/work-items/model';
+import { emptyAskLifecycle, type AskLifecycleResult } from '@/lib/room/ask-lifecycle';
 
 export type JudgmentSweepResult = {
   candidates: number;
@@ -71,6 +72,8 @@ export type JudgmentSweepResult = {
   proofOfLife: { eligible: number; checked: number; reaffirmed: number; demoted: number; leftBehind: number };
   /** W8.6 · THE NOT-JUDGED LANE — its own tally, reported beside the walk (never folded into it). */
   notJudged: NotJudgedLaneResult;
+  /** W14.2 · ASKS AND NARRATION LIVE AND DIE WITH THEIR WORK — the zero-AI lane's own tally. */
+  asks: AskLifecycleResult;
 };
 
 // ── W8.6 · THE NOT-JUDGED LANE ─────────────────────────────────────────────────────────────────────
@@ -317,7 +320,7 @@ export async function runJudgmentSweep(
   const deadline = Date.now() + (opts?.budgetMs ?? DEFAULT_BUDGET_MS);
   const tz = await userTimezone(admin, userId);
   const todayStr = localNow(tz).dateStr;
-  const out: JudgmentSweepResult = { candidates: 0, visited: 0, fresh: 0, cached: 0, failed: 0, resolved: 0, anchorPassed: 0, siblingNominated: 0, leftBehind: 0, graduated: 0, graduationLeftBehind: 0, proofOfLife: { eligible: 0, checked: 0, reaffirmed: 0, demoted: 0, leftBehind: 0 }, notJudged: emptyNotJudged() };
+  const out: JudgmentSweepResult = { candidates: 0, visited: 0, fresh: 0, cached: 0, failed: 0, resolved: 0, anchorPassed: 0, siblingNominated: 0, leftBehind: 0, graduated: 0, graduationLeftBehind: 0, proofOfLife: { eligible: 0, checked: 0, reaffirmed: 0, demoted: 0, leftBehind: 0 }, notJudged: emptyNotJudged(), asks: emptyAskLifecycle() };
 
   // ── Q3 · THE GRADUATION LANE, hosted here (docs/attention-plan.md PART III) ─────────────────────
   // It rides this cron because this cron already walks every active account every two hours — but it
@@ -350,6 +353,24 @@ export async function runJudgmentSweep(
     } catch { /* the lane never costs the sweep its judgments */ }
   };
   await graduate();
+
+  // ── W14.2 · ASKS AND NARRATION LIVE AND DIE WITH THEIR WORK, hosted here (docs/laws-registry.md
+  // `asks-live-and-die-with-their-work`). The platform heals the room record WHERE IT ALREADY
+  // WRITES — no operator script: a closed item's asks settle (reversible — the undo restores them),
+  // a hidden-moot ask archives, a false ask is re-spoken with the deterministic floor (zero AI), an
+  // orphaned prep narration archives. Its own small slice and stated caps; what they leave is COUNTED
+  // and leads the next run. Non-fatal: a failed lane leaves the record exactly as it was. ──
+  const ASK_SLICE_MS = 15_000;
+  if (deadline - Date.now() >= ASK_SLICE_MS + 15_000) {
+    try {
+      const { runAskLifecycleLane } = await import('@/lib/room/ask-lifecycle');
+      out.asks = await runAskLifecycleLane(admin, userId, { deadlineMs: Math.min(deadline, Date.now() + ASK_SLICE_MS) });
+      if (out.asks.leftBehind > 0) console.log(`[judgment-sweep] ask lane for user ${userId}: ${out.asks.leftBehind} turn(s) lead the next run`);
+    } catch { out.asks = { ...emptyAskLifecycle(), skipped: 'the lane failed this run — nothing moved' }; }
+  } else {
+    out.asks = { ...emptyAskLifecycle(), skipped: 'budget too small this run' };
+    console.log(`[judgment-sweep] ask lane skipped for user ${userId}: budget too small this run`);
+  }
 
   const items = await buildWorkItems(admin, userId, { todayStr, skipReconcile: true });
   const candidates = judgmentCandidates(items);

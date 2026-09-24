@@ -1833,8 +1833,9 @@ export async function GET() {
     /** Q2's gradient, served: the door's small number and the quiet one beside it. */
     heldWaiting: number | null;
     heldHandled: number | null;
-    /** THE FRESH SEAT: deck-eligible work FIRST JUDGED within the day that did NOT win a seat —
-     *  the night's arrivals, counted honestly instead of vanishing into the ledger's weather. */
+    /** THE FRESH SEAT: deck-eligible work that ARRIVED inside the seat clock's window (W14.3 —
+     *  its own newest activity, never judgment time) and did NOT win a seat — the night's
+     *  arrivals, counted honestly instead of vanishing into the ledger's weather. */
     fresh: { count: number; ids: string[] };
     /** INSTANT CATCH-UP: this account is dirty enough that the steady-state cron cannot be the
      *  answer — `filing` is how many rows WOULD graduate right now. Null means nothing to drain. */
@@ -1842,7 +1843,7 @@ export async function GET() {
   } = { budget: 0, served: [], heldBack: [], whyNowByAtom: {}, heldTotal: null, heldWaiting: null, heldHandled: null, fresh: { count: 0, ids: [] }, catchUp: null };
   try {
     const { whyNowOf, rankAttention, attentionRank, ATTENTION_BUDGET, internalDomainsOf, isInternalBridge,
-      seatVerdict, provedAliveOf } = await import('@/lib/home/attention');
+      seatVerdict, provedAliveOf, seatClockOf, kindFlooredForSeat } = await import('@/lib/home/attention');
     const { itemIsSelfEcho } = await import('@/lib/inbox/self-echo');
     type Row = import('@/lib/home/attention').AttentionRow;
     // Q8 · AN INTERNAL TEAMMATE IS NEVER A CALENDAR BRIDGE. A colleague attends everything, so one
@@ -1897,6 +1898,44 @@ export async function GET() {
       const cp = String((c.counterparty as string) || '').toLowerCase();
       if (cp.includes('@')) commitCounterpartyEmail.set(c.id as string, cp);
     }
+    // ── W14.3 · FRESH MEANS ARRIVED — the item's OWN newest activity, the seat clock's one input
+    //    (lib/home/attention.ts THE ORDER). Inbox: the deck's own `activityAt` (last_activity_at ›
+    //    newest inbound › created_at). Commitment: its SOURCE message's arrival (an email's
+    //    received_at, a meeting's start) — else created_at — lifted by any newer message on its
+    //    thread. Never judgment time (a backfill that judged old work this morning made it "fresh").
+    //    Two bounded, paged reads over ids already in hand; a failure leaves the fact absent, and an
+    //    absent clock changes nothing (three-valued, like every seat fact).
+    const commitActivityAt = new Map<string, string>();
+    try {
+      const onPlate = new Set(commitments.map((c) => c.id));
+      const plateRows = commits.filter((c) => onPlate.has(c.id as string));
+      const emailSrc = [...new Set(plateRows.filter((c) => c.source === 'email' && c.source_id).map((c) => String(c.source_id)))];
+      const meetingSrc = [...new Set(plateRows.filter((c) => c.source === 'meeting' && c.source_id).map((c) => String(c.source_id)))];
+      const threads = [...new Set(plateRows.map((c) => c.thread_id as string | null).filter((t): t is string => !!t))];
+      const [srcEmails, srcMeetings, threadMsgs] = await Promise.all([
+        emailSrc.length ? fetchAllRows<{ id: string; received_at: string | null }>((f, t) => supabase.from('emails')
+          .select('id, received_at').eq('user_id', user.id).in('id', emailSrc).order('id', { ascending: true }).range(f, t)) : [],
+        meetingSrc.length ? fetchAllRows<{ id: string; start_time: string | null; created_at: string | null }>((f, t) => supabase.from('meeting_transcripts')
+          .select('id, start_time, created_at').eq('user_id', user.id).in('id', meetingSrc).order('id', { ascending: true }).range(f, t)) : [],
+        threads.length ? fetchAllRows<{ thread_id: string | null; received_at: string | null }>((f, t) => supabase.from('emails')
+          .select('thread_id, received_at').eq('user_id', user.id).in('thread_id', threads).order('id', { ascending: true }).range(f, t)) : [],
+      ]);
+      const arrivedAt = new Map<string, string>();
+      for (const e of srcEmails) if (e.received_at) arrivedAt.set(`email:${e.id}`, e.received_at);
+      for (const m of srcMeetings) { const at = m.start_time ?? m.created_at; if (at) arrivedAt.set(`meeting:${m.id}`, at); }
+      const threadNewest = new Map<string, string>();
+      for (const m of threadMsgs) {
+        if (!m.thread_id || !m.received_at) continue;
+        if ((threadNewest.get(m.thread_id) ?? '') < m.received_at) threadNewest.set(m.thread_id, m.received_at);
+      }
+      const iso = (x: string | null | undefined) => (x && Number.isFinite(Date.parse(x)) ? new Date(x).toISOString() : '');
+      for (const c of plateRows) {
+        const arrival = iso(arrivedAt.get(`${c.source}:${c.source_id}`)) || iso(c.created_at as string | null);
+        const onThread = iso(c.thread_id ? threadNewest.get(c.thread_id as string) : null);
+        const at = onThread > arrival ? onThread : arrival;
+        if (at) commitActivityAt.set(c.id as string, at);
+      }
+    } catch { /* the clock is a fact we failed to compute — absent, never "old" */ }
 
     const rows: Row[] = [];
     /** The row's own LEADING WORDS, as the deck prints them (counterparty, else the work's title).
@@ -1916,6 +1955,7 @@ export async function GET() {
       const raw = itemById.get(entityId);
       const sd = (raw?.source_data ?? null) as Record<string, unknown> | null;
       leadWordByAtom.set(entityId, String(f.who || raw?.work_title || 'This'));
+      const rowActivityAt = source === 'commitment' ? (commitActivityAt.get(entityId) ?? null) : (raw ? activityAt(raw) || null : null);
       const draft: Row = {
         key, entityId, source, whyNow: '', calendarAdjacent: !!adj, prepared: f.prepared ?? null, preparedKind: f.preparedKind ?? null,
         overdue: !!f.overdue, dueToday: !!f.dueToday, dueDate: f.dueDate ?? null,
@@ -1927,11 +1967,20 @@ export async function GET() {
         //    the row stays a floating whisper, exactly as it is today.
         anchoredToEventId: (todayZoneLive && adj?.today === true) ? adj.eventId ?? null : null,
         adjacencyToday: adj ? adj.today !== false : undefined,
-        // ── THE FRESH SEAT: the deck's own "surfaced today" fact (first judged inside 24h), read
-        //    off the machine batch that already computed it — never a second derivation of newness.
-        fresh: machineOf(entityId)?.surfaced === true,
+        // ── W14.3 · THE SEAT CLOCK: fresh / signs of life / stale from the item's OWN newest
+        //    activity and its stated deadline (lib/home/attention.ts seatClockOf) — never judgment
+        //    time. (`machine.surfaced` keeps saying "surfaced today" — true of when WE surfaced it,
+        //    and no longer read as arrival.)
+        activityAt: rowActivityAt,
+        ...seatClockOf({ activityAt: rowActivityAt, dueDate: f.dueDate ?? null }, now),
+        // ── W14.3 · THE KIND FLOOR AT THE SEAT — asked for every inbox row, whatever law cached its
+        //    verdict (a notice with no you_owe, an unanswered pitch, the platform's own mail).
+        kindFloored: source === 'commitment' || !raw ? false
+          : kindFlooredForSeat(raw, (threadMsgsById.get(String(sd?.thread_id ?? '')) ?? []).some((m) => m.is_from_user)),
         // W11.2 · LOOKS DONE — ranked below every row of real work (lib/home/attention.ts attentionRank).
         looksDone: machineOf(entityId)?.state === 'looks_done',
+        // W14.4 · the judge said nothing is owed (or the machine reads settled) → held, never seated.
+        judgedNothing: judgedNoneIds.has(entityId) || machineOf(entityId)?.state === 'settled',
       };
       const seat = seatVerdict(draft);
       draft.whyNow = whyNowOf({
@@ -1959,7 +2008,8 @@ export async function GET() {
     }
     // THE ORDER THE BUDGET CUTS is the deck's own judged order (the agenda's law: the REASONED
     // priority weight, stable base order for ties) — the budget re-ranks against context, it does
-    // not re-judge.
+    // not re-judge. W14.3: the weight is THE ORDER's LAST tiebreak (band → due → prepared →
+    // activity → weight; lib/home/attention.ts attentionRank).
     const ordered = rows
       .map((r, i) => ({ r, i, w: itemWeights[r.entityId] ?? 20 }))
       .sort((a, b) => (b.w - a.w) || (a.i - b.i))
@@ -1968,11 +2018,12 @@ export async function GET() {
     // Q4 · a refused seat is a HELD row with a reason — stated in the log so a contract that starts
     // refusing real work is visible the same day, not a month later on somebody's walk.
     if (refused.length) {
-      console.log(`[attention] seat contract refused ${refused.length}: `
+      const byWhy = refused.reduce<Record<string, number>>((m, x) => { m[x.refusal] = (m[x.refusal] ?? 0) + 1; return m; }, {});
+      console.log(`[attention] seat contract refused ${refused.length} (${Object.entries(byWhy).map(([k, n]) => `${k} ${n}`).join(' · ')}): `
         + refused.slice(0, 5).map((x) => `${x.row.entityId.slice(0, 8)}:${x.refusal}`).join(' '));
     }
     const counts = await heldCountsPromise;
-    // THE FRESH SEAT, counted: a first-judged-today row that the budget could not seat. It is NOT a
+    // THE FRESH SEAT, counted: a row that ARRIVED inside the window (W14.3) and the budget could not seat. It is NOT a
     // second attention queue — it is the honest size of what arrived while the user was away, so
     // the Home can say "6 new since last night" instead of letting the night vanish into weather.
     const freshHeld = held.filter((r) => r.fresh === true);

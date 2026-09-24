@@ -269,14 +269,17 @@ export async function DELETE(
         .update({ status: 'cancelled' })
         .eq('workflow_id', id).eq('user_id', user.id)
         .in('status', ['queued', 'running', 'awaiting_approval']);
-      await supabase.from('commitments')
+      const { data: closedHandoffs } = await supabase.from('commitments')
         .update({ status: 'dismissed', resolved_at: new Date().toISOString(), resolved_reason: 'workflow_deleted' })
         .eq('user_id', user.id).eq('source', 'handoff').eq('status', 'open')
-        .in('source_id', runIds);
+        .in('source_id', runIds).select('id');
+      for (const c of (closedHandoffs ?? []) as Array<{ id: string }>) await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(supabase, user.id, 'commitment', c.id)).catch(() => 0);
     }
-    await supabase.from('commitments')
+    const { data: closedStanding } = await supabase.from('commitments')
       .update({ status: 'dismissed', resolved_at: new Date().toISOString(), resolved_reason: 'workflow_deleted' })
-      .eq('user_id', user.id).eq('source', 'workflow').eq('source_id', id).eq('status', 'open');
+      .eq('user_id', user.id).eq('source', 'workflow').eq('source_id', id).eq('status', 'open').select('id');
+    // W14.2 · each closed row's asks die with it (archive, never delete).
+    for (const c of (closedStanding ?? []) as Array<{ id: string }>) await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(supabase, user.id, 'commitment', c.id)).catch(() => 0);
   } catch (e) { console.error('[workflows/delete] settling failed (non-fatal):', e); }
 
   const { error } = await supabase

@@ -177,7 +177,7 @@ export async function applyExpiryVerdict(
   // A historical mirror row (W2.3: no longer written) archives with it — never a hard delete — and
   // the room's asks settle: an obligation's ask must never outlive the obligation.
   await settleMirrorRows(client, userId, commitment.id, { reason: 'expired', stampAt: nowIso });
-  import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', commitment.id)).catch(() => {});
+  await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', commitment.id)).catch(() => 0); // W14.2: awaited — a fire-and-forget settle dies with the function
   try {
     const { logActivity } = await import('@/lib/activity/log');
     await logActivity(client, userId, {

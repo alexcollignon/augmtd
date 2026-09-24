@@ -51,12 +51,17 @@ export async function POST(
     // Invite emails have subjects like "Convite: {title} @..." or "Invitation: {title} @..."
     // Use .filter() for JSONB text extraction — .ilike() doesn't handle ->> operator reliably.
     if (target.row.title) {
-      await supabase
+      const { data: closedInvites } = await supabase
         .from('inbox_items')
         .update({ status: 'completed', updated_at: new Date().toISOString() })
         .eq('user_id', user.id)
         .eq('status', 'pending')
-        .filter('source_data->>subject', 'ilike', `%${target.row.title}%`);
+        .filter('source_data->>subject', 'ilike', `%${target.row.title}%`)
+        .select('id');
+      // W14.2 · each auto-completed invite's asks die with it.
+      for (const r of (closedInvites ?? []) as Array<{ id: string }>) {
+        await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(supabase, user.id, 'inbox_item', r.id)).catch(() => 0);
+      }
     }
 
     return NextResponse.json({ success: true });

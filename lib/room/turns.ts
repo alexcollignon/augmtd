@@ -347,48 +347,160 @@ export async function readRoomSession(client: SupabaseClient, userId: string, ro
 // ASKS LIVE AND DIE WITH THEIR WORK (experience-spec law 3, Aug 2): an input-checklist ask exists
 // only while the work it serves is open. When the item/commitment RESOLVES — verdict-applied,
 // fulfillment-closed, reply-resolved, or the user's own Done/Dismiss — its ask SETTLES: the
-// component strips (the affordance dies), the text stays as history (the story is never erased —
-// the same mechanic the ingest funnel uses on attach). A MERGED ask (one artifact, many items —
-// component.state.covers) only strips once every covered item has resolved.
+// affordance dies, the text stays as history (the story is never erased — the same mechanic the
+// ingest funnel uses on attach). A MERGED ask (one artifact, many items — component.state.covers)
+// only settles once every covered item has resolved.
+//
+// W14.2 · AN UNDO BRINGS THE ASK BACK (census Sep 24: 9 live asks on dismissed items; the activity
+// Undo re-opened items whose asks had been stripped for good). The settle is now REVERSIBLE by
+// construction: it never nulls the component — it RE-KEYS it (`SETTLED_ASK_KEY`, every ask reader
+// matches `input_checklist` only, so the affordance is gone everywhere) and stamps WHO settled it
+// (`state.settled = { ref, at, why }`). An engine ask's turn also archives (its words were
+// scaffolding); a coworker's stays as conversation history. `restoreAsksForItem` — called by THE
+// ONE REOPEN (lib/activity/reopen.ts) — puts back exactly the asks a RESOLUTION of that item
+// settled (never one the user answered, never one a verdict retired), and a live re-post of the
+// same key always wins over the restore (the newer ask is the truth).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
+export type AskSettleWhy = 'resolved' | 'answered' | 'verdict';
+
 export async function settleAsksForItem(
   client: SupabaseClient, userId: string,
   itemKind: 'inbox_item' | 'commitment', itemId: string,
+  opts: { why?: AskSettleWhy } = {},
 ): Promise<number> {
   try {
-    const ref = `${itemKind === 'commitment' ? 'commitment' : 'inbox'}:${itemId}`;
-    // Own asks (requires:<id> · delegate:<id>:*) + merged asks in ANY room that cover this item.
-    const { data: own } = await client.from('room_turns').select('id, component')
+    const { settledAskComponent, askRefOf } = await import('@/lib/room/ask-settle');
+    const ref = askRefOf(itemKind, itemId);
+    const at = new Date().toISOString();
+    const why: AskSettleWhy = opts.why ?? 'resolved';
+    // Own asks (requires:<id> · delegate:<id>:*) + merged asks in ANY room that cover this item —
+    // LIVE turns only (an ask archived for another reason is never re-stamped as this settle's).
+    const { data: own } = await client.from('room_turns').select('id, component, author')
       .eq('user_id', userId)
       .or(`dedupe_key.like.delegate:${itemId}:*,dedupe_key.eq.requires:${itemId}`)
-      .filter('component->>key', 'eq', 'input_checklist');
-    const { data: covering } = await client.from('room_turns').select('id, component')
+      .filter('component->>key', 'eq', 'input_checklist')
+      .is('archived_at', null);
+    const { data: covering } = await client.from('room_turns').select('id, component, author')
       .eq('user_id', userId)
       .filter('component->>key', 'eq', 'input_checklist')
-      .contains('component->state', { covers: [ref] });
+      .contains('component->state', { covers: [ref] })
+      .is('archived_at', null);
     const rows = [...(own ?? []), ...(covering ?? [])];
     const seen = new Set<string>();
     let settled = 0;
-    for (const t of rows as Array<{ id: string; component: { key?: string; state?: Record<string, unknown> } | null }>) {
+    type AskRow = { id: string; component: { key?: string; state?: Record<string, unknown> } | null; author?: { name?: string } | null };
+    for (const t of rows as AskRow[]) {
       if (seen.has(t.id)) continue;
       seen.add(t.id);
       const state = (t.component?.state ?? {}) as Record<string, unknown>;
       const covers = Array.isArray(state.covers) ? (state.covers as string[]).filter((c) => c !== ref) : [];
       if (covers.length > 0) {
-        // Other live work still needs this artifact — the ask stays, minus this beneficiary.
-        await client.from('room_turns').update({ component: { ...(t.component ?? {}), state: { ...state, covers } } }).eq('id', t.id);
+        // Other live work still needs this artifact — the ask stays, minus this beneficiary (kept in
+        // `coversSettled`, so an undo of THIS item puts it back among the beneficiaries).
+        const prior = Array.isArray(state.coversSettled) ? (state.coversSettled as string[]) : [];
+        await client.from('room_turns').update({ component: { ...(t.component ?? {}), state: { ...state, covers, coversSettled: [...new Set([...prior, ref])] } } })
+          .eq('id', t.id).eq('user_id', userId);
       } else {
         // FORWARD-MOTION LAW #5: an ENGINE ask's text is pure scaffolding ("To finish this I
         // need…") — stripping only the checklist left a ghost line (found live). The whole turn
         // archives; a COWORKER's ask keeps its text (their speech is conversation history).
-        const { data: full } = await client.from('room_turns').select('author').eq('id', t.id).maybeSingle();
-        const engineAsk = !((full?.author ?? null) as { name?: string } | null)?.name;
-        const upd = engineAsk ? { component: null, archived_at: new Date().toISOString() } : { component: null };
-        const { error: settleErr } = await client.from('room_turns').update(upd).eq('id', t.id);
-        if (settleErr && engineAsk) await client.from('room_turns').update({ component: null }).eq('id', t.id); // pre-migration: no archived_at column
+        const engineAsk = !((t.author ?? null) as { name?: string } | null)?.name;
+        const component = settledAskComponent(t.component, { ref, at, why });
+        const upd = engineAsk ? { component, archived_at: at } : { component };
+        const { error: settleErr } = await client.from('room_turns').update(upd).eq('id', t.id).eq('user_id', userId).is('archived_at', null);
+        if (settleErr && engineAsk) await client.from('room_turns').update({ component }).eq('id', t.id).eq('user_id', userId); // pre-migration: no archived_at column
         settled++;
       }
     }
     return settled;
+  } catch { return 0; }
+}
+
+/**
+ * W14.2 · THE UNDO'S MIRROR — the asks a RESOLUTION of this item settled come back live (the ONE
+ * reopen calls it; the item is open again, so is what it was waiting on). Symmetric with the settle:
+ * the component's key and state are restored, an engine ask's turn un-archives under its original
+ * key — unless a LIVE turn already holds that key (a later re-post is the newer truth; the settled
+ * row stays record). A merged ask this item had left gets it back among its beneficiaries.
+ * Returns how many asks came back. Non-fatal.
+ */
+export async function restoreAsksForItem(
+  client: SupabaseClient, userId: string,
+  itemKind: 'inbox_item' | 'commitment', itemId: string,
+): Promise<number> {
+  try {
+    const { SETTLED_ASK_KEY, restoredAskComponent, askRefOf, baseDedupeKey, restorableBy } = await import('@/lib/room/ask-settle');
+    const ref = askRefOf(itemKind, itemId);
+    let restored = 0;
+    const { data: settledRows } = await client.from('room_turns').select('id, room_key, dedupe_key, component, archived_at')
+      .eq('user_id', userId)
+      .filter('component->>key', 'eq', SETTLED_ASK_KEY)
+      .filter('component->state->settled->>ref', 'eq', ref);
+    for (const t of (settledRows ?? []) as Array<{ id: string; room_key: string; dedupe_key: string | null; component: { key?: string; state?: Record<string, unknown> } | null; archived_at: string | null }>) {
+      if (!restorableBy(t.component, ref)) continue;
+      const component = restoredAskComponent(t.component);
+      if (!t.archived_at) {
+        const { error } = await client.from('room_turns').update({ component }).eq('id', t.id).eq('user_id', userId);
+        if (!error) restored++;
+        continue;
+      }
+      const key = t.dedupe_key ? baseDedupeKey(t.dedupe_key) : null;
+      if (key) {
+        const { data: liveHolder } = await client.from('room_turns').select('id')
+          .eq('user_id', userId).eq('room_key', t.room_key).eq('dedupe_key', key).is('archived_at', null).limit(1).maybeSingle();
+        if (liveHolder?.id) continue; // the re-posted ask stands — never two live asks on one key
+        // Another ARCHIVED row may hold the original spelling (the key-release idiom renamed ours).
+        if (key !== t.dedupe_key) await releaseArchivedKey(client, userId, t.room_key, key);
+      }
+      const { error } = await client.from('room_turns').update({ component, archived_at: null, ...(key ? { dedupe_key: key } : {}) })
+        .eq('id', t.id).eq('user_id', userId).eq('archived_at', t.archived_at);
+      if (!error) restored++;
+    }
+    // A merged ask that stayed live for its siblings takes this beneficiary back.
+    const { data: merged } = await client.from('room_turns').select('id, component')
+      .eq('user_id', userId)
+      .filter('component->>key', 'eq', 'input_checklist')
+      .contains('component->state', { coversSettled: [ref] })
+      .is('archived_at', null);
+    for (const t of (merged ?? []) as Array<{ id: string; component: { key?: string; state?: Record<string, unknown> } | null }>) {
+      const state = (t.component?.state ?? {}) as Record<string, unknown>;
+      const covers = [...new Set([...(Array.isArray(state.covers) ? state.covers as string[] : []), ref])];
+      const coversSettled = (Array.isArray(state.coversSettled) ? state.coversSettled as string[] : []).filter((c) => c !== ref);
+      const { error } = await client.from('room_turns').update({ component: { ...(t.component ?? {}), state: { ...state, covers, coversSettled } } })
+        .eq('id', t.id).eq('user_id', userId);
+      if (!error) restored++;
+    }
+    return restored;
+  } catch { return 0; }
+}
+
+/** The batch mirror (a bulk deed's undo): ONE read finds which of these items have settled asks at
+ *  all (usually none), and only those are restored. Returns the total restored. Non-fatal. */
+export async function restoreAsksForItems(
+  client: SupabaseClient, userId: string,
+  itemKind: 'inbox_item' | 'commitment', itemIds: string[],
+): Promise<number> {
+  try {
+    if (!itemIds.length) return 0;
+    const { SETTLED_ASK_KEY, askRefOf } = await import('@/lib/room/ask-settle');
+    const want = new Map(itemIds.map((id) => [askRefOf(itemKind, id), id]));
+    type R = { id: string; component: { state?: { settled?: { ref?: string }; coversSettled?: string[] } } | null };
+    // Two small full listings (never a silent cap): every settled ask, and every live ask (a merged
+    // one may carry this item in `coversSettled`).
+    const [settledRows, liveAsks] = await Promise.all(([SETTLED_ASK_KEY, 'input_checklist'] as const).map((key) =>
+      fetchAllRows<R>((from, to) => {
+        const q = client.from('room_turns').select('id, component').eq('user_id', userId).filter('component->>key', 'eq', key);
+        return (key === 'input_checklist' ? q.is('archived_at', null) : q).order('id', { ascending: true }).range(from, to);
+      })));
+    const rows = [...settledRows, ...liveAsks];
+    const hit = new Set<string>();
+    for (const r of rows) {
+      const s = r.component?.state;
+      if (s?.settled?.ref && want.has(s.settled.ref)) hit.add(want.get(s.settled.ref)!);
+      for (const c of s?.coversSettled ?? []) if (want.has(c)) hit.add(want.get(c)!);
+    }
+    let n = 0;
+    for (const id of hit) n += await restoreAsksForItem(client, userId, itemKind, id);
+    return n;
   } catch { return 0; }
 }

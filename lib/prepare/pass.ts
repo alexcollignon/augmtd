@@ -1235,7 +1235,9 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
         async () => body2);
       const pa2 = await getDraftingAssistant(admin, userId);
       await admin.from('inbox_items').update({
-        source_data: { ...sd, draft: { body: body2, generated_at: new Date().toISOString(), prepared: 'pass', law_version: DRAFT_LAW_VERSION_C, ...(kbHave?.file ? { attachment: { fileId: kbHave.file.id, filename: kbHave.file.filename, source: kbHave.file.source } } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa2 ? { prepared_by: { worker: pa2.name, at: new Date().toISOString() } } : {}) },
+        // W14.1 · the inbox doc-send's file match carries the staging law it was verified under (the
+        // one reader re-proves an unstamped machine attachment — lib/prepare/read.ts draftStagingStale).
+        source_data: { ...sd, draft: { body: body2, generated_at: new Date().toISOString(), prepared: 'pass', law_version: DRAFT_LAW_VERSION_C, ...(kbHave?.file ? { attachment: { fileId: kbHave.file.id, filename: kbHave.file.filename, source: kbHave.file.source }, ...(await import('@/lib/prepare/requirements')).stagingStamp() } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa2 ? { prepared_by: { worker: pa2.name, at: new Date().toISOString() } } : {}) },
       }).eq('id', it.id);
       return { did: reqs.have.length ? 'docsend' : 'draft', worker: pa2?.name };
     }
@@ -1274,7 +1276,8 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
     : { law_version: DRAFT_LAW_VERSION_C };
   const pa = await getDraftingAssistant(admin, userId); // O3a attribution
   await admin.from('inbox_items').update({
-    source_data: { ...sd, draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', ...lawStamp, attachment: { fileId: top.id, filename: top.filename, source: top.source } }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) },
+    // W14.1 · stamped with the staging law this match was just verified under (see above).
+    source_data: { ...sd, draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', ...lawStamp, attachment: { fileId: top.id, filename: top.filename, source: top.source }, ...(await import('@/lib/prepare/requirements')).stagingStamp() }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) },
   }).eq('id', it.id);
   return { did: 'docsend', worker: pa?.name };
 }
