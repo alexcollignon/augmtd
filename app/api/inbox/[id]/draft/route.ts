@@ -6,6 +6,7 @@ import { loadUserRules } from '@/lib/inbox/rules/load';
 import { setInboxRules, shouldDraftReply } from '@/lib/inbox/classify-item';
 import { loadPlanStepSummaries } from '@/lib/home/item-plan';
 import { DRAFT_LAW_VERSION } from '@/lib/inbox/attachment-context';
+import { stagedFilesOf } from '@/lib/prepare/email-card';
 
 export const maxDuration = 30;
 
@@ -66,17 +67,38 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // replaces their words. A moved ground MARKS it (`staleUnderEdit`: the card says "the thread moved
   // since you edited this"); only the user's own `?fresh=1` asks for a new version, and their words
   // file into the version chain first.
-  const { isHandHeld } = await import('@/lib/prepare/hand');
+  const { isHandHeld, decideRegeneration } = await import('@/lib/prepare/hand');
   const handHeld = isHandHeld('reply_draft', sd.draft ?? null);
   const groundMovedUnder = !!sd.draft?.body && groundMoved(sd.draft?.prepared_from ?? null, currentGround);
-  const draftSuperseded = !!sd.draft?.body && !handHeld
-    && (groundMovedUnder || draftLawStale(sd.draft ?? null));
+  // W13.2 · NO SECOND DOOR FOR WORDS — the stored draft is served only through THE ONE READER's truth
+  // stamp (lib/prepare/read preparedState → storedDraftWithdrawal): a draft the reader withdraws (it
+  // rides the item's BASE as the answer, its words fail the one vet, it signs as another mailbox, it
+  // greets the wrong person) is never served here either. The user's own edit is never judged (the
+  // reader never withdraws a hand-held draft, and the hand wins below).
+  let readerWithdrew: string | null = null;
+  if (sd.draft?.body && !sd.draft?.sent_at && !handHeld) {
+    try {
+      const { preparedState, storedDraftWithdrawal } = await import('@/lib/prepare/read');
+      readerWithdrew = storedDraftWithdrawal((await preparedState(supabase, user.id, { kind: 'inbox_item', id })).all);
+    } catch { /* the reader unreadable is not a withdrawal — the gates above still hold */ }
+  }
+  // W9.1 · THE ONE DECISION (the pass's own): a moved ground, an older drafting law or a reader
+  // withdrawal regenerates machine words; the user's hand is never regenerated over.
+  const regen = decideRegeneration({
+    exists: !!sd.draft?.body, sent: !!sd.draft?.sent_at, handHeld,
+    groundMoved: groundMovedUnder, lawStale: !!sd.draft?.body && draftLawStale(sd.draft ?? null), nonLive: !!readerWithdrew,
+  });
+  const draftSuperseded = !!sd.draft?.body && !handHeld && regen.action === 'regenerate';
   const handFlags = handHeld ? { edited: true, ...(groundMovedUnder ? { staleUnderEdit: true } : {}) } : {};
+  // W13 · A CLAIM RENDERS — the staged file the stored draft carries rides the answer, so the card
+  // shows it as a chip and Send attaches exactly what the chip shows (KB-held bytes only).
+  const storedFiles = stagedFilesOf(sd.draft?.attachment ?? null);
+  const fileFlags = storedFiles.length ? { attachments: storedFiles } : {};
   if (!fresh && sd.draft?.body && !draftSuperseded) {
     const jrow = await readPlan(supabase, user.id, 'judgment', `inbox:${id}`);
     const cachedWork = ((jrow?.tasks ?? null) as { verdict?: { work?: string } } | null)?.verdict?.work;
     if (cachedWork === 'reply' || cachedWork === 'send_file') {
-      return NextResponse.json({ draft: sd.draft.body as string, ...handFlags });
+      return NextResponse.json({ draft: sd.draft.body as string, ...handFlags, ...fileFlags });
     }
     if (cachedWork && cachedWork !== 'reply' && cachedWork !== 'send_file') {
       return NextResponse.json({ draft: '', skipped: 'judged_none' });
@@ -86,6 +108,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // THE ONE GATE (promise fix #1): drafting — even on-demand from the deep-dive — happens only
   // when THE judged verdict says the work is a reply. Cached on the item, so this costs a read.
   let artifactTruth: string | null = null;
+  // W13: the KB file the resolver staged AS the deliverable rides the fresh draft (the pass's rule —
+  // only KB-held bytes attach; a base is never here, it is not a HAVE).
+  let freshAttachment: { fileId: string; filename: string; source?: string } | null = null;
   try {
     const { judgeWork } = await import('@/lib/work/judge');
     const verdict = await judgeWork(supabase, user.id, { kind: 'inbox', id });
@@ -104,19 +129,33 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         entityId: (linkRow?.entity_id as string) ?? null, requires: verdict.requires, work: verdict.work,
       });
       artifactTruth = reqs.artifactTruth || null;
+      const kbHave = reqs.have.find((h) => h.file?.source === 'kb');
+      if (kbHave?.file) freshAttachment = { fileId: kbHave.file.id, filename: kbHave.file.filename, source: kbHave.file.source };
     }
   } catch { /* judge unavailable → the gates above still hold */ }
 
   // Serve a previously-generated draft (sweep or earlier open) unless a fresh one is requested — only
   // reached for items that genuinely owe a reply (gated above).
-  if (!fresh && sd.draft?.body && !draftSuperseded) return NextResponse.json({ draft: sd.draft.body as string, ...handFlags });
+  if (!fresh && sd.draft?.body && !draftSuperseded) return NextResponse.json({ draft: sd.draft.body as string, ...handFlags, ...fileFlags });
 
   try {
     // Fix 3 — draft ↔ plan coherence: pass the item's LIVE Identified-tasks step summaries so the reply
     // narrates one story with the plan (references an invite the plan sends; a "I'll send X" promise is
     // the same commitment as its task, not a duplicate). The inbox-item deep-dive plans under kind 'email'.
     const planSteps = await loadPlanStepSummaries(supabase, user.id, 'email', id).catch(() => []);
-    const draft = await generateReplyDraft(user.id, sd, supabase, artifactTruth, planSteps);
+    // W13.2 · EVERY DRAFT PASSES THE SAME TRUTH at this door too: the fresh words go through the ONE
+    // vet (lib/prepare/truth draftThroughVet — regenerated ONCE with the failure named, else NOT
+    // served: the honest empty state with the withheld reason), against the item's own facts.
+    const { draftThroughVet, withheldLine } = await import('@/lib/prepare/truth');
+    const { inboxTruthFacts } = await import('@/lib/prepare/read');
+    const vetted = await draftThroughVet(
+      async (objection) => generateReplyDraft(user.id, sd, supabase,
+        [artifactTruth ?? '', objection ? `REVIEWER'S OBJECTION — fix this: ${objection}` : ''].filter(Boolean).join('\n') || null, planSteps),
+      { obligationOpen: inboxTruthFacts(sd)?.obligationOpen ?? false, staged: !!freshAttachment },
+    );
+    if (vetted.failed) return NextResponse.json({ draft: '', withheld: withheldLine(vetted.failed), ...(readerWithdrew ? { withdrawn: readerWithdrew } : {}) });
+    const draft = vetted.body;
+    if (!draft) return NextResponse.json({ draft: '' }); // nothing written — the next open retries
     // The user asked for a fresh version over their own edit: their words FILE first (version_of),
     // so nothing they wrote is lost — replace-in-place only as the user's own action (ruling 8).
     if (handHeld && sd.draft?.body) {
@@ -124,9 +163,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       await fileHandVersion(supabase, user.id, { poolKind: 'email', itemId: id, kind: 'reply_draft', content: String(sd.draft.body), editedAt: (sd.draft as { edited_by_user_at?: string }).edited_by_user_at ?? null });
     }
     await supabase.from('inbox_items')
-      .update({ source_data: { ...sd, draft: { body: draft, generated_at: new Date().toISOString(), prepared_from: currentGround, law_version: DRAFT_LAW_VERSION } } })
+      .update({ source_data: { ...sd, draft: { body: draft, generated_at: new Date().toISOString(), prepared_from: currentGround, law_version: DRAFT_LAW_VERSION, ...(freshAttachment ? { attachment: freshAttachment } : {}) } } })
       .eq('id', id).eq('user_id', user.id);
-    return NextResponse.json({ draft });
+    const freshFiles = stagedFilesOf(freshAttachment);
+    return NextResponse.json({ draft, ...(freshFiles.length ? { attachments: freshFiles } : {}) });
   } catch {
     return NextResponse.json({ error: 'Could not draft a reply.' }, { status: 500 });
   }

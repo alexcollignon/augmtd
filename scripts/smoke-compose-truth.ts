@@ -78,7 +78,8 @@ console.log('\nA · ONE vet — the reader, the evaluator and the compose door c
   const rd = src('lib/prepare/read.ts');
   const ev = src('lib/prepare/evaluate.ts');
   gate('A8 the reader, the evaluator and the compose door all call vetDraft (no private copy of any floor)',
-    /vetDraft\(a\.content, \{ obligationOpen: facts\.obligationOpen, staged: !!a\.attachment, attachmentFloor: a\.kind !== 'paste_pack' \}\)/.test(rd)
+    // ⟲ W13: the reader's call also states `stagedIsWork` (a BASE riding the draft is not the work).
+    /vetDraft\(a\.content, \{ obligationOpen: facts\.obligationOpen, staged: !!a\.attachment, stagedIsWork: !!a\.attachment && !onBase, attachmentFloor: a\.kind !== 'paste_pack' \}\)/.test(rd)
     && !/claimsUndoneWork\(|claimsUnstagedAttachment\(|chaseWordsIn\(/.test(rd)
     && /const failed = vetDraft\(args\.content,/.test(ev) && !/claimsUndoneWork\(|claimsUnstagedAttachment\(/.test(ev)
     && /draftThroughVet\(/.test(route));
@@ -218,11 +219,13 @@ console.log('\nC · regenerate ONCE with the failure named, else serve the hones
     const kit = src('components/thread/thread-cards.tsx');
     const types = src('components/thread/types.ts');
     gate('F1 the compose lane reads `withheld` off the door\'s answer, only when no words were served',
-      /withheld\?: string \} \| null\) => \{/.test(card)
+      // ⟲ W13: the door's answer also types the staged files it serves (`attachments`).
+      /withheld\?: string; attachments\?: unknown \} \| null\) => \{/.test(card)
       && /const held = !words && typeof d\?\.withheld === 'string' && d\.withheld\.trim\(\) \? d\.withheld\.trim\(\) : null;/.test(card)
       && /setWithheld\(held\);/.test(card));
     gate('F2 the served words ride VERBATIM as the card\'s bodyNote (no second home for the text — no withheld literal in the card)',
-      /\.\.\.\(withheld && !dirty && !sent \? \{ bodyNote: withheld \} : \{\}\),/.test(card)
+      // ⟲ W13: the same line; when nothing is withheld, the card's own re-vet note may take the slot.
+      /\.\.\.\(withheld && !dirty && !sent \? \{ bodyNote: withheld \} : unattachedClaim \? \{ bodyNote: UNATTACHED_CLAIM_NOTE \} : \{\}\),/.test(card)
       && !/I held back a draft/.test(card) && !/I held back a draft/.test(kit));
     gate('F3 a held-back draft is NOT the unfillable dead end — the editor stays live for the user\'s own words',
       /setUnfilled\(!words && !\(d\?\.to\?\.length\) && !held\);/.test(card)

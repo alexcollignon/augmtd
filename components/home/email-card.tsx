@@ -13,8 +13,11 @@ import { useFeatures } from '@/context/workspace-context';
 import {
   emailCardOf, directionVariantId, emailBodyHTML, emailBodyText, sameBody,
   EMAIL_BASE_VARIANT, EMAIL_OPEN_VARIANT, EMAIL_USER_VARIANT, EMAIL_TONES, sendFromLabel,
-  type EmailDirection, type StandaloneEmailDraft,
+  stagedFilesOf, UNATTACHED_CLAIM_NOTE,
+  type EmailDirection, type StandaloneEmailDraft, type StagedFile,
 } from '@/lib/prepare/email-card';
+// W13 · the ONE attachment claim (pure, client-safe) — the card re-vets the words against its chips.
+import { claimsUnstagedAttachment } from '@/lib/prepare/truth';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE EMAIL CARD'S HOST (docs/threads-plan.md — THE CARD CONTRACT, the `email_draft` clause).
@@ -192,6 +195,21 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
   // /api/kb/attachment. No parallel uploader, and a failed attach never breaks the card.
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
+  // ── W13 · A CLAIM RENDERS — THE STAGED FILE. A prepared draft can carry the file the staging law
+  // proved IS the deliverable; the door serves it (`attachments`), the card shows it as a chip (name ·
+  // open in THE ONE viewer · remove), and Send hands the standing chips' ids to a door that loads the
+  // bytes itself — the send attaches exactly what the chips show. Seeded ONCE per mount, so a removal
+  // sticks; a late answer never re-adds what the user took off.
+  const [staged, setStaged] = useState<StagedFile[]>([]);
+  const stagedSeededRef = useRef(false);
+  const seedStaged = (raw: unknown) => {
+    if (stagedSeededRef.current) return;
+    const files = stagedFilesOf(raw);
+    if (!files.length) return;
+    stagedSeededRef.current = true;
+    setStaged(files);
+  };
+  const [stagedOpenAt, setStagedOpenAt] = useState<number | null>(null);
   // THE SOURCE MATERIAL'S OWN FILES — one index into the WHOLE context, so the viewer's ‹ › are
   // honest (T25.9b: every file the thread holds, in thread order).
   const [sourceOpenAt, setSourceOpenAt] = useState<number | null>(null);
@@ -264,7 +282,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
       body: JSON.stringify({ kind: compose.kind, entityId: compose.id }),
     })
       .then((r) => (r.ok ? r.json() : null)).catch(() => null)
-      .then((d: { to?: string[]; cc?: string[]; subject?: string; bodyText?: string; recipientName?: string | null; suggestions?: Array<{ name: string | null; email: string | null }>; withheld?: string } | null) => {
+      .then((d: { to?: string[]; cc?: string[]; subject?: string; bodyText?: string; recipientName?: string | null; suggestions?: Array<{ name: string | null; email: string | null }>; withheld?: string; attachments?: unknown } | null) => {
         if (!alive) return;
         const words = String(d?.bodyText ?? '').trim();
         const held = !words && typeof d?.withheld === 'string' && d.withheld.trim() ? d.withheld.trim() : null;
@@ -281,6 +299,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
           servedRef.current = words; setBodyRev((n) => n + 1);
           readHand(d as { edited?: boolean; staleUnderEdit?: boolean } | null);
         }
+        if (words) seedStaged(d?.attachments);
         // A held-back draft is not an unfillable card: the door answered, and the editor is the way on.
         setUnfilled(!words && !(d?.to?.length) && !held);
         setLoading(false);
@@ -295,11 +314,12 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
     setLoading(true);
     const needThread = !item.to?.length || !item.subject;
     let preparedOut = '';
+    let heldOut = false; // a held-back draft is not an unfillable card: the door answered
     let threadHasFrom = false;
     let left = needThread ? 2 : 1;
     const settle = () => {
       if (!alive || --left > 0) return;
-      setUnfilled(!preparedOut && !(item.to?.length || threadHasFrom));
+      setUnfilled(!preparedOut && !heldOut && !(item.to?.length || threadHasFrom));
     };
     // THE BODY IS THE CARD: its arrival is what "loaded" means, so it alone clears the skeleton.
     fetch(`/api/inbox/${item.id}/draft`, { method: 'POST' })
@@ -308,12 +328,18 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
         if (!alive) return;
         const prepared = d && !d.skipped ? String(d.draft ?? '') : '';
         preparedOut = prepared;
+        // W13.2: the inbox door speaks the same honest empty state as the compose door — a draft the
+        // one vet held back twice is not served, and the card says why (the editor is the way on).
+        if (!prepared && d && !d.skipped && typeof d.withheld === 'string' && d.withheld.trim()) {
+          setWithheld(d.withheld.trim()); heldOut = true;
+        }
         // A late draft never clobbers words the user already typed.
         if (prepared && !typedRef.current) {
           setBody(prepared); setVariantBodies({ [EMAIL_BASE_VARIANT]: prepared });
           servedRef.current = prepared; setBodyRev((n) => n + 1);
           readHand(d);
         }
+        if (prepared) seedStaged(d?.attachments);
         setLoading(false);
         settle();
       });
@@ -525,8 +551,16 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEdit, sent]);
 
+  // ── W13 · THE CARD RE-VETS ITS OWN WORDS against the files that stand on it — the SAME attachment
+  // floor THE ONE READER applies (lib/prepare/truth `claimsUnstagedAttachment`): words that say a file
+  // is attached with no chip left (the staged one removed, or never there) hold Send and say why.
+  const preparedLane = itemLane || composeLane;
+  const unattachedClaim = preparedLane && !sent
+    && !!claimsUnstagedAttachment(emailBodyText(body), { staged: staged.length + attachments.length > 0 });
+
   const send = async () => {
     if (sending || sent) return;
+    if (unattachedClaim) { setErr(UNATTACHED_CLAIM_NOTE); return; }
     if (!to.length) { setErr('Add a recipient before it can send.'); return; }
     // The words themselves decide whether there is anything to mail — an empty rich editor still
     // carries markup, and markup is not a message.
@@ -550,6 +584,8 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               to, cc, subject: subject.trim(), bodyHTML: emailBodyHTML(text),
+              // W13: the standing staged chips, by id — the door loads and attaches exactly these.
+              ...(staged.length ? { stagedFileIds: staged.map((f) => f.fileId) } : {}),
               prepared: servedRef.current.trim()
                 ? { itemKind: compose!.kind, itemId: compose!.id, bodyHTML: emailBodyHTML(servedRef.current) }
                 : null,
@@ -582,6 +618,8 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
               customMessage: emailBodyHTML(text), aiDraft: variantBodies[EMAIL_BASE_VARIANT] ?? undefined,
               to, ...(cc.length ? { cc } : {}), ...(bcc.length ? { bcc } : {}),
               ...(attachments.length ? { attachments } : {}),
+              // W13: the standing staged chips, by id — the door loads and attaches exactly these.
+              ...(staged.length ? { stagedFileIds: staged.map((f) => f.fileId) } : {}),
             }),
           });
       if (res.ok) {
@@ -667,6 +705,12 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
       <AttendeeChips attendees={list} onChange={(next) => { set(next); setErr(null); }} />
     </span>
   );
+  // W13 · the staged file's chip: its name opens it in THE ONE viewer; ✕ takes it off the send.
+  const stagedChips = staged.map((f, i) => ({
+    name: f.filename,
+    onOpen: () => setStagedOpenAt(i),
+    ...(sent ? {} : { onRemove: () => { setStaged((prev) => prev.filter((x) => x.fileId !== f.fileId)); setStagedOpenAt(null); setErr(null); } }),
+  }));
   const card: ThreadCard = {
     kind: 'email',
     id: `email-${coworker?.draft.id ?? standalone?.emailId ?? item?.id ?? (compose ? `${compose.kind}-${compose.id}` : 'card')}`,
@@ -706,6 +750,8 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
       // …and Bcc + attachments ONLY the item lane's `send-reply`, the one door that models them.
       // The standalone door carries `to`/`cc`/`subject`/`body` and nothing else, so it shows
       // neither — the card never wears a field its send would silently drop.
+      // W13 · THE STAGED CHIPS — on both prepared lanes (the compose door carries them by id too).
+      ...(composeLane && staged.length ? { attachments: stagedChips } : {}),
       ...(itemLane ? {
         onOpenBcc: () => setBccOpen(true),
         ...(bccOpen || bcc.length ? { bccEditor: chips(bcc, setBcc) } : {}),
@@ -713,9 +759,9 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
         // route carries no attachment field, so that lane shows no paperclip.
         onAttachFile: () => fileInputRef.current?.click(),
         onAttachFromKb: () => setKbPickerOpen(true),
-        attachments: attachments.map((a, i) => ({
+        attachments: [...stagedChips, ...attachments.map((a, i) => ({
           name: a.filename, onRemove: () => setAttachments((prev) => prev.filter((_, j) => j !== i)),
-        })),
+        }))],
         attachNode: (
           <>
             <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onLocalFile} />
@@ -755,7 +801,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
         } } : {}),
       // TRUTH BEFORE PRESENTATION at the commit row: with no recipient there is nothing to mail,
       // so the card carries NO Send — it asks for the address and waits.
-      ...(props.state === 'ready' ? { onSend: send, sendLabel: itemLane ? 'Send reply' : 'Send', sendDisabled: sending } : {}),
+      ...(props.state === 'ready' ? { onSend: send, sendLabel: itemLane ? 'Send reply' : 'Send', sendDisabled: sending || unattachedClaim } : {}),
     } : {}),
     // THE MATERIAL IS PART OF THE EMAIL CONTEXT — counted, never claimed: with nothing attached the
     // lane is absent. Independent of `live`: a sent reply still shows what it was answering.
@@ -765,7 +811,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
       })),
       contextFilesLabel: sourceList.length > 1 ? `Came with the email · ${sourceList.length}` : 'Came with the email',
     } : {}),
-    ...(withheld && !dirty && !sent ? { bodyNote: withheld } : {}),
+    ...(withheld && !dirty && !sent ? { bodyNote: withheld } : unattachedClaim ? { bodyNote: UNATTACHED_CLAIM_NOTE } : {}),
     bodyHint: sent ? undefined
       : redrafting ? 'redrafting…'
       : dirty ? 'your words — kept in “Your edit”, whichever tab you try'
@@ -782,6 +828,13 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
   return (
     <>
       <ThreadCardView card={card} />
+      {stagedOpenAt !== null && staged.length > 0 && (
+        <AttachmentLightbox
+          files={staged.map((f) => ({ name: f.filename, ref: { kind: 'kb' as const, id: f.fileId }, note: 'Attached to this message' }))}
+          index={Math.min(stagedOpenAt, staged.length - 1)}
+          onIndex={setStagedOpenAt} onClose={() => setStagedOpenAt(null)}
+        />
+      )}
       {sourceOpenAt !== null && sourceList.length > 0 && (
         <AttachmentLightbox
           files={sourceList} index={sourceOpenAt}

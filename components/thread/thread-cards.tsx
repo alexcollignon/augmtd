@@ -541,7 +541,14 @@ function EmailCardView({ card }: { card: EmailCard }) {
             {card.attachments!.map((a, i) => (
               <span key={`${a.name}:${i}`} className="inline-flex items-center gap-1 rounded bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-700">
                 <PaperClipIcon className="h-3 w-3 flex-shrink-0" />
-                <span className="max-w-[160px] truncate">{a.name}</span>
+                {a.onOpen ? (
+                  <button type="button" onClick={a.onOpen} title={`Open ${a.name}`}
+                    className="aug-focus max-w-[160px] truncate rounded text-left underline-offset-2 hover:underline">
+                    {a.name}
+                  </button>
+                ) : (
+                  <span className="max-w-[160px] truncate">{a.name}</span>
+                )}
                 {a.onRemove && (
                   <button type="button" onClick={a.onRemove} aria-label={`Remove ${a.name}`}
                     className="aug-focus ml-0.5 rounded transition-colors hover:text-rose-500">

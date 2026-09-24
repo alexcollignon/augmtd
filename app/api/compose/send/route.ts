@@ -21,7 +21,8 @@ export const maxDuration = 30;
 // connected, falls back to the OAuth-free coworker-email channel (Resend, team.augmtd.ai) and flags
 // it so the UI can note "sent via your assistant's address". Logs a `message_sent` activity event.
 //
-// POST /api/compose/send { to[], cc[], subject, bodyHTML, threadId?, prepared? }
+// POST /api/compose/send { to[], cc[], subject, bodyHTML, threadId?, stagedFileIds?, prepared? }
+//   stagedFileIds = the card's staged-file chips (W13) — loaded server-side, attached all-or-nothing.
 //   prepared = { itemKind: 'inbox'|'commitment'|'meeting', itemId, bodyHTML } — the drafter's text the
 //   composer was seeded with (W3.2 — THE TWO-WAY LEDGER: accepted vs edited is measured against it).
 //   → { success, viaCoworker?: boolean }
@@ -41,7 +42,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Too many requests' }, { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } });
     }
 
-    const raw = (await request.json()) as { to?: unknown; cc?: unknown; subject?: string; bodyHTML?: string; prepared?: { itemKind?: unknown; itemId?: unknown; bodyHTML?: unknown } | null };
+    const raw = (await request.json()) as { to?: unknown; cc?: unknown; subject?: string; bodyHTML?: string; stagedFileIds?: unknown; prepared?: { itemKind?: unknown; itemId?: unknown; bodyHTML?: unknown } | null };
     const to = cleanList(raw.to);
     const cc = cleanList(raw.cc);
     // THE HEADER FLOOR — one line, no control characters (the same class the chat-born door fixed).
@@ -53,10 +54,23 @@ export async function POST(request: NextRequest) {
     if (!subject) return NextResponse.json({ error: 'A subject is required.' }, { status: 400 });
     if (!plain) return NextResponse.json({ error: 'The message body is empty.' }, { status: 400 });
 
+    // W13 · A CLAIM RENDERS — the card's STAGED chips ride as ids and load HERE through THE ONE loader
+    // (lib/knowledge/kb-attachment): the send attaches exactly what the chip showed, all or nothing,
+    // before any claim. The assistant-address fallback cannot carry files — it refuses rather than
+    // dropping them (a message that says "attached" must arrive with its attachment).
+    const { stagedFileIdsOf, loadStagedAttachments } = await import('@/lib/knowledge/kb-attachment');
+    const stagedIds = stagedFileIdsOf(raw.stagedFileIds);
+    let attachments: import('@/lib/google/gmail').EmailAttachment[] = [];
+    if (stagedIds.length) {
+      const loaded = await loadStagedAttachments(supabase, user.id, stagedIds);
+      if (!loaded.ok) return NextResponse.json({ error: loaded.error }, { status: 422 });
+      attachments = loaded.files;
+    }
+
     // Content-scoped idempotency: the identical message (same recipients + subject + body) can't be sent
     // twice inside 2 min — kills a transient double-fire/loop while a genuinely different message still
     // goes through. (Complements the coarse per-user rate limit above; mirrors the send-reply dedup.)
-    const dedupHash = createHash('sha1').update(`${to.join(',')}|${cc.join(',')}|${subject}|${plain}`.toLowerCase()).digest('hex').slice(0, 16);
+    const dedupHash = createHash('sha1').update(`${to.join(',')}|${cc.join(',')}|${subject}|${plain}|${stagedIds.join(',')}`.toLowerCase()).digest('hex').slice(0, 16);
 
     // ── THE COMMIT DOOR (W0.4 — EXACTLY-ONCE DEEDS). The old in-memory dedup only caught a burst on
     // one warm instance; the claim is ONE atomic insert keyed by the message + its time window. The
@@ -102,6 +116,7 @@ export async function POST(request: NextRequest) {
         cc: cc.length ? cc.join(', ') : undefined,
         subject,
         body: bodyHTML,
+        ...(attachments.length ? { attachments } : {}),
       };
       try {
         if (connection.provider === 'gmail') await sendGmailEmail(args);
@@ -112,6 +127,10 @@ export async function POST(request: NextRequest) {
         throw sendErr;
       }
     } else {
+      if (attachments.length) {
+        await release();
+        return NextResponse.json({ error: 'Attachments need your connected mailbox — connect one, or remove the file from the message.' }, { status: 422 });
+      }
       // Fallback: no connected mailbox → send from the coworker (Clara) address, Reply-To the user.
       viaCoworker = true;
       const admin = createAdminClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
@@ -140,7 +159,7 @@ export async function POST(request: NextRequest) {
       title: `Sent to ${to[0]}${to.length > 1 ? ` +${to.length - 1}` : ''}`,
       entityType: 'compose',
       entityId: null,
-      metadata: { via: viaCoworker ? 'coworker' : (connection?.provider ?? 'mailbox'), recipients: to.length + cc.length },
+      metadata: { via: viaCoworker ? 'coworker' : (connection?.provider ?? 'mailbox'), recipients: to.length + cc.length, ...(attachments.length ? { attachments: attachments.map((a) => a.filename) } : {}) },
     });
 
     // THE OUTCOME LOG (W3.2 — THE TWO-WAY LEDGER): when the composer was seeded by our drafter, the

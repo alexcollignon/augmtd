@@ -151,6 +151,33 @@ export const COMPLETION_CLAIM_PATTERNS: ReadonlyArray<RegExp> = [
   /(?<!\p{L})j'ai\s+(?!pas(?!\p{L}))(?:\S+\s+){0,3}?(?:terminé|finalisé|envoyé|joint|livré|transmis|soumis|téléchargé|partagé)(?!\p{L})/iu,
   /(?<!\p{L})(?:ci-joint|en pièce jointe|vous trouverez ci-joint)(?!\p{L})/iu,
   /(?<!\p{L})(?:c'est|est)\s+(?:maintenant\s+|désormais\s+)?(?:terminé|fait|finalisé|envoyé|livré)(?!\p{L})/iu,
+  // ── W13 · THE WORK-DONE FORMS (owner live walk, Sep 24 — "The interim report now includes slides 7
+  // and 8 with detail on the remaining functions… Document is attached." on an OPEN obligation
+  // nobody had touched). The net above spoke only of HANDING OVER (sent/attached/finished); a claim
+  // that the WORK ITSELF was done — revised, added, updated, now containing the asked-for part — is
+  // the same lie in another tense. GRAMMATICAL FORMS, never topic words: the present perfect of a
+  // revision verb in the first person, the passive perfect, "is now <state>", the present "now
+  // includes/contains/covers/reflects", and "is ready". Negations break every shape by construction
+  // ("I have not updated", "has not been added"); futures never match (no participle after "will").
+  // EN
+  /\b(?:I|we)(?:'ve| have)\s+(?!not\b|never\b|yet\b)(?:now\s+|just\s+|already\s+|also\s+)?(?:updated|added|revised|amended|expanded|corrected|fixed|incorporated|reworked|included|made (?:the|those|these) (?:changes|edits|updates))\b/i,
+  /(?<!\bwill\s)(?<!\bto\s)\b(?:has|have)\s+(?:now\s+|just\s+|already\s+|also\s+)?been\s+(?:updated|added|revised|amended|expanded|corrected|fixed|incorporated|included|implemented)\b/i,
+  /\b(?:is|are)\s+now\s+(?:updated|included|added|revised|complete|completed|ready|done|fixed|corrected|in place|finali[sz]ed|reflected)\b/i,
+  /\bnow\s+(?:includes|contains|covers|reflects|incorporates)\b/i,
+  /(?<!\b(?:when|once|until|if|before|after|whenever)\s+(?:[\w'’-]+\s+){0,4})(?<!\b(?:you|they|we|I|he|she)\s+)\b(?:it|this|that|everything|[\w-]{3,})(?:['’]s|\s+is|\s+are)\s+(?:now\s+|all\s+)?ready\b(?!\s+(?:to|yet|once|when|soon|by)\b)/i,
+  // PT — preterites of revision (1st person), the passive perfect, "agora/já inclui", "está pronto".
+  /(?<!\p{L})(?:já\s+)?(?:atualizei|actualizei|adicionei|acrescentei|incluí|revi|corrigi|alterei|completei|atualizámos|atualizamos|adicionámos|adicionamos|incluímos|revimos|corrigimos)(?!\p{L})/iu,
+  /(?<!\p{L})(?:está|estão|foi|foram|ficou|ficaram)\s+(?:agora\s+|já\s+)?(?:atualizad[oa]s?|actualizad[oa]s?|adicionad[oa]s?|acrescentad[oa]s?|incluíd[oa]s?|revist[oa]s?|corrigid[oa]s?|alterad[oa]s?|pront[oa]s?)(?!\p{L})/iu,
+  /(?<!\p{L})(?:agora|já)\s+(?:inclui|incluem|contém|contêm|abrange|abrangem)(?!\p{L})/iu,
+  // DE — the perfect of revision verbs, the passive ("wurde … ergänzt"), "enthält jetzt".
+  /(?<!\p{L})(?:ich|wir)\s+(?:habe|haben)\s+(?:(?!nicht(?!\p{L})|noch(?!\p{L}))\S+\s+){0,4}?(?:aktualisiert|ergänzt|hinzugefügt|überarbeitet|korrigiert|eingefügt|eingearbeitet|angepasst|vervollständigt)(?!\p{L})/iu,
+  /(?<!\p{L})(?:wurde|wurden|ist|sind)\s+(?:nun\s+|jetzt\s+|bereits\s+)?(?:(?!nicht(?!\p{L})|noch(?!\p{L})|kein\p{L}*)\S+\s+){0,3}?(?:aktualisiert|ergänzt|hinzugefügt|überarbeitet|korrigiert|eingefügt|eingearbeitet|angepasst|vervollständigt)(?:\s+worden)?(?!\p{L})/iu,
+  /(?<!\p{L})(?:enthält|enthalten|umfasst|umfassen)\s+(?:jetzt|nun)(?!\p{L})/iu,
+  // FR — the passé composé of revision verbs, the passive, "inclut désormais", "est prêt".
+  /(?<!\p{L})(?:j'ai|nous avons)\s+(?:(?!pas(?!\p{L})|jamais(?!\p{L}))\S+\s+){0,3}?(?:mis à jour|ajouté|complété|révisé|corrigé|intégré|modifié|inclus)(?!\p{L})/iu,
+  /(?<!\p{L})(?:a|ont)\s+été\s+(?:\S+\s+){0,2}?(?:mis(?:e|es)? à jour|ajouté(?:e|s|es)?|complété(?:e|s|es)?|révisé(?:e|s|es)?|corrigé(?:e|s|es)?|intégré(?:e|s|es)?|modifié(?:e|s|es)?)(?!\p{L})/iu,
+  /(?<!\p{L})(?:inclut|incluent|contient|contiennent|comprend|comprennent)\s+(?:désormais|maintenant)(?!\p{L})/iu,
+  /(?<!\p{L})(?:est|sont)\s+(?:maintenant\s+|désormais\s+)?(?:prêt|prête|prêts|prêtes|à jour)(?!\p{L})/iu,
 ];
 
 /** The first completion claim a text makes (the matched phrase), or null. Pure. */
@@ -263,6 +290,10 @@ export const ATTACHMENT_CLAIM_PATTERNS: ReadonlyArray<RegExp> = [
   /\bI(?:'m| am)\s+(?:also\s+)?(?:attaching|enclosing)\b/i,
   /(?:^|[.!?]\s+|\n)\s*(?:attaching|attached|enclosed)\s+(?:is|are|the|a|my|our|you(?:'ll| will) find)\b/i,
   /\b(?:in|see)\s+the\s+attach(?:ment|ed file)\b(?!\s+(?:you|they)\s+sent)/i,
+  // W13 — the bare passive: "Document is attached." / "Both files are attached." (the live walk's
+  // closing line). Not "your … is attached", never after "nothing/not", and "will be attached" is a
+  // future (no "is/are").
+  /(?<!\b(?:your|their|his|her)\s+(?:[\w-]+\s+){0,2})(?<!\b(?:nothing|none|not)\s+)\b(?!(?:nothing|none|what|whatever|nothing's)\b)[\w-]{3,}\s+(?:is|are)\s+(?:now\s+|also\s+)?attached\b(?!\s+(?:to\s+(?:your|their|the\s+(?:email|message|thread)\s+you)|yet)\b)/i,
   // PT · DE · FR (letter-bounded under `u`, as above).
   /(?<!\p{L})(?:em\s+anexo|segue\s+(?:em\s+)?anexo|anexei|anexo\s+(?:o|a|os|as)\s)(?!\p{L})/iu,
   /(?<!\p{L})(?:anbei|im\s+anhang\s+(?:finden|sende|schicke)|angehängt\s+(?:ist|sind|finden))(?!\p{L})/iu,
@@ -381,6 +412,12 @@ export type DraftVetFacts = {
   obligationOpen: boolean;
   /** Something real rides with the words (an attachment, a staged deliverable). */
   staged: boolean;
+  /** W13 · A STAGED FILE IS THE DELIVERABLE, OR IT ISN'T STAGED: the thing riding along IS the work
+   *  the obligation asks for — not the BASE it builds on (the pre-existing report the ask wants new
+   *  work added to). Absent → `staged` (every legacy caller). The completion and chase floors read
+   *  THIS; the attachment floor reads `staged` (a base file does ride — "attached" is then true,
+   *  "now includes the new slides" is not). */
+  stagedIsWork?: boolean;
   /** The attachment floor speaks (default true). Off for a PASTE PACK (its destination may carry
    *  the file) and for an evaluator caller that stated no `staged` fact. */
   attachmentFloor?: boolean;
@@ -403,13 +440,14 @@ export function chaseObjection(claim: string): string {
  * chase (chasing the counterparty for the user's own debt). Pure.
  */
 export function vetDraft(text: string | null | undefined, facts: DraftVetFacts): DraftVetFailure | null {
-  const done = claimsUndoneWork(text, { obligationOpen: facts.obligationOpen, staged: facts.staged });
+  const isWork = facts.stagedIsWork ?? facts.staged;
+  const done = claimsUndoneWork(text, { obligationOpen: facts.obligationOpen, staged: isWork });
   if (done) return { floor: 'completion', claim: done, objection: completionObjection(done) };
   if (facts.attachmentFloor !== false) {
     const att = claimsUnstagedAttachment(text, { staged: facts.staged });
     if (att) return { floor: 'attachment', claim: att, objection: attachmentObjection(att) };
   }
-  if (facts.obligationOpen && !facts.staged) {
+  if (facts.obligationOpen && !isWork) {
     const chase = chaseWordsIn(text);
     if (chase) return { floor: 'chase', claim: chase, objection: chaseObjection(chase) };
   }

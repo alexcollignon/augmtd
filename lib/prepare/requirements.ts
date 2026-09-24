@@ -27,6 +27,11 @@ export type RequirementResolution = {
   label: string;
   status: 'have' | 'missing';
   file?: { source: string; id: string; filename: string };
+  /** W13 · the reasoned kind of the requirement (null = not judged — no candidate reached the pick). */
+  kind?: RequirementKind | null;
+  /** W13 · the pre-existing file a NEW-WORK requirement builds on — staged as CONTEXT (`base:<label>`),
+   *  never as the deliverable; the requirement itself stays missing (an ask / produce). */
+  base?: { source: string; id: string; filename: string } | null;
 };
 
 export type RequirementsResult = {
@@ -61,14 +66,369 @@ const CONFIDENT = 0.55; // below this, don't even ask the judge — retrieval fo
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 const STAGE_SCORE = 0.7;
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// W13 · A STAGED FILE IS THE DELIVERABLE, OR IT ISN'T STAGED (owner live walk on prod, Sep 24 — a
+// you_owe commitment "Provide details on slides 7&8 for remaining functions in interim report" staged
+// the PRE-EXISTING "…Interim_Report_20260910.pptx" as the requirement, and the served reply said "The
+// interim report now includes slides 7 and 8 … Document is attached." The client already HAD that
+// report; the ask was to ADD work to it. Related ≠ is, in time as well as in topic.)
+//
+//   5. THE REQUIREMENT HAS A KIND, REASONED — `existing` (a document that already exists, to send as
+//      it is) or `new_work` (new or revised content someone must still produce — write, add, update,
+//      complete — even when it goes INTO an existing document). Judged in the SAME reasoned pick that
+//      matches the candidate (never a keyword list); a kind the judge's inventory already carries wins.
+//   6. THE DATES ARE CODE-CHECKED against the REQUEST message's date (`requestFactsOf`):
+//        · new_work — only a file born AFTER the request can be the deliverable. A file from on or
+//          before it is at most the BASE ("the current report to update"): staged as context under
+//          `base:<label>`, never as the deliverable; the requirement stays missing (an ask / produce).
+//          An unknown date proves nothing new — base (fail safe).
+//        · existing — a file that predates the request is it only when the request NAMES it (a
+//          distinctive token of the filename or the proving quote appears in the request's own words);
+//          otherwise it is a named suggestion, never staged.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+export type RequirementKind = 'existing' | 'new_work';
+/** Where a matched candidate may go: the deliverable itself, the base new work builds on, or a named
+ *  suggestion (never staged). */
+export type StagingRole = 'deliverable' | 'base' | 'suggest';
+
+const tsOf = (iso: string | null | undefined): number | null => {
+  const t = Date.parse(String(iso ?? ''));
+  return Number.isFinite(t) ? t : null;
+};
+const escRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The distinctive tokens of a name or phrase: letters/digits runs ≥ 4, no pure numbers (dates,
+ *  versions), no generic work words ("report", "project" — every engagement shares them). Pure. */
+function distinctiveTokens(text: string): string[] {
+  return String(text ?? '').replace(/\.[a-z0-9]{2,5}$/i, '').toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((t) => t.length >= 4 && !/^\d+$/.test(t) && !GENERIC_WORK_WORDS.has(t));
+}
+
+/**
+ * Does the REQUEST name this file? True when a distinctive token of the filename — or of the pick's
+ * verbatim proving quote — appears in the request's own words (title · message · judged label). Pure.
+ */
+export function requestNamesFile(filename: string, requestText: string, evidence?: string | null): boolean {
+  const hay = String(requestText ?? '').toLowerCase();
+  if (!hay.trim()) return false;
+  const toks = [...new Set([...distinctiveTokens(filename), ...distinctiveTokens(evidence ?? '')])];
+  return toks.some((t) => new RegExp(`(?<![\\p{L}\\p{N}])${escRe(t)}`, 'u').test(hay));
+}
+
+/**
+ * THE STAGING ROLE — the code half of laws 5–6. Pure: the kind is the reasoned field, the dates are
+ * facts, the naming is a token check. See the block above for the rules.
+ */
+export function stagingRole(args: {
+  kind: RequirementKind | null | undefined;
+  fileAt: string | null | undefined;
+  requestAt: string | null | undefined;
+  namedByRequest: boolean;
+}): StagingRole {
+  const f = tsOf(args.fileAt);
+  const r = tsOf(args.requestAt);
+  if (args.kind === 'new_work') return f !== null && r !== null && f > r ? 'deliverable' : 'base';
+  if (f !== null && r !== null && f <= r && !args.namedByRequest) return 'suggest';
+  return 'deliverable';
+}
+
+/**
+ * W13 · THE REPAIR'S VERDICT on a row staged before (or under) this law — pure, zero AI:
+ *   · judged kind → the staging role decides (not the deliverable = `violation`);
+ *   · unjudged (staged before the kind existed) → the existing-artifact rule is decisive on its own (an
+ *     older file the request never names = `violation`); an older file the request DOES name could
+ *     still be the base of new work — `suspect` until the kind is judged; anything else `ok`.
+ */
+export function stagedRowVerdict(args: {
+  kind: RequirementKind | null | undefined; fileAt: string | null | undefined; requestAt: string | null | undefined; namedByRequest: boolean;
+}): 'ok' | 'violation' | 'suspect' {
+  if (args.kind) return stagingRole(args) === 'deliverable' ? 'ok' : 'violation';
+  if (stagingRole({ ...args, kind: 'existing' }) !== 'deliverable') return 'violation';
+  const f = tsOf(args.fileAt);
+  const r = tsOf(args.requestAt);
+  return f !== null && r !== null && f <= r ? 'suspect' : 'ok';
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// W13.2 · THE STAGING LAW IS VERSIONED, AND IT HEALS ITSELF (owner principle: the PLATFORM identifies
+// and corrects what an older law staged — never an operator running a script).
+//
+// W13.1 made staging honest going forward, but every `require:` row staged under the OLD law read as
+// SETTLED to the judge's serving edge ("everything staged") and was never re-checked; only the one-shot
+// repair fixed them. Now:
+//   · every resolver-staged row is STAMPED with the law it was verified under (`metadata.stagingLaw`,
+//     no migration) — `STAGING_LAW_VERSION`;
+//   · a row stamped with an OLDER law (or unstamped) is STALE (`stagingLawStale`): no reader counts it
+//     as settled, and THE RESOLVER re-verifies it on its next touch (the prepare pass, the judge's
+//     serving edge, the inbox draft door — every caller of `resolveRequirements`). The standing file is
+//     put back in front of the SAME reasoned pick (the kind rides that call — no extra call) as the
+//     item's own candidate, with its real file id and its own date, and `reverifyDecision` rules:
+//       restamp  — the pick verifies the same file as the deliverable under this law → re-stamped;
+//       replace  — the pick verifies ANOTHER file → staged in its place (one row per requirement);
+//       demote   — the staging role refuses it (base / suggestion) → THE ONE unstage writer;
+//       unproven — a stale row the pick, answering cleanly, does not verify at all → unstaged (no
+//                  verifiable evidence is no match — law #2);
+//       hold     — the pick did not answer (AI outage, no budget) → the row stands untouched, still
+//                  stale, retried on the next touch. AI failure NEVER unstages.
+//   · bounded: at most `REVERIFY_PER_PASS` items per preparation pass (the rest are reported and left
+//     for the next sweep), one item per open at the serving edge, ≤ 5 labels per resolve.
+// Bump STAGING_LAW_VERSION whenever the staging law's rules change: every standing row then re-verifies.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+/** 1 = W6 (provenance + evidence) — the unstamped era · 2 = W13.1 (the requirement's kind + the dates). */
+export const STAGING_LAW_VERSION = 2;
+/** How many items with stale staging one preparation pass re-verifies (the rest wait, reported). */
+export const REVERIFY_PER_PASS = 6;
+
+/** A row the RESOLVER staged (not a typed supply, not the user's own drop): its pointer is ours to
+ *  re-verify and, on a positive demotion, to unstage. Pure. */
+export function isResolverStagedRow(meta: unknown): boolean {
+  const m = (meta ?? {}) as { source?: unknown; via?: unknown; attachment?: { fileId?: unknown } | null };
+  return m.source === 'requirement_resolution' && !m.via && typeof m.attachment?.fileId === 'string' && !!m.attachment.fileId;
+}
+
+/** A resolver-staged row verified under an OLDER staging law (or never stamped) — it is not settled
+ *  and must be re-verified on the next touch. Typed supplies and user drops are never stale. Pure. */
+export function stagingLawStale(meta: unknown): boolean {
+  if (!isResolverStagedRow(meta)) return false;
+  const v = Number(((meta ?? {}) as { stagingLaw?: unknown }).stagingLaw ?? 0);
+  return !Number.isFinite(v) || v < STAGING_LAW_VERSION;
+}
+
+/** The stamp a row verified NOW carries. */
+export const stagingStamp = () => ({ stagingLaw: STAGING_LAW_VERSION, verifiedAt: new Date().toISOString() });
+
+/**
+ * THE SERVING EDGE's settled guard (the judge route): nothing to resolve only when every required
+ * artifact has a staged row verified under THIS law — or an ask already stands and no staged row is
+ * stale. A stale row is never "settled". Pure.
+ */
+export function servingEdgeShouldResolve(args: {
+  askStands: boolean; requiredCount: number; staged: Array<{ metadata?: unknown }>;
+}): boolean {
+  const anyStale = args.staged.some((r) => stagingLawStale(r.metadata));
+  if (anyStale) return true;
+  if (args.askStands) return false;
+  return args.staged.length < args.requiredCount;
+}
+
+export type ReverifyAction = 'restamp' | 'replace' | 'demote' | 'unproven' | 'hold';
+/**
+ * W13.2 · THE RE-VERIFY RULING for a label with a standing resolver row — pure (see the block above).
+ * `judged` = the reasoned pick actually answered (a parseable verdict); anything else holds.
+ */
+export function reverifyDecision(p: {
+  judged: boolean; candidateId: string | null | undefined; demoted?: 'base' | 'suggest' | null;
+  standingFileId: string; stale: boolean;
+}): ReverifyAction {
+  if (!p.judged) return 'hold';
+  if (p.candidateId) return p.candidateId === p.standingFileId ? 'restamp' : 'replace';
+  if (p.demoted) return 'demote';
+  return p.stale ? 'unproven' : 'hold';
+}
+
+/** A standing `require:` pool row → the candidate the pick re-judges: the FILE it points at (its real
+ *  id and source, never the pointer row's id), the row's snippet, the file's own date. It is the
+ *  item's own pool material, so provenance holds (law #1). null = not a resolver pointer. Pure. */
+export function standingCandidateOf(
+  row: { content?: unknown; metadata?: unknown }, fileAt: string | null | undefined,
+): UniversalCandidate | null {
+  if (!isResolverStagedRow(row.metadata)) return null;
+  const att = ((row.metadata ?? {}) as { attachment: { fileId: string; filename?: string; source?: string } }).attachment;
+  const source = (['kb', 'gdrive', 'onedrive', 'dropbox', 'pool'].includes(String(att.source)) ? att.source : 'kb') as UniversalCandidate['source'];
+  const filename = String(att.filename ?? 'file');
+  return {
+    source, id: att.fileId, filename,
+    snippet: String(row.content ?? '').replace(/\s+/g, ' ').slice(0, 200),
+    entityId: null, score: 1, fileAt: effectiveFileAt({ fileAt: fileAt ?? null, filename }),
+  } as UniversalCandidate;
+}
+
+/** The item's standing resolver rows for these requirement labels — one bounded read, zero AI. */
+export async function standingRequireRows(
+  client: SupabaseClient, userId: string,
+  args: { itemKind: 'inbox' | 'commitment'; itemId: string; labels: string[] },
+): Promise<Array<{ id: string; task_id: string; content: string | null; metadata: Record<string, unknown> | null; created_at: string | null }>> {
+  if (!args.labels.length) return [];
+  const { data, error } = await client.from('item_deliverables').select('id, task_id, content, metadata, created_at')
+    .eq('user_id', userId).eq('kind', args.itemKind === 'commitment' ? 'commitment' : 'email').eq('entity_id', args.itemId)
+    .in('task_id', args.labels.map((l) => requireTaskId(l)));
+  if (error) return [];
+  return ((data ?? []) as Array<{ id: string; task_id: string; content: string | null; metadata: Record<string, unknown> | null; created_at: string | null }>)
+    .filter((r) => isResolverStagedRow(r.metadata) && !(r.metadata as { version_of?: unknown } | null)?.version_of);
+}
+
+/** The FILE dates of standing rows (a W13.1 row carries its stamp; an older row's KB file is read) —
+ *  one bounded read; unreadable → unknown (the staging role then fails safe). */
+async function standingFileDates(
+  client: SupabaseClient, userId: string, rows: Array<{ metadata: Record<string, unknown> | null }>,
+): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  const need: string[] = [];
+  for (const r of rows) {
+    const m = (r.metadata ?? {}) as { fileAt?: unknown; attachment?: { fileId?: string; source?: string } };
+    const id = String(m.attachment?.fileId ?? '');
+    if (typeof m.fileAt === 'string' && m.fileAt) out.set(id, m.fileAt);
+    else if (!m.attachment?.source || m.attachment.source === 'kb') need.push(id);
+    else out.set(id, null);
+  }
+  if (!need.length) return out;
+  try {
+    const { kbFileAt, emailAttachmentDates } = await import('@/lib/knowledge/resolve');
+    const { data, error } = await client.from('knowledge_files').select('id, origin, last_modified_at, indexed_at').eq('user_id', userId).in('id', need);
+    if (error) return out;
+    const files = (data ?? []) as Array<{ id: string; origin: { kind?: string; ref?: string } | null; last_modified_at: string | null; indexed_at: string | null }>;
+    const attachedAt = await emailAttachmentDates(client, userId, files);
+    for (const f of files) out.set(f.id, kbFileAt(f, attachedAt));
+  } catch { /* unknown dates — fail safe */ }
+  return out;
+}
+
+/**
+ * W13.2 · THE SELF-HEAL ENTRY — the ONE function every caller that would otherwise skip the resolver
+ * asks (the prepare pass before its lanes, the repair accelerator): when this item holds a require row
+ * staged under an older staging law, run THE RESOLVER (which re-verifies it — see `reverifyDecision`);
+ * otherwise do nothing (one read, zero AI). Returns how many stale rows it found and whether it ran.
+ */
+export async function reverifyStaleStaging(
+  admin: SupabaseClient, userId: string,
+  args: Parameters<typeof resolveRequirements>[2],
+): Promise<{ stale: number; ran: boolean; result?: RequirementsResult }> {
+  const rows = await standingRequireRows(admin, userId, { itemKind: args.itemKind, itemId: args.itemId, labels: (args.requires ?? []).map((r) => r.label).filter(Boolean) }).catch(() => []);
+  const stale = rows.filter((r) => stagingLawStale(r.metadata)).length;
+  if (!stale) return { stale: 0, ran: false };
+  const result = await resolveRequirements(admin, userId, args);
+  return { stale, ran: true, result };
+}
+
+/**
+ * W13.2 · THE SAME SELF-HEAL, for a caller that holds only the item's address (the repair accelerator):
+ * the item's standing judgment (cached — `judgeWork`), its title and its body of work, then
+ * `reverifyStaleStaging`. Nothing is re-verified unless the verdict still carries the inventory the
+ * row was staged for (the same condition as the serving edge). Non-fatal.
+ */
+export async function reverifyItemStaging(
+  client: SupabaseClient, userId: string, item: { kind: 'inbox' | 'commitment'; id: string },
+): Promise<{ stale: number; ran: boolean; reason?: string }> {
+  try {
+    const { judgeWork } = await import('@/lib/work/judge');
+    const verdict = await judgeWork(client, userId, item);
+    if (verdict.failed) return { stale: 0, ran: false, reason: 'could not judge' };
+    if (!verdict.requires?.length || !(verdict.work === 'reply' || verdict.work === 'send_file' || verdict.work === 'produce')) {
+      return { stale: 0, ran: false, reason: 'the verdict no longer carries an inventory' };
+    }
+    let title = '';
+    if (item.kind === 'inbox') {
+      const { data: it } = await client.from('inbox_items').select('work_title, subject:source_data->>subject').eq('id', item.id).eq('user_id', userId).maybeSingle();
+      const row = (it ?? null) as { work_title?: string | null; subject?: string | null } | null;
+      title = String(row?.work_title || row?.subject || '');
+    } else {
+      const { data: c } = await client.from('commitments').select('description').eq('id', item.id).eq('user_id', userId).maybeSingle();
+      title = String(c?.description ?? '');
+    }
+    const { data: link } = await client.from('entity_links').select('entity_id')
+      .eq('user_id', userId).eq('item_kind', item.kind === 'commitment' ? 'commitment' : 'inbox_item').eq('item_id', item.id)
+      .not('entity_id', 'is', null).maybeSingle();
+    const rv = await reverifyStaleStaging(client, userId, {
+      itemKind: item.kind, itemId: item.id, itemTitle: title, entityId: (link?.entity_id as string | undefined) ?? null,
+      requires: verdict.requires, work: verdict.work,
+    });
+    return { stale: rv.stale, ran: rv.ran };
+  } catch { return { stale: 0, ran: false, reason: 'failed' }; }
+}
+
+/** The pick's kind word → the type (anything else → null: not judged). Pure. */
+export function kindOf(raw: unknown): RequirementKind | null {
+  return raw === 'new_work' ? 'new_work' : raw === 'existing' ? 'existing' : null;
+}
+
+/**
+ * The date a FILENAME states about itself ("Interim_Report_20260910.pptx", "deck 2026-09-10.pdf") —
+ * year-month-day forms only (never a bare number), as the start of that day in UTC. null = none. Pure.
+ */
+export function dateInFilename(filename: string | null | undefined): string | null {
+  const m = /(?<!\d)(20\d{2})[-_.]?(0[1-9]|1[0-2])[-_.]?(0[1-9]|[12]\d|3[01])(?!\d)/.exec(String(filename ?? ''));
+  if (!m) return null;
+  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
+
+/**
+ * THE FILE'S EFFECTIVE DATE — every date we hold about a file is an UPPER bound on when it came to
+ * exist (we first saw it then; its name says it is from then), so the file is at least as old as the
+ * EARLIEST of them. A late index of an old report never makes it look new. Pure.
+ */
+export function effectiveFileAt(c: { fileAt?: string | null; filename?: string | null }): string | null {
+  const dates = [tsOf(c.fileAt), tsOf(dateInFilename(c.filename))].filter((t): t is number => t !== null);
+  return dates.length ? new Date(Math.min(...dates)).toISOString() : null;
+}
+
+/** The prompt block every reasoned pick carries — one wording, so the two doors ask the same thing. */
+const KIND_RULE =
+  `Also decide what THE NEEDED ARTIFACT is: "existing" = a document that already exists and is to be ` +
+  `sent or shared AS IT IS; "new_work" = new or revised content somebody must still produce — write, ` +
+  `add, provide details, update, revise, complete, correct — even when it goes INTO an existing ` +
+  `document. A file dated on or before the request cannot already contain new work the request asks for.`;
+
+/** The candidate's own date, as the pick sees it. */
+const datedLine = (c: UniversalCandidate) => { const at = effectiveFileAt(c); return at ? ` · dated ${at.slice(0, 10)}` : ''; };
+
+/** THE REQUEST'S OWN FACTS — its date (the message that asked: an inbox item's received_at; a
+ *  commitment's SOURCE email, else its creation) and its words (title/description + subject + body).
+ *  Bounded reads, zero AI; unreadable → nulls (the date rules then fail safe). */
+export async function requestFactsOf(
+  client: SupabaseClient, userId: string, item: { kind: 'inbox' | 'commitment'; id: string },
+): Promise<{ requestAt: string | null; requestText: string; excerpt: string | null }> {
+  try {
+    if (item.kind === 'inbox') {
+      const { data: it } = await client.from('inbox_items').select('source_data, created_at, work_title').eq('id', item.id).eq('user_id', userId).maybeSingle();
+      const sd = (it?.source_data ?? {}) as { body?: string; subject?: string; received_at?: string };
+      const body = String(sd.body ?? '');
+      return {
+        requestAt: sd.received_at ?? (it?.created_at as string | null) ?? null,
+        requestText: [it?.work_title, sd.subject, body.slice(0, 4000)].filter(Boolean).join('\n'),
+        excerpt: body.slice(0, 700) || null,
+      };
+    }
+    const { data: c } = await client.from('commitments').select('description, created_at, source, source_id').eq('id', item.id).eq('user_id', userId).maybeSingle();
+    if (!c) return { requestAt: null, requestText: '', excerpt: null };
+    let at: string | null = (c.created_at as string | null) ?? null;
+    let subject = '';
+    let body = '';
+    if (c.source === 'email' && c.source_id) {
+      const { data: e } = await client.from('emails').select('received_at, subject, body').eq('id', c.source_id as string).eq('user_id', userId).maybeSingle();
+      if (e) { at = (e.received_at as string | null) ?? at; subject = String(e.subject ?? ''); body = String(e.body ?? '').replace(/\s+/g, ' ').trim(); }
+    }
+    const desc = String(c.description ?? '');
+    return {
+      requestAt: at,
+      requestText: [desc, subject, body.slice(0, 4000)].filter(Boolean).join('\n'),
+      excerpt: [desc, body.slice(0, 500)].filter(Boolean).join(' — ').slice(0, 700) || null,
+    };
+  } catch { return { requestAt: null, requestText: '', excerpt: null }; }
+}
+
 export type ArtifactPick = {
   label: string;
-  /** The candidate that may STAGE (passed provenance + evidence) — null when nothing qualifies. */
+  /** The candidate that may STAGE (passed provenance + evidence + the staging role) — null when nothing qualifies. */
   candidate: UniversalCandidate | null;
   /** The code-verified quote that proved the match (present iff candidate). */
   evidence?: string;
-  /** A plausible-but-unstageable hit (wrong provenance / unverified) — named in the ask, never staged. */
+  /** A plausible-but-unstageable hit (wrong provenance / unverified / an old file the request does
+   *  not name) — named in the ask, never staged. */
   suggestion?: UniversalCandidate | null;
+  /** W13 · the requirement's reasoned kind (null = no reasoned pick ran). */
+  kind?: RequirementKind | null;
+  /** W13 · the verified match that PREDATES a new-work request — the base to build on, never staged
+   *  as the deliverable. */
+  base?: UniversalCandidate | null;
+  /** W13 · the verified match was DEMOTED by the staging role (to the base, or to a suggestion) — a
+   *  positive finding, unlike a miss (an AI outage never unstages anything). */
+  demoted?: 'base' | 'suggest';
+  /** W13.2 · the reasoned pick ANSWERED (a parseable verdict) — false on an AI outage / no budget, or
+   *  when no candidate reached the pick. Only a judged pick may unstage a standing row. */
+  judged?: boolean;
 };
 
 const normText = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
@@ -87,28 +447,41 @@ function stageEligible(c: UniversalCandidate, entityId: string | null | undefine
  */
 export async function verifyArtifactMatch(
   admin: SupabaseClient, userId: string,
-  input: { task: string; candidate: UniversalCandidate; entityId?: string | null; emailExcerpt?: string | null },
-): Promise<{ match: boolean; evidence: string | null }> {
+  input: {
+    task: string; candidate: UniversalCandidate; entityId?: string | null; emailExcerpt?: string | null;
+    /** W13 · the request's date + own words (`requestFactsOf`) — the staging role's facts. */
+    requestAt?: string | null; requestText?: string | null;
+  },
+): Promise<{ match: boolean; evidence: string | null; kind: RequirementKind | null; role: StagingRole | null }> {
   const c = input.candidate;
   // Provenance floor: a file that BELONGS to a different body of work never attaches here.
-  if (input.entityId && c.entityId && c.entityId !== input.entityId) return { match: false, evidence: null };
+  if (input.entityId && c.entityId && c.entityId !== input.entityId) return { match: false, evidence: null, kind: null, role: null };
   try {
-    const res = await aiCall<{ match?: boolean; evidence?: string }>({
-      userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 160, source: 'task_preparation',
+    const res = await aiCall<{ match?: boolean; evidence?: string; kind?: string }>({
+      userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 180, source: 'task_preparation',
       prompt:
         `TASK: ${input.task.slice(0, 140)}\n` +
         (input.emailExcerpt ? `THEIR OWN WORDS: ${input.emailExcerpt.replace(/\s+/g, ' ').slice(0, 400)}\n` : '') +
-        `CANDIDATE FILE: "${c.filename}" [${c.source}${c.originKind ? ` · ${c.originKind}` : ''}]\nSnippet: ${c.snippet.slice(0, 200)}\n\n` +
+        (input.requestAt && tsOf(input.requestAt) !== null ? `THE REQUEST WAS MADE ON: ${new Date(tsOf(input.requestAt)!).toISOString().slice(0, 10)}\n` : '') +
+        `CANDIDATE FILE: "${c.filename}" [${c.source}${c.originKind ? ` · ${c.originKind}` : ''}${datedLine(c)}]\nSnippet: ${c.snippet.slice(0, 200)}\n\n` +
         `Is this file THE document the task asks to send/share — not merely related to the same ` +
         `client/topic? If yes, return "evidence": a short phrase COPIED VERBATIM from the filename ` +
         `or snippet that proves it is THIS document. Unsure → false.\n` +
-        `JSON only: {"match":true|false,"evidence":"<verbatim phrase or empty>"}`,
+        `${KIND_RULE}\n` +
+        `JSON only: {"kind":"existing"|"new_work","match":true|false,"evidence":"<verbatim phrase or empty>"}`,
     });
     const evidence = String(res.json?.evidence ?? '').trim();
+    const kind = kindOf(res.json?.kind);
     const real = res.json?.match === true && evidence.length >= 3
       && normText(`${c.filename} ${c.snippet}`).includes(normText(evidence));
-    return { match: real, evidence: real ? evidence : null };
-  } catch { return { match: false, evidence: null }; }
+    if (!real) return { match: false, evidence: null, kind, role: null };
+    // W13 · law 6, the CODE half: the verified file must also be the deliverable IN TIME.
+    const role = stagingRole({
+      kind, fileAt: effectiveFileAt(c), requestAt: input.requestAt ?? null,
+      namedByRequest: requestNamesFile(c.filename, `${input.task}\n${input.requestText ?? input.emailExcerpt ?? ''}`, evidence),
+    });
+    return { match: role === 'deliverable', evidence, kind, role };
+  } catch { return { match: false, evidence: null, kind: null, role: null }; }
 }
 
 /**
@@ -123,12 +496,23 @@ export async function pickArtifacts(
     /** The item's own words (email body excerpt) — the pick grounds in what was actually asked. */
     emailExcerpt?: string | null;
     entityId?: string | null;
-    perLabel: Array<{ label: string; candidates: UniversalCandidate[] }>;
+    perLabel: Array<{
+      label: string; candidates: UniversalCandidate[]; kind?: RequirementKind | null;
+      /** W13.2 · the file this label's standing `require:` row already points at (`standingCandidateOf`)
+       *  — the item's own material (provenance holds), re-judged FIRST under the current law. */
+      standing?: UniversalCandidate | null;
+    }>;
+    /** W13 · the request's date + own words (`requestFactsOf`) — the staging role's facts. */
+    requestAt?: string | null;
+    requestText?: string | null;
   },
 ): Promise<ArtifactPick[]> {
   const out: ArtifactPick[] = [];
-  for (const { label, candidates } of input.perLabel) {
-    const eligible = candidates.filter((c) => stageEligible(c, input.entityId)).slice(0, 3);
+  for (const { label, candidates: found, kind: judgedKind, standing } of input.perLabel) {
+    // W13.2: the standing file leads (always eligible — it is this item's own pool pointer); the same
+    // file found again by retrieval is not a second candidate.
+    const candidates = standing ? found.filter((c) => c.id !== standing.id) : found;
+    const eligible = [...(standing ? [standing] : []), ...candidates.filter((c) => stageEligible(c, input.entityId))].slice(0, 3);
     let suggestion = candidates.find((c) => !stageEligible(c, input.entityId) && c.score >= STAGE_SCORE) ?? null;
     // R-class SUGGESTION FLOOR: a named "maybe this?" must itself be plausible — offering another
     // deal's kickoff transcript as maybe-the-HR-insights reads as not paying attention, even
@@ -144,24 +528,31 @@ export async function pickArtifacts(
       }).catch(() => ({ json: { plausible: false } }));
       if (sres.json?.plausible !== true) suggestion = null;
     }
-    if (!eligible.length) { out.push({ label, candidate: null, suggestion }); continue; }
-    // ── The contrastive, evidence-quoting verification (law #2) — per label, full context. ──
-    const res = await aiCall<{ match?: number | null; evidence?: string }>({
-      userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 220, source: 'task_preparation',
+    if (!eligible.length) { out.push({ label, candidate: null, suggestion, kind: judgedKind ?? null, judged: false }); continue; }
+    // ── The contrastive, evidence-quoting verification (law #2) — per label, full context — and
+    // the requirement's KIND (law 5), reasoned in the same call. ──
+    const res = await aiCall<{ match?: number | null; evidence?: string; kind?: string }>({
+      userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 240, source: 'task_preparation',
       prompt:
         `A colleague asked for a specific artifact. Decide whether one of the candidate files IS that ` +
         `artifact — not merely related to the same client, topic, or kind of work. Being adjacent ` +
         `("assessment material" when they asked for "the individual report") is NOT a match.\n\n` +
         `THE ASK: ${input.itemTitle.slice(0, 140)}\n` +
         (input.emailExcerpt ? `THEIR OWN WORDS: ${input.emailExcerpt.replace(/\s+/g, ' ').slice(0, 500)}\n` : '') +
+        (input.requestAt && tsOf(input.requestAt) !== null ? `THE REQUEST WAS MADE ON: ${new Date(tsOf(input.requestAt)!).toISOString().slice(0, 10)}\n` : '') +
         `THE NEEDED ARTIFACT: "${label}"\n\n` +
         `CANDIDATES:\n${eligible.map((c, j) =>
-          `${j}. "${c.filename}" [${c.source}${c.originKind ? ` · ${c.originKind}` : ''}${input.entityId && c.entityId === input.entityId ? ' · SAME body of work' : ''}] — ${c.snippet.slice(0, 160)}`).join('\n')}\n\n` +
+          `${j}. "${c.filename}" [${c.source}${c.originKind ? ` · ${c.originKind}` : ''}${input.entityId && c.entityId === input.entityId ? ' · SAME body of work' : ''}${datedLine(c)}] — ${c.snippet.slice(0, 160)}`).join('\n')}\n\n` +
         `If one IS the artifact: return its number AND "evidence" — a short phrase COPIED VERBATIM ` +
         `from that candidate's filename or snippet above that proves it (the proof must name what ` +
         `makes it THIS artifact, not the shared topic). If none qualifies, match null. Unsure → null.\n` +
-        `JSON only: {"match":<number or null>,"evidence":"<verbatim phrase or empty>"}`,
+        `${KIND_RULE}\n` +
+        `JSON only: {"kind":"existing"|"new_work","match":<number or null>,"evidence":"<verbatim phrase or empty>"}`,
     }).catch(() => ({ json: undefined }));
+    // The judged inventory's own kind wins; else the pick's reasoned field.
+    const kind: RequirementKind | null = judgedKind ?? kindOf(res.json?.kind);
+    // W13.2: did the pick ANSWER? (an outage / no budget → json undefined → never a verdict)
+    const judged = !!res.json && typeof res.json === 'object' && ('match' in res.json || 'kind' in res.json);
     const idx = typeof res.json?.match === 'number' ? res.json.match : null;
     const cand = idx !== null ? eligible[idx] : undefined;
     const evidence = String(res.json?.evidence ?? '').trim();
@@ -176,9 +567,17 @@ export async function pickArtifacts(
     const evidenceReal = !!cand && evidence.length >= 3
       && (candText.includes(evNorm)
         || (evTokens.length >= 2 && evTokens.every((t) => candText.includes(t))));
-    out.push(evidenceReal
-      ? { label, candidate: cand!, evidence, suggestion: null }
-      : { label, candidate: null, suggestion });
+    if (!evidenceReal) { out.push({ label, candidate: null, suggestion, kind, judged }); continue; }
+    // ── W13 · law 6, the CODE half: a verified match must also be the deliverable IN TIME. ──
+    const role = stagingRole({
+      kind, fileAt: effectiveFileAt(cand!), requestAt: input.requestAt ?? null,
+      namedByRequest: requestNamesFile(cand!.filename, `${input.itemTitle}\n${label}\n${input.requestText ?? input.emailExcerpt ?? ''}`, evidence),
+    });
+    out.push(role === 'deliverable'
+      ? { label, candidate: cand!, evidence, suggestion: null, kind, judged }
+      : role === 'base'
+        ? { label, candidate: null, suggestion: null, kind, base: cand!, demoted: 'base', judged }
+        : { label, candidate: null, suggestion: cand!, kind, demoted: 'suggest', judged });
   }
   // ── Law #3: one file, one label — duplicate matches all reject (ambiguity is not confidence). ──
   const counts = new Map<string, number>();
@@ -193,11 +592,14 @@ export async function pickArtifacts(
 
 // The drafter/producer's constraint block — non-blocking by design: missing pieces are named so the
 // work proceeds honestly around them, never so it stalls waiting for completeness.
-function buildTruth(have: RequirementResolution[], missing: RequirementResolution[]): string {
+export function buildTruth(have: RequirementResolution[], missing: RequirementResolution[]): string {
+  const bases = missing.filter((m2) => m2.base);
   return (
     `ARTIFACT TRUTH — claim, attach, or build on ONLY what is actually staged:\n` +
     (have.length ? `- STAGED (attached/ready): ${have.map((h) => `${h.label} → "${h.file!.filename}"`).join(' · ')}\n` : '') +
-    (missing.length ? `- MISSING (NOT in hand): ${missing.map((m2) => m2.label).join(' · ')}. Do NOT claim these are attached or promise a specific delivery time for them — either say they will follow separately or ask what's needed to get them.\n` : '')
+    (missing.length ? `- MISSING (NOT in hand): ${missing.map((m2) => m2.label).join(' · ')}. Do NOT claim these are attached or promise a specific delivery time for them — either say they will follow separately or ask what's needed to get them.\n` : '') +
+    // W13 · THE BASE: the current version new work builds on — context, never the answer.
+    (bases.length ? `- BASE ONLY (the CURRENT version the new work goes into — NOT the deliverable): ${bases.map((b) => `${b.label} → "${b.base!.filename}"`).join(' · ')}. Never attach it as the answer and never say it now includes, has been updated with, or contains the requested new work — that work is still to be done.\n` : '')
   );
 }
 
@@ -393,6 +795,100 @@ export async function composeAskSpeech(
   }
 }
 
+/**
+ * W13 · THE KIND, ALONE — the same reasoned field the pick returns (KIND_RULE, one wording), for a
+ * requirement staged BEFORE the kind existed (the repair's judged pass; owner-gated, never on a dry
+ * run). null = could not judge (the caller leaves the row alone — failure is not a verdict).
+ */
+export async function judgeRequirementKind(
+  admin: SupabaseClient, userId: string,
+  input: { itemTitle: string; excerpt?: string | null; label: string },
+): Promise<RequirementKind | null> {
+  try {
+    const res = await aiCall<{ kind?: string }>({
+      userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 40, source: 'task_preparation',
+      prompt:
+        `${EXCERPT_RULE}\n\n` +
+        `THE ASK: ${clipForPrompt(input.itemTitle, 160)}\n` +
+        (input.excerpt ? `THEIR OWN WORDS: ${clipForPrompt(input.excerpt.replace(/\s+/g, ' '), 500)}\n` : '') +
+        `THE NEEDED ARTIFACT: "${clipForPrompt(input.label, 120)}"\n\n${KIND_RULE}\n` +
+        `JSON only: {"kind":"existing"|"new_work"}`,
+    });
+    return kindOf(res.json?.kind);
+  } catch { return null; }
+}
+
+/** W13 · the ask's base sentence — one wording (the ask and the gate read it). Pure. */
+export function baseLine(filenames: string[]): string {
+  const f = filenames.slice(0, 2).map((x) => `"${x}"`).join(' and ');
+  return `I have ${f} — that's the current version the new work goes into, not the finished piece, so I won't attach it as the answer.`;
+}
+
+/** The pool key a BASE file stages under — never `require:` (every reader of that key reads a HAVE). */
+export function baseTaskId(label: string): string {
+  return `base:${String(label ?? '').toLowerCase().slice(0, 60)}`;
+}
+
+/**
+ * W13 · UNSTAGE — THE ONE WRITER that takes a requirement back from "staged". The resolver's own
+ * `require:<label>` pointer row is removed (a POINTER — the user's file itself is never touched), and
+ * when the file is the base for new work it is re-staged as CONTEXT under `base:<label>` (type file,
+ * `role: 'base'`, the reason recorded) — the pool's search skips it and THE ONE READER withdraws any
+ * draft that rides it as the answer. A typed supply or a user-supplied row is never unstaged
+ * (`onlyResolverRows`). Non-fatal.
+ */
+export async function unstageRequirement(
+  client: SupabaseClient, userId: string,
+  args: {
+    itemKind: 'inbox' | 'commitment'; itemId: string; label: string; reason: string;
+    base?: { fileId: string; filename: string; source?: string; fileAt?: string | null; snippet?: string | null } | null;
+    requestAt?: string | null;
+    /** Only a row the RESOLVER staged (source requirement_resolution, not a typed supply). */
+    onlyResolverRows?: boolean;
+  },
+): Promise<{ removed: number; based: boolean }> {
+  const poolKind = args.itemKind === 'commitment' ? 'commitment' : 'email';
+  let removed = 0;
+  try {
+    const { data: rows, error } = await client.from('item_deliverables').select('id, metadata')
+      .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', args.itemId).eq('task_id', requireTaskId(args.label));
+    if (!error) {
+      const ids = ((rows ?? []) as Array<{ id: string; metadata: Record<string, unknown> | null }>)
+        .filter((r) => !args.onlyResolverRows || (r.metadata?.source === 'requirement_resolution' && !r.metadata?.via && !!r.metadata?.attachment))
+        .map((r) => r.id);
+      if (ids.length) {
+        const { error: delErr } = await client.from('item_deliverables').delete().eq('user_id', userId).in('id', ids);
+        if (!delErr) removed = ids.length;
+      }
+    }
+  } catch { /* non-fatal */ }
+  let based = false;
+  if (args.base) {
+    // Idempotent: the same base already standing for this label is left as it is (no churn per pass).
+    try {
+      const { data: standing } = await client.from('item_deliverables').select('id, metadata')
+        .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', args.itemId).eq('task_id', baseTaskId(args.label)).limit(1).maybeSingle();
+      const standingFile = ((standing?.metadata ?? null) as { attachment?: { fileId?: string } } | null)?.attachment?.fileId;
+      if (standingFile && standingFile === args.base.fileId) return { removed, based: true };
+    } catch { /* write below */ }
+    const { writeDeliverable } = await import('@/lib/home/deliverable-pool');
+    const row = await writeDeliverable(client, userId, {
+      kind: poolKind, entityId: args.itemId, taskId: baseTaskId(args.label), type: 'file',
+      title: `Current version (to update): ${args.base.filename}`.slice(0, 100),
+      content: String(args.base.snippet ?? '').slice(0, 2000),
+      gist: `the base for: ${args.label} — NOT the deliverable`.slice(0, 120),
+      metadata: {
+        source: 'requirement_base', role: 'base', requirement: args.label, requirementKind: 'new_work',
+        attachment: { fileId: args.base.fileId, filename: args.base.filename, source: args.base.source ?? 'kb' },
+        fileAt: args.base.fileAt ?? null, requestAt: args.requestAt ?? null, ...stagingStamp(),
+        ...(removed ? { unstaged: { at: new Date().toISOString(), reason: args.reason } } : {}),
+      },
+    }).catch(() => null);
+    based = !!row;
+  }
+  return { removed, based };
+}
+
 export async function resolveRequirements(
   admin: SupabaseClient, userId: string,
   args: {
@@ -400,7 +896,7 @@ export async function resolveRequirements(
     itemId: string;
     itemTitle: string;
     entityId?: string | null;
-    requires: Array<{ label: string }>;
+    requires: Array<{ label: string; kind?: RequirementKind | null }>;
     /** The judged verb — the ask's CONSEQUENCE half (law 4). Absent → a neutral "move this forward". */
     work?: WorkVerb | null;
   },
@@ -428,28 +924,38 @@ export async function resolveRequirements(
   if (!requires.length) return empty;
 
   try {
+    // ── W13.2 · THE STANDING ROWS: what the resolver already staged for these labels (one read). Each
+    // is re-judged by the SAME pick as the item's own candidate — its real file, its own date — so a
+    // row staged under an older staging law re-verifies on this touch (`reverifyDecision`). ──
+    const standingRows = await standingRequireRows(admin, userId, { itemKind: args.itemKind, itemId: args.itemId, labels: requires.map((r) => r.label) }).catch(() => []);
+    const standingDates = standingRows.length ? await standingFileDates(admin, userId, standingRows) : new Map<string, string | null>();
+    const standingByTask = new Map(standingRows.map((r) => [r.task_id, r]));
+    const standingRowIds = new Set(standingRows.map((r) => r.id));
+
     // ── Retrieval: the universal resolver per label (pool-first, entity-affinity). ──
-    const perLabel: Array<{ label: string; candidates: UniversalCandidate[] }> = [];
+    const perLabel: Array<{ label: string; candidates: UniversalCandidate[]; kind?: RequirementKind | null; standing?: UniversalCandidate | null }> = [];
     for (const r of requires) {
       const cands = await resolveFileUniversal(admin, { userId, entityId: args.entityId ?? null }, r.label, 4).catch(() => []);
-      perLabel.push({ label: r.label, candidates: cands.filter((c) => c.score >= CONFIDENT || c.source === 'pool') });
+      const row = standingByTask.get(requireTaskId(r.label));
+      const fid = String(((row?.metadata ?? {}) as { attachment?: { fileId?: string } }).attachment?.fileId ?? '');
+      perLabel.push({
+        label: r.label, kind: kindOf(r.kind),
+        // A standing POINTER row is never its own candidate (its id is the row's, not the file's).
+        candidates: cands.filter((c) => (c.score >= CONFIDENT || c.source === 'pool') && !(c.source === 'pool' && standingRowIds.has(c.id))),
+        standing: row ? standingCandidateOf(row, standingDates.get(fid) ?? null) : null,
+      });
     }
 
-    // ── The item's OWN WORDS ground the pick (a filename can't be judged against a 140-char title). ──
-    let emailExcerpt: string | null = null;
-    try {
-      if (args.itemKind === 'inbox') {
-        const { data: it } = await admin.from('inbox_items').select('source_data').eq('id', args.itemId).eq('user_id', userId).maybeSingle();
-        emailExcerpt = String(((it?.source_data ?? {}) as { body?: string }).body ?? '').slice(0, 700) || null;
-      } else {
-        const { data: c } = await admin.from('commitments').select('description').eq('id', args.itemId).eq('user_id', userId).maybeSingle();
-        emailExcerpt = String(c?.description ?? '').slice(0, 300) || null;
-      }
-    } catch { /* the excerpt is grounding, not a gate */ }
+    // ── The item's OWN WORDS ground the pick (a filename can't be judged against a 140-char title),
+    // and W13 · the REQUEST's date is the staging role's clock (a commitment's SOURCE message). ──
+    const request = await requestFactsOf(admin, userId, { kind: args.itemKind, id: args.itemId });
+    const emailExcerpt = request.excerpt;
 
-    // ── THE STAGING LAW (W6): provenance-gated, evidence-verified, one-file-one-label. ──
+    // ── THE STAGING LAW (W6 + W13): provenance-gated, evidence-verified, one-file-one-label, and a
+    // file is the deliverable only when it is the deliverable IN TIME. ──
     const picks = await pickArtifacts(admin, userId, {
       itemTitle: args.itemTitle, emailExcerpt, entityId: args.entityId ?? null, perLabel,
+      requestAt: request.requestAt, requestText: request.requestText,
     });
 
     // ── Stage haves into the pool; collect the missing (+ their named suggestions). ──
@@ -459,21 +965,67 @@ export async function resolveRequirements(
     const suggestions: Array<{ label: string; filename: string }> = [];
     for (const pick of picks) {
       const { label, candidate: cand } = pick;
+      // ── W13.2 · THE RE-VERIFY RULING for a label that already has a standing resolver row. ──
+      const standingRow = standingByTask.get(requireTaskId(label)) ?? null;
+      const standingAtt = ((standingRow?.metadata ?? {}) as { attachment?: { fileId: string; filename: string; source?: string } }).attachment ?? null;
+      const action: ReverifyAction | null = standingRow && standingAtt ? reverifyDecision({
+        judged: !!pick.judged, candidateId: cand?.id ?? null, demoted: pick.demoted ?? null,
+        standingFileId: standingAtt.fileId, stale: stagingLawStale(standingRow.metadata),
+      }) : null;
+      if (action === 'hold') {
+        // The pick did not answer (or a verified row was not re-proven this time): the row STANDS as
+        // it is — the truth says it is staged, because it is. AI failure never unstages.
+        resolutions.push({ label, status: 'have', kind: kindOf((standingRow!.metadata as { requirementKind?: unknown } | null)?.requirementKind) ?? pick.kind ?? null,
+          file: { source: standingAtt!.source ?? 'kb', id: standingAtt!.fileId, filename: standingAtt!.filename } });
+        continue;
+      }
+      if (action === 'unproven') {
+        // A stale row the current law's pick, answering cleanly, does not verify: no verifiable
+        // evidence is no match (law #2) — unstaged through THE ONE writer; the requirement is missing.
+        await unstageRequirement(admin, userId, {
+          itemKind: args.itemKind, itemId: args.itemId, label,
+          reason: `re-verified under staging law v${STAGING_LAW_VERSION}: not proven to be the deliverable`,
+          base: null, requestAt: request.requestAt, onlyResolverRows: true,
+        });
+      }
       if (pick.suggestion) suggestions.push({ label, filename: pick.suggestion.filename });
+      // W13.2 · RESTAMP IN PLACE: the same file re-verified under this law keeps its row (and its
+      // created_at — a re-verify is not new supply); only the stamp and the facts move.
+      let restamped = false;
+      if (cand && action === 'restamp' && standingRow) {
+        const { error: upErr } = await admin.from('item_deliverables').update({
+          metadata: { ...(standingRow.metadata ?? {}), requirementKind: pick.kind ?? null, fileAt: effectiveFileAt(cand), requestAt: request.requestAt, ...stagingStamp() },
+        }).eq('id', standingRow.id).eq('user_id', userId);
+        restamped = !upErr;
+      }
       if (cand) {
         // Idempotent staging: one pool row per (item, requirement) — a re-resolve replaces nothing
         // it doesn't have to (writeDeliverable dedupes on task_id).
-        await writeDeliverable(admin, userId, {
+        if (!restamped) await writeDeliverable(admin, userId, {
           // ONE REQUIREMENT KEY (W4-B, Sep 22): the resolver's own staging and the type-it door's
           // typed fact land under the same `require:<label>` — lib/prepare/supply.ts.
           kind: poolKind, entityId: args.itemId, taskId: requireTaskId(label),
           type: 'file', title: cand.filename.slice(0, 100),
           content: cand.snippet.slice(0, 2000), gist: `staged for: ${label}`.slice(0, 120),
-          metadata: { source: 'requirement_resolution', requirement: label, attachment: { fileId: cand.id, filename: cand.filename, source: cand.source } },
+          // W13.1: the staging's own facts ride the row — the kind it was judged as, the FILE's date
+          // (never the row's) and the request's — so a re-resolve and the repair read the same truth.
+          // W13.2: and the LAW it was verified under (`stagingLaw`) — an older stamp re-verifies.
+          metadata: { source: 'requirement_resolution', requirement: label, attachment: { fileId: cand.id, filename: cand.filename, source: cand.source },
+            requirementKind: pick.kind ?? null, fileAt: effectiveFileAt(cand), requestAt: request.requestAt, ...stagingStamp() },
         }).catch(() => {});
-        resolutions.push({ label, status: 'have', file: { source: cand.source, id: cand.id, filename: cand.filename } });
+        resolutions.push({ label, status: 'have', kind: pick.kind ?? null, file: { source: cand.source, id: cand.id, filename: cand.filename } });
       } else {
-        resolutions.push({ label, status: 'missing' });
+        // W13 · a resolver-staged row for this label that no longer holds (the file predates a
+        // new-work ask, or an old file the request never names) is UNSTAGED — the base is kept as
+        // context, the requirement goes back to missing.
+        const base = pick.base ?? null;
+        if (pick.demoted) await unstageRequirement(admin, userId, {
+          itemKind: args.itemKind, itemId: args.itemId, label,
+          reason: base ? 'the file predates a request for new work — it is the base, not the deliverable' : 'no longer the deliverable',
+          base: base ? { fileId: base.id, filename: base.filename, source: base.source, fileAt: effectiveFileAt(base), snippet: base.snippet } : null,
+          requestAt: request.requestAt, onlyResolverRows: true,
+        });
+        resolutions.push({ label, status: 'missing', kind: pick.kind ?? null, ...(base ? { base: { source: base.source, id: base.id, filename: base.filename } } : {}) });
       }
     }
     const have = resolutions.filter((r) => r.status === 'have');
@@ -552,9 +1104,12 @@ export async function resolveRequirements(
     if (uncovered.length) {
       // Unstageable-but-plausible hits are NAMED, never silently attached (Prepared → Suggested:
       // the user confirms in the room — "use it" routes through the conversation/attach funnel).
-      const suggestLine = suggestions.length
+      const bases = uncovered.filter((m2) => m2.base);
+      const suggestLine = (suggestions.length
         ? ` I did find ${suggestions.slice(0, 2).map((s) => `"${s.filename}" (maybe the ${s.label.toLowerCase()})`).join(' and ')} — but I'm not sure enough to attach ${suggestions.length === 1 ? 'it' : 'them'} without you confirming.`
-        : '';
+        : '')
+        // W13 · THE BASE IS NAMED AS WHAT IT IS — the current version the new work goes into.
+        + (bases.length ? ` ${baseLine(bases.map((b) => b.base!.filename))}` : '');
       // COMPOSED ONCE: a standing ask covering exactly these labels already carries its words —
       // re-running the pass re-states them, it never re-buys them. Only a NEW gap composes.
       const labels = uncovered.map((m2) => m2.label);

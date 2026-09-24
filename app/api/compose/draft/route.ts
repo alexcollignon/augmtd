@@ -8,6 +8,7 @@ import { detectLanguage } from '@/lib/inbox/detect-language';
 import { generateReplyDraft } from '@/lib/inbox/draft-reply';
 import { loadPlanStepSummaries, type ItemPlanKind } from '@/lib/home/item-plan';
 import { firstEmailIn, looksLikeEmail } from '@/lib/core/email';
+import { stagedFilesOf } from '@/lib/prepare/email-card';
 
 export const maxDuration = 30;
 
@@ -91,6 +92,9 @@ export async function POST(request: NextRequest) {
     let pooledHand: { edited: true; staleUnderEdit?: true } | null = null;
     // W7.3 TRUE ADDRESSEES — candidates the ladder saw but may not claim (offered on the card, never sent).
     let pooledAddressee: import('@/lib/prepare/addressee').Addressee | null = null;
+    // W13 · A CLAIM RENDERS — the file the pooled draft carries (staged by the pass under the staging
+    // law). Served so the card shows it as a chip, and Send attaches exactly the chips that stand.
+    let pooledAttachment: unknown = null;
     let suggestions: Array<{ name: string | null; email: string | null }> = [];
     // For an email/awareness item that genuinely owes a reply, we draft via the shared reply drafter
     // (`generateReplyDraft`) — it detects + mirrors the INCOMING email's language (the A2 fix), so the
@@ -149,6 +153,7 @@ export async function POST(request: NextRequest) {
         const pooled = st.live.find((a) => (a.kind === 'nudge_draft' || a.kind === 'reply_draft') && a.content.trim());
         if (pooled && !intent?.trim()) {
           pooledBody = pooled.content; pooledBy = pooled.by; pooledAddressee = pooled.addressee ?? null;
+          pooledAttachment = pooled.attachment ?? null;
           if (pooled.hand) pooledHand = { edited: true, ...(pooled.staleUnderEdit ? { staleUnderEdit: true as const } : {}) };
         }
       } catch { /* the reader is an enhancement — fall through to drafting */ }
@@ -357,6 +362,8 @@ export async function POST(request: NextRequest) {
       recipientName: recipientName ?? null,
       ...(suggestions.length ? { suggestions } : {}),
       ...(pooledBody ? { prepared: true, preparedBy: pooledBy } : {}),
+      // W13: the staged file(s) riding the served words — the card's chips (KB-held only).
+      ...(pooledBody && stagedFilesOf(pooledAttachment).length ? { attachments: stagedFilesOf(pooledAttachment) } : {}),
       ...(pooledBody && pooledHand ? pooledHand : {}),
       // W12.1: the honest empty state — why no words were served (the draft failed the one vet twice).
       ...(withheld ? { withheld } : {}),
