@@ -188,7 +188,9 @@ console.log('\nD · (d) a requires-ask for the draft itself / the item\'s own in
 {
   const machine = src('lib/work/machine.ts');
   gate('D1 both machine readers decide ask liveness through the ONE predicate (askIsMoot) and serve mootAskKeys',
-    /import \{ askIsMoot, isEngineAskKey \} from '@\/lib\/room\/ask-mootness';/.test(machine)
+    // ⟲ RE-POINTED (W13.6): the machine also imports the ONE verdict-labels reader (`verdictRequireLabels`)
+    // it now shares with the room grounding — the same predicate, the same facts.
+    /import \{ askIsMoot, isEngineAskKey, verdictRequireLabels \} from '@\/lib\/room\/ask-mootness';/.test(machine)
     && (machine.match(/liveAsksOf\(/g) ?? []).length >= 3
     && /mootAskKeys\?: string\[\];/.test(machine)
     // the title half is the inbound's OWN subject (source_data.subject), never the judge's work_title

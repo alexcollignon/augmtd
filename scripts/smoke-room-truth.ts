@@ -171,8 +171,71 @@ function fakeTurns(seed: Turn[]) {
     && /if \(!editorMaySettle\(ask\.key\)\) \{/.test(brief));
   const reqSrc = src('lib/prepare/requirements.ts');
   gate('D5 an unstaged new-work requirement still posts its ask through the ONE turn writer (the resolver\'s missing branch + the lane\'s base offer)',
-    /component: \{ key: 'input_checklist', state: \{ items: uncovered\.map\(\(m2\) => m2\.label\), taskId: null \} \}/.test(reqSrc)
-    && /await askForFile\(admin, userId, w, label\);\s*\n\s*return \{ did: 'none', reason: 'the file found is the version to update/.test(passSrc));
+    // ⟲ RE-POINTED (W13.6): the ask's state also carries the base it offers; the lane asks under the
+    // verdict's labels with the base named.
+    /component: \{ key: 'input_checklist', state: \{ items: uncovered\.map\(\(m2\) => m2\.label\), taskId: null, \.\.\.\(baseFiles\.length \? \{ base: baseFiles \} : \{\}\) \} \}/.test(reqSrc)
+    && /await askForFile\(admin, userId, w, labels, \[file\.filename\]\);\s*\n\s*return \{ did: 'none', reason: 'the file found is the version to update/.test(passSrc));
+
+  // ═══ E · W13.6 THE LIVE ASK RENDERS + THE NARRATION FOLLOWS ITS ARTIFACT (owner live walk after
+  // W13.5: a live engine `requires:` ask stood in the loose room but did not render — its label "the
+  // document itself" read as outlived by the verdict, so the machine mooted it while the brief still
+  // spoke it; and "Clara found the file and drafted the send" stood live over a filed send) ═══
+  console.log('\nE · W13.6 — the live ask renders; the narration follows its artifact');
+  {
+    const { liveAsksOf } = await import('../lib/work/machine');
+    const { askIsMoot } = await import('../lib/room/ask-mootness');
+    const { narrationOrphaned, prepNarrationKeys } = await import('../lib/prepare/narration');
+    const { docSendAskLabels } = await import('../lib/prepare/pass');
+    const { poolRowsToArtifacts, stampTruth, isLiveArtifact, commitmentTruthFacts } = await import('../lib/prepare/read');
+    const LBL = 'slides 7&8 details for remaining functions in interim report';
+    const facts = { itemTitle: 'Provide details on slides 7&8 for remaining functions in interim report', itemKind: 'commitment' as const, verdictRequires: [LBL] };
+    const ask = (items: string[]) => ({ dedupe_key: 'requires:c1', archived_at: null, component: { key: 'input_checklist', state: { items } } });
+    gate('E1 the doc-send lane\'s ask (the verdict\'s own label) is LIVE — the rail lifts it (nothing in mootAskKeys)',
+      liveAsksOf([ask(docSendAskLabels({ requires: [{ label: LBL }] }))], facts).live === true
+      && liveAsksOf([ask(docSendAskLabels({ requires: [{ label: LBL }] }))], facts).mootKeys.length === 0);
+    gate('E2 a placeholder label ("the document itself") has no identity to outlive the verdict with — a doubt keeps it live; a real outlived label is still moot',
+      liveAsksOf([ask(['the document itself'])], facts).live === true
+      && liveAsksOf([ask(['the signed NDA from legal'])], facts).mootKeys.includes('requires:c1'));
+    const ground = src('lib/room/grounding.ts');
+    gate('E3 the composer hears ONLY the asks the room renders — the grounding reads them through the SAME moot predicate the machine hands the rail',
+      /const asks: RoomGrounding\['asks'\] = rawAsks\.filter\(/.test(ground)
+      && /return !askIsMoot\(a\.items, \{ itemTitle: title, itemKind: kind, verdictRequires: verdictRequireLabels\(judgments\.get\(`\$\{kind\}:\$\{id\}`\)\), engineAsk: true \}\);/.test(ground)
+      && /const requiresOf = \(v: Verdict\): string\[\] \| null => verdictRequireLabels\(v\);/.test(src('lib/work/machine.ts'))
+      && askIsMoot(['the signed NDA from legal'], { ...facts, engineAsk: true }) && !askIsMoot([LBL], { ...facts, engineAsk: true }));
+    const rail = src('components/home/item-rail.tsx');
+    const card = src('components/home/input-card.tsx');
+    gate('E4 a lifted engine ask renders WITH its doors — Attach · Type it · Point me to it per row, and Go ahead when proceeding produces the work (one card, one CTA row)',
+      /const liftedAsk = turns\.find\(\(t\): t is Extract<Turn, \{ role: 'system' \}> => t\.role === 'system' && !t\.author\?\.name && !!t\.checklist\?\.length && !!t\.turnId && !isMootAsk\(t\)\);/.test(rail)
+      && /onAttach: \(\) => fileRef\.current\?\.click\(\),\s*onPointToIt: \(\) => setComposerPrefill\(/.test(rail)
+      && /onType: \(text: string\) => supply\(turnId, label, text, spec\.items\.length\)/.test(card)
+      && /\.\.\.\(onProceed \? \{ onProceed, proceedLabel: goAheadLabel\(spec\.items\) \} : \{\}\),/.test(card)
+      && /\{foldedAsk && askCard\(\{ \.\.\.foldedAsk, text: '' \}, 'folded-ask'\)\}/.test(rail)
+      && /node: askCard\(\{ \.\.\.liftedAsk, text: '' \}, 'lifted-ask'\)/.test(rail));
+    gate('E5 an orphaned narration is a POSITIVE finding only (nothing live AND something withdrawn or just retired); both prep-key spellings archive',
+      narrationOrphaned({ live: [], all: [{}] }) && narrationOrphaned({ live: [], all: [] }, 1)
+      && !narrationOrphaned({ live: [], all: [] }) && !narrationOrphaned({ live: [{}], all: [{}] }, 3) && !narrationOrphaned(null)
+      && JSON.stringify(prepNarrationKeys('commitment', 'c1')) === JSON.stringify(['prep:commit:c1', 'prep:commitment:c1'])
+      && JSON.stringify(prepNarrationKeys('inbox', 'i1')) === JSON.stringify(['prep:inbox:i1']));
+    const req = src('lib/prepare/requirements.ts');
+    const narr = src('lib/prepare/narration.ts');
+    const kicks = src('lib/room/open-kicks.ts');
+    const passSrc2 = src('lib/prepare/pass.ts');
+    gate('E6 EVERY door that takes an artifact away settles its narration: the one superseding writer, the withdrawn-draft retirement, and the reader-withdrawal re-prepare trip — archived, never deleted',
+      /if \(filed\) \{\s*const \{ settlePrepNarration \} = await import\('@\/lib\/prepare\/narration'\);\s*await settlePrepNarration\(client, userId, \{ kind: poolKind === 'commitment' \? 'commitment' : 'inbox', id: itemId \}, \{ retired: filed \}\);/.test(req)
+      && /await settlePrepNarration\(client, userId, item, \{ retired: filed \}\);/.test(req)
+      && /await settlePrepNarration\(client, uid, \{ kind: linkKind === 'inbox_item' \? 'inbox' : 'commitment', id \}\);/.test(kicks)
+      && /\.update\(\{ archived_at: new Date\(\)\.toISOString\(\) \}\)/.test(narr) && !/\.delete\(\)/.test(narr));
+    // The Sep 23 "Nudge — <contact>" row: a chase on a you_owe item, under a filed doc-send.
+    const rows = [
+      { id: 'd', task_id: 'prepare-pass-docsend', type: 'draft', title: 'Send report.pptx', content: 'Here it is.', created_at: '2026-09-23T22:22:00Z', metadata: { attachment: { fileId: 'f1', filename: 'report.pptx' }, version_of: 'superseded:unstaged' } },
+      { id: 'n', task_id: null, type: 'draft', title: 'Nudge — Sam', content: "Just checking in to see if you've had a chance to pull that together.", created_at: '2026-09-23T12:22:00Z', metadata: {} },
+    ];
+    const arts = stampTruth(poolRowsToArtifacts(rows, 'commitment'), commitmentTruthFacts({ description: 'Provide details on slides 7&8', created_at: '2026-09-10T15:00:00Z', status: 'open', direction: 'you_owe', counterparty: 'Sam' } as never));
+    gate('E7 the inverted chase is WITHDRAWN by the reader (never served) once the filed send no longer shadows it — and the lane retires it with the send',
+      arts.length === 1 && arts[0].kind === 'nudge_draft' && arts[0].falseClaim === true && !isLiveArtifact(arts[0])
+      && /await supersedeWithdrawnDrafts\(admin, userId, \{ kind: 'commitment', id: w\.entityId \}, reason\);/.test(passSrc2)
+      && /version_of: 'superseded:withdrawn'/.test(req) && /if \(isPoolRowHeldAnyKind\(r\)\) continue;/.test(req));
+  }
 
   console.log(`\n${failures.length ? '✗' : '✓'} smoke-room-truth: ${pass} passed, ${failures.length} failed`);
   if (failures.length) { for (const f of failures) console.log(`  ✗ ${f}`); process.exit(1); }

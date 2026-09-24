@@ -29,6 +29,7 @@ import InputSupplyForm, { type SupplyAccepts, type SupplyOutcome } from '@/compo
 import type { AskRowDoors } from '@/components/thread/ask-rows';
 import { proceedAsk, supplyAskText } from '@/lib/deeds/gate-doors';
 import { askAllowsGoAhead, askItemShape, goAheadLabel, saidItLabels } from '@/lib/room/go-ahead';
+import { baseOfferLine } from '@/lib/room/ask-base';
 import { GATE_OUTCOME_WORDS, GATE_SETTLED_ELSEWHERE } from '@/lib/workflows/process-state';
 
 /** THE ENGINE ASK — the room's own turn. */
@@ -40,6 +41,9 @@ export type EngineAskSpec = {
   ask: string;
   /** The concrete missing things — the judged labels. */
   items: string[];
+  /** W13.6 · THE BASE IS OFFERED — the current version the new work goes into (never the answer):
+   *  printed as the card's meta line, "Current version (to update): <file>". */
+  base?: string[];
   /** Whatever names the work, for the go-ahead test (lib/room/go-ahead.ts). */
   context: Array<string | null | undefined>;
   /** Already answered by a go-ahead somewhere else (the served `proceeded` stamp). */
@@ -231,9 +235,11 @@ export default function InputCard({ spec, open = true, onSettled, id, held = fal
         ? { saidIt: { label: `Use this as ${label.charAt(0).toLowerCase()}${label.slice(1)} ✓`, text: said, onUse: () => void supply(turnId, label, said, spec.items.length) } }
         : {}),
     }));
+    const baseLineText = baseOfferLine(spec.base ?? []);
     card = {
       ...base,
       items: spec.items,
+      ...(baseLineText ? { meta: baseLineText } : {}),
       // ONE DEED ONE DOOR: with rows carrying their own doors, the card-level chips would be a
       // second Attach for the same deed. An ask with no rows at all keeps them.
       ...(spec.items.length

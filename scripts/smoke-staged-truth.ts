@@ -31,13 +31,16 @@ import { join } from 'path';
 import {
   stagingRole, stagedRowVerdict, requestNamesFile, kindOf, dateInFilename, effectiveFileAt, buildTruth, baseLine,
   baseTaskId, STAGING_LAW_VERSION, REVERIFY_PER_PASS, stagingLawStale, servingEdgeShouldResolve, reverifyDecision, standingCandidateOf,
+  askPreamble, reusableAskText, standingAsBase,
 } from '../lib/prepare/requirements';
 import { decideRegeneration } from '../lib/prepare/hand';
 import { requireTaskId } from '../lib/prepare/supply';
 import { kbFileAt, poolFileAt } from '../lib/knowledge/resolve';
 import {
-  completionClaimIn, attachmentClaimIn, vetDraft, draftThroughVet, claimsUnstagedAttachment,
+  completionClaimIn, attachmentClaimIn, vetDraft, draftThroughVet, claimsUnstagedAttachment, askClaimsReadiness,
 } from '../lib/prepare/truth';
+import { baseOfferLine, askBaseOf, BASE_OFFER_PREFIX } from '../lib/room/ask-base';
+import { docSendAskLabels } from '../lib/prepare/pass';
 import { stampTruth, baseFileIdsOf, commitmentTruthFacts, storedDraftWithdrawal, preparedFromSourceData, type PreparedArtifact } from '../lib/prepare/read';
 import { stagedFilesOf, UNATTACHED_CLAIM_NOTE } from '../lib/prepare/email-card';
 
@@ -113,8 +116,12 @@ console.log('\nA · a file is the deliverable only when it is the deliverable IN
     /BASE ONLY/.test(truth) && !/STAGED \(attached/.test(truth) && /never say it now includes/.test(truth) && /MISSING \(NOT in hand\): slides 7&8 details/.test(truth));
   gate('A13 the base stages under its OWN key (`base:`), never `require:` (every reader of that key reads a HAVE)',
     baseTaskId('slides 7&8 details') === 'base:slides 7&8 details' && requireTaskId('slides 7&8 details') !== baseTaskId('slides 7&8 details'));
-  gate('A14 the ask names the base as what it is — the current version, not the finished piece',
-    /current version the new work goes into, not the finished piece/.test(baseLine([OLD_REPORT.filename])));
+  // ⟲ RE-POINTED (W13.6): the base sentence says "not the new work itself" (was "not the finished
+  // piece") so the ask's own claim net (askClaimsReadiness) never reads it as readiness — and the gate
+  // now also proves that.
+  gate('A14 the ask names the base as what it is — the current version, not the new work itself (and never reads as readiness)',
+    /current version the new work goes into, not the new work itself/.test(baseLine([OLD_REPORT.filename]))
+    && askClaimsReadiness(baseLine([OLD_REPORT.filename])) === null);
   // Dates of candidates (pure halves).
   gate('A15 a KB file\'s date is the EARLIEST of its upper bounds (conversation item · modified · indexed)',
     kbFileAt({ origin: { kind: 'email_attachment', ref: 'i1' }, last_modified_at: '2026-09-11T13:26:00Z', indexed_at: '2026-09-11T13:26:00Z' }, new Map([['i1', '2026-09-17T07:43:00Z']])) === '2026-09-11T13:26:00.000Z'
@@ -147,7 +154,8 @@ console.log('\nA · a file is the deliverable only when it is the deliverable IN
   gate('A23 both doc-send lanes hand the request\'s date + words to the verifier, and a base answer offers the base + asks (never sends the old file)',
     (pass_.match(/requestAt: req[CI]\.requestAt/g) ?? []).length === 2
     && (pass_.match(/return await offerBase\(admin, userId, w, '(commitment|inbox)'/g) ?? []).length === 2
-    && /await askForFile\(admin, userId, w, label\);/.test(pass_));
+    // ⟲ RE-POINTED (W13.6): the base offer asks under the VERDICT's labels and names the base file.
+    && /await askForFile\(admin, userId, w, labels, \[file\.filename\]\);/.test(pass_));
 }
 
 // ═══ B · COMPLETION HONESTY ═══
@@ -320,7 +328,10 @@ console.log('\nC · the staged file shows as a chip, Send attaches exactly the c
       && /\{ label, candidate: null, suggestion, kind: judgedKind \?\? null, judged: false \}/.test(reqs));
     gate('E8 hold keeps the row AND the truth (it reads as staged); unproven unstages through THE ONE writer (resolver rows only); restamp updates in place (no delete, no new supply)',
       /if \(action === 'hold'\) \{[\s\S]{0,500}resolutions\.push\(\{ label, status: 'have'/.test(reqs)
-      && /if \(action === 'unproven'\) \{[\s\S]{0,400}await unstageRequirement\(admin, userId, \{[\s\S]{0,300}base: null, requestAt: request\.requestAt, onlyResolverRows: true,/.test(reqs)
+      // ⟲ RE-POINTED (W13.6): unproven still unstages through THE ONE writer (resolver rows only) —
+      // now carrying the standing file as the BASE when it is the named, older document a new-work
+      // requirement goes into (`standingAsBase`), else no base.
+      && /if \(action === 'unproven'\) \{[\s\S]{0,900}await unstageRequirement\(admin, userId, \{[\s\S]{0,700}base: labelBase \? \{[^\n]*\} : null,\s*requestAt: request\.requestAt, onlyResolverRows: true,/.test(reqs)
       && /if \(cand && action === 'restamp' && standingRow\) \{\s*const \{ error: upErr \} = await admin\.from\('item_deliverables'\)\.update\(/.test(reqs)
       && /if \(!restamped\) await writeDeliverable\(/.test(reqs));
     gate('E9 THE PASS asks before its lanes (a kept draft / "already prepared" would never reach the resolver), through the ONE entry, bounded per pass and saying what it left behind',
@@ -382,6 +393,67 @@ console.log('\nC · the staged file shows as a chip, Send attaches exactly the c
     stampTruth(fresh, { text: 'x', anchorIso: null, obligationOpen: true });
     gate('F4 outcome: an unstamped legacy doc-send reads withdrawn; a stamped one stands',
       legacy[0]?.falseClaim === true && legacy[0]?.stagingStale === true && !fresh[0]?.falseClaim);
+  }
+
+  // ═══ G · W13.6 THE ASK SPEAKS TRUE + THE BASE IS OFFERED (owner live walk after W13.5: the live ask
+  // said "I have the details on slides 7&8 … ready to go, but I need …" over work nobody had started,
+  // and the old report was never offered as the current version to update) ═══
+  {
+    const req = src('lib/prepare/requirements.ts');
+    const pass = src('lib/prepare/pass.ts');
+    const legacy = src('lib/room/legacy-ask-speech.ts');
+    const turnsRoute = src('app/api/room/turns/route.ts');
+    const LIVE = 'I have the details on slides 7&8 for remaining functions in interim report ready to go, but I need the data showing responses under 10 to include those as well.';
+    const TITLE = 'Provide details on slides 7&8 for remaining functions in interim report';
+    const LBL = 'slides 7&8 details for remaining functions in interim report';
+    gate('G1 the ask\'s claim net catches the live sentence and the readiness/done shapes (EN/PT/DE/FR); an honest ask passes',
+      !!askClaimsReadiness(LIVE) && !!askClaimsReadiness("I've drafted the reply, I just need the IBAN.")
+      && !!askClaimsReadiness('Everything is all set except the signed addendum.') && !!askClaimsReadiness('Tenho o relatório pronto, só preciso dos dados.')
+      && !!askClaimsReadiness('Ich habe die Folien fertig, brauche aber noch die Zahlen.') && !!askClaimsReadiness("J'ai le rapport prêt, il me manque les chiffres.")
+      && askClaimsReadiness('Once I have the slides 7&8 details I can send what was asked for — attach them or tell me where they are.') === null);
+    gate('G2 the deterministic floor and the base sentence can never trip it (the floor is true by construction)',
+      [askPreamble({ labels: [LBL], itemTitle: TITLE, work: 'send_file' }), askPreamble({ labels: [LBL, 'the budget'], itemTitle: TITLE, work: 'produce', haveFilenames: ['budget.xlsx'] }),
+        askPreamble({ labels: ['the IBAN'], itemTitle: '', work: null }), baseLine([OLD_REPORT.filename])].every((t) => askClaimsReadiness(t) === null));
+    gate('G3 the composer refuses a readiness claim (rule 7 in the prompt AND the code check → the floor)',
+      /7\. NOTHING is ready, drafted, done or prepared yet/.test(req) && /&& !askClaimsReadiness\(raw\);\s*return usable \? raw : floor;/.test(req));
+    const liveAsk = { text: 'Once I have the details I can send it.', archived_at: null, component: { state: { items: [LBL] } } };
+    gate('G4 words are re-stated only from a LIVE ask for the same labels + base whose speech is true (never an archived turn\'s, never a false one)',
+      reusableAskText(liveAsk, [LBL]) === liveAsk.text && reusableAskText({ ...liveAsk, archived_at: '2026-09-24T10:16Z' }, [LBL]) === null
+      && reusableAskText({ ...liveAsk, text: LIVE }, [LBL]) === null && reusableAskText(liveAsk, ['the document itself']) === null
+      && reusableAskText(liveAsk, [LBL], { base: [OLD_REPORT.filename] }) === null
+      && reusableAskText({ ...liveAsk, component: { state: { items: [LBL], base: [OLD_REPORT.filename] } } }, [LBL], { base: [OLD_REPORT.filename] }) === liveAsk.text);
+    gate('G5 BOTH ask seams reuse only through that predicate (the resolver and the doc-send lane) and select archived_at',
+      /const reused = reusableAskText\(priorAsk, labels, \{ tail: suggestLine, base: baseFiles \}\);/.test(req)
+      && /select\('id, component, text, archived_at'\)/.test(req)
+      && /const reused = reusableAskText\(standing, labels, \{ tail: tail\.trim\(\), base: bases \}\);/.test(pass)
+      && /select\('text, component, archived_at'\)/.test(pass) && !/priorText \|\| await composeAskSpeech/.test(pass));
+    gate('G6 words already written are served TRUE on this paint (the floor) and re-spoken after it — the durable lie never paints',
+      /return NextResponse\.json\(\{ turns: await truthfulAskTurns\(turns as never\[\]\), readAt \}\)/.test(turnsRoute)
+      && /export async function truthfulAskTurns</.test(legacy) && /isLegacyAskSpeech\(t\.text\) \|\| await askSpeechIsFalse\(t\.text\)/.test(legacy));
+    gate('G7 the doc-send lane asks under the VERDICT\'s own labels (the generic label only for an inventory-less send)',
+      JSON.stringify(docSendAskLabels({ requires: [{ label: LBL }] })) === JSON.stringify([LBL])
+      && JSON.stringify(docSendAskLabels({ requires: [] })) === JSON.stringify(['the document itself'])
+      && (pass.match(/askForFile\(admin, userId, w, docSendAskLabels\(verdict\)\)/g) ?? []).length === 3
+      && !/askForFile\(admin, userId, w, `the document itself`\)/.test(pass));
+    const f = { filename: OLD_REPORT.filename, fileAt: '2026-09-10T00:00:00Z' };
+    gate('G8 THE STANDING FILE IS THE BASE: new work (the verdict\'s kind, else the pick\'s) + a file from on/before the request + named by the request — code-checked, zero AI',
+      standingAsBase({ kind: 'new_work', standing: f, requestAt: REQUEST_AT, requestText: `${TITLE}\n${LBL}` })
+      && !standingAsBase({ kind: 'existing', standing: f, requestAt: REQUEST_AT, requestText: TITLE })
+      && !standingAsBase({ kind: null, standing: f, requestAt: REQUEST_AT, requestText: TITLE })
+      && !standingAsBase({ kind: 'new_work', standing: { ...f, filename: 'Board_Minutes_20260901.docx' }, requestAt: REQUEST_AT, requestText: TITLE })
+      && /let labelBase: UniversalCandidate \| null = pick\.base \?\? null;/.test(req)
+      && /kind: pick\.kind \?\? null, standing: standingCand, requestAt: request\.requestAt,/.test(req));
+    gate('G9 THE TARGET RULE rides BOTH reasoned picks (for new work, the document it goes into is the match — code decides base vs deliverable)',
+      (req.match(/\$\{KIND_RULE\}\\n\$\{TARGET_RULE\}\\n/g) ?? []).length === 2 && /const TARGET_RULE =/.test(req));
+    gate('G10 THE BASE IS OFFERED: one wording (row title + card meta), the ask turn carries it, the resolver keeps offering a standing base',
+      baseOfferLine([OLD_REPORT.filename]) === `${BASE_OFFER_PREFIX}: ${OLD_REPORT.filename}` && baseOfferLine([]) === ''
+      && JSON.stringify(askBaseOf({ items: ['x'], base: [OLD_REPORT.filename] })) === JSON.stringify([OLD_REPORT.filename]) && askBaseOf({ items: ['x'] }).length === 0
+      && /title: baseOfferLine\(\[args\.base\.filename\]\)\.slice\(0, 100\),/.test(req)
+      && /const standingBases = await standingBaseRows\(admin, userId,/.test(req) && /const base = labelBase \?\? standingBase;/.test(req)
+      && /state: \{ items: labels\.map\(\(l\) => l\.slice\(0, 120\)\), taskId: null, \.\.\.\(bases\.length \? \{ base: bases \} : \{\}\) \}/.test(pass)
+      && /\.\.\.\(baseLineText \? \{ meta: baseLineText \} : \{\}\),/.test(src('components/home/input-card.tsx'))
+      && /\.\.\.\(a\.base\?\.length \? \{ base: a\.base \} : \{\}\),/.test(src('components/home/item-rail.tsx'))
+      && /const b = askBaseOf\(t\.component\.state\); if \(b\.length\) turn\.base = b;/.test(src('components/home/item-rail.tsx')));
   }
 
   console.log(`\n${failures.length ? '✗' : '✓'} smoke-staged-truth: ${pass} passed, ${failures.length} failed`);

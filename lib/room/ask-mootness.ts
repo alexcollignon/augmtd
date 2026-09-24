@@ -44,7 +44,11 @@ const DRAFT_SHAPED = /\bdraft\b|\b(?:reply|response)\b/i;
 const OWN_INBOUND_SHAPED = /\b(?:original|incoming|inbound|received|this|that|their|sender'?s?)\s+(?:e-?mail|message|notice|mail|thread|invoice|letter|request)\b/i;
 // Tiny filler set — plumbing for the token test, deliberately NOT a fork of the identity primitive
 // (GENERIC_WORK_WORDS lives in a server-only module; this file must stay client-safe).
-const FILLER = new Set(['the', 'this', 'that', 'with', 'from', 'your', 'their', 'about', 'copy', 'file', 'attachment', 'document']);
+// W13.6: the reflexive/placeholder words ("the document ITSELF", "the thing", "one more") carry no
+// identity either — a label made only of them has no distinctive token, and rule 3 then abstains (a
+// doubt keeps the ask live) instead of reading "itself" as a requirement the verdict dropped.
+const FILLER = new Set(['the', 'this', 'that', 'with', 'from', 'your', 'their', 'about', 'copy', 'file', 'attachment', 'document',
+  'itself', 'themselves', 'thing', 'things', 'more', 'something']);
 
 const tokens = (s: string): string[] =>
   String(s ?? '').toLowerCase().replace(/[_-]+/g, ' ').replace(/[^\p{L}\p{N}\s]/gu, ' ')
@@ -126,6 +130,15 @@ export function askIsMoot(labels: unknown[], facts: AskMootFacts): boolean {
   const items = (labels ?? []).map((l) => String(l ?? '').trim()).filter(Boolean);
   if (!items.length) return true;
   return mootRequireLabels(items, facts).live.length === 0;
+}
+
+/** The CURRENT verdict's requires labels (strings or `{label}` objects), or null when it states none —
+ *  THE ONE reading both machine readers and the room's grounding hand to rule 3. Pure. */
+export function verdictRequireLabels(v: unknown): string[] | null {
+  const r = (v as { requires?: unknown } | null)?.requires;
+  if (!Array.isArray(r)) return null;
+  const out = r.map((x) => (typeof x === 'string' ? x : String((x as { label?: unknown } | null)?.label ?? ''))).filter(Boolean);
+  return out.length ? out : null;
 }
 
 /** The engine's own ask vs a coworker's — read off the turn's dedupe key (the writer's shape). */

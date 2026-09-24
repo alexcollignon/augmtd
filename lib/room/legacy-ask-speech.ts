@@ -42,6 +42,22 @@ export function isLegacyAskSpeech(text: string | null | undefined): boolean {
   return LEGACY_ASK_RE.test(t);
 }
 
+/**
+ * W13.6 · THE ASK SPEAKS TRUE — INCLUDING WORDS ALREADY WRITTEN. A durable ask whose own speech claims
+ * readiness or a done deed ("I have the details … ready to go, but I need …") is false by definition:
+ * an ask exists because something is missing. The claim net is THE ONE (lib/prepare/truth
+ * `askClaimsReadiness`); the base sentence and the named-suggestion tail the writers append are not
+ * the speech and are set aside first (the pre-W13.6 base wording said "not the finished piece").
+ */
+const BASE_TAIL_RE = /\s*I have "[^"]+"(?: and "[^"]+")? — that's the current version the new work goes into[^.]*\./g;
+const SUGGEST_TAIL_RE = /\s*I did find "[^"]+"[^.]*without you confirming\./g;
+export async function askSpeechIsFalse(text: string | null | undefined): Promise<boolean> {
+  const speech = String(text ?? '').replace(BASE_TAIL_RE, '').replace(SUGGEST_TAIL_RE, '').trim();
+  if (!speech) return false;
+  const { askClaimsReadiness } = await import('@/lib/prepare/truth');
+  return !!askClaimsReadiness(speech);
+}
+
 /** The shape the serving door hands over — exactly the fields readRoomTurns already carries. */
 export type ServedAskTurn = {
   id?: string;
@@ -71,10 +87,15 @@ export async function recomposeLegacyAsks(
 ): Promise<number> {
   let repaired = 0;
   try {
-    const stale = turns.filter((t) =>
+    const asks = turns.filter((t) =>
       t.id && t.role === 'system' && t.component?.key === 'input_checklist'
-      && Array.isArray(t.component.state?.items) && (t.component.state!.items as unknown[]).length > 0
-      && isLegacyAskSpeech(t.text)).slice(0, REPAIR_CAP);
+      && Array.isArray(t.component.state?.items) && (t.component.state!.items as unknown[]).length > 0);
+    // W13.6: a FALSE ask (claims readiness) is re-spoken exactly like a legacy one.
+    const stale: ServedAskTurn[] = [];
+    for (const t of asks) {
+      if (stale.length >= REPAIR_CAP) break;
+      if (isLegacyAskSpeech(t.text) || await askSpeechIsFalse(t.text)) stale.push(t);
+    }
     if (!stale.length) return 0;
     const { composeAskSpeech } = await import('@/lib/prepare/requirements');
     for (const t of stale) {
@@ -95,11 +116,38 @@ export async function recomposeLegacyAsks(
         labels, itemTitle: itemTitle || 'this work',
         work: (work ?? null) as never,
       });
-      if (!say?.trim() || isLegacyAskSpeech(say)) continue; // never write the old words back
-      const { error } = await client.from('room_turns').update({ text: say.trim() })
+      if (!say?.trim() || isLegacyAskSpeech(say) || await askSpeechIsFalse(say)) continue; // never write the old (or false) words back
+      // The base sentence rides as the tail (the writers' own shape), never dropped by a re-speak.
+      const { askBaseOf } = await import('@/lib/room/ask-base');
+      const { baseLine } = await import('@/lib/prepare/requirements');
+      const bases = askBaseOf(t.component!.state);
+      const { error } = await client.from('room_turns').update({ text: `${say.trim()}${bases.length ? ` ${baseLine(bases)}` : ''}` })
         .eq('id', t.id!).eq('user_id', userId);
       if (!error) repaired++;
     }
   } catch { /* the repair is an enhancement — the room still serves what it has */ }
   return repaired;
+}
+
+/**
+ * W13.6 · SERVED TRUE ON THIS PAINT (not only the next): an ask turn whose stored speech claims
+ * readiness is served with THE deterministic floor (`askPreamble` — the ask's own labels + work title
+ * + its base sentence, zero AI) while the after() repair above re-composes the durable words. The
+ * first paint never carries the false sentence. Returns the same array when nothing is false.
+ */
+export async function truthfulAskTurns<T extends ServedAskTurn>(turns: T[]): Promise<T[]> {
+  let out: T[] | null = null;
+  for (let i = 0; i < turns.length; i++) {
+    const t = turns[i];
+    if (t.role !== 'system' || t.component?.key !== 'input_checklist') continue;
+    const items = Array.isArray(t.component.state?.items) ? (t.component.state!.items as unknown[]).map(String).filter(Boolean) : [];
+    if (!items.length || !(await askSpeechIsFalse(t.text))) continue;
+    const { askPreamble, baseLine } = await import('@/lib/prepare/requirements');
+    const { askBaseOf } = await import('@/lib/room/ask-base');
+    const bases = askBaseOf(t.component.state);
+    const text = `${askPreamble({ labels: items.slice(0, 5), itemTitle: String(t.refs?.[0]?.label ?? '').trim() })}${bases.length ? ` ${baseLine(bases)}` : ''}`;
+    out = out ?? [...turns];
+    out[i] = { ...t, text };
+  }
+  return out ?? turns;
 }

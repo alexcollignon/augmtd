@@ -23,6 +23,7 @@ import { deedWords } from '@/lib/evidence/sources';
 import { getPersonEntities, type PersonEntity } from '@/lib/entities/people';
 import { normalizeEmail } from '@/lib/core/email';
 import { withdrawnReasonOf } from '@/lib/prepare/read';
+import { askIsMoot, verdictRequireLabels } from '@/lib/room/ask-mootness';
 
 export type RoomScope =
   | { kind: 'entity'; entityId: string }
@@ -442,7 +443,7 @@ export async function assembleRoomGrounding(
   // conversation moves on, and a windowed read makes the composer blind to a gap the page is
   // still rendering right under its brief. Live turns only (archived_at); pre-migration falls
   // back to the window, which is the behaviour this replaces.
-  const asks: RoomGrounding['asks'] = await (async () => {
+  const rawAsks: RoomGrounding['asks'] = await (async () => {
     try {
       let { data, error } = await client.from('room_turns')
         .select('id, text, component, author, created_at, dedupe_key')
@@ -457,6 +458,25 @@ export async function assembleRoomGrounding(
       return rows.filter(isAsk).map(askOf).reverse().slice(0, 6);
     } catch { return turns.filter(isAsk).map(askOf); }
   })();
+  // W13.6 · THE ASK THE PAGE HIDES IS NEVER SPOKEN (found live: the doc-send lane asked for "the
+  // document itself" while the verdict required another label; the machine's moot predicate — which
+  // the rail reads — hid the ask, but this read handed it to the composer as OPEN, and the brief said
+  // "I need you to send me the document itself" over a room with no ask card). ONE predicate, both
+  // readers: an engine ask the moot rules settle (lib/room/ask-mootness `askIsMoot`, the same facts
+  // the machine hands it — the item's title, its kind, the CURRENT verdict's requires) is not open.
+  const asks: RoomGrounding['asks'] = rawAsks.filter((a) => {
+    const m = /^requires:(.+)$/.exec(String(a.key ?? ''));
+    if (!m) return true;
+    const id = m[1];
+    const inboxRow = inboxRows.find((r) => String(r.id) === id);
+    const commitRow = inboxRow ? null : commitRows.find((r) => String(r.id) === id);
+    if (!inboxRow && !commitRow) return true; // not this room's item — a doubt keeps the ask
+    const kind: 'inbox' | 'commitment' = inboxRow ? 'inbox' : 'commitment';
+    const title = inboxRow
+      ? (String(((inboxRow.source_data ?? {}) as { subject?: unknown }).subject ?? '') || null)
+      : (String(commitRow!.description ?? '') || null);
+    return !askIsMoot(a.items, { itemTitle: title, itemKind: kind, verdictRequires: verdictRequireLabels(judgments.get(`${kind}:${id}`)), engineAsk: true });
+  });
   // W5c · THE NARRATION FOLLOWS ITS ARTIFACT, INTO THE MIND TOO: a `prep:*` narration ("Clara
   // prepared the calendar invite — review it and approve to send") whose item holds NO live artifact
   // on the board is a claim no card renders — the rail folds it, and the composer must not read it

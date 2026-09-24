@@ -224,6 +224,44 @@ export function completionObjection(claim: string): string {
     `rewrite it to state where things actually stand and the next step (or ask what is needed); never announce a deed that has not happened.`;
 }
 
+// ── W13.6 · THE ASK SPEAKS TRUE ──────────────────────────────────────────────────────────────────
+//
+// Found live (owner walk after W13.5): the room's engine ask read "I have the details on slides 7&8
+// … ready to go, but I need …" — an ASK (something is missing, by definition) claiming the work was
+// ready. The ask composer's own rule said "invent nothing", but nothing CHECKED it, and the composed
+// words were durable: every re-post re-stated them. An ask is never allowed to say that anything is
+// ready, done, drafted or prepared — the only things it may say it holds are the staged files the
+// deterministic floor names ("I have "x.pptx" in hand").
+//
+// THE NET = the completion net above (every deed/work-done form) + the READINESS forms an ask uses:
+// "ready to go/send", "I have … ready", "all set", "I've prepared/drafted/put together …", and the
+// "pronto/fertig/bereit/prêt" readiness words. BROADER than the draft floor on purpose: a false catch
+// here costs only the composed wording (the deterministic floor speaks instead, and it is true by
+// construction); a missed catch puts a lie in the room's first sentence.
+export const ASK_READINESS_PATTERNS: ReadonlyArray<RegExp> = [
+  /\bready\s+to\s+(?:go|send|share|be\s+sent|deliver|hand\s+over)\b/i,
+  /\b(?:I|we)(?:'ve| have)(?:\s+got)?\s+(?:[^\s.;!?]+\s+){1,16}?(?:ready|prepared|drafted|done|finished|complete|completed|lined up)\b/i,
+  /\b(?:I|we)(?:'ve| have)\s+(?:already\s+|now\s+|just\s+)?(?:prepared|drafted|written|put together|pulled together|built|assembled|created|made)\b/i,
+  /\b(?:is|are|'s)\s+(?:all\s+|now\s+|already\s+)?(?:ready|prepared|drafted|set)\b/i,
+  /\ball\s+set\b/i,
+  /(?<!\p{L})(?:tenho|temos|está|estão|fica|ficou)\s+(?:\S+\s+){0,12}?pront[oa]s?(?!\p{L})/iu,
+  /(?<!\p{L})(?:habe|haben|ist|sind)\s+(?:\S+\s+){0,12}?(?:fertig|bereit)(?!\p{L})/iu,
+  /(?<!\p{L})(?:j'ai|nous avons|est|sont)\s+(?:\S+\s+){0,12}?prêt(?:e|s|es)?(?!\p{L})/iu,
+];
+
+/** The readiness/completion claim an ASK's words make (the matched phrase), or null. Pure. */
+export function askClaimsReadiness(text: string | null | undefined): string | null {
+  const t = String(text ?? '');
+  if (!t.trim()) return null;
+  const done = completionClaimIn(t);
+  if (done) return done;
+  for (const re of ASK_READINESS_PATTERNS) {
+    const m = re.exec(t);
+    if (m) return m[0].trim();
+  }
+  return null;
+}
+
 // ── THE CHASE DIRECTION (stabilization W11.1 · ONE COHERENT ITEM) ─────────────────────────────────
 
 /**

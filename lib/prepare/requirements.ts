@@ -22,6 +22,8 @@ import { detectLanguage } from '@/lib/inbox/detect-language';
 import { GENERIC_WORK_WORDS } from '@/lib/entities/recognize';
 import type { WorkVerb } from '@/lib/work/surface-registry';
 import { requireTaskId } from '@/lib/prepare/supply';
+import { askClaimsReadiness } from '@/lib/prepare/truth';
+import { baseOfferLine } from '@/lib/room/ask-base';
 
 export type RequirementResolution = {
   label: string;
@@ -213,6 +215,52 @@ export function servingEdgeShouldResolve(args: {
   return args.staged.length < args.requiredCount;
 }
 
+/**
+ * W13.6 · THE STANDING FILE IS THE BASE (found live: a stale `require:` row pointing at the client's
+ * own interim report was re-verified for a NEW-WORK requirement; the pick, asked "is this the
+ * artifact?", answered no — so the row was unstaged as `unproven` with NO base, and the room never
+ * offered "the current version to update"). When the requirement is judged new work (the verdict's
+ * kind, else the pick's own reasoned kind), the standing file predates the request, and the request's
+ * own words NAME it (a distinctive token — code-checked, zero AI), the file is the version the new
+ * work goes into: it is staged as the BASE, never dropped. Pure.
+ */
+export function standingAsBase(args: {
+  kind: RequirementKind | null | undefined;
+  standing: { filename: string; fileAt?: string | null } | null | undefined;
+  requestAt: string | null | undefined;
+  requestText: string;
+}): boolean {
+  if (args.kind !== 'new_work' || !args.standing) return false;
+  if (stagingRole({ kind: 'new_work', fileAt: args.standing.fileAt ?? null, requestAt: args.requestAt, namedByRequest: true }) !== 'base') return false;
+  return requestNamesFile(args.standing.filename, args.requestText);
+}
+
+/** W13.6 · the item's standing BASE rows for these labels (`base:<label>`, role base), as candidates
+ *  keyed by task id — one bounded read, zero AI; unreadable → none (the ask then names no base). */
+export async function standingBaseRows(
+  client: SupabaseClient, userId: string,
+  args: { itemKind: 'inbox' | 'commitment'; itemId: string; labels: string[] },
+): Promise<Map<string, UniversalCandidate>> {
+  const out = new Map<string, UniversalCandidate>();
+  if (!args.labels.length) return out;
+  try {
+    const { data, error } = await client.from('item_deliverables').select('task_id, content, metadata')
+      .eq('user_id', userId).eq('kind', args.itemKind === 'commitment' ? 'commitment' : 'email').eq('entity_id', args.itemId)
+      .in('task_id', args.labels.map((l) => baseTaskId(l)));
+    if (error) return out;
+    for (const r of (data ?? []) as Array<{ task_id: string; content: string | null; metadata: Record<string, unknown> | null }>) {
+      const m = (r.metadata ?? {}) as { role?: unknown; attachment?: { fileId?: string; filename?: string; source?: string }; fileAt?: string | null };
+      if (m.role !== 'base' || !m.attachment?.fileId) continue;
+      out.set(r.task_id, {
+        source: (m.attachment.source ?? 'kb') as UniversalCandidate['source'], id: m.attachment.fileId,
+        filename: String(m.attachment.filename ?? 'file'), snippet: String(r.content ?? '').slice(0, 200),
+        entityId: null, score: 1, fileAt: m.fileAt ?? null,
+      } as UniversalCandidate);
+    }
+  } catch { /* none */ }
+  return out;
+}
+
 export type ReverifyAction = 'restamp' | 'replace' | 'demote' | 'unproven' | 'hold';
 /**
  * W13.2 · THE RE-VERIFY RULING for a label with a standing resolver row — pure (see the block above).
@@ -371,6 +419,16 @@ const KIND_RULE =
   `add, provide details, update, revise, complete, correct — even when it goes INTO an existing ` +
   `document. A file dated on or before the request cannot already contain new work the request asks for.`;
 
+/** W13.6 · THE TARGET RULE — for new work, the document the new content goes INTO is the match the
+ *  pick names (quoted like any other); CODE then decides its role (`stagingRole`: a file from on or
+ *  before the request is the BASE, never the deliverable). Found live: a new-work ask ("details on
+ *  slides 7&8 … in the interim report") met its own interim report, the pick answered "not the
+ *  artifact", and the room never offered the current version to update. One wording, both doors. */
+const TARGET_RULE =
+  `NEW WORK: when the needed artifact is new or revised content that goes INTO an existing document, ` +
+  `the candidate that IS that document (its current version) counts as the match — quote what proves ` +
+  `it is that document. Code decides whether it is the finished piece or only the version to update.`;
+
 /** The candidate's own date, as the pick sees it. */
 const datedLine = (c: UniversalCandidate) => { const at = effectiveFileAt(c); return at ? ` · dated ${at.slice(0, 10)}` : ''; };
 
@@ -467,7 +525,7 @@ export async function verifyArtifactMatch(
         `Is this file THE document the task asks to send/share — not merely related to the same ` +
         `client/topic? If yes, return "evidence": a short phrase COPIED VERBATIM from the filename ` +
         `or snippet that proves it is THIS document. Unsure → false.\n` +
-        `${KIND_RULE}\n` +
+        `${KIND_RULE}\n${TARGET_RULE}\n` +
         `JSON only: {"kind":"existing"|"new_work","match":true|false,"evidence":"<verbatim phrase or empty>"}`,
     });
     const evidence = String(res.json?.evidence ?? '').trim();
@@ -546,7 +604,7 @@ export async function pickArtifacts(
         `If one IS the artifact: return its number AND "evidence" — a short phrase COPIED VERBATIM ` +
         `from that candidate's filename or snippet above that proves it (the proof must name what ` +
         `makes it THIS artifact, not the shared topic). If none qualifies, match null. Unsure → null.\n` +
-        `${KIND_RULE}\n` +
+        `${KIND_RULE}\n${TARGET_RULE}\n` +
         `JSON only: {"kind":"existing"|"new_work","match":<number or null>,"evidence":"<verbatim phrase or empty>"}`,
     }).catch(() => ({ json: undefined }));
     // The judged inventory's own kind wins; else the pick's reasoned field.
@@ -779,7 +837,10 @@ export async function composeAskSpeech(
         `3. Say the person can attach it or tell you where to look. Never say you searched "everywhere".\n` +
         `4. Invent NOTHING beyond the facts above — no deadlines, no people, no reasons, no file names.\n` +
         `5. Write in ${language ?? "the same language the work's title is written in"}.\n` +
-        `6. Plain sentences. No markdown, no quotes around the whole answer, no emoji.\n\n` +
+        `6. Plain sentences. No markdown, no quotes around the whole answer, no emoji.\n` +
+        // W13.6 · THE ASK SPEAKS TRUE: something is missing, so nothing is ready — and code checks it.
+        `7. NOTHING is ready, drafted, done or prepared yet — never say or imply that it is ("ready to go", ` +
+        `"I have it ready", "all set"). The only things you hold are the ones listed as already in hand.\n\n` +
         `JSON only: {"say":"<your sentence(s)>"}`,
     });
     const raw = String(res.json?.say ?? '').replace(/\s+/g, ' ').trim();
@@ -788,7 +849,10 @@ export async function composeAskSpeech(
       && raw.length >= 20
       && raw.length <= ASK_SPEECH_MAX
       && !/[•*#]|^\s*[-–]\s/.test(raw)
-      && speechIsGrounded(raw, [facts.itemTitle, ...facts.labels]);
+      && speechIsGrounded(raw, [facts.itemTitle, ...facts.labels])
+      // W13.6 · THE ASK SPEAKS TRUE — an ask never claims readiness or a done deed (the same claim net
+      // every draft passes, plus the readiness forms an ask uses); the floor is true by construction.
+      && !askClaimsReadiness(raw);
     return usable ? raw : floor;
   } catch {
     return floor; // AI outage / no budget — the ask still speaks (failure never blanks a surface)
@@ -818,10 +882,35 @@ export async function judgeRequirementKind(
   } catch { return null; }
 }
 
-/** W13 · the ask's base sentence — one wording (the ask and the gate read it). Pure. */
+/** W13 · the ask's base sentence — one wording (the ask and the gate read it). Pure.
+ *  W13.6: worded so the ask's own claim net never reads it as readiness ("not the new work itself"). */
 export function baseLine(filenames: string[]): string {
   const f = filenames.slice(0, 2).map((x) => `"${x}"`).join(' and ');
-  return `I have ${f} — that's the current version the new work goes into, not the finished piece, so I won't attach it as the answer.`;
+  return `I have ${f} — that's the current version the new work goes into, not the new work itself, so I won't attach it as the answer.`;
+}
+
+/**
+ * W13.6 · COMPOSED ONCE — BUT ONLY TRUE WORDS ARE RE-STATED. A standing ask's words are reused (never
+ * re-bought) only when that turn is LIVE (an archived ask is history — found live: the doc-send lane
+ * re-posted an ARCHIVED ask's false "… ready to go" words into a new live turn), asks for exactly
+ * these labels (and names the same base), and its speech passes the ask's claim net. Anything else
+ * recomposes. `tail` (the suggestion/base sentence the caller re-appends) is stripped first. Pure.
+ */
+export function reusableAskText(
+  prior: { text?: unknown; archived_at?: unknown; component?: unknown } | null | undefined,
+  labels: string[], opts: { tail?: string; base?: string[] } = {},
+): string | null {
+  if (!prior || prior.archived_at) return null;
+  const st = ((prior.component ?? null) as { state?: { items?: unknown; base?: unknown } } | null)?.state ?? {};
+  const items = Array.isArray(st.items) ? (st.items as unknown[]).map(String) : null;
+  if (!items || items.length !== labels.length || !labels.every((l) => items.includes(l))) return null;
+  const priorBase = Array.isArray(st.base) ? (st.base as unknown[]).map(String) : [];
+  const base = opts.base ?? [];
+  if (priorBase.length !== base.length || !base.every((b) => priorBase.includes(b))) return null;
+  const text = typeof prior.text === 'string' ? prior.text.trim() : '';
+  const speech = (opts.tail ? text.replace(opts.tail, '') : text).trim();
+  if (!speech || askClaimsReadiness(speech)) return null;
+  return speech;
 }
 
 /** The pool key a BASE file stages under — never `require:` (every reader of that key reads a HAVE). */
@@ -861,7 +950,64 @@ export async function supersedeDraftsRiding(
         .eq('user_id', userId).eq('id', r.id);
       if (!upErr) filed++;
     }
+    // W13.6 · THE NARRATION FOLLOWS ITS ARTIFACT: the send this writer just filed took its "found the
+    // file and drafted the send" line's backing with it — archived when nothing live remains.
+    if (filed) {
+      const { settlePrepNarration } = await import('@/lib/prepare/narration');
+      await settlePrepNarration(client, userId, { kind: poolKind === 'commitment' ? 'commitment' : 'inbox', id: itemId }, { retired: filed });
+    }
   } catch { /* non-fatal */ }
+  return filed;
+}
+
+/**
+ * W13.6 · THE READER'S WITHDRAWALS ARE RETIRED, NOT KEPT (found live: a Sep 23 "Nudge — <contact>"
+ * chase on a you_owe item — THE ONE READER withdrew it (chase inversion → falseClaim) and nothing
+ * served it, yet it stood un-filed under the retired doc-send; every open re-found a non-live artifact
+ * and re-bought the on-open trip). When a lane lands elsewhere (an ask, a base offer), every MACHINE
+ * pool draft on the item that the reader holds as NOT live is filed into the version chain
+ * (`version_of: 'superseded:withdrawn'`, the reader's reason recorded — never deleted). The user's
+ * hand, sent rows, the base and the requirement rows are never touched. Repeats while a newer filing
+ * uncovers an older withdrawn draft (the reader shows a commitment's NEWEST draft only), bounded.
+ * Then the narration settles. Zero AI; non-fatal.
+ */
+export async function supersedeWithdrawnDrafts(
+  client: SupabaseClient, userId: string, item: { kind: 'inbox' | 'commitment'; id: string }, reason: string,
+): Promise<number> {
+  let filed = 0;
+  try {
+    const { preparedState, isLiveArtifact, withdrawnReasonOf } = await import('@/lib/prepare/read');
+    const { isPoolRowHeldAnyKind } = await import('@/lib/prepare/hand');
+    const poolKind = item.kind === 'commitment' ? 'commitment' : 'email';
+    for (let round = 0; round < 3; round++) {
+      const st = await preparedState(client, userId, { kind: item.kind === 'inbox' ? 'inbox_item' : 'commitment', id: item.id });
+      const targets = st.all.filter((a) => (a.kind === 'reply_draft' || a.kind === 'nudge_draft') && !a.hand && !isLiveArtifact(a)
+        && a.payload?.store === 'pool' && !!a.payload.rowId);
+      if (!targets.length) break;
+      const ids = targets.map((a) => (a.payload as { rowId: string }).rowId);
+      const why = new Map(targets.map((a) => [(a.payload as { rowId: string }).rowId, withdrawnReasonOf(a)]));
+      const { data: rows, error } = await client.from('item_deliverables').select('id, content, metadata, task_id')
+        .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', item.id).in('id', ids);
+      if (error) break;
+      let thisRound = 0;
+      for (const r of (rows ?? []) as Array<{ id: string; content: unknown; metadata: Record<string, unknown> | null; task_id: string | null }>) {
+        const m = r.metadata ?? {};
+        if (m.version_of || m.sent_at || m.role === 'base') continue;
+        if (String(r.task_id ?? '').startsWith('require:')) continue;
+        if (isPoolRowHeldAnyKind(r)) continue;
+        const { error: upErr } = await client.from('item_deliverables')
+          .update({ metadata: { ...m, version_of: 'superseded:withdrawn', withdrawn: { at: new Date().toISOString(), reason, why: why.get(r.id) ?? null } } })
+          .eq('user_id', userId).eq('id', r.id);
+        if (!upErr) thisRound++;
+      }
+      filed += thisRound;
+      if (!thisRound) break;
+    }
+    if (filed) {
+      const { settlePrepNarration } = await import('@/lib/prepare/narration');
+      await settlePrepNarration(client, userId, item, { retired: filed });
+    }
+  } catch { /* non-fatal — the reader still withholds them */ }
   return filed;
 }
 
@@ -914,7 +1060,7 @@ export async function unstageRequirement(
     const { writeDeliverable } = await import('@/lib/home/deliverable-pool');
     const row = await writeDeliverable(client, userId, {
       kind: poolKind, entityId: args.itemId, taskId: baseTaskId(args.label), type: 'file',
-      title: `Current version (to update): ${args.base.filename}`.slice(0, 100),
+      title: baseOfferLine([args.base.filename]).slice(0, 100),
       content: String(args.base.snippet ?? '').slice(0, 2000),
       gist: `the base for: ${args.label} — NOT the deliverable`.slice(0, 120),
       metadata: {
@@ -971,6 +1117,10 @@ export async function resolveRequirements(
     const standingDates = standingRows.length ? await standingFileDates(admin, userId, standingRows) : new Map<string, string | null>();
     const standingByTask = new Map(standingRows.map((r) => [r.task_id, r]));
     const standingRowIds = new Set(standingRows.map((r) => r.id));
+    // W13.6 · THE BASE STAYS OFFERED: a label whose base row already stands (written by an earlier
+    // demotion, or by the doc-send lane's base offer) keeps naming it in the ask — the resolver and the
+    // lane then post the SAME ask (same labels, same base), so neither re-composes the other's words.
+    const standingBases = await standingBaseRows(admin, userId, { itemKind: args.itemKind, itemId: args.itemId, labels: requires.map((r) => r.label) });
 
     // ── Retrieval: the universal resolver per label (pool-first, entity-affinity). ──
     const perLabel: Array<{ label: string; candidates: UniversalCandidate[]; kind?: RequirementKind | null; standing?: UniversalCandidate | null }> = [];
@@ -1019,16 +1169,29 @@ export async function resolveRequirements(
           file: { source: standingAtt!.source ?? 'kb', id: standingAtt!.fileId, filename: standingAtt!.filename } });
         continue;
       }
+      // W13.6 · the base this label carries — the pick's demotion, or the standing file itself when
+      // it is the named, older document a NEW-WORK requirement goes into (`standingAsBase`).
+      let labelBase: UniversalCandidate | null = pick.base ?? null;
       if (action === 'unproven') {
         // A stale row the current law's pick, answering cleanly, does not verify: no verifiable
         // evidence is no match (law #2) — unstaged through THE ONE writer; the requirement is missing.
+        const standingCand = perLabel.find((p) => p.label === label)?.standing ?? null;
+        if (!labelBase && standingCand && standingAsBase({
+          kind: pick.kind ?? null, standing: standingCand, requestAt: request.requestAt,
+          requestText: `${args.itemTitle}\n${label}\n${request.requestText}`,
+        })) labelBase = standingCand;
         await unstageRequirement(admin, userId, {
           itemKind: args.itemKind, itemId: args.itemId, label,
-          reason: `re-verified under staging law v${STAGING_LAW_VERSION}: not proven to be the deliverable`,
-          base: null, requestAt: request.requestAt, onlyResolverRows: true,
+          reason: labelBase
+            ? 'the file predates a request for new work — it is the base, not the deliverable'
+            : `re-verified under staging law v${STAGING_LAW_VERSION}: not proven to be the deliverable`,
+          base: labelBase ? { fileId: labelBase.id, filename: labelBase.filename, source: labelBase.source, fileAt: effectiveFileAt(labelBase), snippet: labelBase.snippet } : null,
+          requestAt: request.requestAt, onlyResolverRows: true,
         });
       }
-      if (pick.suggestion) suggestions.push({ label, filename: pick.suggestion.filename });
+      const standingBase = standingBases.get(baseTaskId(label)) ?? null;
+      // The base is never also a "maybe this?" suggestion — it is named as what it is.
+      if (pick.suggestion && pick.suggestion.id !== (labelBase ?? standingBase)?.id) suggestions.push({ label, filename: pick.suggestion.filename });
       // W13.2 · RESTAMP IN PLACE: the same file re-verified under this law keeps its row (and its
       // created_at — a re-verify is not new supply); only the stamp and the facts move.
       let restamped = false;
@@ -1058,7 +1221,7 @@ export async function resolveRequirements(
         // W13 · a resolver-staged row for this label that no longer holds (the file predates a
         // new-work ask, or an old file the request never names) is UNSTAGED — the base is kept as
         // context, the requirement goes back to missing.
-        const base = pick.base ?? null;
+        const base = labelBase ?? standingBase;
         if (pick.demoted) await unstageRequirement(admin, userId, {
           itemKind: args.itemKind, itemId: args.itemId, label,
           reason: base ? 'the file predates a request for new work — it is the base, not the deliverable' : 'no longer the deliverable',
@@ -1102,7 +1265,7 @@ export async function resolveRequirements(
     // W3 LIFECYCLE — a PROCEEDED ask (the user's "go ahead with what's available") is a standing
     // decision: the ask is never re-posted (the turn stays in the room as the record), and the
     // caller proceeds around the gaps under the artifact truth.
-    const { data: priorAsk } = await admin.from('room_turns').select('id, component, text')
+    const { data: priorAsk } = await admin.from('room_turns').select('id, component, text, archived_at')
       .eq('user_id', userId).eq('room_key', roomKey).eq('dedupe_key', dedupeKey).maybeSingle();
     const proceeded = !!((priorAsk?.component as { state?: { proceeded?: boolean } } | null)?.state?.proceeded);
     if (proceeded) {
@@ -1152,15 +1315,13 @@ export async function resolveRequirements(
         + (bases.length ? ` ${baseLine(bases.map((b) => b.base!.filename))}` : '');
       // COMPOSED ONCE: a standing ask covering exactly these labels already carries its words —
       // re-running the pass re-states them, it never re-buys them. Only a NEW gap composes.
+      // W13.6: only a LIVE ask's TRUE words are re-stated (`reusableAskText`); the suggestion/base
+      // tail is re-appended below, never doubled.
       const labels = uncovered.map((m2) => m2.label);
-      const priorItems = ((priorAsk?.component as { state?: { items?: unknown } } | null)?.state?.items ?? []) as unknown[];
-      const sameGap = Array.isArray(priorItems)
-        && priorItems.length === labels.length
-        && labels.every((l) => priorItems.some((p) => String(p) === l));
-      const priorText = typeof priorAsk?.text === 'string' ? priorAsk.text.trim() : '';
-      const speech = sameGap && priorText
-        ? priorText.replace(suggestLine, '') // the suggestion tail is re-appended below, never doubled
-        : await composeAskSpeech(admin, userId, {
+      const baseFiles = bases.map((b) => b.base!.filename);
+      const reused = reusableAskText(priorAsk, labels, { tail: suggestLine, base: baseFiles });
+      const speech = reused
+        ?? await composeAskSpeech(admin, userId, {
           labels,
           itemTitle: args.itemTitle,
           work: args.work ?? null,
@@ -1171,7 +1332,8 @@ export async function resolveRequirements(
         role: 'system',
         text: speech + suggestLine,
         refs: [{ label: args.itemTitle.slice(0, 60), href: args.itemKind === 'commitment' ? `/item/${args.itemId}?kind=commitment` : `/item/${args.itemId}` }],
-        component: { key: 'input_checklist', state: { items: uncovered.map((m2) => m2.label), taskId: null } },
+        // W13.6 · THE BASE IS OFFERED: the card carries the current version to update (its meta line).
+        component: { key: 'input_checklist', state: { items: uncovered.map((m2) => m2.label), taskId: null, ...(baseFiles.length ? { base: baseFiles } : {}) } },
         dedupeKey,
       });
     } else {

@@ -20,7 +20,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { readPlan, readPlans, asRawResult } from '@/lib/store/item-plans';
 import { isLiveArtifact, type PreparedArtifact, type PreparedState } from '@/lib/prepare/read';
-import { askIsMoot, isEngineAskKey } from '@/lib/room/ask-mootness';
+import { askIsMoot, isEngineAskKey, verdictRequireLabels } from '@/lib/room/ask-mootness';
 import { fetchAllRows } from '@/lib/utils/fetch-all';
 import { LOOKS_DONE_WORD as LOOKS_DONE_WORD_LITERAL } from '@/lib/evidence/looks-done-word'; // W11.2
 
@@ -60,7 +60,7 @@ export type WorkMachineState = {
 // late for the header. So the readers decide liveness HERE, deterministically, from the ask's own
 // labels + the item's title + the verdict's requires. Same inputs in both readers, one predicate.
 type AskRow = { dedupe_key: string | null; component: unknown; archived_at?: string | null };
-function liveAsksOf(
+export function liveAsksOf(
   asks: AskRow[], facts: { itemTitle: string | null; itemKind: 'inbox' | 'commitment'; verdictRequires: string[] | null },
 ): { live: boolean; mootKeys: string[] } {
   let live = false; const mootKeys: string[] = [];
@@ -73,12 +73,7 @@ function liveAsksOf(
   }
   return { live, mootKeys };
 }
-const requiresOf = (v: Verdict): string[] | null => {
-  const r = (v as { requires?: unknown } | null)?.requires;
-  if (!Array.isArray(r)) return null;
-  const out = r.map((x) => (typeof x === 'string' ? x : String((x as { label?: unknown } | null)?.label ?? ''))).filter(Boolean);
-  return out.length ? out : null;
-};
+const requiresOf = (v: Verdict): string[] | null => verdictRequireLabels(v);
 
 /** THE HUMAN WORDS — every surface that speaks a state uses THIS mapping (one grammar, no
  *  per-surface paraphrase; law: speak consequence, never internal jargon). Transient/terminal

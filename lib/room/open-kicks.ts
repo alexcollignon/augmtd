@@ -91,6 +91,10 @@ async function runReprepareTrip(
     } as never);
     // One line per trip — a re-prepare that no-ops is never silent (the W5c find was invisible).
     console.log(`[items/view] re-prepare trip ${linkKind}:${id} → ${r.did}${r.reason ? ` (${r.reason})` : ''}`);
+    // W13.6 · THE NARRATION FOLLOWS ITS ARTIFACT: the trip ran because the reader withdrew something;
+    // when the board still holds nothing live, the item's prep line ("… drafted the send") archives.
+    const { settlePrepNarration } = await import('@/lib/prepare/narration');
+    await settlePrepNarration(client, uid, { kind: linkKind === 'inbox_item' ? 'inbox' : 'commitment', id });
   } catch { /* the pass cron is the backstop */ }
 }
 
