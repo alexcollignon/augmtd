@@ -28,6 +28,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { EXCERPT_MARK, clipForPrompt, clipForDisplay, displayText } from '../lib/utils/clip-for-prompt';
 import { threadTail, TRIAGE_MESSAGE_CHARS } from '../lib/triage/words';
 import { shapeDeckContext } from '../lib/triage/deck-context';
+import { emailSourceFromRow } from '../lib/commitments/source';
 import { SourceObjectCard } from '../components/thread/source-object-card';
 import { oauthConnectionWrite } from '../lib/connections/oauth-upsert';
 import { renderPostureSentence, MIRRORED_POSTURES, SORT_PHRASE, RULE_LABELS, type PostureRow } from '../lib/postures/registry';
@@ -61,7 +62,8 @@ console.log('\nS1 · THE MARKER NEVER RENDERS');
   // Every producer whose text is SERVED TO A SURFACE clips for display, never for a prompt.
   const SURFACE_PRODUCERS: Array<[string, RegExp]> = [
     ['lib/triage/words.ts', /clipForDisplay\(/],
-    ['lib/triage/deck-context.ts', /clipForDisplay\(/],
+    // ⟲ RE-POINTED (W16.4): the deck context composes no excerpt — the card's source is the one
+    // source reader's (lib/commitments/source.ts, below), which clips for display.
     ['lib/commitments/source.ts', /clipForDisplay\(/],
     ['lib/home/attention.ts', /excerpt: body \? clipForDisplay\(/],
     ['app/api/commitments/[id]/route.ts', /clipForDisplay\(/],
@@ -76,8 +78,9 @@ console.log('\nS1 · THE MARKER NEVER RENDERS');
   ok('the triage tail ends "…" at a word boundary, never with the marker',
     tail[0].body.endsWith('…') && !tail[0].body.includes(EXCERPT_MARK) && !/\bwor…$/.test(tail[0].body)
     && tail[0].body.length <= TRIAGE_MESSAGE_CHARS + 2);
-  const ctx = shapeDeckContext({ commitment: { id: 'c', description: null, source: 'email' }, lastEmail: { from_name: 'Sam', body: long }, inboxItemId: 'i', meeting: null });
-  ok('the founding line on a deck card never carries the marker', !!ctx.founding && !ctx.founding.line.includes(EXCERPT_MARK) && ctx.founding.line.endsWith('…'));
+  // ⟲ RE-POINTED (W16.4): the deck card's source excerpt is the one source reader's (the page's own).
+  const ctx = shapeDeckContext({ commitment: { id: 'c', description: null, source: 'email' }, email: emailSourceFromRow({ id: 'e', from_name: 'Sam', body: long }, (b) => b), quote: null, inboxItemId: 'i', meeting: null });
+  ok('the source excerpt on a deck card never carries the marker', !!ctx.email?.excerpt && !ctx.email.excerpt.includes(EXCERPT_MARK) && ctx.email.excerpt.endsWith('…'));
 
   ok('clipForDisplay: short text passes clean; long text ends at a boundary with "…"',
     clipForDisplay('short', 50) === 'short' && clipForDisplay('alpha beta gamma delta epsilon', 18) === 'alpha beta gamma…');
@@ -105,9 +108,11 @@ console.log('\nS1 · THE MARKER NEVER RENDERS');
   // render path applies the floor (asserted by the render test above). The law is unchanged: no
   // excerpt reaches the screen around the floor.
   ok('the triage card passes every excerpt it renders through the render floor',
-    /<SourceObjectCard card=\{\{[\s\S]{0,200}messages: tail\.map/.test(deck)
+    // ⟲ RE-POINTED (W16.4): the tail and the commitment's source are the item page's own mounts
+    // (SourceObjectMount · EmailSourceMount · MeetingSourceMount), which render through the same kit card.
+    /<SourceObjectMount itemId=\{row\.id\}/.test(deck)
     && /<SourceObjectCard card=\{\{[\s\S]{0,160}excerpt: row\.excerpt \}\} \/>/.test(deck)
-    && /<SourceObjectCard card=\{\{[\s\S]{0,260}excerpt: ctx\.founding\.line,/.test(deck)
+    && /<EmailSourceMount source=\{ctx\.email\}/.test(deck) && /<MeetingSourceMount meeting=\{ctx\.meeting\}/.test(deck)
     && /\{displayText\(newest\.own\)\}/.test(read('components/thread/source-object-card.tsx'))
     && !/>\{m\.body\}</.test(deck) && !/>\{row\.excerpt\}</.test(deck));
 }

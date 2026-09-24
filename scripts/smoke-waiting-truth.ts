@@ -197,13 +197,16 @@ console.log('\nG · THE TRIAGE CARD — no model reasoning; the evidence is the 
 {
   const deck = code('components/triage/triage-deck.tsx');
   gate('G1 the card renders no reason (no `ctx.reason`, no `verdict.reason`)', !/ctx\??\.reason/.test(deck) && !/verdict\??\.reason/.test(deck) && /const whyLine = sentenceCase\(row\.why\);/.test(deck));
-  const shaped = shapeDeckContext({ commitment: { id: 'c', description: 'Send the deck', source: 'email' }, lastEmail: { from_name: 'Sam', body: 'Ready when you are.' }, inboxItemId: 'i1', meeting: null });
+  const shaped = shapeDeckContext({ commitment: { id: 'c', description: 'Send the deck', source: 'email' }, email: null, quote: null, inboxItemId: 'i1', meeting: null });
   gate('G2 the deck context carries NO reason field at all', !('reason' in shaped));
   const read = code('lib/triage/deck-context-read.ts');
   gate('G3 the context read never reads the judgment store', !/readPlans\(|'judgment'/.test(read));
-  gate('G4 the evidence is the item’s OWN source first (source row → thread fallback)',
-    /\(c\.source_id \? emailById\.get\(c\.source_id\) : undefined\)\s*\?\? \(c\.thread_id \? newestByThread\.get\(c\.thread_id\) : undefined\)/.test(read)
-    && /\(c\.source_id \? itemBySource\.get\(c\.source_id\) : undefined\)\s*\?\? \(c\.thread_id \? itemByThread\.get\(c\.thread_id\) : undefined\)/.test(read));
+  // ⟲ RE-POINTED (W16.4 — stronger): the evidence is the item's OWN source ONLY (by its id, through the
+  // one source reader) — the thread's newest is no longer even a fallback; the thread is the door.
+  gate('G4 the evidence is the item’s OWN source (by its id; the thread is only the door)',
+    /email: c\.source === 'email' && c\.source_id \? emails\.get\(c\.source_id\) \?\? null : null,/.test(read)
+    && !/newestByThread/.test(read)
+    && /\(c\.source_id \? itemBySource\.get\(c\.source_id\) : undefined\)\s*\?\? \(thread \? itemByThread\.get\(thread\) : undefined\)/.test(read));
 }
 
 // ═══ H · THE FYI POOL BOUND ═══

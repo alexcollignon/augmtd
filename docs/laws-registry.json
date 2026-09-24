@@ -7548,11 +7548,12 @@
    "aliases": [
     "THE PILL IS THE PAGE'S WIDGET",
     "THE ROW'S WHY IN THE READER'S WORDS",
-    "NO MACHINERY WORDS ON THE CARD"
+    "NO MACHINERY WORDS ON THE CARD",
+    "THE CARD'S EVIDENCE IS THE PAGE'S SOURCE"
    ],
    "tier": 2,
    "domain": "deck · surfaces",
-   "statement": "A triage card and a held-list row wear a \"ready\" pill (draft ready · follow-up ready · invite ready · forward ready · ready to review · words ready) EXACTLY when opening that item shows that prepared widget: the pill's kind is chosen by the item page's own table (components/thread/item-page.ts `receiptKindOfItem` = `actionOf` over THE MACHINE's single state + THE ONE READER's LIVE prepared kinds, served per waiting/watched row by the ledger's hydration step through `workStatesFor` — every floor the page's door applies: mailbox identity, exact ground, settled, staging, addressee, time) and worded by ONE table (lib/triage/words.ts `readyWordOf`). A withdrawn artifact, a state whose widget is not prepared work (looks done, scheduled, an ask, preparing …), or a row with no served truth wears NO pill — never a guess from stored source data. The Home's handed rows (commitments, deals) choose their receipt through the same table over their served machine state. The row's WHY is the reader's words, composed in ONE home (lib/home/held-words.ts `rowWhyOf`) from the item's own facts, first rung wins: the person's own park (\"you asked to see this today\") · the machine's looks-done (\"looks done — confirm\") · the stated date (\"due Sep 13\" / \"was due Sep 13\") · who asked and when (\"Sam asked you on Sep 22\") · a counterparty on the calendar within two days (\"you meet Sam soon\") · \"waiting for you\"; handled classes keep their own plain account. No card or list word is the platform's machinery — \"judged\", \"today's five\", \"held\", \"seat\", \"budget\" (ROW_JARGON) — and the card's kind label is plain (\"Email\", \"Commitment\", \"From a meeting\"), never the lane token \"mail\". The date is said once (the why carries it; the card's meta line no longer repeats it).",
+   "statement": "A triage card and a held-list row wear a \"ready\" pill (draft ready · follow-up ready · invite ready · forward ready · ready to review · words ready) EXACTLY when opening that item shows that prepared widget: the pill's kind is chosen by the item page's own table (components/thread/item-page.ts `receiptKindOfItem` = `actionOf` over THE MACHINE's single state + THE ONE READER's LIVE prepared kinds, served per waiting/watched row by the ledger's hydration step through `workStatesFor` — every floor the page's door applies: mailbox identity, exact ground, settled, staging, addressee, time) and worded by ONE table (lib/triage/words.ts `readyWordOf`). A withdrawn artifact, a state whose widget is not prepared work (looks done, scheduled, an ask, preparing …), or a row with no served truth wears NO pill — never a guess from stored source data. The Home's handed rows (commitments, deals) choose their receipt through the same table over their served machine state. The row's WHY is the reader's words, composed in ONE home (lib/home/held-words.ts `rowWhyOf`) from the item's own facts, first rung wins: the person's own park (\"you asked to see this today\") · the machine's looks-done (\"looks done — confirm\") · the stated date (\"due Sep 13\" / \"was due Sep 13\") · who asked and when (\"Sam asked you on Sep 22\") · a counterparty on the calendar within two days (\"you meet Sam soon\") · \"waiting for you\"; handled classes keep their own plain account. No card or list word is the platform's machinery — \"judged\", \"today's five\", \"held\", \"seat\", \"budget\" (ROW_JARGON) — and the card's kind label is plain (\"Email\", \"Commitment\", \"From a meeting\"), never the lane token \"mail\". The date is said once (the why carries it; the card's meta line no longer repeats it). W16.4 · THE EVIDENCE IS THE PAGE'S SOURCE: a triage card's evidence is the source widget the item's page mounts, read by the same reader — an email item → the page's object card over the item's own thread door (components/room/source-object.tsx SourceObjectMount); a commitment → its OWN source message (commitments.source_id → lib/commitments/source.ts emailSourceOf, batched as emailSourcesOf: same columns, same shaper, BY ID) through the page's EmailSourceMount, with its quote (sourceQuoteOf/sourceQuotesOf) and the rest of the conversation one door away (\"Open thread\"); a meeting-born commitment → its meeting (meetingSourceOf/meetingSourcesOf) through the page's MeetingSourceMount. Never the thread's newest message, never a line the deck composes itself.",
    "homes": [
     "components/thread/item-page.ts",
     "lib/home/held-words.ts",
@@ -7563,7 +7564,11 @@
     "lib/triage/words.ts",
     "components/triage/triage-deck.tsx",
     "components/home/home-view.tsx",
-    "lib/home/agenda.ts"
+    "lib/home/agenda.ts",
+    "lib/commitments/source.ts",
+    "lib/triage/deck-context.ts",
+    "lib/triage/deck-context-read.ts",
+    "components/room/source-object.tsx"
    ],
    "gates": [
     {
@@ -7596,13 +7601,31 @@
       "J3"
      ],
      "note": "W16.3: the ledger no longer reads source_data for its pill (receiptKindOfItem over the served truth); the truth is workStatesFor's live kinds, read beside the bodies and carried into the payload; the card words its pill by the one table and the Home's handed rows choose theirs through the page table; the retired strings are gone"
+    },
+    {
+     "suite": "smoke-decision-card",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "E1-E8"
+     ],
+     "note": "W16.4: over one in-memory fixture through the REAL server reader (readDeckContexts) and the REAL page readers, with server renders of the REAL deck and the page's own mounts — a commitment on a long thread whose newest message is unrelated: the card's evidence IS the page's EmailSourceMount render (the Aug 10 ask, no newest words, no \"+N earlier\", the quote rides, \"Open thread\"); no quote → the page's card alone; meeting → MeetingSourceMount; email item → SourceObjectMount over the same door; batched reads == single reads; tests/unit/deck-evidence"
+    },
+    {
+     "suite": "smoke-decision-card",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "E9-E10"
+     ],
+     "note": "W16.4: the single and batched source reads share columns + shaper (the meeting read delegates); the deck reads through them, lists no mail of its own, and the card mounts the page's own mounts (no thread-door tail for a commitment)"
     }
    ],
    "version_key": null,
    "status": "holding-uncommitted",
    "broken_by": null,
-   "fixed_by": "W16.3",
-   "fn": "receiptKindOfItem · rowWhyOf · readyWordOf · buildHeldLedger (itemPage) · TriageDeck (server render)",
+   "fixed_by": "W16.3 · W16.4",
+   "fn": "receiptKindOfItem · rowWhyOf · readyWordOf · buildHeldLedger (itemPage) · TriageDeck (server render) · readDeckContexts · emailSourcesOf · sourceQuotesOf · meetingSourcesOf",
    "collides_with": [
     {
      "law": "the-item-page-is-a-few-widgets",
@@ -7618,10 +7641,10 @@
     },
     {
      "law": "one-decision-per-screen",
-     "precedence": "the frame, heights and verbs are untouched; this law decides only the head's words and pill inside the frame"
+     "precedence": "the frame, heights and verbs are untouched; this law decides only the head's words and pill inside the frame and (W16.4) WHICH source widget fills the evidence slot — the page's own; its one door is navigation, never a deed"
     }
    ],
-   "note": "Sep 24 (owner walk on the one-at-a-time card): an email card wore \"draft ready\" while opening the same item showed NO draft widget — the ledger derived its pill from the row's stored source_data through the pure reader (no mailbox-identity floor, an approximate ground, no machine state), while the page used THE ONE READER's IO verdict + the machine's single state. The card's why read \"judged work — it did not make today's five\" and its kind label read \"mail\". Fixed by W16.3 (uncommitted). NOT VERIFIED IN THE BROWSER (no walk was run by this wave)."
+   "note": "Sep 24 (owner walk on the one-at-a-time card): an email card wore \"draft ready\" while opening the same item showed NO draft widget — the ledger derived its pill from the row's stored source_data through the pure reader (no mailbox-identity floor, an approximate ground, no machine state), while the page used THE ONE READER's IO verdict + the machine's single state. The card's why read \"judged work — it did not make today's five\" and its kind label read \"mail\". Fixed by W16.3 (uncommitted). NOT VERIFIED IN THE BROWSER (no walk was run by this wave). Sep 24 (local walk): a commitment card showed its long thread's NEWEST message (\"+97 earlier\") while its page showed the commitment's own source message — the deck mounted the thread's item through the thread door. Fixed by W16.4 (uncommitted): the card mounts the page's own source widget through the one source reader. NOT VERIFIED IN THE BROWSER."
   },
   {
    "id": "one-thread-component",

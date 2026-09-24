@@ -2,8 +2,9 @@
 // THE DECK CARD'S CONTEXT DOOR (W3.6 · DECK CARDS WITH CONTEXT).
 //
 // POST { ids: string[] } — the commitment ids the Home handed the triage deck — returns each one's
-// founding context (source kind, the thread's inbox item or the meeting, the newest message line,
-// the judge's reason) in ONE batched read (lib/triage/deck-context-read.ts). The session's own
+// source (W16.4 — the item page's OWN source: the source message by its id, its quote, or the
+// meeting; the thread's inbox item only as the "Open thread" door) in ONE batched read through the
+// one source reader (lib/triage/deck-context-read.ts → lib/commitments/source.ts). The session's own
 // client (RLS), zero AI, no writes. The brief's hot path is untouched: the deck asks for this only
 // when a stack is actually opened, and the client door coalesces every card's ask into one call.
 // ════════════════════════════════════════════════════════════════════════════════════════════════

@@ -18,6 +18,7 @@ import { readFileSync } from 'fs';
 import { decodeEntities } from '../lib/core/text';
 import { threadTail } from '../lib/triage/words';
 import { shapeDeckContext } from '../lib/triage/deck-context';
+import { emailSourceFromRow } from '../lib/commitments/source';
 import { buildHeldLedger, classifyHeld, type HeldFacts } from '../lib/home/attention';
 import { isNoMoveNotice, listMailOf } from '../lib/inbox/notice-demotion';
 import { foldHeldRows, foldSubject, foldCountWord, heldFooter, listHanded } from '../lib/home/held-list';
@@ -45,11 +46,14 @@ console.log('\nDD1 · A PLAIN EXCERPT NEVER SHOWS AN ESCAPE SEQUENCE');
   ok('   …and decodes a body before the quote strip (an escaped `&gt;` quote line is still a quote)',
     !!tail2[0] && tail2[0].body.includes('Thanks — see below.') && !tail2[0].body.includes('&gt;'), JSON.stringify(tail2[0]));
 
+  // ⟲ RE-POINTED (W16.4): the deck card's source is THE ONE SOURCE READER's message (the page's own),
+  // decoded once in its shaper — the card and the page read the same plain words.
   const ctx = shapeDeckContext({
     commitment: { id: 'c1', description: 'Send the deck', source: 'email' },
-    lastEmail: { from_name: 'Sam', body: 'It&#39;s ready when you are.' }, inboxItemId: 'i1', meeting: null,
+    email: emailSourceFromRow({ id: 'e1', from_name: 'Sam &amp; Co', subject: 'Q&amp;A', body: 'It&#39;s ready when you are.' }, (b) => b),
+    quote: null, inboxItemId: 'i1', meeting: null,
   });
-  ok('the deck card\'s founding line decodes', ctx.founding?.line === "It's ready when you are.", JSON.stringify(ctx.founding));
+  ok('the deck card\'s source message decodes (body, sender, subject)', ctx.email?.excerpt === "It's ready when you are." && ctx.email.from === 'Sam & Co' && ctx.email.subject === 'Q&A', JSON.stringify(ctx.email));
 
   const facts: HeldFacts = {
     item: { id: 'a1', work_title: 'x', source_data: { subject: 'Q&amp;A follow&#45;up', from_name: 'Sam', body: 'We&#39;re close &amp; nearly done.' } },
@@ -59,9 +63,10 @@ console.log('\nDD1 · A PLAIN EXCERPT NEVER SHOWS AN ESCAPE SEQUENCE');
   ok('the held ledger row decodes subject + excerpt (list line and triage card)',
     row?.subject === 'Q&A follow-up' && (row?.excerpt ?? '').startsWith("We're close & nearly done"), JSON.stringify(row));
 
-  const words = src('lib/triage/words.ts'), shaper = src('lib/triage/deck-context.ts');
+  // ⟲ RE-POINTED (W16.4): the deck context composes no text now — its decoding seat is the one source shaper.
+  const words = src('lib/triage/words.ts'), shaper = src('lib/commitments/source.ts');
   const door = src('lib/inbox/thread-door.ts'), attention = src('lib/home/attention.ts'), calm = src('lib/home/calm.ts');
-  ok('every plain-excerpt seam imports THE ONE decoder (words · deck-context · thread-door · attention · calm)',
+  ok('every plain-excerpt seam imports THE ONE decoder (words · commitments/source · thread-door · attention · calm)',
     [words, shaper, door, attention, calm].every((s) => s.includes("import { decodeEntities } from '@/lib/core/text'")));
   ok('   …the thread door decodes its subject + sender name', /subject: d\.subject \? decodeEntities\(d\.subject\)/.test(door) && /fromName: d\.fromName \? decodeEntities\(d\.fromName\)/.test(door));
   ok('   …the whisper body (Home deck rows) decodes', /return decodeEntities\(\(item\.ask/.test(calm));

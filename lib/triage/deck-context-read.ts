@@ -1,25 +1,35 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// THE DECK CARD'S CONTEXT — THE ONE BATCHED READ (W3.6). Server-only.
+// THE DECK CARD'S CONTEXT — THE ONE BATCHED READ (W3.6 → W16.4). Server-only.
 //
-// A handed commitment card needs the facts the Home never carried: where the obligation came from
-// (its source email, else its thread's newest message, or the meeting it was said in) and the inbox
-// item that IS the founding object (so the card mounts THE ONE OBJECT CARD rather than authoring an
-// excerpt). The judge's reason is no longer read (W8.3 — the no-internal-text law). They are read
-// for THE WHOLE HANDED SET at once — one commitments read, then five reads in parallel, each an
-// `in()` over the set. Never one query per card (no N+1), zero AI.
+// A handed commitment card needs the facts the Home never carried: where the obligation came from.
+// W16.4 · THE CARD'S EVIDENCE IS THE ITEM PAGE'S SOURCE — read through THE ONE SOURCE READER
+// (lib/commitments/source.ts), the same reader, columns and shaper the item page's payload uses
+// (app/api/commitments/[id] → emailSourceOf + sourceQuoteOf; app/api/items/view → meetingSourceOf),
+// in their batched form:
+//   · an email-born commitment → its OWN source message, BY ITS ID (`commitments.source_id` IS the
+//     `emails.id`) — never the thread's newest (the Sep 24 walk: an Aug 10 ask on a long thread
+//     showed the thread's Sep 3 message, "+97 earlier");
+//   · its quote (W15.4, "Sam asked: “…”");
+//   · a meeting-born commitment → its meeting.
+// The thread's inbox item rides along ONLY as the card's "Open thread" door (the rest of the
+// conversation) — resolved the way `inboxItemForEmail` resolves it: the exact source row, else the
+// newest item on the source's thread.
+//
+// For THE WHOLE HANDED SET at once — one commitments read, then the readers' `in()` reads in
+// parallel. Never one query per card (no N+1), zero AI, no writes.
 //
 // The prepared artifact's kind is NOT read here: the brief already serves it on every commitment row
-// from THE ONE READER (lib/prepare/read.ts `preparedStatesFor` — kind-true, expired excluded), and a
-// second read of the same fact would be a second answer to one question.
+// from THE ONE READER (lib/prepare/read.ts `preparedStatesFor`), and a second read of the same fact
+// would be a second answer to one question.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { shapeDeckContext, type DeckContext } from '@/lib/triage/deck-context';
+import { emailSourcesOf, sourceQuotesOf, meetingSourcesOf } from '@/lib/commitments/source';
 
 /** The handed set is a stack's opening, never the account — the read is bounded. */
 export const DECK_CONTEXT_MAX_IDS = 60;
 
 type CommitRow = { id: string; description: string | null; source: string | null; source_id: string | null; thread_id: string | null };
-type EmailRow = { id: string; thread_id: string | null; from_name: string | null; from_address: string | null; body: string | null; received_at: string | null; is_from_user: boolean | null };
 
 export async function readDeckContexts(
   client: SupabaseClient, userId: string, rawIds: string[],
@@ -28,85 +38,60 @@ export async function readDeckContexts(
   const out: Record<string, DeckContext> = {};
   if (!ids.length) return out;
 
-  const { data: cRows } = await client.from('commitments')
+  const { data: cRows, error } = await client.from('commitments')
     .select('id, description, source, source_id, thread_id')
     .eq('user_id', userId).in('id', ids);
+  if (error) return out;
   const commits = (cRows ?? []) as CommitRow[];
   if (!commits.length) return out;
 
   const emailCommits = commits.filter((c) => c.source === 'email');
-  const threadIds = [...new Set(emailCommits.map((c) => c.thread_id).filter((t): t is string => !!t))];
   const sourceEmailIds = [...new Set(emailCommits.map((c) => c.source_id).filter((t): t is string => !!t))];
   const meetingIds = [...new Set(commits.filter((c) => c.source === 'meeting' && c.source_id).map((c) => c.source_id as string))];
-  // THE HOT-PATH LAW (event-spine P0): the thread listing is BODY-FREE (up to 400 messages, of which
-  // one per thread is used); the founding lines' bodies are read after the pick, for exactly the
-  // chosen emails (≤ one per handed commitment — bounded by DECK_CONTEXT_MAX_IDS).
-  const EMAIL_COLS = 'id, thread_id, from_name, from_address, received_at, is_from_user';
   const none = Promise.resolve({ data: [] as unknown[] });
 
-  const [threadMail, sourceMail, itemsByThread, itemsBySource, meetings] = await Promise.all([
-    threadIds.length
-      ? client.from('emails').select(EMAIL_COLS).eq('user_id', userId).in('thread_id', threadIds)
-          .order('received_at', { ascending: false }).limit(400)
-      : none,
-    sourceEmailIds.length
-      ? client.from('emails').select(EMAIL_COLS).eq('user_id', userId).in('id', sourceEmailIds)
-      : none,
-    threadIds.length
-      ? client.from('inbox_items').select('id, created_at, thread:source_data->>thread_id')
-          .eq('user_id', userId).eq('source', 'email').in('source_data->>thread_id', threadIds)
-          .order('created_at', { ascending: false }).limit(400)
-      : none,
+  // The meeting's attendees minus the user — the SAME predicate the item page's door hands the reader.
+  const isUserP = meetingIds.length
+    ? import('@/lib/prepare/addressee').then(async ({ loadUserForms, isUserForm }) => {
+        const forms = await loadUserForms(client, userId);
+        return (who: string) => isUserForm(who, forms);
+      }).catch(() => undefined)
+    : Promise.resolve(undefined);
+
+  const [emails, quotes, meetings, itemsBySource] = await Promise.all([
+    emailSourcesOf(client, userId, sourceEmailIds),
+    sourceQuotesOf(client, userId, commits.map((c) => c.id)),
+    isUserP.then((isUser) => meetingSourcesOf(client, userId, meetingIds, isUser)),
     sourceEmailIds.length
       ? client.from('inbox_items').select('id, source_id').eq('user_id', userId).in('source_id', sourceEmailIds)
       : none,
-    meetingIds.length
-      ? client.from('meeting_transcripts').select('id, title, start_time, created_at').eq('user_id', userId).in('id', meetingIds)
-      : none,
   ]);
-
-  // Newest message per thread (the rows arrive newest-first).
-  const newestByThread = new Map<string, EmailRow>();
-  for (const e of (threadMail.data ?? []) as EmailRow[]) {
-    if (e.thread_id && !newestByThread.has(e.thread_id)) newestByThread.set(e.thread_id, e);
-  }
-  const emailById = new Map(((sourceMail.data ?? []) as EmailRow[]).map((e) => [e.id, e]));
-  const itemByThread = new Map<string, string>();
-  for (const r of (itemsByThread.data ?? []) as Array<{ id: string; thread: string | null }>) {
-    if (r.thread && !itemByThread.has(r.thread)) itemByThread.set(r.thread, r.id);
-  }
   const itemBySource = new Map(((itemsBySource.data ?? []) as Array<{ id: string; source_id: string }>).map((r) => [r.source_id, r.id]));
-  const meetingById = new Map(((meetings.data ?? []) as Array<{ id: string; title: string | null; start_time: string | null; created_at: string | null }>).map((m) => [m.id, m]));
 
-  // THE FOUNDING BODIES — one id-keyed read for the emails the cards will quote, nothing else.
-  {
-    const chosen = new Map<string, EmailRow[]>();
-    for (const c of commits) {
-      const e = (c.source_id ? emailById.get(c.source_id) : undefined) ?? (c.thread_id ? newestByThread.get(c.thread_id) : undefined);
-      if (e) (chosen.get(e.id) ?? chosen.set(e.id, []).get(e.id)!).push(e);
-    }
-    const bodyIds = [...chosen.keys()];
-    if (bodyIds.length) {
-      const { data: bodies } = await client.from('emails').select('id, body').eq('user_id', userId).in('id', bodyIds);
-      for (const b of (bodies ?? []) as Array<{ id: string; body: string | null }>) {
-        for (const e of chosen.get(b.id) ?? []) e.body = b.body;
-      }
+  // THE DOOR'S FALLBACK — the newest inbox item on the source's thread (inboxItemForEmail's order),
+  // read only for the commitments whose exact source row has no item.
+  const threadOf = (c: CommitRow) => c.thread_id ?? (c.source_id ? emails.get(c.source_id)?.threadId ?? null : null);
+  const threadIds = [...new Set(emailCommits.filter((c) => !(c.source_id && itemBySource.has(c.source_id)))
+    .map(threadOf).filter((t): t is string => !!t))];
+  const itemByThread = new Map<string, string>();
+  if (threadIds.length) {
+    const { data: onThread } = await client.from('inbox_items').select('id, last_activity_at, thread:source_data->>thread_id')
+      .eq('user_id', userId).eq('source', 'email').in('source_data->>thread_id', threadIds)
+      .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(400);
+    for (const r of (onThread ?? []) as Array<{ id: string; thread: string | null }>) {
+      if (r.thread && !itemByThread.has(r.thread)) itemByThread.set(r.thread, r.id);
     }
   }
 
-  // W8.3 · THE ITEM'S OWN SOURCE FIRST (one reader's order — lib/commitments/source.ts
-  // `inboxItemForEmail`: the exact source row, else the thread). The thread-first order showed an
-  // UNRELATED email as a commitment's evidence whenever the thread had moved on or its newest inbox
-  // row was a different message. The thread is the fallback, never the lead.
   for (const c of commits) {
-    const lastEmail = (c.source_id ? emailById.get(c.source_id) : undefined)
-      ?? (c.thread_id ? newestByThread.get(c.thread_id) : undefined) ?? null;
-    const inboxItemId = (c.source_id ? itemBySource.get(c.source_id) : undefined)
-      ?? (c.thread_id ? itemByThread.get(c.thread_id) : undefined) ?? null;
+    const thread = threadOf(c);
     out[c.id] = shapeDeckContext({
       commitment: { id: c.id, description: c.description, source: c.source },
-      lastEmail, inboxItemId,
-      meeting: c.source === 'meeting' && c.source_id ? meetingById.get(c.source_id) ?? null : null,
+      // BY ITS ID — the message the promise came from, never a later one in its thread.
+      email: c.source === 'email' && c.source_id ? emails.get(c.source_id) ?? null : null,
+      quote: quotes.get(c.id) ?? null,
+      inboxItemId: (c.source_id ? itemBySource.get(c.source_id) : undefined) ?? (thread ? itemByThread.get(thread) : undefined) ?? null,
+      meeting: c.source === 'meeting' && c.source_id ? meetings.get(c.source_id) ?? null : null,
     });
   }
   return out;
