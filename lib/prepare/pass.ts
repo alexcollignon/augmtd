@@ -1084,25 +1084,42 @@ async function markStaleUnderEdit(
   return { did: 'none', reason };
 }
 
-async function askForFile(admin: SupabaseClient, userId: string, w: WorkItem, label: string): Promise<void> {
+/** W13.6 · THE ASK NAMES THE VERDICT'S OWN REQUIREMENT (found live: the doc-send lane asked for
+ *  "the document itself" while the verdict required "slides 7&8 details …" — the moot-ask rule read
+ *  the generic label as one the verdict no longer lists and the room hid the ask, while the brief
+ *  still spoke it). The lane asks for the judged inventory's labels whenever the verdict states them;
+ *  only an inventory-less send falls back to the generic label. Pure. */
+export function docSendAskLabels(verdict: { requires?: Array<{ label?: string | null } | string> | null } | null | undefined): string[] {
+  const labels = (verdict?.requires ?? [])
+    .map((r) => (typeof r === 'string' ? r : String(r?.label ?? '')).replace(/\s+/g, ' ').trim().slice(0, 120))
+    .filter(Boolean).slice(0, 5);
+  return labels.length ? labels : ['the document itself'];
+}
+
+async function askForFile(admin: SupabaseClient, userId: string, w: WorkItem, labels: string[], base?: string[] | null): Promise<void> {
   try {
     const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
-    const { composeAskSpeech } = await import('@/lib/prepare/requirements');
+    const { composeAskSpeech, reusableAskText, baseLine } = await import('@/lib/prepare/requirements');
     const itemKind = w.id.startsWith('commit:') ? 'commitment' as const : 'inbox' as const;
     const roomKey = await roomKeyForItem(admin, userId, itemKind, w.entityId);
     const dedupeKey = `requires:${w.entityId}`;
+    const bases = (base ?? []).filter(Boolean).slice(0, 2);
+    const tail = bases.length ? ` ${baseLine(bases)}` : '';
     // THE ASK SPEAKS CONSEQUENCE (law 4) — the SAME reasoned composer every ask-authoring seam uses,
     // COMPOSED ONCE: a standing ask for this same gap re-states its words, it never re-buys them.
-    const { data: standing } = await admin.from('room_turns').select('text')
+    // W13.6: only a LIVE ask's TRUE words are re-stated (`reusableAskText` — never an archived turn's,
+    // never words that claim readiness); the base sentence rides as the tail.
+    const { data: standing } = await admin.from('room_turns').select('text, component, archived_at')
       .eq('user_id', userId).eq('room_key', roomKey).eq('dedupe_key', dedupeKey).maybeSingle();
-    const priorText = typeof standing?.text === 'string' ? standing.text.trim() : '';
+    const reused = reusableAskText(standing, labels, { tail: tail.trim(), base: bases });
+    const speech = reused ?? await composeAskSpeech(admin, userId, {
+      labels, itemTitle: w.title, work: 'send_file',
+    });
     await writeRoomTurn(admin, userId, roomKey, {
       role: 'system',
-      text: priorText || await composeAskSpeech(admin, userId, {
-        labels: [label], itemTitle: w.title, work: 'send_file',
-      }),
+      text: `${speech}${tail}`,
       refs: [{ label: w.title.slice(0, 60), href: itemKind === 'commitment' ? `/item/${w.entityId}?kind=commitment` : `/item/${w.entityId}` }],
-      component: { key: 'input_checklist', state: { items: [label.slice(0, 120)], taskId: null } },
+      component: { key: 'input_checklist', state: { items: labels.map((l) => l.slice(0, 120)), taskId: null, ...(bases.length ? { base: bases } : {}) } },
       dedupeKey,
     });
   } catch { /* the honest none still records via prep_outcome */ }
@@ -1111,19 +1128,21 @@ async function askForFile(admin: SupabaseClient, userId: string, w: WorkItem, la
 // ── W13 · THE BASE IS NOT THE SEND — the doc-send lanes found the file the ask is ABOUT, but the ask
 // is for new work on it (it predates the request). The file is staged as the BASE (context, through
 // THE ONE unstage writer), and the new work is asked for in the room — the honest none, never a send
-// of the old file dressed as the answer. ──
+// of the old file dressed as the answer. W13.6: under the verdict's own requirement label (the base
+// row, the ask's rows and the card's "Current version (to update)" line all name the same thing). ──
 async function offerBase(
   admin: SupabaseClient, userId: string, w: WorkItem, itemKind: 'inbox' | 'commitment',
   file: { id: string; filename: string; source: string; fileAt?: string | null; snippet?: string }, requestAt: string | null,
+  verdict?: import('@/lib/work/judge').WorkVerdict,
 ): Promise<PrepareOneResult> {
   const { unstageRequirement } = await import('@/lib/prepare/requirements');
-  const label = `the updated version of "${file.filename}"`.slice(0, 120);
+  const labels = verdict?.requires?.length ? docSendAskLabels(verdict) : [`the updated version of "${file.filename}"`.slice(0, 120)];
   await unstageRequirement(admin, userId, {
-    itemKind, itemId: w.entityId, label, reason: 'the file predates a request for new work — it is the base, not the deliverable',
+    itemKind, itemId: w.entityId, label: labels[0], reason: 'the file predates a request for new work — it is the base, not the deliverable',
     base: { fileId: file.id, filename: file.filename, source: file.source, fileAt: file.fileAt ?? null, snippet: file.snippet ?? null },
     requestAt, onlyResolverRows: true,
   });
-  await askForFile(admin, userId, w, label);
+  await askForFile(admin, userId, w, labels, [file.filename]);
   return { did: 'none', reason: 'the file found is the version to update, not the new work — asked in the room' };
 }
 
@@ -1155,14 +1174,16 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
           .eq('user_id', userId).eq('kind', 'commitment').eq('entity_id', w.entityId).eq('task_id', 'prepare-pass-docsend')
           .filter('metadata->>version_of', 'is', null).limit(1).maybeSingle();
         const fid = ((sendRow?.metadata ?? {}) as { attachment?: { fileId?: unknown } }).attachment?.fileId;
-        if (sendErr || typeof fid !== 'string') return;
-        const { supersedeDraftsRiding } = await import('@/lib/prepare/requirements');
-        await supersedeDraftsRiding(admin, userId, 'commitment', w.entityId, [fid], reason);
+        const { supersedeDraftsRiding, supersedeWithdrawnDrafts } = await import('@/lib/prepare/requirements');
+        if (!sendErr && typeof fid === 'string') await supersedeDraftsRiding(admin, userId, 'commitment', w.entityId, [fid], reason);
+        // W13.6 · every other MACHINE draft THE ONE READER withdrew on this item (an inverted chase, a
+        // false claim) is retired with it — the lane landed elsewhere, so none of them is coming back.
+        await supersedeWithdrawnDrafts(admin, userId, { kind: 'commitment', id: w.entityId }, reason);
       } catch { /* non-fatal — the reader still withholds it */ }
     };
     const cCands = await resolveFileUniversal(admin, { userId, entityId: w.entity?.id ?? null }, w.title, 4).catch(() => []);
     const cTop = cCands.find((c) => c.source === 'kb');
-    if (!cTop || cTop.score < 0.7) { await retireWithdrawn('withdrawn send — no file found for it now'); await askForFile(admin, userId, w, `the document itself`); return { did: 'none', reason: 'could not find the document — asked in the room' }; }
+    if (!cTop || cTop.score < 0.7) { await retireWithdrawn('withdrawn send — no file found for it now'); await askForFile(admin, userId, w, docSendAskLabels(verdict)); return { did: 'none', reason: 'could not find the document — asked in the room' }; }
     // W6 — the ONE evidence-quoting verifier (cross-entity rejected structurally; the quote is
     // code-checked): a wrong attach is worse than none.
     // W13 · A STAGED FILE IS THE DELIVERABLE, OR IT ISN'T STAGED: the request's own date + words ride
@@ -1170,8 +1191,8 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
     const { verifyArtifactMatch: verifyC, requestFactsOf: reqFactsC } = await import('@/lib/prepare/requirements');
     const reqC = await reqFactsC(admin, userId, { kind: 'commitment', id: w.entityId });
     const cJudge = await verifyC(admin, userId, { task: w.title, candidate: cTop, entityId: w.entity?.id ?? null, emailExcerpt: reqC.excerpt, requestAt: reqC.requestAt, requestText: reqC.requestText });
-    if (!cJudge.match && cJudge.role === 'base') { await retireWithdrawn('withdrawn send — the file is the base of new work, not the deliverable'); return await offerBase(admin, userId, w, 'commitment', cTop, reqC.requestAt); }
-    if (!cJudge.match) { await retireWithdrawn('withdrawn send — its file is not proven to be the deliverable'); await askForFile(admin, userId, w, `the document itself`); return { did: 'none', reason: 'no confident file match — asked in the room' }; }
+    if (!cJudge.match && cJudge.role === 'base') { await retireWithdrawn('withdrawn send — the file is the base of new work, not the deliverable'); return await offerBase(admin, userId, w, 'commitment', cTop, reqC.requestAt, verdict); }
+    if (!cJudge.match) { await retireWithdrawn('withdrawn send — its file is not proven to be the deliverable'); await askForFile(admin, userId, w, docSendAskLabels(verdict)); return { did: 'none', reason: 'no confident file match — asked in the room' }; }
     // TRUE ADDRESSEES (W7.3): the send is addressed by THE ONE LADDER and stamped with it.
     const { resolveCommitmentAddressee: resolveC, recipientsLabel: labelC, addresseeStamp: stampC } = await import('@/lib/prepare/addressee');
     const cAddr = await resolveC(admin, userId, w.entityId);
@@ -1225,7 +1246,7 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
   // Only attach on a CONFIDENT KB hit (bytes we hold → previewable + attachable); drive-catalog
   // candidates surface in the deep-dive picker instead of silently auto-attaching.
   const top = cands.find((c) => c.source === 'kb');
-  if (!top || top.score < 0.7) { await askForFile(admin, userId, w, `the document itself`); return { did: 'none', reason: 'could not find the document — asked in the room' }; }
+  if (!top || top.score < 0.7) { await askForFile(admin, userId, w, docSendAskLabels(verdict)); return { did: 'none', reason: 'could not find the document — asked in the room' }; }
   // THE REASONED PICK (the S4 rule — a score is retrieval, not judgment), upgraded to the W6
   // evidence law: the verifier quotes the proving phrase (code-checked) and rejects cross-entity
   // candidates structurally. Reject → no auto-attach (the deep-dive's picker offers candidates
@@ -1238,7 +1259,7 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
     requestAt: reqI.requestAt, requestText: reqI.requestText,
   });
   // W13: the verified file predates an ask for new work — the base, never the send.
-  if (!judge.match && judge.role === 'base') return await offerBase(admin, userId, w, 'inbox', top, reqI.requestAt);
+  if (!judge.match && judge.role === 'base') return await offerBase(admin, userId, w, 'inbox', top, reqI.requestAt, verdict);
   if (!judge.match) return { did: 'none', reason: 'no confident file match' };
   // W13.2: a withdrawn draft's words are never reused as the send's body.
   const reusedDraft = !!existingDraft?.body && !sendWithdrawn;

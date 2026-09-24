@@ -1518,7 +1518,10 @@ console.log('\nT10 · ONE AGENDA PER ROOM — the brief speaks it, or it dies');
   // 3 — THE COHERENCE RULE REACHES COWORKER ASKS.
   gate('T10.8 the grounding reads live asks off THEIR OWN query, not the transcript window',
     !!ground && /from\('room_turns'\)[\s\S]{0,220}not\('component', 'is', null\)/.test(ground)
-    && /const asks: RoomGrounding\['asks'\] = await \(async \(\) => \{/.test(ground));
+    // ⟲ RE-POINTED (W13.6): the own-query read is `rawAsks`; `asks` is that read through the ONE moot
+    // predicate (the composer hears only the asks the room renders).
+    && /const rawAsks: RoomGrounding\['asks'\] = await \(async \(\) => \{/.test(ground)
+    && /const asks: RoomGrounding\['asks'\] = rawAsks\.filter\(/.test(ground));
   // RE-POINTED (Sep 18, Q1's source half): the attribution moved OUT of the template and into
   // `askAttribution(who, speaker)` — the page now collapses the SPEAKER'S OWN ask to first person
   // at the source, so every consumer inherits it. The law is unchanged and stricter: an ask still
@@ -1647,7 +1650,9 @@ console.log('\nT11 · THE READ MARKER — the project raising its hand');
     && /import \{ NextRequest, NextResponse, after \} from 'next\/server'/.test(turnsRoute));
   gate('T11.5 the marker served back is the PRE-stamp value (read before the after() stamp)',
     !!turnsRoute && turnsRoute.indexOf('readRoomMarker(supabase') < turnsRoute.indexOf('stampRoomMarker(supabase')
-    && /return NextResponse\.json\(\{ turns, readAt \}\)/.test(turnsRoute));
+    // ⟲ RE-POINTED (W13.6): the same turns are served through the ask truth net (a false ask speaks
+    // its floor on this paint); readAt is still the pre-stamp marker.
+    && /return NextResponse\.json\(\{ turns: await truthfulAskTurns\(turns as never\[\]\), readAt \}\)/.test(turnsRoute));
 
   // 3 — THE UNREAD FACT: non-user live turns newer than the marker; ABSENT without a marker.
   gate('T11.6 unread counts LIVE, NON-USER turns newer than the marker',
@@ -1734,14 +1739,18 @@ console.log('\nT13 · THE ASK SPEAKS CONSEQUENCE — one accent, named faces');
     && /work: verdict\.work,/.test(read('app/api/inbox/[id]/draft/route.ts') ?? '')
     && /work: verdict\.work,/.test(read('app/api/items/judge/route.ts') ?? ''));
   gate('T13.7 COMPOSED ONCE — a standing ask covering the same gap re-states its words, never re-buys them',
-    !!req && /const sameGap = Array\.isArray\(priorItems\)/.test(req)
-    && /sameGap && priorText/.test(req)
-    && !!pass && /text: priorText \|\| await composeAskSpeech\(/.test(pass));
+    !!req && /export function reusableAskText\(/.test(req)
+    // ⟲ RE-POINTED (W13.6): reuse goes through ONE predicate (`reusableAskText` — a LIVE turn, the
+    // same labels + base, words that pass the ask's claim net); both seams compose only otherwise.
+    && /const reused = reusableAskText\(priorAsk, labels, \{ tail: suggestLine, base: baseFiles \}\);\s*const speech = reused\s*\?\? await composeAskSpeech\(/.test(req)
+    && !!pass && /const reused = reusableAskText\(standing, labels, \{ tail: tail\.trim\(\), base: bases \}\);\s*const speech = reused \?\? await composeAskSpeech\(/.test(pass));
   gate('T13.8 BOTH ask-authoring seams speak through the ONE composer',
     !!req && !!pass && /composeAskSpeech\(admin, userId, \{/.test(pass)
     && !/askPreamble\(/.test(pass));
   gate('T13.9 the LABEL still renders VERBATIM in its row (the judged inventory is never rewritten by the speech)',
-    !!req && /state: \{ items: uncovered\.map\(\(m2\) => m2\.label\), taskId: null \}/.test(req));
+    // ⟲ RE-POINTED (W13.6): the state also carries the offered base (`base: baseFiles`) — the labels
+    // themselves are still written verbatim.
+    !!req && /state: \{ items: uncovered\.map\(\(m2\) => m2\.label\), taskId: null, \.\.\.\(baseFiles\.length \? \{ base: baseFiles \} : \{\}\) \}/.test(req));
 
   // 2 — THE CHAT FEEL: one accent per room, the kit's own input-card grammar.
   gate('T13.10 NO amber/orange anywhere in the rail’s markup (the ask was a second focus point)',
@@ -3133,8 +3142,10 @@ console.log('\nT20 · THE DEED MOVES THE BRIEF — the room never claims a deed 
     // (readPlans(…, 'judgment', …)) instead of a raw `.eq('kind', 'judgment')` — same record, same law.
     && /readPlans\(client, userId, 'judgment', \{ keys:/.test(legacy));
   gate('T20.13b BOUNDED AND SAFE — a capped repair, and the old words are never written back',
-    !!legacy && /const REPAIR_CAP = 2;/.test(legacy) && /\.slice\(0, REPAIR_CAP\)/.test(legacy)
-    && /if \(!say\?\.trim\(\) \|\| isLegacyAskSpeech\(say\)\) continue;/.test(legacy));
+    // ⟲ RE-POINTED (W13.6): the cap is enforced in the (now async) selection loop, and the words
+    // written back must pass BOTH the legacy detector and the ask's claim net.
+    !!legacy && /const REPAIR_CAP = 2;/.test(legacy) && /if \(stale\.length >= REPAIR_CAP\) break;/.test(legacy)
+    && /if \(!say\?\.trim\(\) \|\| isLegacyAskSpeech\(say\) \|\| await askSpeechIsFalse\(say\)\) continue;/.test(legacy));
 }
 
 // ── T21 · THE HOME PAINTS FIRST (owner walk, Sep 8 — "Home loads very slowly") ──────────────────

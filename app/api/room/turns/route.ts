@@ -54,7 +54,10 @@ export async function GET(request: NextRequest) {
       const { recomposeLegacyAsks } = await import('@/lib/room/legacy-ask-speech');
       await recomposeLegacyAsks(supabase, user.id, turns);
     });
-    return NextResponse.json({ turns, readAt });
+    // W13.6 · THE ASK SPEAKS TRUE ON THIS PAINT: a stored ask claiming readiness is served with the
+    // deterministic floor while the repair above re-speaks it (zero AI, never blocks on a model).
+    const { truthfulAskTurns } = await import('@/lib/room/legacy-ask-speech');
+    return NextResponse.json({ turns: await truthfulAskTurns(turns as never[]), readAt });
   } catch (e) {
     console.error('[room/turns GET]', e);
     return NextResponse.json({ error: 'failed' }, { status: 500 });

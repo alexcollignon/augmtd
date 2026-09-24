@@ -427,7 +427,10 @@
     "lib/room/render-plan.ts",
     "lib/room/serve-truth.ts",
     "app/api/entities/[id]/room/route.ts",
-    "app/api/items/view/route.ts"
+    "app/api/items/view/route.ts",
+    "lib/room/legacy-ask-speech.ts",
+    "app/api/room/turns/route.ts",
+    "lib/prepare/narration.ts"
    ],
    "gates": [
     {
@@ -512,11 +515,31 @@
      "kind": "source",
      "cost": "zero-ai",
      "note": "W13.5: both doors (items/view, entities room) serve last-good only through serveTimeTruth; the entity door never lets the room-view builder's own last-good slip past the net; a lane that re-runs a withdrawn send and lands on an ask/base retires it through the one superseding writer"
+    },
+    {
+     "suite": "smoke-staged-truth",
+     "ids": [
+      "G1-G4",
+      "G6"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "askClaimsReadiness · reusableAskText · askPreamble",
+     "note": "W13.6 THE ASK SPEAKS TRUE: an engine ask never claims readiness or a done deed ('I have … ready to go, but I need …') — the composer's rule 7 + the code check fall back to the deterministic floor (true by construction); words are re-stated only from a LIVE ask for the same labels + base whose speech passes the net; a stored false ask is served as the floor on this paint and re-spoken after it"
+    },
+    {
+     "suite": "smoke-room-truth",
+     "ids": [
+      "E1-E7"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W13.6 THE LIVE ASK RENDERS: the doc-send lane asks under the verdict's own labels (never moot by construction); a placeholder label never reads as outlived; the brief's grounding reads asks through the SAME moot predicate the rail does (the composer never speaks an ask the page hides); the lifted/folded ask card keeps Attach · Type it · Point me to it · Go ahead; every door that takes an artifact away settles its prep narration; an inverted chase is withdrawn by the reader and retired with the send. tests/unit/ask-truth.test.ts runs the composer's refusal, THE ONE RESOLVER's base offer and the narration settle over in-memory fakes"
     }
    ],
    "version_key": null,
    "status": "holding-uncommitted",
-   "fixed_by": "W2.1",
+   "fixed_by": "W2.1, W13.6",
    "broken_by": null,
    "collides_with": [
     {
@@ -527,7 +550,8 @@
      "law": "open-ask-outranks-staged-send",
      "precedence": "same chain: floor → ladder pick → single claim"
     }
-   ]
+   ],
+   "note": "W13.6 (owner walk after W13.5): the live engine ask said \"I have the details on slides 7&8 … ready to go\" over work nobody had started (the composer's words were never checked, and the doc-send lane re-posted an ARCHIVED ask's words); the ask did not render (the lane's generic label \"the document itself\" was mooted by the verdict-drift rule while the brief's grounding still read it as open); and \"Clara found the file and drafted the send\" stood live over a send already filed. Fixed by W13.6 (uncommitted)."
   },
   {
    "id": "exactly-once-deeds",
@@ -1429,12 +1453,16 @@
    ],
    "tier": 2,
    "domain": "rooms",
-   "statement": "A prep narration folds into its artifact card by dedupe key and survives only while the current verdict's lane holds that artifact — an orphaned narration never stands alone.",
+   "statement": "A prep narration folds into its artifact card by dedupe key and survives only while the current verdict's lane holds that artifact — an orphaned narration never stands alone. W13.6: whichever door takes the artifact away — a verdict strip, the one superseding writer, the reader's withdrawal — archives the narration when the item holds nothing live.",
    "homes": [
     "lib/work/apply-verdict.ts",
     "lib/prepare/pass.ts",
     "lib/room/turns.ts",
-    "components/home/item-detail.tsx"
+    "components/home/item-detail.tsx",
+    "lib/prepare/narration.ts",
+    "lib/prepare/requirements.ts",
+    "lib/room/open-kicks.ts",
+    "lib/room/grounding.ts"
    ],
    "gates": [
     {
@@ -1446,13 +1474,24 @@
      "suite": "smoke-threads",
      "kind": "source",
      "cost": "zero-ai"
+    },
+    {
+     "suite": "smoke-room-truth",
+     "ids": [
+      "E5-E7"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W13.6: every door that takes an artifact off the board settles the item's prep narration through ONE function (settlePrepNarration — THE ONE READER holds nothing live AND something was withdrawn or just retired → archived, never deleted): the one superseding writer, the withdrawn-draft retirement, the reader-withdrawal re-prepare trip. tests/unit/ask-truth.test.ts runs the settle and the retirement over fakes"
     }
    ],
-   "fn": "one prep-key builder shared by writer and anchors",
+   "fn": "narrationOrphaned · prepNarrationKeys · settlePrepNarration (lib/prepare/narration.ts; tests/unit/ask-truth.test.ts)",
    "version_key": null,
-   "status": "broken-live",
-   "broken_by": "Sep 22: apply-verdict deletes on `prep:<kind>:<id>` while pass.ts, item-detail and entity-room anchor on `prep:<id>` — the fold never matches, narrations orphan.",
-   "collides_with": []
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "collides_with": [],
+   "fixed_by": "W13.6",
+   "note": "Sep 22 finding (was broken-live): Sep 22: apply-verdict deletes on `prep:<kind>:<id>` while pass.ts, item-detail and entity-room anchor on `prep:<id>` — the fold never matches, narrations orphan. The Sep 22 key mismatch is closed (apply-verdict archiveItemNarrations archives both `prep:<kind>:<id>` and the work-spine `prep:commit:<id>`). W13.6 (owner walk after W13.5): \"Clara found the file and drafted the send\" stood live after its doc-send was filed into the version chain — the law was enforced only at the verdict-driven strip. Fixed by W13.6 (uncommitted)."
   },
   {
    "id": "one-narrator-law",
@@ -2053,7 +2092,7 @@
    ],
    "tier": 2,
    "domain": "judge-prepare-deck",
-   "statement": "Only the item's own pool material or a same-entity file auto-stages; evidence is quoted and code-checked; a global hit becomes a named suggestion in the ask, never a staged attachment. W13.1: a staged file is the deliverable IN TIME and of the right KIND, or it is not staged. The requirement's kind (`existing` — a document sent as it is · `new_work` — new or revised content still to be produced, even INTO an existing document) is a reasoned field judged in the same pick that matches the file (a kind the judge's inventory states wins); the dates are code-checked against the REQUEST message (a commitment's source email): the file's effective date is the EARLIEST it can be (its own name's date, when we first saw it, its conversation's date). New work is never satisfied by a file from on or before the request — that file is offered as the BASE (staged as context under `base:<label>`, never `require:`), the requirement stays an ask/produce; an older file satisfies an existing-artifact ask only when the request names it. A resolver-staged row the law now refuses is unstaged through ONE writer (the pointer row goes, the user's file is never touched, the reason is recorded), and only on a positive demotion — an AI outage never unstages. W13.2: the law is VERSIONED and heals itself — the platform, never an operator. Every resolver-staged `require:` row carries the staging-law version it was verified under (`metadata.stagingLaw`, no migration); a row stamped with an older law, or unstamped, is never read as settled and is re-verified by THE ONE RESOLVER on its next touch (the prepare pass before its lanes, the judge's serving edge, the draft doors): its FILE is put first in the same reasoned pick (the kind rides that call), and the ruling is code's — the same file verified restamps in place (not new supply), another file replaces it, a demotion or a stale row the pick cleanly does not verify is unstaged through the one writer, and an unanswered pick holds (the row stands, still stale, still read as staged — an AI failure never unstages). Bounded: REVERIFY_PER_PASS items per pass (the rest counted and said), one item per open. The repair script is an optional accelerator that calls the same function.",
+   "statement": "Only the item's own pool material or a same-entity file auto-stages; evidence is quoted and code-checked; a global hit becomes a named suggestion in the ask, never a staged attachment. W13.1: a staged file is the deliverable IN TIME and of the right KIND, or it is not staged. The requirement's kind (`existing` — a document sent as it is · `new_work` — new or revised content still to be produced, even INTO an existing document) is a reasoned field judged in the same pick that matches the file (a kind the judge's inventory states wins); the dates are code-checked against the REQUEST message (a commitment's source email): the file's effective date is the EARLIEST it can be (its own name's date, when we first saw it, its conversation's date). New work is never satisfied by a file from on or before the request — that file is offered as the BASE (staged as context under `base:<label>`, never `require:`), the requirement stays an ask/produce; an older file satisfies an existing-artifact ask only when the request names it. A resolver-staged row the law now refuses is unstaged through ONE writer (the pointer row goes, the user's file is never touched, the reason is recorded), and only on a positive demotion — an AI outage never unstages. W13.2: the law is VERSIONED and heals itself — the platform, never an operator. Every resolver-staged `require:` row carries the staging-law version it was verified under (`metadata.stagingLaw`, no migration); a row stamped with an older law, or unstamped, is never read as settled and is re-verified by THE ONE RESOLVER on its next touch (the prepare pass before its lanes, the judge's serving edge, the draft doors): its FILE is put first in the same reasoned pick (the kind rides that call), and the ruling is code's — the same file verified restamps in place (not new supply), another file replaces it, a demotion or a stale row the pick cleanly does not verify is unstaged through the one writer, and an unanswered pick holds (the row stands, still stale, still read as staged — an AI failure never unstages). Bounded: REVERIFY_PER_PASS items per pass (the rest counted and said), one item per open. The repair script is an optional accelerator that calls the same function. W13.6: the base is OFFERED, never lost — for new work the document the content goes into is the reasoned match (code then makes an older one the base), a stale row the current pick cannot verify on a new-work requirement becomes the base when the request names its older file, and the room's ask names it (\"Current version (to update): <file>\").",
    "homes": [
     "app/api/items/judge/route.ts",
     "lib/knowledge/resolve.ts",
@@ -2061,7 +2100,10 @@
     "lib/prepare/requirements.ts",
     "scripts/repair-stale-staging.ts",
     "lib/room/turns.ts",
-    "lib/room/open-kicks.ts"
+    "lib/room/open-kicks.ts",
+    "lib/room/ask-base.ts",
+    "components/home/input-card.tsx",
+    "components/home/item-rail.tsx"
    ],
    "gates": [
     {
@@ -2122,9 +2164,19 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W13.5 THE ASK MUST STAND: an archived turn never holds its dedupe key hostage (the unique index is not partial on archived_at — the re-posted ask now lands LIVE, the archived turn keeps its session under a released key); the editor never archives the engine's own `requires:` ask; any withdrawal makes the on-open re-prepare trip due, budgeted one per item per window. Outcome over an in-memory table that enforces the production index; tests/unit/room-truth runs THE ONE RESOLVER's demotion to the BASE and finds the ask live"
+    },
+    {
+     "suite": "smoke-staged-truth",
+     "ids": [
+      "G7-G10"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "standingAsBase · docSendAskLabels · baseOfferLine · askBaseOf",
+     "note": "W13.6 THE BASE IS OFFERED: for new work the document the content goes INTO is the pick's match (TARGET_RULE, both picks) and code demotes an older one to the base; a stale row the pick does not verify on a new-work requirement (the verdict's kind, else the pick's own) whose older file the request names becomes the BASE (never dropped as 'unproven'); the base row is titled and the ask card's meta line reads 'Current version (to update): <file>'; the resolver keeps offering a standing base so it and the lane post the same ask"
     }
    ],
-   "fn": "pickArtifacts · verifyArtifactMatch · stagingRole · stagedRowVerdict · unstageRequirement (tests/unit/staged-truth.test.ts) · W13.2: STAGING_LAW_VERSION · stagingLawStale · servingEdgeShouldResolve · reverifyDecision · reverifyStaleStaging · reverifyItemStaging (tests/unit/staging-self-heal.test.ts — resolveRequirements outcome over an in-memory pool with a stubbed model) · W13.5: writeRoomTurn releases an archived key (releaseArchivedKey · isUniqueViolation) · editorMaySettle (tests/unit/room-truth.test.ts — the ask stands over an archived one)",
+   "fn": "pickArtifacts · verifyArtifactMatch · stagingRole · stagedRowVerdict · unstageRequirement (tests/unit/staged-truth.test.ts) · W13.2: STAGING_LAW_VERSION · stagingLawStale · servingEdgeShouldResolve · reverifyDecision · reverifyStaleStaging · reverifyItemStaging (tests/unit/staging-self-heal.test.ts — resolveRequirements outcome over an in-memory pool with a stubbed model) · W13.5: writeRoomTurn releases an archived key (releaseArchivedKey · isUniqueViolation) · editorMaySettle (tests/unit/room-truth.test.ts — the ask stands over an archived one) · W13.6: standingAsBase · standingBaseRows · docSendAskLabels · baseOfferLine (tests/unit/ask-truth.test.ts — the unproven new-work row becomes the base row and the ask carries it)",
    "version_key": "STAGING_LAW_VERSION",
    "status": "holding-uncommitted",
    "broken_by": null,
@@ -2142,8 +2194,8 @@
      "precedence": "the self-heal only ever re-verifies and unstages a RESOLVER pointer row — never a typed supply, a user drop, or the user's file; a draft the user edited is never withdrawn or regenerated by it (the reader never judges hand-held words)"
     }
    ],
-   "fixed_by": "W13.1, W13.2, W13.5",
-   "note": "W13.1 (owner live walk on prod after W12): a you_owe commitment asking to ADD detail to slides 7&8 of an interim report staged the PRE-EXISTING report as the requirement (plus a doc-send draft carrying it), and the reply said the report 'now includes' the new slides. No JUDGE_VERSION bump: the judge prompt is unchanged — the kind is reasoned inside the requirements pick. Rows staged before W13 carry no kind: scripts/repair-stale-staging.ts (dry-run, zero AI) lists decisive violations and suspects; --apply --yes --judge (owner-gated) judges the suspects and unstages the new-work ones. W13.2 (owner principle — the platform corrects itself): rows staged under the old law were read as settled by the judge's serving edge and never re-checked; only the one-shot repair fixed them. The staging law is now versioned and every older-law row re-verifies on its next touch (bounded; an AI failure never unstages); the repair became an optional accelerator over the same function. Fixed by W13.2 (uncommitted)."
+   "fixed_by": "W13.1, W13.2, W13.5, W13.6",
+   "note": "W13.1 (owner live walk on prod after W12): a you_owe commitment asking to ADD detail to slides 7&8 of an interim report staged the PRE-EXISTING report as the requirement (plus a doc-send draft carrying it), and the reply said the report 'now includes' the new slides. No JUDGE_VERSION bump: the judge prompt is unchanged — the kind is reasoned inside the requirements pick. Rows staged before W13 carry no kind: scripts/repair-stale-staging.ts (dry-run, zero AI) lists decisive violations and suspects; --apply --yes --judge (owner-gated) judges the suspects and unstages the new-work ones. W13.2 (owner principle — the platform corrects itself): rows staged under the old law were read as settled by the judge's serving edge and never re-checked; only the one-shot repair fixed them. The staging law is now versioned and every older-law row re-verifies on its next touch (bounded; an AI failure never unstages); the repair became an optional accelerator over the same function. Fixed by W13.2 (uncommitted). W13.6 (owner walk after W13.5): the live new-work requirement ended 'unproven' with NO base — the pick, asked whether the client's own interim report IS the new slides' details, rightly said no, so the resolver dropped it; the commitment doc-send lane's verifier said the same and asked for \"the document itself\". The pick now names the target document for new work and code decides its role; the unproven path keeps a named older file as the base."
   },
   {
    "id": "ask-direction-floor",
