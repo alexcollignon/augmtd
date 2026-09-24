@@ -4,6 +4,9 @@ import { defineConfig } from 'vitest/config';
 import path from 'node:path';
 
 export default defineConfig({
+  // tsconfig says `jsx: preserve` (Next compiles JSX); a unit test that renders a component needs the
+  // automatic runtime (W12.2's frame render test).
+  esbuild: { jsx: 'automatic' },
   test: {
     environment: 'node',
     include: ['tests/unit/**/*.test.ts'],

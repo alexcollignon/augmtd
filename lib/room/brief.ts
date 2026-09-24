@@ -295,6 +295,62 @@ async function presentOf(
   } catch { return { lines: [], groundAt: null, noise: false }; }
 }
 
+/** W12.1 · TIME TRUTH IN THE BRIEF — the page's dated events (each board item's own date: a
+ *  commitment's source message else its creation, an inbox item's receipt — with its person; every
+ *  date the rendered page states, unattributed) in the user's zone, then the pure net. Compose path
+ *  only (never a hot render path); bounded reads (the board's own ids); a failure serves the text
+ *  unchanged (the net is a protection, never a blocker). */
+async function verifyRelativeTime(
+  client: SupabaseClient, userId: string, g: RoomGrounding, present: string[], text: string,
+): Promise<string> {
+  try {
+    const [{ enforceRelativeTimeTruth }, { userTimezone, localNow }] = await Promise.all([
+      import('@/lib/room/self-voice'), import('@/lib/utils/user-time'),
+    ]);
+    const tz = await userTimezone(client, userId);
+    const today = localNow(tz).dateStr;
+    const dayOf = (iso: unknown): string | null => {
+      const t = Date.parse(String(iso ?? ''));
+      return Number.isFinite(t) ? localNow(tz, new Date(t)).dateStr : null;
+    };
+    const events: Array<{ day: string; who?: string | null }> = [];
+    const commits = g.board.filter((b) => b.kind === 'commitment');
+    const inbox = g.board.filter((b) => b.kind === 'inbox');
+    if (commits.length) {
+      const { data: rows, error } = await client.from('commitments').select('id, created_at, source, source_id')
+        .eq('user_id', userId).in('id', commits.map((b) => b.id));
+      if (!error) {
+        const srcIds = (rows ?? []).filter((r) => r.source === 'email' && r.source_id).map((r) => String(r.source_id));
+        const received = new Map<string, string>();
+        if (srcIds.length) {
+          const { data: ems, error: eErr } = await client.from('emails').select('id, received_at').eq('user_id', userId).in('id', srcIds);
+          if (!eErr) for (const e of ems ?? []) if (e.received_at) received.set(String(e.id), String(e.received_at));
+        }
+        for (const r of rows ?? []) {
+          const b = commits.find((x) => x.id === String(r.id));
+          const day = dayOf((r.source_id && received.get(String(r.source_id))) || r.created_at);
+          if (day) events.push({ day, who: b?.who ?? null });
+        }
+      }
+    }
+    if (inbox.length) {
+      const { data: rows, error } = await client.from('inbox_items').select('id, received_at:source_data->>received_at')
+        .eq('user_id', userId).in('id', inbox.map((b) => b.id));
+      if (!error) for (const r of (rows ?? []) as Array<{ id: string; received_at: string | null }>) {
+        const day = dayOf(r.received_at);
+        if (day) events.push({ day, who: inbox.find((x) => x.id === String(r.id))?.who ?? null });
+      }
+    }
+    for (const a of g.asks) { const day = dayOf(a.since); if (day) events.push({ day, who: a.who }); }
+    for (const m of `${g.text}\n${present.join('\n')}`.matchAll(/\b(20\d{2}-\d{2}-\d{2})\b/g)) events.push({ day: m[1], who: null });
+    const net = enforceRelativeTimeTruth(text, { today, events });
+    if (net.rewritten.length || net.dropped.length) {
+      console.warn('[room-respond] time truth:', [...net.rewritten.map((r) => `rewrote ${r}`), ...net.dropped.map((d) => `dropped "${d}"`)]);
+    }
+    return net.text;
+  } catch { return text; }
+}
+
 async function composeAndStore(
   client: SupabaseClient, userId: string, roomKey: string, g: RoomGrounding, sig: string, name: string,
   present: string[] = [], noiseAnchor = false, speaker: string | null = null,
@@ -527,7 +583,12 @@ async function composeAndStore(
       [...once.dropped.map((d) => `restated: ${d.slice(0, 60)}`), ...refs.dropped.map((d) => `dangling: ${d}`)]);
   }
   // The people this page is actually about — the board's own counterparties, never guessed names.
-  const text = nameOncePerSentence(refs.text, g.board.map((b) => b.who)).trim();
+  const named = nameOncePerSentence(refs.text, g.board.map((b) => b.who)).trim();
+  // ── TIME TRUTH IN THE BRIEF (W12.1): every relative day claim ("nine days ago", "yesterday",
+  // "last week") is code-verified against the dated events this page carries — an attributed false
+  // one is rewritten to its absolute date, anything else unverifiable is dropped (lib/room/self-voice
+  // enforceRelativeTimeTruth; pure). The prompt is unchanged, so ROOM_BRIEF_VERSION is not bumped.
+  const text = await verifyRelativeTime(client, userId, g, present, named);
   // Fully degraded by the code nets — deterministic for this page, so remembered like a refusal.
   if (!text) { await refuseForSig(client, userId, roomKey, sig); return null; }
   // THE DEED IS CODE-BUILT: the move's target must exist on the board (the model picks, the code

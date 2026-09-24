@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { ItemDetail, type ItemKind } from './item-detail';
-import { takeFramePainted } from './item-open-frame';
+import { takeFramePainted, markRouteLanded } from './item-open-frame';
 
 // ── The item-detail rendered as a DEEP DIVE IN the Home — NOT a centered popup. Mounted by the
 // intercepting route (@modal/(.)item/[id]) on soft-navigation from the Home. It covers the Home's
@@ -28,6 +28,10 @@ export function ItemDetailModal({ id }: { id: string }) {
   // (already entered), never a second entrance from transparent (components/home/item-open-frame).
   const [entered, setEntered] = useState(() => takeFramePainted());
   const [closing, setClosing] = useState(false);
+
+  // W12.2: the route has landed — the click's own frame (ClientOpenFrame) steps aside in THIS
+  // frame, before paint (a layout effect), so the room fills the frame with no gap and no overlap.
+  useLayoutEffect(() => { markRouteLanded(); }, []);
 
   useEffect(() => {
     const r = requestAnimationFrame(() => setEntered(true));

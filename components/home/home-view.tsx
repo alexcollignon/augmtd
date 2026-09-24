@@ -10,6 +10,7 @@ import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { mayReplaceInPlace, freezeRows, freezeMap, hasContent } from '@/lib/room/no-mutation';
 import { useLiveRefresh } from '@/hooks/use-live-refresh';
 import { MOMENTUM as MOMENTUM_TOKENS } from '@/lib/work-items/states';
+import { ClientOpenFrame } from '@/components/home/item-open-frame';
 import { WorkRow as DoRow, useExit, useCommitmentAct, useRowActions, ctaFor, RowControls, RowHoverRail, EffortDate, InitiativeTag, prefetchItem, fmtDue, exitCls, DO_META } from '@/components/work/work-row';
 // THE CALM HOME (docs/threads-plan.md) — the pick, the words, the receipts, all pure.
 import { pickWhispers, toWhisper, sortDoorRows, servedWho, whisperBody, whisperProject, CALM_MAX_WHISPERS, type Whisper } from '@/lib/home/calm';
@@ -1192,15 +1193,24 @@ function WhisperLine({ w, whyNow, handlers }: {
     e.stopPropagation(); setNotYet(true);
     refuseLooksDoneOnRow(item).then((ok) => { if (!ok) setNotYet(false); });
   };
+  // W12.2 · THE CLICK PAINTS ITS OWN FRAME (owner live walk on prod: +0s and +2s after the click
+  // the Home stood unchanged — the kit's push is a transition the router holds until the server
+  // answers). The click is a discrete event: `opening` is set synchronously and paints on the next
+  // frame — the row shows it is opening, and ClientOpenFrame stands the room's frame over the Home
+  // at once; the route fills it when it lands. A second click while opening is refused.
+  const [opening, setOpening] = useState(false);
+  const openNow = () => { if (opening) return; setOpening(true); open(); };
   if (removed) return null;
   const { Icon } = DO_META[item.source];
   return (
     <div
       onMouseEnter={prefetch} onFocus={prefetch} onMouseDown={prefetch} onTouchStart={prefetch}
-      className={`group relative flex items-center gap-2.5 rounded-[10px] px-3 py-2 transition-all duration-200 ease-out hover:bg-white hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)] ${exitCls(exiting)}`}
+      aria-busy={opening || undefined} data-opening={opening ? '' : undefined}
+      className={`group relative flex items-center gap-2.5 rounded-[10px] px-3 py-2 transition-all duration-200 ease-out hover:bg-white hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)] ${opening ? 'bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)]' : ''} ${exitCls(exiting)}`}
     >
-      <div role="button" tabIndex={0} onClick={open}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
+      {opening && <ClientOpenFrame door={item.href} onDone={() => setOpening(false)} />}
+      <div role="button" tabIndex={0} onClick={openNow}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openNow(); } }}
         className="min-w-0 flex-1 flex items-center gap-2.5 text-left cursor-pointer">
         <Icon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-300 group-hover:text-neutral-400 transition-colors" />
         <p className="min-w-0 flex-1 truncate text-[13px] text-neutral-500 group-hover:text-neutral-700 transition-colors">

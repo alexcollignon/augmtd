@@ -178,6 +178,11 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
   // may BE the user's own saved edit (`edited`), and the thread may have moved since they wrote it
   // (`staleUnderEdit`) — the engine never overwrites them, so the card says which it is showing.
   const [handNote, setHandNote] = useState<'edited' | 'stale' | null>(null);
+  // ── W12.3 · THE HELD-BACK LINE. When the compose door's generated draft failed the one truth vet
+  // twice it serves NO words and says why (`withheld`, lib/prepare/truth `withheldLine`). The card
+  // prints that sentence verbatim above the editor — never an empty editor pretending nothing
+  // happened, never a second copy of the words — and the editor stays open for the user's own.
+  const [withheld, setWithheld] = useState<string | null>(null);
   const readHand = (d: { edited?: boolean; staleUnderEdit?: boolean } | null | undefined) => {
     if (d?.edited) setHandNote(d.staleUnderEdit ? 'stale' : 'edited');
   };
@@ -259,9 +264,11 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
       body: JSON.stringify({ kind: compose.kind, entityId: compose.id }),
     })
       .then((r) => (r.ok ? r.json() : null)).catch(() => null)
-      .then((d: { to?: string[]; cc?: string[]; subject?: string; bodyText?: string; recipientName?: string | null; suggestions?: Array<{ name: string | null; email: string | null }> } | null) => {
+      .then((d: { to?: string[]; cc?: string[]; subject?: string; bodyText?: string; recipientName?: string | null; suggestions?: Array<{ name: string | null; email: string | null }>; withheld?: string } | null) => {
         if (!alive) return;
         const words = String(d?.bodyText ?? '').trim();
+        const held = !words && typeof d?.withheld === 'string' && d.withheld.trim() ? d.withheld.trim() : null;
+        setWithheld(held);
         if (d) {
           if (d.to?.length) setTo(d.to);
           if (d.cc?.length) setCc(d.cc);
@@ -274,7 +281,8 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
           servedRef.current = words; setBodyRev((n) => n + 1);
           readHand(d as { edited?: boolean; staleUnderEdit?: boolean } | null);
         }
-        setUnfilled(!words && !(d?.to?.length));
+        // A held-back draft is not an unfillable card: the door answered, and the editor is the way on.
+        setUnfilled(!words && !(d?.to?.length) && !held);
         setLoading(false);
       });
     return () => { alive = false; };
@@ -757,6 +765,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
       })),
       contextFilesLabel: sourceList.length > 1 ? `Came with the email · ${sourceList.length}` : 'Came with the email',
     } : {}),
+    ...(withheld && !dirty && !sent ? { bodyNote: withheld } : {}),
     bodyHint: sent ? undefined
       : redrafting ? 'redrafting…'
       : dirty ? 'your words — kept in “Your edit”, whichever tab you try'

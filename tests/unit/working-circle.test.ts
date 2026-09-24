@@ -1,7 +1,7 @@
 // W11.2 THE WORKING CIRCLE · ONE ROW PER CONVERSATION · LOOKS DONE — the pure pieces.
 // Zero IO, zero AI. Fake identities only (Acme / Sam / Jo).
 import { describe, it, expect } from 'vitest';
-import { inferCircle, countingCircle, circleRows, sameOrganisation, type CircleMail } from '@/lib/evidence/circle';
+import { inferCircle, countingCircle, circleRows, sameOrganisation, autoVerdict, orgOf, type CircleMail } from '@/lib/evidence/circle';
 import { actorRole, buildActorContext, teammateAddressesOf } from '@/lib/evidence/actor';
 import { looksDoneEvidenceOf, looksDoneLive, looksDoneLine } from '@/lib/evidence/looks-done';
 import { foldByConversation, conversationKeyOf, conversationSentence, foldedIntoOf } from '@/lib/home/conversation-fold';
@@ -39,6 +39,27 @@ describe('inferCircle', () => {
     expect(countingCircle(c, [])).toEqual([]);
     expect(countingCircle(c, [{ address: PARTNER, state: 'confirmed', at: '' }])).toEqual([PARTNER]);
     expect(circleRows(c, [{ address: PARTNER, state: 'removed', at: '' }])[0].state).toBe('removed');
+  });
+});
+
+describe('W12.2 · the counterparty is an organisation', () => {
+  const CLIENT_MATE = 'lee@acme-example.com';
+  const base = ['a', 'b', 'c', 'd'].flatMap((t) => side(t));
+  it('never suggests the client\'s colleague the user copies when writing to someone else', () => {
+    const c = inferCircle([...base, ...['x1', 'x2'].map((t) => ({ from: ME, to: [PARTNER], cc: [CLIENT_MATE], threadId: t, fromUser: true }))], known);
+    expect(c.map((x) => x.address)).toEqual([PARTNER]);
+  });
+  it('never suggests the client\'s colleague writing to the partner with the user copied, nor counts it against the partner', () => {
+    const c = inferCircle([...base, ...['y1', 'y2', 'y3'].map((t) => ({ from: CLIENT_MATE, to: [PARTNER], cc: [ME], threadId: t, fromUser: false }))], known);
+    expect(c.map((x) => x.address)).toEqual([PARTNER]);
+    expect(c[0].counterThreads).toBe(0);
+    expect(c[0].auto).toBe(true);
+  });
+  it('a public address is its own organisation; the high bar is a verdict of the counts', () => {
+    expect(orgOf('pat.example@gmail.com')).toBe('pat.example@gmail.com');
+    expect(orgOf(CLIENT)).toBe('acme-example.com');
+    expect(autoVerdict({ threads: 20, counterThreads: 2, alongside: 125, publicDomain: false })).toBe(true);
+    expect(autoVerdict({ threads: 20, counterThreads: 6, alongside: 125, publicDomain: false })).toBe(false);
   });
 });
 

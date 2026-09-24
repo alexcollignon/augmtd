@@ -14,8 +14,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { getPersonEntities, resolveIdentity } from '@/lib/entities/people';
-import { claimsUndoneWork, completionObjection } from '@/lib/prepare/truth';
-import { claimsUnstagedAttachment, attachmentObjection } from '@/lib/prepare/truth';
+import { vetDraft } from '@/lib/prepare/truth';
 
 export type EvalVerdict = {
   verdict: 'pass' | 'revise' | 'flag' | 'needs_input';
@@ -85,20 +84,21 @@ export async function evaluateDeliverable(admin: SupabaseClient, userId: string,
     if (args.sourceComplete !== true && looksMechanicallyTruncated(args.content)) {
       return { verdict: 'revise', objection: 'The deliverable appears CUT OFF mid-sentence at the end — regenerate it complete; never hand over a truncated document.' };
     }
-    // ── THE COMPLETION FLOOR (W5a — the fabricated-deed class, found live: "I've finished the
-    // redistribution… everything is balanced now" on an open obligation nothing had touched). A
-    // message about an OPEN obligation with nothing staged may not announce a deed. Deterministic,
-    // narrow vocabulary (lib/prepare/truth), fail-safe: it speaks only with its facts in hand. ──
-    if (args.kind !== 'deliverable' && args.obligationOpen === true) {
-      const claim = claimsUndoneWork(args.content, { obligationOpen: true, staged: args.staged === true });
-      if (claim) return { verdict: 'revise', objection: completionObjection(claim) };
-    }
-    // ── THE ATTACHMENT FLOOR (W11.1 — "…the attached interim report…" with nothing attached, found
-    // live Sep 23). Speaks only with its fact in hand (`staged === false`, stated by the producer):
-    // a message may never say a file rides with it when none does. ──
-    if (args.kind !== 'deliverable' && args.staged === false) {
-      const claim = claimsUnstagedAttachment(args.content, { staged: false });
-      if (claim) return { verdict: 'revise', objection: attachmentObjection(claim) };
+    // ── THE TRUTH FLOORS — ONE VET (W12.1 · EVERY DRAFT PASSES THE SAME TRUTH): `vetDraft`
+    // (lib/prepare/truth) is the ONE function THE ONE READER (stampTruth), this evaluator and the
+    // compose door all call — a second door can no longer serve what the first withdraws. Each floor
+    // speaks only with its fact in hand (the floor doctrine):
+    //   · THE COMPLETION FLOOR (W5a — "I've finished the redistribution… everything is balanced now"
+    //     on an open obligation nothing had touched): `obligationOpen === true`, nothing staged.
+    //   · THE ATTACHMENT FLOOR (W11.1 — "…the attached interim report…" with nothing attached): only
+    //     when the producer STATED `staged === false`.
+    //   · THE INVERTED CHASE (W11.1/W12.1 — "just a quick nudge…" on work the USER owes): chase words
+    //     on an open you_owe obligation with nothing staged.
+    if (args.kind !== 'deliverable') {
+      const failed = vetDraft(args.content, {
+        obligationOpen: args.obligationOpen === true, staged: args.staged === true, attachmentFloor: args.staged === false,
+      });
+      if (failed) return { verdict: 'revise', objection: failed.objection };
     }
     // ── STRUCTURAL floor: an artifact addressed to the USER THEMSELF is wrong at birth (the
     // self-nudge class) — no AI needed, the registry answers. T3 adds the twin: an AUTOMATED /

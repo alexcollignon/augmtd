@@ -41,6 +41,7 @@ function paraHTML(text: string): string {
 }
 
 export async function POST(request: NextRequest) {
+  const requestStartedAt = Date.now();
   try {
     const supabase = await createClient();
     const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -96,6 +97,12 @@ export async function POST(request: NextRequest) {
     // reply comes back in the thread's language, not the user's default. Set to the item's source_data.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let replyItemSD: Record<string, any> | null = null;
+    // W12.1 · EVERY DRAFT PASSES THE SAME TRUTH — the facts this door's generated words are vetted
+    // against (lib/prepare/truth vetDraft, the ONE function the reader + evaluator call). Nothing is
+    // ever staged with a generated compose body. A commitment the user owes sets `obligationOpen`.
+    const vetFacts: import('@/lib/prepare/truth').DraftVetFacts = { obligationOpen: false, staged: false };
+    // W12.1 · NO PAY-PER-OPEN — a generated commitment draft is pooled once (set in that branch).
+    let poolCommitment: { id: string; direction: string | null; addr: import('@/lib/prepare/addressee').AddresseeResolution } | null = null;
 
     if (kind === 'meeting') {
       // entityId = the meeting transcript id. Pull its calendar event's attendees (minus the user).
@@ -148,7 +155,7 @@ export async function POST(request: NextRequest) {
       // entityId = the commitment id.
       const { data: c } = await supabase
         .from('commitments')
-        .select('id, description, counterparty, direction, source, source_id, thread_id, due_date')
+        .select('id, description, counterparty, direction, status, source, source_id, thread_id, due_date')
         .eq('id', entityId).eq('user_id', user.id).maybeSingle();
       if (!c) return NextResponse.json({ error: 'not found' }, { status: 404 });
 
@@ -197,9 +204,15 @@ export async function POST(request: NextRequest) {
         recipientName ? `Recipient: ${recipientName}` : '',
         sourceBody ? `From the original message:\n${sourceBody}` : '',
       ].filter(Boolean).join('\n\n');
+      // W12.1 · THE DIRECTION FRAMES THE TASK (lib/prepare/truth commitmentComposeTask): on work the
+      // user OWES the message DELIVERS — never a request to the counterparty; on work THEY owe a
+      // chase is the valid message. The one vet below holds the words to the same fact.
+      vetFacts.obligationOpen = String(c.status ?? '') === 'open' && String(c.direction ?? '') === 'you_owe';
+      if (!pooledBody && !intent?.trim()) poolCommitment = { id: String(c.id), direction: (c.direction as string | null) ?? null, addr };
+      const { commitmentComposeTask } = await import('@/lib/prepare/truth');
       task = intent?.trim()
         ? intent.trim()
-        : `Write a short email delivering (or clearly setting a time for) what you committed to: "${c.description ?? ''}". Address ${recipientName || 'the recipient'} directly, be helpful and specific.`;
+        : commitmentComposeTask({ direction: c.direction as string | null, description: c.description as string | null }, recipientName);
     } else {
       // awareness | email — entityId = an inbox item id. Recipient = the sender. Draft a reply.
       const { data: item } = await supabase
@@ -247,13 +260,23 @@ export async function POST(request: NextRequest) {
     // Draft in the user's voice — same voice block the reply drafter uses (per-recipient tone). Skipped
     // for FYI/`noted` inbox items (recipient/subject still returned; the user writes the body themselves).
     let body = pooledBody;
+    // W12.1 · EVERY DRAFT PASSES THE SAME TRUTH: a GENERATED body goes through `draftThroughVet` —
+    // the ONE vet (chase on work the user owes · "attached" with nothing staged · a deed not done),
+    // regenerated ONCE with the failure named, else NOT served (the card's honest empty state). A
+    // pooled body already passed THE ONE READER (the same vet, at stampTruth) — never re-vetted here.
+    let withheld: string | null = null;
+    const { draftThroughVet, withheldLine } = await import('@/lib/prepare/truth');
     if (pooledBody) { /* served from the pool — no AI call */ }
     else if (!skipDraft && replyItemSD) try {
       // Fix 3 — draft ↔ plan coherence: load this item's LIVE plan step summaries (deep-dives plan
       // inbox items under kind 'email') so the reply narrates one story with the Identified tasks.
       const planSteps = await loadPlanStepSummaries(supabase, user.id, 'email' as ItemPlanKind, entityId).catch(() => []);
       // Email/awareness reply → the shared reply drafter, which mirrors the incoming email's language.
-      body = await generateReplyDraft(user.id, replyItemSD, supabase, intent?.trim() || null, planSteps);
+      const sd = replyItemSD;
+      const vetted = await draftThroughVet(async (objection) => generateReplyDraft(user.id, sd, supabase,
+        [intent?.trim() || '', objection ? `REVIEWER'S OBJECTION — fix this: ${objection}` : ''].filter(Boolean).join('\n') || null, planSteps), vetFacts);
+      body = vetted.body;
+      if (vetted.failed) withheld = withheldLine(vetted.failed);
     } catch (e) {
       console.error('[compose/draft] reply drafting failed:', e);
     } else if (!skipDraft) try {
@@ -261,27 +284,67 @@ export async function POST(request: NextRequest) {
       const { mailboxIdentityRule } = await import('@/lib/inbox/draft-reply');
       const identityRule = mailboxIdentityRule(mailbox);
       const { client: ai, model } = await getAIClient(user.id, 'conversation', supabase);
-      const res = await aiCreate(ai, {
-        model, max_tokens: 600, temperature: 0.6,
-        messages: [{ role: 'user', content:
-          `${voiceBlock ? voiceBlock + '\n\n' : ''}` +
-          `You are ${userName}. ${task}\n\n` +
-          `Write the message in ${userName}'s voice and sign as ${userName} — NEVER sign as anyone else. ` +
-          `${identityRule ? `${identityRule} ` : ''}` +
-          `Return ONLY the message body — no subject line, no preamble, no surrounding quotes. Keep it ready to send.\n\n` +
-          `--- CONTEXT ---\n${context}\n\n` +
-          // Language mirrors the correspondent, not the user's default. A concrete detected language wins
-          // over the voice examples (which may be in another language); fall back to "match the context".
-          (detectLanguage(context)
-            ? `IMPORTANT — LANGUAGE: The context above is in ${detectLanguage(context)}. Write the ENTIRE ` +
-              `message in ${detectLanguage(context)}, and ONLY in ${detectLanguage(context)}. The voice ` +
-              `examples are for STYLE only — ignore their language.`
-            : `IMPORTANT — LANGUAGE: Write in the SAME language as the context above — detect it and match ` +
-              `it; if there's no clear language, use English. The voice examples are for STYLE only.`) }],
-      });
-      body = res.choices?.[0]?.message?.content?.trim() || '';
+      const generate = async (objection: string | null): Promise<string> => {
+        const res = await aiCreate(ai, {
+          model, max_tokens: 600, temperature: 0.6,
+          messages: [{ role: 'user', content:
+            `${voiceBlock ? voiceBlock + '\n\n' : ''}` +
+            `You are ${userName}. ${task}\n\n` +
+            `Write the message in ${userName}'s voice and sign as ${userName} — NEVER sign as anyone else. ` +
+            `${identityRule ? `${identityRule} ` : ''}` +
+            `Return ONLY the message body — no subject line, no preamble, no surrounding quotes. Keep it ready to send.\n\n` +
+            `--- CONTEXT ---\n${context}\n\n` +
+            (objection ? `REVIEWER'S OBJECTION to your previous draft — fix this: ${objection}\n\n` : '') +
+            // Language mirrors the correspondent, not the user's default. A concrete detected language wins
+            // over the voice examples (which may be in another language); fall back to "match the context".
+            (detectLanguage(context)
+              ? `IMPORTANT — LANGUAGE: The context above is in ${detectLanguage(context)}. Write the ENTIRE ` +
+                `message in ${detectLanguage(context)}, and ONLY in ${detectLanguage(context)}. The voice ` +
+                `examples are for STYLE only — ignore their language.`
+              : `IMPORTANT — LANGUAGE: Write in the SAME language as the context above — detect it and match ` +
+                `it; if there's no clear language, use English. The voice examples are for STYLE only.`) }],
+        });
+        return res.choices?.[0]?.message?.content?.trim() || '';
+      };
+      const vetted = await draftThroughVet(generate, vetFacts);
+      body = vetted.body;
+      if (vetted.failed) withheld = withheldLine(vetted.failed);
     } catch (e) {
       console.error('[compose/draft] drafting failed:', e);
+    }
+
+    // W12.1 · NO PAY-PER-OPEN: a generated commitment draft that PASSED the vet is written ONCE to the
+    // pool as the commitment's prepared artifact (lib/prepare/truth composeDraftRow — the pass's shape,
+    // `prepared_from` ground + addressee stamps), so the next open serves it through THE ONE READER at
+    // zero AI, and from then on it obeys the-users-hand-wins + regeneration-only-on-ground-move. Never
+    // over the user's own words (a held newest draft stands), never twice (a row that landed while we
+    // drafted wins), never for an intent-driven one-off. Non-fatal: the words are served regardless.
+    let pooledNow = false;
+    if (poolCommitment && body && !withheld) try {
+      const startedAt = requestStartedAt;
+      const { data: prior, error: priorErr } = await supabase.from('item_deliverables').select('id, content, metadata, created_at')
+        .eq('user_id', user.id).eq('kind', 'commitment').eq('entity_id', poolCommitment.id).eq('type', 'draft')
+        .filter('metadata->>version_of', 'is', null)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      const { isPoolRowHandHeld } = await import('@/lib/prepare/hand');
+      const landedMeanwhile = !!prior && Date.parse(String(prior.created_at ?? '')) >= startedAt;
+      if (!priorErr && !isPoolRowHandHeld('reply_draft', prior) && !isPoolRowHandHeld('nudge_draft', prior) && !landedMeanwhile) {
+        const [{ groundOf }, { addresseeStamp, recipientsLabel }, { composeDraftRow }] = await Promise.all([
+          import('@/lib/prepare/ground'), import('@/lib/prepare/addressee'), import('@/lib/prepare/truth'),
+        ]);
+        const ground = await groundOf(supabase, user.id, { kind: 'commitment', id: poolCommitment.id }).catch(() => null);
+        const row = composeDraftRow({
+          userId: user.id, commitmentId: poolCommitment.id, direction: poolCommitment.direction, body,
+          recipientLabel: recipientsLabel(poolCommitment.addr.recipients) || recipientName,
+          preparedFrom: ground ? { emailId: ground.emailId ?? null, receivedAt: ground.receivedAt ?? null } : null,
+          addresseeStamp: addresseeStamp(poolCommitment.addr),
+        });
+        const { error: insErr } = await supabase.from('item_deliverables').insert(row);
+        if (insErr) console.error('[compose/draft] pooling the draft failed (non-fatal):', insErr.message);
+        else pooledNow = true;
+      }
+    } catch (e) {
+      console.error('[compose/draft] pooling the draft failed (non-fatal):', e);
     }
 
     return NextResponse.json({
@@ -295,6 +358,9 @@ export async function POST(request: NextRequest) {
       ...(suggestions.length ? { suggestions } : {}),
       ...(pooledBody ? { prepared: true, preparedBy: pooledBy } : {}),
       ...(pooledBody && pooledHand ? pooledHand : {}),
+      // W12.1: the honest empty state — why no words were served (the draft failed the one vet twice).
+      ...(withheld ? { withheld } : {}),
+      ...(pooledNow ? { pooled: true } : {}),
     });
   } catch (error) {
     console.error('[compose/draft] error:', error);

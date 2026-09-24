@@ -4,6 +4,10 @@
 //
 //   C · THE CIRCLE — same-side co-senders count; the counterparty never; the same organisation never
 //       a side; a public domain never counts alone; the thresholds; the user's hand wins.
+//       W12.2 (C10–C15): THE COUNTERPARTY IS AN ORGANISATION — the client's own colleagues are never
+//       suggested (copied by the user to someone else, or writing to the partner with the user
+//       copied); their pairs never inflate a partner's counter count; the high bar is a verdict of
+//       the counts under the CURRENT rule (a cached verdict is re-judged; a v1 cache is recomputed).
 //   L · THE ONE LADDER READS THE CIRCLE — actorRole · loadActorContext · the scoped mail lane · a
 //       circle colleague's delivery nominates as a teammate's (SETTLE_MATCH); read-only mode.
 //   D · THE CONVERSATION DELTA (a) — a working-circle author on the user's side may nominate
@@ -20,7 +24,7 @@ import { readFileSync } from 'fs';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   inferCircle, countingCircle, circleRows, sameOrganisation, isMachineAddress, loadCircle, setCirclePersistence,
-  CIRCLE_AUTO_MIN_THREADS, type CircleMail,
+  CIRCLE_AUTO_MIN_THREADS, CIRCLE_VERSION, CIRCLE_ORG_SIDE_DOMINANCE, autoVerdict, orgOf, type CircleMail, type CircleInference,
 } from '../lib/evidence/circle';
 import { actorRole, buildActorContext, loadActorContext, teammateAddressesOf } from '../lib/evidence/actor';
 import { loadEvidenceEvents } from '../lib/evidence/sources';
@@ -88,6 +92,39 @@ console.log('C · THE CIRCLE');
     && countingCircle(cands, [{ address: PARTNER, state: 'removed', at: '' }]).length === 0
     && countingCircle(cands, [{ address: 'ali@other-example.com', state: 'confirmed', at: '' }]).includes('ali@other-example.com')
     && circleRows(cands, []).find((r) => r.address === 'ali@other-example.com')?.state === 'suggested');
+
+  // ── W12.2 · THE COUNTERPARTY IS AN ORGANISATION ──
+  const clientThreads = ['t1', 't2', 't3', 't4'].flatMap((t) => sideThread(t, PARTNER));
+  // The user writes TO the partner copying the client's colleague (the client's side, not ours).
+  const userToPartnerCcClient = ['x1', 'x2'].map((t) => ({ from: ME, to: [PARTNER], cc: [CLIENT_MATE], threadId: t, fromUser: true }));
+  // The client's colleague writes TO the partner with the user copied (alongside, structurally).
+  const clientToPartnerCcMe = ['y1', 'y2', 'y3'].map((t) => ({ from: CLIENT_MATE, fromName: 'Lee Client', to: [PARTNER], cc: [ME], threadId: t, fromUser: false }));
+  const v10 = inferCircle([...clientThreads, ...userToPartnerCcClient], known);
+  ok('C10 a CLIENT colleague the user copies when writing to someone else is never suggested (their organisation is the counterparty)',
+    !v10.some((x) => x.address === CLIENT_MATE) && v10.some((x) => x.address === PARTNER && x.auto), JSON.stringify(v10.map((x) => [x.threads, x.counterThreads])));
+  const v11 = inferCircle([...clientThreads, ...clientToPartnerCcMe], known);
+  const p11 = v11.find((x) => x.address === PARTNER);
+  ok('C11 a client colleague writing to the partner with the user copied is never suggested — and those pairs never count against the partner (counter 0)',
+    !v11.some((x) => x.address === CLIENT_MATE) && !!p11 && p11.counterThreads === 0 && p11.auto, JSON.stringify(p11));
+  // Per thread: an org that LOSES an org contest there is the thread's counterparty — none of its
+  // addresses is a same-side collaborator on it, even if one of them wins a pair over a third org.
+  const OTHER = 'ali@other-example.com';
+  const v12 = inferCircle([...clientThreads, ...['z1', 'z2'].flatMap((t) => [
+    { from: ME, to: [CLIENT], cc: [PARTNER], threadId: t, fromUser: true },
+    { from: CLIENT_MATE, to: [OTHER], cc: [ME], threadId: t, fromUser: false },
+  ])], known);
+  ok('C12 on a thread whose counterparty org is the client, the client\'s own people never gain a side there (a win over a third org does not help)',
+    !v12.some((x) => x.address === CLIENT_MATE) && !v12.some((x) => x.address === CLIENT), JSON.stringify(v12.map((x) => x.threads)));
+  ok('C13 a public-provider address is its OWN organisation (a public domain proves no org) — the public-domain rules are unchanged',
+    orgOf(GMAIL) === GMAIL && orgOf(CLIENT) === 'acme-example.com' && CIRCLE_ORG_SIDE_DOMINANCE >= 2);
+  // A partner that is genuinely the counterparty on a few threads (the user writes TO them copying the
+  // client) stays on the user's side while it is the side on ≥ the stated multiple.
+  const v14 = inferCircle([...clientThreads, ...userToPartnerCcClient, { from: ME, to: [PARTNER], cc: [], threadId: 'q1', fromUser: true }], known);
+  ok('C14 a 1:1 thread with the partner proves no side either way (no pair → no org contest)', v14.some((x) => x.address === PARTNER && x.threads === 4 && x.counterThreads === 0));
+  ok('C15 THE HIGH BAR IS A VERDICT OF THE COUNTS under the current rule (the owner\'s two strongest partners: 24/4 and 20/2 clear it)',
+    autoVerdict({ threads: 24, counterThreads: 4, alongside: 26, publicDomain: false }) && autoVerdict({ threads: 20, counterThreads: 2, alongside: 125, publicDomain: false })
+    && !autoVerdict({ threads: 20, counterThreads: 6, alongside: 125, publicDomain: false }) && !autoVerdict({ threads: 20, counterThreads: 0, alongside: 125, publicDomain: true })
+    && CIRCLE_VERSION >= 2);
   ok('C9 the stores are registered in the one typed door (working_circle cache · circle_decision record · looks_done record)',
     ITEM_PLAN_REGISTRY.working_circle.role === 'cache' && ITEM_PLAN_REGISTRY.circle_decision.role === 'record' && ITEM_PLAN_REGISTRY.looks_done.role === 'record');
 }
@@ -184,6 +221,18 @@ async function main() {
   const ev = matchEvents(events, { afterISO: day(5), fulfiller: 'user', keys: { addresses: [CLIENT], personIds: [], threadIds: ['tClient'], eventIds: [], fileIds: [], externalRefs: [], entityIds: [] } }, NOW, SETTLE_MATCH);
   ok('L6 their delivery on the client thread is NOMINATED for the work the user owes (SETTLE_MATCH), attributed to them',
     ev.some((e) => e.id === 'm-deliver' && e.by === 'teammate' && e.key === 'object'));
+
+  // L7/L8 — THE CACHE NEVER SERVES A STALE VERDICT (W12.2: a cache computed under an earlier rule held
+  // both of the owner's strongest partners at auto=false for a day).
+  const cand = { address: PARTNER, name: 'Sam Partner', threads: 20, counterThreads: 2, alongside: 125, ccByUser: 54, publicDomain: false, auto: false };
+  const staleV2: CircleInference = { v: CIRCLE_VERSION, at: NOW, read: 10, capped: false, dropped: 0, candidates: [cand] };
+  const t2: Record<string, Row[]> = { emails: [], item_plans: [{ id: 'p1', user_id: U, kind: 'working_circle', entity_id: 'user', tasks: staleV2, created_at: NOW, updated_at: NOW }] };
+  const rejudged = await loadCircle(fakeDb(t2), U, known, { persist: false });
+  ok('L7 a cached inference is RE-JUDGED on read: counts that clear the current bar count, whatever verdict was stored',
+    rejudged.recomputed === false && rejudged.counting.includes(PARTNER) && rejudged.inference?.candidates[0]?.auto === true);
+  const t3: Record<string, Row[]> = { emails: [], item_plans: [{ id: 'p1', user_id: U, kind: 'working_circle', entity_id: 'user', tasks: { ...staleV2, v: 1 }, created_at: NOW, updated_at: NOW }] };
+  const recomputed = await loadCircle(fakeDb(t3), U, known, { persist: false });
+  ok('L8 an inference cached under the v1 rule (no organisation contest) is recomputed on read, not served', recomputed.recomputed === true && recomputed.counting.length === 0);
 
   // ── D · THE CONVERSATION DELTA (a) ──
   console.log('\nD · THE CONVERSATION DELTA — the working circle is the user\'s side');
@@ -322,6 +371,12 @@ async function main() {
   ok('R10 the settings door: Settings → Team mounts "People you work with" over its own route (RLS client, the user\'s click only)',
     /<WorkingCircle \/>/.test(src('components/settings/team-section.tsx')) && /createClient\(\)/.test(src('app/api/settings/working-circle/route.ts'))
     && /decideCircle\(supabase, user\.id/.test(src('app/api/settings/working-circle/route.ts')) && /People you work with/.test(src('components/settings/working-circle.tsx')));
+  {
+    const r = src('app/api/settings/working-circle/route.ts');
+    ok('R11 (W12.3) members are read with the service role scoped to the caller (loadActorContext(adminClient(), userId…)) — a member on a second mailbox is a member, never a suggestion; the user\'s own rows and decisions stay on the RLS client',
+      /loadActorContext\(adminClient\(\), userId/.test(r) && /loadCircle\(supabase, userId, base/.test(r) && /decideCircle\(supabase, user\.id/.test(r)
+      && /auth\.getUser\(\)/.test(r));
+  }
 
   console.log(`\n${fail ? '❌' : '✅'} ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
