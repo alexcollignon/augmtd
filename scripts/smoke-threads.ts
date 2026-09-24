@@ -2182,13 +2182,15 @@ console.log('\nT15 · THE ITEM ROOM IS THE PROJECT ROOM — same header, same ha
   gate('T15.1 the item room opens with the SAME 52px header line as the project room',
     !!detail && /<header className="flex-shrink-0 flex items-center gap-3 h-\[52px\] px-5 bg-white border-b border-neutral-200\/80">/.test(detail)
     && !!room && /<header className="flex-shrink-0 flex items-center gap-3 h-\[52px\]/.test(room));
-  gate('T15.2 the header carries back (the BackLink idiom) · the title · the machine’s ONE word · the faces',
+  // ⟲ RE-POINTED (W16 · THE ITEM PAGE IS A FEW KIT WIDGETS, owner Sep 24): the item header is back ·
+  // title · one quiet subtitle · Details · Done · Dismiss · ⋯ — the state word, the face pile and the
+  // project chip left it (the state speaks through the page's ONE widget; linking lives in Details).
+  gate('T15.2 the header carries back (the BackLink idiom) · the title · the subtitle — no state pill, no faces',
     !!detail && /<BackLink fallback="\/home"/.test(detail)
     && /className="min-w-0 max-w-\[40%\] truncate text-\[15px\] font-semibold/.test(detail)
-    && /room\.stateWord && \(/.test(detail) && /machineWordOf\(view\)/.test(detail)
-    && /<FacePile faces=\{room\.faces\}/.test(detail));
-  gate('T15.2b the faces are DERIVED from what the view already serves (no second store, no new read)',
-    !!detail && /function facesOf\(/.test(detail) && /for \(const p of view\?\.prepared \?\? \[\]\) push\(p\.by\);/.test(detail)
+    && !/room\.stateWord/.test(detail) && !/<FacePile/.test(detail) && /\{room\.meta && </.test(detail));
+  gate('T15.2b no face pile and no second store read for one (the pile left the header — W16)',
+    !!detail && !/function facesOf\(/.test(detail) && !/room\.faces/.test(detail)
     && !/fetch\('\/api\/people/.test(detail));
   {
     // The header's OWN slice: chrome may carry facts (who · when · due) but never prose.
@@ -2197,9 +2199,10 @@ console.log('\nT15 · THE ITEM ROOM IS THE PROJECT ROOM — same header, same ha
       !!header && !/brief/i.test(header) && !/summary/i.test(header) && !/nextMove/.test(header)
       && !/GapLine|room\.gap/.test(header));
   }
-  gate('T15.4 URGENCY IS A WORD: the machine’s state wears a tone, never a badge, and no rose/red chrome',
-    !!detail && /const MACHINE_TONE: Record<string, string>/.test(detail)
-    && /awaiting_input: 'text-amber-600'/.test(detail)
+  // ⟲ RE-POINTED (W16): no state word in the header at all now — the calm law holds a fortiori.
+  gate('T15.4 URGENCY IS NEVER CHROME: the item header carries no state pill, no tone table, and no rose/red chrome',
+    !!detail && !/const MACHINE_TONE: Record<string, string>/.test(detail)
+    && !/stateTone/.test(detail)
     && !/bg-rose-|bg-red-/.test(detail?.match(/<header className="flex-shrink-0 flex items-center gap-3 h-\[52px\][\s\S]*?<\/header>/)?.[0] ?? ''));
 
   // THE STAGE IS SUMMONED — no docked second pane at rest, on ANY kind.
@@ -2224,8 +2227,10 @@ console.log('\nT15 · THE ITEM ROOM IS THE PROJECT ROOM — same header, same ha
     // it is DATA, not a kind branch: the frame renders the handle only when the kind supplies one
     && /\{room\.onSummonStage && room\.sourceLabel && \(/.test(detail)
     && /onSummonStage\?: \(\) => void;/.test(detail) && /sourceLabel\?: string;/.test(detail)
-    // …the two workspace kinds still summon; the two reading kinds hand over nothing
-    && (detail.match(/onSummonStage: \(\) => setSourceOpen\(true\)/g) ?? []).length === 2
+    // …the workspace kind still summons (a meeting's notes); the reading kinds hand over nothing.
+    // ⟲ RE-POINTED (W16): the commitment door's "The ask" handle is gone — a parked gate is the
+    // thread's ONE widget now, so only the meeting door keeps a summon handle.
+    && (detail.match(/onSummonStage: \(\) => setSourceOpen\(true\)/g) ?? []).length === 1
     && !/sourceLabel: objectKind === 'email_thread' \? 'Thread'/.test(detail)
     && !/sourceLabel: 'Thread',/.test(detail)
     // …and it never doubles as a ⋯ row.
@@ -2240,9 +2245,14 @@ console.log('\nT15 · THE ITEM ROOM IS THE PROJECT ROOM — same header, same ha
   // nudge row summoned a split stage holding the OLD ComposePanel while the email door wore the kit
   // EmailCard in the conversation). The commitment door's stage now exists ONLY for a parked gate;
   // its message is the ONE EmailCard in the conversation (smoke-one-stage A-block carries the law).
-  gate('T15.8b a parked GATE is the room’s one move, so it raises the stage the way a focused artifact does — and on the commitment door NOTHING ELSE raises one',
+  // ⟲ RE-POINTED (W16 · THE ITEM PAGE IS A FEW KIT WIDGETS — owner-approved: a workflow/handoff gate is
+  // the page's ONE action widget, Approve / Hold back, IN THE THREAD). The law "a parked gate is the
+  // room's one move" holds; its SEAT moved from a raised stage to the thread, and still nothing else on
+  // the commitment door raises a stage.
+  gate('T15.8b a parked GATE is the room’s one move — the thread’s ONE action widget, never a raised stage — and on the commitment door NOTHING raises one',
     !!detail && /const gateStanding = isHandoff && handoffOpen;/.test(detail)
-    && /const stageOpen = sourceOpen \|\| \(isHandoff && inviteOpen\) \|\| gateStanding;/.test(detail));
+    && /const stageOpen = sourceOpen \|\| \(isHandoff && inviteOpen\);/.test(detail)
+    && /gate=\{gateStanding && gateNode \?/.test(detail));
   gate('T15.8c THE JUDGE NEVER RAISES A STAGE — the meeting door keeps its person-raised composer; the commitment door has NO composer stage at all (W7.3)',
     !!detail && (detail.match(/const \[composeRaised, setComposeRaised\] = useState\(false\);/g) ?? []).length === 1
     && !/setComposing\(true\);/.test(detail.slice(detail.indexOf('function CommitmentDetail')))
@@ -2264,7 +2274,8 @@ console.log('\nT15 · THE ITEM ROOM IS THE PROJECT ROOM — same header, same ha
     && !/aug-drawer absolute top-0 right-0/.test(detail)
     && !/@keyframes aug-drawer-in/.test(detail));
   gate('T15.10 its sections are the kind’s own tabs, handed in as DATA (no layout branch, no forked TabBar)',
-    !!detail && /sections=\{tabs\}/.test(detail) && /signal=\{room\.drawerSignal \?\? null\}/.test(detail)
+    // ⟲ W16: project linking joins the drawer as its first section (data, never a branch).
+    !!detail && /sections=\{projectSection \? \[projectSection, \.\.\.tabs\] : tabs\}/.test(detail) && /signal=\{room\.drawerSignal \?\? null\}/.test(detail)
     && !/<TabBar/.test(detail));
   gate('T15.11 EXACTLY ONE drawer implementation exists in the tree (the maintenance-work law)',
     sourceFiles('components').concat(sourceFiles('app'))
@@ -3358,7 +3369,8 @@ console.log('\nT22 · THE GROUND EVIDENCE + ONE AGENDA AT THE RENDER — the roo
     // reads is `moveCard` rather than a non-empty action row. The question is identical.
     !!rail && /const pinnedSpeaks = !!\(composed \|\| openingText \|\| moveCard[^)]*\);/.test(rail)
     && /const foldedAsk = pinnedSpeaks && liftedAsk\?\.checklist\?\.length \? liftedAsk : null;/.test(rail)
-    && /if \(liftedAsk && !foldedAsk\) \{/.test(rail)
+    // ⟲ W16: the project door keeps this seat; an ITEM page seats the ask only as its ONE input widget.
+    && /if \(!itemPage && liftedAsk && !foldedAsk\) \{/.test(rail)
     // …and the fold no longer loses the ask's own sentence where no brief names the gap
     && /\{foldedAsk && !composed && foldedAsk\.text && \(/.test(rail));
   gate('T22.11 …it folds INTO the pinned card (one delivery, one primary CTA)',
@@ -3370,7 +3382,8 @@ console.log('\nT22 · THE GROUND EVIDENCE + ONE AGENDA AT THE RENDER — the roo
     // all three seats, so the test is that all three pass through it — a stronger claim than the
     // old one, which could only compare one seat's inline arguments.
     !!rail && /\{foldedAsk && askCard\(\{ \.\.\.foldedAsk, text: '' \}, 'folded-ask'\)\}/.test(rail)
-    && (rail.match(/askCard\(\{ \.\.\./g) ?? []).length === 3
+    // ⟲ W16: a FOURTH seat — the item page's input widget — through the SAME host and handlers.
+    && (rail.match(/askCard\(\{ \.\.\./g) ?? []).length === 4
     // …and the host is the ONE place the go-ahead law and the proceed door are consulted
     && !!askHost && /askAllowsGoAhead\(spec\.items, spec\.context\)/.test(askHost)
     && /proceedAsk\(turnId\)/.test(askHost));
@@ -4448,7 +4461,8 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     // RE-POINTED (W3-A, Sep 22 — docs/component-map.md §2a): the three seats now reach the law
     // through the ONE host, which calls it exactly once. So the gate asserts BOTH halves: three
     // seats, one call site. (The old form counted three calls in one file, which was the drift.)
-    !!rail && (rail.match(/askCard\(\{ \.\.\./g) ?? []).length === 3
+    // ⟲ W16: four seats (the item page's input widget joins), still ONE call site in the host.
+    !!rail && (rail.match(/askCard\(\{ \.\.\./g) ?? []).length === 4
     && !/askAllowsGoAhead\(/.test(rail)
     && !!askHost && (askHost.match(/askAllowsGoAhead\(/g) ?? []).length === 1
     && /const askContext = \(t: Pick<Extract<Turn, \{ role: 'system' \}>, 'refs'>\)/.test(rail));
@@ -4789,7 +4803,7 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     && ALL.filter((f) => /— \{FILED_LABEL\}<\/span>/.test(read(f) ?? '')).length === 1);
   gate('T29.2 BOTH DOORS MOUNT IT — the project room and the loose item room, with sections as DATA',
     !!room && /<FiledDrawer$/m.test(room) && /sections=\{\(\[/.test(room)
-    && !!detail && /<FiledDrawer$/m.test(detail) && /sections=\{tabs\}/.test(detail)
+    && !!detail && /<FiledDrawer$/m.test(detail) && /sections=\{projectSection \? \[projectSection, \.\.\.tabs\] : tabs\}/.test(detail) /* ⟲ W16 */
     // …and neither door keeps a tab state, an escape handler or a drag of its own any more
     && !/const \[rightTab, setRightTab\]/.test(room)
     && !/ev\.key === 'Escape'\) setDrawerOpen\(false\)/.test(room)

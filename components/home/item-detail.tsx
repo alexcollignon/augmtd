@@ -29,7 +29,13 @@ import { prepAnchorKey } from '@/lib/room/presentation';
 // THE ONE ROOM GRAMMAR (threads Phase 3, owner walk Sep 7 — "the room isn't the same across items
 // and projects"): the loose item room wears the project room's own chrome — the 52px header line,
 // the FacePile, the Filed handle, the summoned drawer. Same parts, same file, never a lookalike.
-import { FacePile } from '@/components/thread/avatar-status';
+// W16 · THE ITEM PAGE IS A FEW KIT WIDGETS — the header carries no face pile, no state pill and no
+// project chip (the state speaks through the ONE widget; project linking lives in Details).
+import { ConfirmCard } from '@/components/thread/confirm-card';
+import { actionWidgetOf, type ItemArtifactKind } from '@/components/thread/item-page';
+// W16 · a meeting source with a calendar event on file is the kit's EVENT widget (time · attendees · join).
+import EventCard from '@/components/home/event-card';
+import type { AnswerableState } from '@/components/thread/types';
 import { FiledIcon } from '@/components/room/filed-icon';
 import { PastePackCard } from '@/components/prepared/paste-pack-card';
 import { BackLink, AttachmentLightbox, type LightboxFile } from '@/components/ui';
@@ -59,7 +65,7 @@ import { panelPlan, applyPanelPlan } from '@/lib/room/render-plan';
 import { resolveDecisionObject, type DecisionObject } from '@/lib/room/decision-object';
 // W15.2 · EVERY ITEM CAN BE CLOSED — the header's Done · Dismiss (each through its kind's own door) and
 // SCHEDULED's word. Both modules are client-safe (zero imports).
-import { ITEM_DEED_WORDS, resolveRequestOf, resolveEmphasisOf, type ItemDeed } from '@/lib/work/item-actions';
+import { ITEM_DEED_WORDS, resolveRequestOf, type ItemDeed } from '@/lib/work/item-actions';
 import { scheduledWordOf } from '@/lib/work/scheduled';
 import dynamic from 'next/dynamic';
 
@@ -535,30 +541,24 @@ type RoomTab = { id: string; label: string; node: React.ReactNode };
 /** The chrome the item room wears. Assembled by each kind from what it already serves. */
 type RoomChrome = {
   title: string;
-  /** The quiet fact line beside the title (who · when · due). Chrome, never prose. */
+  /** The ONE quiet subtitle beside the title (who · date). Chrome, never prose. */
   meta?: React.ReactNode;
-  /** W11.1 · LOOKS DONE — CONFIRM: the served evidence line + the ONE Done / Not yet pair, under the
-   *  header word. Done = the item's own resolution door (logged, undoable); Not yet = the sticky
-   *  refusal (POST /api/work/looks-done). Absent unless the machine's state is `looks_done`. */
-  confirm?: LooksDoneConfirm | null;
+  /* (W16 · the LOOKS-DONE BAR and its "Not yet" are retired: the machine's looks_done state renders as
+     the kit's CONFIRM WIDGET in the thread — "Mark done" · "Keep open" — chosen by the item page's one
+     composition. The header carries no state pill either: the state speaks through the widget.) */
   /** W15.2 · EVERY ITEM CAN BE CLOSED — the header's persistent action group (right side, beside
    *  Details): Done · Dismiss, each through THIS item kind's existing resolution door (logged,
-   *  undoable — lib/work/item-actions.ts). SECONDARY beside a prepared primary; Done is emphasised
-   *  when the machine reads looks_done / settled. Null only where the kind's own card owns closing
-   *  (a handoff gate: approving IS done) or the item is already resolved. */
+   *  undoable — lib/work/item-actions.ts). W16: Done is emphasised ONLY when the page's one action
+   *  widget is the CONFIRM widget (components/thread/item-page.ts). Null only where the kind's own
+   *  card owns closing (a handoff gate: approving IS done) or the item is already resolved. */
   resolve?: RoomResolve | null;
-  /** THE MACHINE'S ONE WORD — the same vocabulary the deck and the deep-dive already speak. */
-  stateWord: string | null;
-  stateTone?: string;
-  faces: Array<{ id: string; name: string }>;
   verbs: RoomVerb[];
   tabs: RoomTab[];
-  /** The membership control (Add to project) — the item's filing affordance. */
+  /** The membership control (Add to project) — W16: it lives in DETAILS (the drawer's Project
+   *  section), never as a chip in the header. */
   membership?: React.ReactNode;
-  /** THE PROJECT DOOR, in the ONE chrome band (owner walk, Sep 10 — the rail's second name row
-   *  died and its door moved here rather than being lost). Rendered ONLY for a TRACKED entity: a
-   *  merely-recognized one has no room to open, and the filing chip beside it already names it
-   *  ("connects to X · Track"). A door with nowhere to go is the lying-door class. */
+  /** THE PROJECT DOOR — W16: in Details beside the membership control, only for a TRACKED entity (a
+   *  merely-recognized one has no room to open — a door with nowhere to go is the lying-door class). */
   project?: { id: string; name: string; tracked?: boolean } | null;
   /** Is the stage raised? Null stage at rest is the whole point (the summoned-stage law). */
   stageOpen: boolean;
@@ -592,44 +592,46 @@ function clipTitle(text: string, max: number): string {
   return `${(at > max * 0.6 ? cut.slice(0, at) : cut).replace(/[\s,;:—-]+$/, '')}…`;
 }
 
-// ── W11.1 · LOOKS DONE — CONFIRM, in the room ────────────────────────────────────────────────────
-// W11.2's machine state `looks_done` (the user's own side shows the work delivered, the judge did not
-// close it). The room shows the SERVED evidence line under the header word and ONE CTA row: Done
-// (the item's existing resolution door — logged, undoable) · Not yet (the sticky refusal, until new
-// evidence). The words' one home is lib/evidence/looks-done-word.ts / the served line — nothing here
-// composes them.
-// W15.2 · ONE CTA ROW: Done lives in the HEADER's action group now (emphasised on looks_done) — this
-// strip keeps the evidence line and the one deed only it can do, Not yet. Never a second Done.
+// ── W16 · THE CONFIRM WIDGET'S HOST (looks_done) ──────────────────────────────────────────────────
+// The machine's `looks_done` state (the work's OWN conversation shows it delivered, the judge did not
+// close it — lib/evidence/looks-done.ts) renders as the kit's confirm widget IN THE THREAD: the served
+// evidence line ("You replied on Sep 23") and two plain deeds — "Mark done" (the item's existing
+// resolution door: logged, undoable) · "Keep open" (the sticky refusal until new evidence arrives).
+// The full-width bar under the header and its "Not yet" are gone (owner, Sep 24). This host owns the
+// two doors; the kit card draws them.
 type LooksDoneConfirm = { line: string | null; kind: 'commitment' | 'inbox'; id: string; onDone: () => void | Promise<void> };
-export const LOOKS_DONE_NOT_YET_ROUTE = '/api/work/looks-done';
+export const LOOKS_DONE_KEEP_OPEN_ROUTE = '/api/work/looks-done';
 function looksDoneConfirmOf(view: ItemViewData | null, kind: 'commitment' | 'inbox', id: string, onDone: () => void | Promise<void>): LooksDoneConfirm | null {
   const m = view?.machineState;
   if (m?.state !== 'looks_done') return null;
   return { line: m.line ?? null, kind, id, onDone };
 }
-function LooksDoneStrip({ confirm }: { confirm: LooksDoneConfirm }) {
+function ConfirmHost({ confirm }: { confirm: LooksDoneConfirm }) {
   const { kind, id } = confirm;
-  const [busy, setBusy] = useState<null | 'not_yet'>(null);
-  const [answered, setAnswered] = useState(false);
-  if (answered) return null;
-  const notYet = async () => {
-    setBusy('not_yet');
-    try {
-      const res = await fetch(LOOKS_DONE_NOT_YET_ROUTE, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, id, action: 'not_yet' }) });
-      if (res.ok) setAnswered(true);
-    } finally { setBusy(null); }
+  const [state, setState] = useState<AnswerableState>('open');
+  const [settledLine, setSettledLine] = useState<string | undefined>(undefined);
+  const done = async () => {
+    setState('busy');
+    // The kind's own door narrates its receipt and leaves the page; the card only stands down meanwhile.
+    try { await confirm.onDone(); } finally { setState('open'); }
   };
-  return (
-    <div className="flex-shrink-0 flex items-center gap-3 px-5 py-2 bg-white border-b border-neutral-200/80">
-      {confirm.line && <p className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-600">{confirm.line}</p>}
-      {!confirm.line && <div className="flex-1" />}
-      <div className="flex-shrink-0 flex items-center gap-2">
-        <button onClick={notYet} disabled={!!busy}
-          className="aug-focus inline-flex items-center rounded-lg h-8 px-3 text-[12px] font-medium text-neutral-600 border border-neutral-200 hover:border-neutral-300 disabled:opacity-60 transition-colors">Not yet</button>
-      </div>
-    </div>
-  );
+  const keep = async () => {
+    setState('busy');
+    try {
+      const res = await fetch(LOOKS_DONE_KEEP_OPEN_ROUTE, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, id, action: 'not_yet' }) });
+      if (res.ok) { setSettledLine('Kept open — it comes back if something new arrives.'); setState('settled'); } else setState('open');
+    } catch { setState('open'); }
+  };
+  return <ConfirmCard line={confirm.line} state={state} onDone={() => void done()} onKeep={() => void keep()} settledLine={settledLine} />;
 }
+/** The confirm widget as an item-page artifact (the rail's one composition picks it on looks_done). */
+function confirmArtifactOf(confirm: LooksDoneConfirm | null) {
+  return confirm ? [{ key: 'confirm', label: 'Looks done', onOpen: () => {}, artifactKind: 'looks_done' as const, node: <ConfirmHost confirm={confirm} /> }] : [];
+}
+/** W16 · Done is emphasised ONLY when the page's one widget is the confirm widget — the same pure
+ *  choice the rail renders (components/thread/item-page.ts actionWidgetOf). */
+const doneEmphasisOf = (view: ItemViewData | null, confirm: LooksDoneConfirm | null): 'done' | 'none' =>
+  actionWidgetOf(view?.machineState ?? null, { looks_done: !!confirm }) === 'confirm' ? 'done' : 'none';
 
 // ── W15.2 · THE HEADER'S ACTION GROUP — Done · Dismiss on EVERY item room ─────────────────────────
 type RoomResolve = { onDone: () => void | Promise<void>; onDismiss: () => void | Promise<void>; emphasis: 'done' | 'none' };
@@ -660,6 +662,22 @@ function ItemRoomFrame({ room, rail, stage }: { room: RoomChrome; rail: React.Re
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [menu, setMenu] = useState(false);
   const tabs = room.tabs;
+  // W16 · PROJECT LINKING LIVES IN DETAILS — the membership control and (for a TRACKED project) its
+  // door, as the drawer's first section, never as chips in the header.
+  const projectSection: RoomTab | null = (room.membership || (room.project && room.project.tracked !== false)) ? {
+    id: 'project', label: 'Project',
+    node: (
+      <div className="flex flex-wrap items-center gap-2">
+        {room.membership}
+        {room.project && room.project.tracked !== false && (
+          <Link href={projectHref(room.project.id)} title={`Open ${room.project.name}`}
+            className="truncate rounded-lg px-2 py-1 text-[12px] font-medium text-neutral-500 transition-colors hover:bg-neutral-50 hover:text-indigo-700">
+            Open {room.project.name} →
+          </Link>
+        )}
+      </div>
+    ),
+  } : null;
 
   // THE CARD'S DOOR RAISES THE PANE; the pane lands on the named section itself (the drawer owns
   // its own tab state now — ONE component, both doors).
@@ -682,28 +700,10 @@ function ItemRoomFrame({ room, rail, stage }: { room: RoomChrome; rail: React.Re
         </BackLink>
         <h1 title={room.title}
           className="min-w-0 max-w-[40%] truncate text-[15px] font-semibold tracking-tight text-neutral-900">{room.title}</h1>
-        {room.meta && <div className="min-w-0 max-w-[32%] truncate flex items-center gap-1.5 text-[12px] text-neutral-500">{room.meta}</div>}
-        {room.stateWord && (
-          // URGENCY IS A WORD, NEVER RED CHROME (the calm law) — the machine's own word, quiet.
-          <span className={`flex-shrink-0 text-[11px] font-semibold uppercase tracking-wide ${room.stateTone ?? 'text-neutral-400'}`}>
-            {room.stateWord}
-          </span>
-        )}
+        {room.meta && <div className="min-w-0 max-w-[40%] truncate flex items-center gap-1.5 text-[12px] text-neutral-500">{room.meta}</div>}
+        {/* W16 · NO STATE PILL, NO FACE PILE, NO PROJECT CHIP in the header: the state speaks through
+            the page's ONE widget, and project linking lives in Details (the drawer's Project section). */}
         <div className="flex-1" />
-        {/* THE FACES NAME THEMSELVES AND POINT SOMEWHERE — the pile IS the door to where people
-            and inventory live: the drawer. Never an unlabeled row of pseudo-buttons. */}
-        {room.faces.length > 0 && (
-          <FacePile faces={room.faces} size={26} max={4} label="In this room" onClick={() => setDrawerOpen(true)} />
-        )}
-        {/* THE PROJECT DOOR — the word IS the deed (law 8). It sits in the ONE band beside the
-            filing chip; the rail no longer says the room's name a second line down. */}
-        {room.project && room.project.tracked !== false && (
-          <Link href={projectHref(room.project.id)} title={`Open ${room.project.name}`}
-            className="flex-shrink-0 max-w-[22%] truncate rounded-lg px-2 py-1 text-[12px] font-medium text-neutral-500 transition-colors hover:bg-neutral-50 hover:text-indigo-700">
-            {room.project.name}
-          </Link>
-        )}
-        {room.membership && <span className="flex-shrink-0">{room.membership}</span>}
         {/* THE SOURCE HANDLE — for a kind whose source material is a WORKSPACE (a meeting's notes,
             a commitment's ask), one tap away beside Filed. A kind whose source READS (a mail
             thread) supplies none: its home is the drawer's own Thread section and the card's
@@ -749,8 +749,7 @@ function ItemRoomFrame({ room, rail, stage }: { room: RoomChrome; rail: React.Re
           </div>
         )}
       </header>
-      {/* W11.1 · LOOKS DONE — CONFIRM: the evidence line under the header word + ONE CTA row. */}
-      {room.confirm && <LooksDoneStrip confirm={room.confirm} />}
+      {/* (W16 · the looks-done bar is retired — the confirm widget lives in the thread.) */}
 
       <div className="flex-1 min-h-0">
         {/* ONE-ROOM R2 — THE INVERSION via THE ONE shared shell: the CONVERSATION is the room; the
@@ -784,7 +783,7 @@ function ItemRoomFrame({ room, rail, stage }: { room: RoomChrome; rail: React.Re
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         title={room.title}
-        sections={tabs}
+        sections={projectSection ? [projectSection, ...tabs] : tabs}
         signal={room.drawerSignal ?? null}
       />
     </div>
@@ -829,7 +828,7 @@ type ItemViewData = {
     /** The Aug 13 sweep: false = staged but the send door would refuse it (a timeless invite). */
     sendReady?: boolean;
     /** W2.1: an invite's STORED proposed time — the card mounts from it, never from a live re-grounding. */
-    invite?: { title: string | null; startISO: string | null; proposed: boolean } | null;
+    invite?: { title: string | null; startISO: string | null; proposed: boolean; /** W16 · false = only the user is on it — never an invite widget */ withCounterparty?: boolean } | null;
   }>;
   gap: string | null;
   inviteTaskId: string | null;
@@ -846,7 +845,7 @@ type ItemViewData = {
   itemSource?: string | null;
   /** THE MACHINE'S ONE WORD (experience-spec Part "THE MACHINE") — absent on meetings and on any
    *  view cached before the field existed. */
-  machineState?: { state: string; word: string | null; /** W11.1 · on looks_done: the evidence line (served) */ line?: string | null } | null;
+  machineState?: { state: string; word: string | null; /** W11.1 · on looks_done: the evidence line (served) */ line?: string | null; /** W16 · on a scheduled booking: the event */ eventId?: string | null } | null;
   briefAt?: string | null;
   /** W3.5 (a): the server's compose outran its paint budget — one re-check appends the arrival. */
   briefPending?: boolean;
@@ -875,39 +874,21 @@ function machineWordOf(view: ItemViewData | null): string | null {
   return m.word;
 }
 
-// ONE COLOR PER FACT: the machine's word wears a tone, never a badge — a state that WANTS the
-// person is amber, a state that has something ready is indigo, everything else is quiet neutral.
-// (The calm law: urgency is a word in a line, never chrome.)
-const MACHINE_TONE: Record<string, string> = {
-  awaiting_input: 'text-amber-600',
-  awaiting_decision: 'text-amber-600',
-  looks_done: 'text-amber-600', // W11.1 — it wants the person's confirmation
-  scheduled: 'text-neutral-500', // W15.2 — booked; nothing is due before its day
-  ready: 'text-indigo-500',
-  awaiting_approval: 'text-indigo-500',
-};
-const machineToneOf = (view: ItemViewData | null): string =>
-  MACHINE_TONE[view?.machineState?.state ?? ''] ?? 'text-neutral-400';
+// (W16 · THE STATE PILL IS RETIRED from the item header — its tone table went with it. The word still
+//  rides the EMBEDDED stage header, where the project room owns the chrome.)
+
+// W16 · SCHEDULED speaks in the quiet SUBTITLE (who · date — the date IS the booked when), never as a
+// pill: "scheduled — Wed, Sep 30, 11:00".
+function scheduledMetaOf(view: ItemViewData | null): React.ReactNode {
+  const m = view?.machineState;
+  return m?.state === 'scheduled' ? <span className="flex-shrink-0 text-neutral-400">· {scheduledWordOf(m.line)}</span> : null;
+}
 
 // W15.2 · SETTLED ITEMS DROP THEIR ACTION CARDS — the machine says the work is settled (closed, or
 // judged owed-nothing): no prepared card mounts (no Send on settled work); the history stays readable.
 const roomSettled = (view: ItemViewData | null): boolean => view?.machineState?.state === 'settled';
 
-// ── THE ROOM'S FACES — derived from what the view ALREADY serves (no second store, no new read):
-// the coworkers who prepared work here, then the human this work is with. Collect more than the
-// pile shows, so its "+N" is a truth and not a constant.
-function facesOf(view: ItemViewData | null, ...people: Array<string | null | undefined>): Array<{ id: string; name: string }> {
-  const out: Array<{ id: string; name: string }> = [];
-  const push = (raw: string | null | undefined) => {
-    const name = (raw ?? '').split('<')[0].trim();
-    if (!name || name.toLowerCase() === 'draft' || out.length >= 8) return;
-    if (out.some((f) => f.name.toLowerCase() === name.toLowerCase())) return;
-    out.push({ id: name.toLowerCase(), name });
-  };
-  for (const p of view?.prepared ?? []) push(p.by);
-  for (const p of people) push(p);
-  return out;
-}
+// (W16 · THE FACE PILE left the item header — the header is back · title · subtitle · Details · Done · Dismiss · ⋯.)
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE ITEM'S ONE CONTEXT DRAWER (owner walk, Sep 9 — "the side panel just flags all items that
@@ -1867,11 +1848,15 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
   const objectKind: 'email_thread' | 'meeting_action' = view?.itemSource === 'meeting' ? 'meeting_action' : 'email_thread';
   // ONE derivation of the prepared-artifact cards — the rail renders them at the stream's edge;
   // EMBEDDED (no own rail) renders the same cards in-stage (the "says prepared, isn't" bug, Aug 4).
-  type StreamArtifact = { key: string; label: string; by?: string | null; onOpen: () => void; anchorKey?: string; node?: React.ReactNode };
+  type StreamArtifact = { key: string; label: string; by?: string | null; onOpen: () => void; anchorKey?: string; node?: React.ReactNode; artifactKind?: ItemArtifactKind };
+  // W16 · looks_done → the confirm widget (Mark done = this item's own done door, markHandled).
+  const emailConfirm = itemDismissed ? null : looksDoneConfirmOf(view, 'inbox', id, markHandled);
   // W15.2 · a SETTLED item's room mounts no action card (the machine's word, one predicate).
   const artifactList: StreamArtifact[] = itemDismissed || roomSettled(view) ? [] : [
+    // W16 · THE CONFIRM WIDGET (looks_done) — the page's one composition picks it by the machine's state.
+    ...(embedded ? [] : confirmArtifactOf(emailConfirm)),
     ...(!sent && !!draft?.trim() && verdict?.work !== 'decide' && objectKind === 'email_thread' ? [{
-      key: 'reply', label: 'Reply drafted — ready to review',
+      key: 'reply', label: 'Reply drafted — ready to review', artifactKind: 'reply_draft' as const,
       by: view?.prepared?.find((p) => p.kind === 'reply_draft')?.by ?? null,
       // THE PREP ANCHOR KEY (W2.1): the writer's own shape (`prep:inbox:<id>`) — `prep:<id>` never matched.
       onOpen: openComposer, anchorKey: prepAnchorKey('inbox', id),
@@ -1902,8 +1887,9 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     // shell under a "prepared" label whenever the stored invite was hidden (or never landed). The
     // re-prepare lands as the card on the next open; the summoned stage (the user's own door) keeps
     // its on-demand build.
-    ...(view?.prepared?.some((p) => p.kind === 'invite') ? [{
-      key: 'invite',
+    // W16 · AN INVITE IS FOR SOMEONE: one with only the user on it mounts no widget (the room asks who).
+    ...(view?.prepared?.some((p) => p.kind === 'invite' && p.invite?.withCounterparty !== false) ? [{
+      key: 'invite', artifactKind: 'invite' as const,
       // TRUTH BEFORE PRESENTATION: an invite without a grounded time never claims "prepared".
       label: view?.inviteHasTime === false ? 'Invite drafted — needs a time from you' : 'Calendar invite prepared — review & approve',
       onOpen: () => { setInviteOpen(true); setComposerOpen(false); setForwarding(false); },
@@ -1914,7 +1900,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
         verdictLevel={!view?.inviteTaskId} onSent={() => setInviteOpen(false)} />,
     }] : []),
     ...(verdict?.work === 'forward' ? [{
-      key: 'forward', label: 'Forward prepared — review & approve', by: null,
+      key: 'forward', label: 'Forward prepared — review & approve', by: null, artifactKind: 'forward' as const,
       onOpen: openForward, anchorKey: prepAnchorKey('inbox', id),
       // THE CARD CONTRACT REACHES THE LAST PREPARED VERB (W3-C, Sep 22 — component-map §2 item 8):
       // forward arrived as a bare "Open →" row beside a reply and an invite that both arrived AS
@@ -1986,15 +1972,12 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
       <>
         {senderLine && <span className="min-w-0 truncate">{senderLine}</span>}
         {thread?.receivedAt && <span className="flex-shrink-0 text-neutral-400 tabular-nums">· {fmtDateTime(thread.receivedAt)}</span>}
+        {scheduledMetaOf(view)}
       </>
     ),
-    stateWord: machineWordOf(view),
-    stateTone: machineToneOf(view),
-    // W11.1 · LOOKS DONE — Done is this item's own resolution door (markHandled: logged, undoable).
-    confirm: itemDismissed ? null : looksDoneConfirmOf(view, 'inbox', id, markHandled),
     // W15.2 · Done · Dismiss in the header, through this kind's own doors (markHandled / dismissItem).
-    resolve: itemDismissed ? null : { onDone: markHandled, onDismiss: dismissItem, emphasis: resolveEmphasisOf(view?.machineState?.state) },
-    faces: facesOf(view, thread?.fromName ?? thread?.fromAddress),
+    // W16 · Done is emphasised only when the page's one widget is the confirm widget.
+    resolve: itemDismissed ? null : { onDone: markHandled, onDismiss: dismissItem, emphasis: doneEmphasisOf(view, emailConfirm) },
     membership: <AddToProjectControl kind="inbox" id={id} projectId={thread?.projectId ?? null} projectName={thread?.projectName ?? null} suggestName={thread?.initiative ?? null} compact />,
     // THE PROJECT DOOR rides the ONE band (the rail's second name row died with it).
     project: railView?.entity ?? null,
@@ -2420,9 +2403,6 @@ function MeetingDetail({ id, embedded = false }: { id: string; embedded?: boolea
         {tr?.durationMinutes ? <span className="flex-shrink-0 text-neutral-400">· {tr.durationMinutes} min</span> : null}
       </>
     ),
-    stateWord: machineWordOf(view),
-    stateTone: machineToneOf(view),
-    faces: facesOf(view),
     membership: <AddToProjectControl kind="meeting" id={id} compact />,
     // THE PROJECT DOOR rides the ONE band (the rail's second name row died with it).
     project: railView?.entity ?? null,
@@ -2796,8 +2776,17 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   // drawer's Source section. The header's "Source" handle opened a split pane with a composer in it
   // (found live, Sep 23): that door is gone for non-gate commitments.
   const [sourceOpen, setSourceOpen] = useState(false);
+  // W16 · THE GATE IS THE PAGE'S ONE ACTION WIDGET — no longer a raised stage. A parked run's gate (a
+  // handoff's approval card, or an input station) mounts IN THE THREAD as the item page's single
+  // widget (the one table's `gate_open` row → approval / input), beneath Clara's sentence and the
+  // source. The stage is never raised for it; embedded (inside a project room) it stays in place.
   const gateStanding = isHandoff && handoffOpen;
-  const stageOpen = sourceOpen || (isHandoff && inviteOpen) || gateStanding;
+  const stageOpen = sourceOpen || (isHandoff && inviteOpen);
+  const gateNode = isHandoff && data ? (handoff?.gateKind === 'input' ? (
+    <InputStationCard title={data.description} runId={handoffRunId} open={handoffOpen} handoff={handoff} onDecided={() => setReload((n) => n + 1)} />
+  ) : (
+    <HandoffDecisionCard title={data.description} runId={handoffRunId} open={handoffOpen} handoff={handoff} onDecided={() => setReload((n) => n + 1)} />
+  )) : null;
   const lowerStage = () => { setSourceOpen(false); setInviteOpen(false); };
 
   // ── A CLAIM RENDERS (stabilization W2.1): the commitment room MOUNTS its prepared artifacts —
@@ -2808,7 +2797,8 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   // which now reads the pooled draft; documents/paste packs/decision briefs ride the PreparedLead
   // card. Anchored on the writer's own key so the pass's narration BECOMES the card.
   const prepArts = view?.prepared ?? [];
-  const inviteArt = prepArts.find((p) => p.kind === 'invite') ?? null;
+  // W16 · AN INVITE IS FOR SOMEONE — one with only the user on it is not mountable work.
+  const inviteArt = prepArts.find((p) => p.kind === 'invite' && p.invite?.withCounterparty !== false) ?? null;
   const nudgeArt = prepArts.find((p) => p.kind === 'nudge_draft' || p.kind === 'reply_draft') ?? null;
   const leadArts = prepArts.filter((p) => (p.kind === 'deliverable' || p.kind === 'paste_pack') && p.content && !p.decision);
   const commitAnchor = prepAnchorKey('commitment', id);
@@ -2849,13 +2839,16 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   const [drawerReq, setDrawerReq] = useState<{ tab: string; v: number } | null>(null);
   const openDrawerAt = (tab: string) => setDrawerReq((r) => ({ tab, v: (r?.v ?? 0) + 1 }));
   // W15.2 · a SETTLED commitment's room mounts no action card (the machine's word, one predicate).
+  // W16 · looks_done → the confirm widget (Mark done = this commitment's own door, act('done')).
+  const commitConfirm = isHandoff || done ? null : looksDoneConfirmOf(view, 'commitment', id, () => act('done'));
   const commitArtifacts = (isHandoff || done || roomSettled(view)) ? [] : [
+    ...(embedded ? [] : confirmArtifactOf(commitConfirm)),
     // W5c: mounts from the LIVE invite ONLY (see EmailDetail's twin) — never hollow. A plan step
     // ("Send calendar invite to X") is a PLAN, not prepared work: it mounted an empty card under a
     // "prepared" label after the verdict had moved on (re-walk, Sep 23: the step outlived a
     // schedule→decide re-judgment). The step still rides the card's prepare hint when a live one mounts.
     ...(inviteArt ? [{
-      key: 'invite',
+      key: 'invite', artifactKind: 'invite' as const,
       // TRUTH BEFORE PRESENTATION: a timeless invite never claims "prepared".
       label: inviteArt?.sendReady === false ? 'Invite drafted — needs a time from you' : 'Calendar invite prepared — review & approve',
       by: inviteArt?.by ?? null,
@@ -2869,7 +2862,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
     // ADDRESSEE LADDER (an unresolvable recipient is ASKED for on the card, never guessed). J5's
     // clauses ride above it only when the extraction flagged a multi-part motion.
     ...(emailCardNode ? [{
-      key: 'nudge',
+      key: 'nudge', artifactKind: (nudgeArt?.kind === 'reply_draft' ? 'reply_draft' : 'nudge_draft') as ItemArtifactKind,
       label: nudgeArt ? (nudgeArt.kind === 'nudge_draft' ? 'Follow-up drafted — ready to review' : 'Email drafted — ready to review') : 'Email — ready to write',
       by: nudgeArt?.by ?? null,
       onOpen: () => setDraftSummoned(true),
@@ -2877,7 +2870,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
       node: emailCardNode,
     }] : []),
     ...(leadArts.length ? [{
-      key: 'lead', label: leadArts[0].kind === 'paste_pack' ? 'Words ready — copy them where this lives' : `Prepared — "${(leadArts[0].title ?? 'document').slice(0, 52)}"`,
+      key: 'lead', artifactKind: leadArts[0].kind as ItemArtifactKind, label: leadArts[0].kind === 'paste_pack' ? 'Words ready — copy them where this lives' : `Prepared — "${(leadArts[0].title ?? 'document').slice(0, 52)}"`,
       by: leadArts[0].by ?? null,
       onOpen: () => openDrawerAt('prepared'),
       anchorKey: commitAnchor,
@@ -2894,16 +2887,13 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
       <>
         {data?.counterparty && <span className="truncate">{data.direction === 'awaiting' ? 'Waiting on' : 'You owe'} {data.counterparty.split('<')[0].trim()}</span>}
         {data?.dueDate && !scheduled && <span className={`flex-shrink-0 ${overdue ? 'text-rose-500 font-medium' : 'text-neutral-400'}`}>· {overdue ? 'Overdue' : 'Due'} {fmtWeekdayDate(data.dueDate)}</span>}
+        {scheduledMetaOf(view)}
       </>
     ),
-    stateWord: machineWordOf(view),
-    stateTone: machineToneOf(view),
-    // W11.1 · LOOKS DONE — Done is THIS commitment's own resolution door (act('done'): logged, undoable).
-    confirm: isHandoff || done ? null : looksDoneConfirmOf(view, 'commitment', id, () => act('done')),
     // W15.2 · Done · Dismiss in the header, through the commitment door. A handoff gate's card owns its
     // close (Approve / Hold back — approving IS done), so the pair is structurally absent there.
-    resolve: isHandoff || done ? null : { onDone: () => act('done'), onDismiss: () => act('dismissed'), emphasis: resolveEmphasisOf(view?.machineState?.state) },
-    faces: facesOf(view, data?.counterparty),
+    // W16 · Done is emphasised only when the page's one widget is the confirm widget.
+    resolve: isHandoff || done ? null : { onDone: () => act('done'), onDismiss: () => act('dismissed'), emphasis: doneEmphasisOf(view, commitConfirm) },
     membership: <AddToProjectControl kind="commitment" id={id} compact />,
     // THE PROJECT DOOR rides the ONE band (the rail's second name row died with it).
     project: railView?.entity ?? null,
@@ -2924,10 +2914,9 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
     stageOpen,
     onLowerStage: lowerStage,
     drawerSignal: drawerReq,
-    // THE GATE ALONE SUMMONS (W7.3): a handoff / input station keeps "The ask" — its card IS the
-    // room's move. Every other commitment hands the frame NO handle (the drawer + the object card).
-    ...(isHandoff ? { onSummonStage: () => setSourceOpen(true), sourceLabel: 'The ask' } : {}),
-    stageLabel: isHandoff ? 'what needs your call' : 'this commitment',
+    // W16: NO handle summons a stage on the commitment door — a parked gate is the thread's ONE widget,
+    // every other commitment reads its source in the drawer + the object card.
+    stageLabel: 'this commitment',
   };
 
   return (
@@ -2955,7 +2944,13 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
           pushDealTurn(`commitment:${id}`, outcome.say, { key: `decide:${id}` });
         },
         onDismiss: () => setDecisionCleared(true),
-      } : null} />}>
+      } : null}
+      // W16 · a parked run's gate is the page's ONE action widget (approval · input station).
+      gate={gateStanding && gateNode ? { kind: handoff?.gateKind === 'input' ? 'input_gate' : 'gate', node: gateNode } : null}
+      // W16 · a meeting with a calendar event on file: the source widget is the kit's EVENT widget
+      // (addressId is the calendar event id when one is on file — lib/commitments/source.ts).
+      sourceEvent={view?.sourceMeeting && view.sourceMeeting.addressId !== view.sourceMeeting.id
+        ? <EventCard pointer={{ eventId: view.sourceMeeting.addressId }} /> : null} />}>
       {/* Header — EMBEDDED only: on the loose door the ROOM header carries these facts once. */}
       {embedded && (
       <DetailHeader
@@ -2993,22 +2988,10 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
                 (relay canvas, THE WAVE) takes the same seat with a different deed: this park asks
                 for MATERIAL, so the card is a paste box and a pin-a-document door, never a yes/no
                 (which the resume route refuses at an input gate). */}
-            {isHandoff && handoff?.gateKind === 'input' ? (
-              <InputStationCard
-                title={data.description}
-                runId={handoffRunId}
-                open={handoffOpen}
-                handoff={handoff}
-                onDecided={() => setReload((n) => n + 1)}
-              />
-            ) : isHandoff ? (
-              <HandoffDecisionCard
-                title={data.description}
-                runId={handoffRunId}
-                open={handoffOpen}
-                handoff={handoff}
-                onDecided={() => setReload((n) => n + 1)}
-              />
+            {isHandoff ? (
+              // W16: the gate card is the thread's ONE widget on the loose door; EMBEDDED (a project
+              // room's stage, no own rail) it stays here, in place.
+              embedded ? gateNode : null
             ) : (
             <>
             {/* One action bar — the compose panel is the only writing surface. When the judge says
@@ -3394,6 +3377,12 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
 
   const title = thread?.subject || 'Follow-up';
   const who = thread?.counterparty || thread?.fromName;
+  // W16 · looks_done → the confirm widget. A follow-up IS a (waiting-on) COMMITMENT (W15.2) — its
+  // machine key and its doors are the commitment's.
+  const followConfirm = sent || closed ? null : looksDoneConfirmOf(view, 'commitment', id, () => resolveFollowUp('done'));
+  // W16 · THE PREPARED NUDGE IS THE EMAIL WIDGET — the same kit email card the commitment door mounts
+  // for the same commitment id (the pooled nudge through THE ONE READER; Send through the commit door).
+  const followNudgeLive = (view?.prepared ?? []).some((p) => p.kind === 'nudge_draft' || p.kind === 'reply_draft');
 
   const threadMessages: ThreadMessage[] | null = useMemo(() => {
     if (threadErr) return [];
@@ -3424,16 +3413,10 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
   const [historyLines, setHistoryLines] = useState<RoomHistoryLine[]>([]);
   const room: RoomChrome | null = embedded ? null : {
     title,
-    meta: who ? <span className="truncate">Waiting on {who.split('<')[0].trim()}</span> : undefined,
-    stateWord: machineWordOf(view),
-    stateTone: machineToneOf(view),
-    // W11.1 · LOOKS DONE — Not yet keys on the item's own machine key. W15.2: a follow-up IS a
-    // (waiting-on) COMMITMENT — its id is a commitment id, so its machine key and its doors are the
-    // commitment's (the inbox complete route this used to fire could never find the row).
-    confirm: sent || closed ? null : looksDoneConfirmOf(view, 'commitment', id, () => resolveFollowUp('done')),
+    meta: (who || scheduledMetaOf(view)) ? <>{who && <span className="truncate">Waiting on {who.split('<')[0].trim()}</span>}{scheduledMetaOf(view)}</> : undefined,
     // W15.2 · Done · Dismiss in the header, through the commitment door (logged, undoable).
-    resolve: sent || closed ? null : { onDone: () => resolveFollowUp('done'), onDismiss: () => resolveFollowUp('dismiss'), emphasis: resolveEmphasisOf(view?.machineState?.state) },
-    faces: facesOf(view, who),
+    // W16 · Done is emphasised only when the page's one widget is the confirm widget.
+    resolve: sent || closed ? null : { onDone: () => resolveFollowUp('done'), onDismiss: () => resolveFollowUp('dismiss'), emphasis: doneEmphasisOf(view, followConfirm) },
     membership: <AddToProjectControl kind="inbox" id={id} compact />,
     // THE PROJECT DOOR rides the ONE band (the rail's second name row died with it).
     project: railView?.entity ?? null,
@@ -3460,14 +3443,16 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
       <ItemRail kind="followup" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} onDraft={(d) => { setDraft(d); setDraftV((v) => v + 1); }}
         // W15.2 · a SETTLED / closed follow-up mounts no action card; an EMPTY draft never claims "drafted".
         artifacts={sent || closed || roomSettled(view) ? [] : [
-          ...(!!draft?.trim() ? [{
-            key: 'nudge', label: 'Follow-up drafted — ready to review',
-            by: view?.prepared?.find((p) => p.kind === 'nudge_draft' || p.kind === 'deliverable')?.by ?? null,
+          ...(embedded ? [] : confirmArtifactOf(followConfirm)),
+          ...(followNudgeLive ? [{
+            key: 'nudge', label: 'Follow-up drafted — ready to review', artifactKind: 'nudge_draft' as const,
+            by: view?.prepared?.find((p) => p.kind === 'nudge_draft' || p.kind === 'reply_draft')?.by ?? null,
             onOpen: () => { setComposerOpen(true); setInviteOpen(false); }, anchorKey: prepAnchorKey('commitment', id), // one stage at a time
+            node: <EmailCard compose={{ kind: 'commitment', id }} onSent={() => { setSent(true); setTimeout(() => router.back(), 900); }} />,
           }] : []),
           // W5c: the LIVE invite only — a plan step is not prepared work (never a hollow card).
-          ...(view?.prepared?.some((p) => p.kind === 'invite') ? [{
-            key: 'invite', label: view?.inviteHasTime === false ? 'Invite drafted — needs a time from you' : 'Calendar invite prepared — review & approve',
+          ...(view?.prepared?.some((p) => p.kind === 'invite' && p.invite?.withCounterparty !== false) ? [{
+            key: 'invite', artifactKind: 'invite' as const, label: view?.inviteHasTime === false ? 'Invite drafted — needs a time from you' : 'Calendar invite prepared — review & approve',
             by: view?.prepared?.find((p) => p.kind === 'invite')?.by ?? null,
             onOpen: () => { setInviteOpen(true); setComposerOpen(false); }, anchorKey: prepAnchorKey('commitment', id),
             node: <InviteCard kind="followup" entityId={id} taskId={view?.inviteTaskId ?? undefined} verdictLevel={!view?.inviteTaskId} onSent={() => setInviteOpen(false)} />,

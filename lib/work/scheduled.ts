@@ -126,15 +126,45 @@ const partyOf = (a: unknown): { address: string | null; name: string | null; dec
   return { address, name, declined };
 };
 
+// ── W16 · A NAME-ONLY COUNTERPARTY (owner walk, Sep 24 — "Join call with <A> and <B> …", the
+// counterparty stored as NAMES, the booked event's attendees carrying ADDRESSES only: the booking was
+// on the calendar, accepted, and the page still said "Due" and proposed a new invite). A stored name
+// may hold several people ("A Person and B Person", "A, B & C"): each is its own key. A name key
+// matches an attendee with no display name through the attendee's OWN ADDRESS — its local part names
+// both the first and the last name ("anna.schmidt", "anna_schmidt", "annaschmidt", "schmidt.anna") or
+// is the initial + last name ("aschmidt", "a.schmidt"). Deterministic, zero IO; a single token is never
+// a key (too weak), so a first name alone still matches nothing. ──
+const NAME_SEPARATORS = /\s*(?:,|;|&|\+|\/|\band\b|\bund\b|\bet\b|\be\b|\by\b)\s*/i;
+/** Every person-name key a stored who value carries (split on and/und/et/e/y/,/&). Pure. */
+export function nameKeysOf(raw: unknown): string[] {
+  const whole = String(raw ?? '').replace(/<[^>]*>/g, ' ');
+  const out = new Set<string>();
+  for (const part of whole.split(NAME_SEPARATORS)) { const k = nameKeyOf(part); if (k) out.add(k); }
+  return [...out];
+}
+const fold = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z]/g, '');
+/** Does this address's local part name this person (a ≥2-token name key)? Pure. */
+export function addressNamesPerson(address: string | null | undefined, nameKey: string): boolean {
+  const local = String(address ?? '').split('@')[0] ?? '';
+  const parts = nameKey.split(' ').map(fold).filter((t) => t.length >= 2);
+  if (parts.length < 2 || !local) return false;
+  const first = parts[0], last = parts[parts.length - 1];
+  const flat = fold(local);
+  if (flat.includes(first) && flat.includes(last)) return true;
+  return flat === `${first[0]}${last}` || flat === `${last}${first[0]}`;
+}
+
 /** Does the counterparty sit in this event (an attendee who did not decline, or the organizer)? */
 export function counterpartyInEvent(ev: CalendarRowLike, facts: Pick<BookingFacts, 'addresses' | 'names'>): boolean {
   const want = new Set(facts.addresses.map((a) => a.toLowerCase()));
-  const names = new Set(facts.names.map((n) => n.toLowerCase()));
+  // W16: a stored "A Person and B Person" is two keys, each matched by name or by the attendee's address.
+  const names = new Set(facts.names.flatMap((n) => [n.toLowerCase(), ...nameKeysOf(n)]));
   if (!want.size && !names.size) return false;
   for (const a of Array.isArray(ev.attendees) ? ev.attendees : []) {
     const p = partyOf(a);
     if (p.declined) continue;
     if ((p.address && want.has(p.address)) || (p.name && names.has(p.name))) return true;
+    if (p.address && [...names].some((n) => addressNamesPerson(p.address, n))) return true;
   }
   const org = addressesIn(typeof ev.organizer === 'string' ? ev.organizer : (ev.organizer as { email?: unknown } | null)?.email ?? '')[0];
   return !!org && want.has(org);

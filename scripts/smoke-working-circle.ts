@@ -278,7 +278,9 @@ async function main() {
     && !!looksDoneEvidenceOf([e({ type: 'calendar', status: 'held', deed: 'meeting_held', by: undefined })], 'unclear', 'user')
     && !looksDoneEvidenceOf([e({ by: 'counterparty' })], 'unclear', 'user'));
   const hit = looksDoneEvidenceOf([e({})], 'unclear', 'user')!;
-  ok('P2 the evidence line says who · what · when in plain words', /^Sam Partner sent “Re: the changes” [A-Z][a-z]{2} \d{1,2}$/.test(looksDoneLine(hit)), looksDoneLine(hit));
+  // ⟲ RE-POINTED (W16 · the confirm widget's plain line — who · deed · when; the title is not repeated
+  // because looks-done evidence now sits on the page's OWN conversation, which the source widget shows).
+  ok('P2 the evidence line says who · what · when in plain words', /^Sam Partner replied on [A-Z][a-z]{2} \d{1,2}$/.test(looksDoneLine(hit)), looksDoneLine(hit));
   const st = deriveState({ open: true, verdict: { work: 'reply' }, judgedAt: NOW, prepared: [], liveAsk: true, sentStamp: false, looksDone: true });
   const settled = deriveState({ open: true, verdict: { work: 'none' }, judgedAt: NOW, prepared: [], liveAsk: false, sentStamp: false, looksDone: true });
   ok('P3 THE ONE MACHINE serves `looks_done` (outranking the ladder), worded "looks done — confirm" from ONE client-safe home; a judged-none stays settled',
@@ -305,7 +307,8 @@ async function main() {
     up1 && down && stillDown && upAgain && WRITES.every((w) => w.startsWith('item_plans:looks_done:')));
   const settleSrc = src('lib/work/evidence-settle.ts');
   ok('P7 THE ONE SETTLE DOOR writes it after every non-delivered judgment (never a close)',
-    /if \(verdict\.verdict !== 'delivered'\) await noteLooksDone\(client, userId, \{ kind: work\.kind, id: work\.id, fulfiller: work\.fulfiller \}, evidence, verdict\.verdict\)/.test(settleSrc));
+    // ⟲ RE-POINTED (W16): the same one write, now handed the meeting-shaped signal (looks-done scoping).
+    /if \(verdict\.verdict !== 'delivered'\) \{[\s\S]{0,200}await noteLooksDone\(client, userId, \{ kind: work\.kind, id: work\.id, fulfiller: work\.fulfiller \}, evidence, verdict\.verdict,/.test(settleSrc));
   const home = src('components/home/home-view.tsx');
   const route = src('app/api/work/looks-done/route.ts');
   ok('P8 one click each way on the row: Done = the row\'s own resolution door (done()), Not yet = POST /api/work/looks-done (refuseLooksDone, not_yet only)',

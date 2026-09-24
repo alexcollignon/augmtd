@@ -25,6 +25,8 @@ import { DocumentIcon } from '@heroicons/react/24/outline';
 import { WorkerMentionInput } from '@/components/workers/worker-mention-input';
 import { ThreadShell, ThreadCardView } from '@/components/thread';
 import type { ThreadCard, ThreadItem } from '@/components/thread';
+// W16 · THE ITEM PAGE IS A FEW KIT WIDGETS — the ONE composition every item door renders through.
+import { composeItemPage, itemPageItems, type ItemArtifactKind, type ItemArtifactsMounted } from '@/components/thread/item-page';
 import { useCosSeat } from '@/hooks/use-cos-seat';
 import { moveTargetId, mergedArtifactKey, stageOfArtifactKey } from '@/lib/room/presentation';
 // THE DECISION'S ONE HOST (W3-C, Sep 22) — the kit's `decision` card with the steer door behind
@@ -97,6 +99,9 @@ export type RailView = {
    *  the same turns the header ignored (one claim). */
   mootAskKeys?: string[];
   gap: string | null;
+  /** THE MACHINE's single state for an ITEM door (served by GET /api/items/view) — the item page's
+   *  one action widget is chosen from it (W16). Absent on the project door. */
+  machineState?: { state: string; word?: string | null; line?: string | null; eventId?: string | null } | null;
   entity: {
     id: string; name: string;
     tracked?: boolean; // T4 — accepted (project) vs merely recognized (quiet context)
@@ -382,7 +387,7 @@ function Chip({ icon, label, onClick }: { icon?: React.ReactNode; label: string;
   );
 }
 
-export function ItemRail({ kind, id, view, pending = false, onDraft, decision: decisionIn, artifacts: artifactsIn, onOpenHref, onStage, onHistory, sourceItemId, sourceMeeting, sourceEmail, onOpenThread }: {
+export function ItemRail({ kind, id, view, pending = false, onDraft, decision: decisionIn, artifacts: artifactsIn, onOpenHref, onStage, onHistory, sourceItemId, sourceMeeting, sourceEmail, onOpenThread, gate, sourceEvent }: {
   kind: RailKind; id: string; view: RailView;
   /** THE STRUCTURAL FRAME (UX arc): true while the view is still loading — the rail mounts its
    *  shell (header, turns, composer) immediately and shows a quiet shimmer instead of anchor
@@ -418,7 +423,11 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
    *  do (the EmailCard is the outbound reply's editor; the InviteCard is the invite) — so the
    *  default is false and the object mounts ABOVE them. A future card that quotes the thread sets
    *  it and the object stands down, without this room guessing from a key name. */
-  artifacts?: Array<{ key: string; label: string; by?: string | null; onOpen: () => void; anchorKey?: string; node?: React.ReactNode; showsSource?: boolean }> | null;
+  artifacts?: Array<{ key: string; label: string; by?: string | null; onOpen: () => void; anchorKey?: string; node?: React.ReactNode; showsSource?: boolean;
+    /** W16 · which ARTIFACT this card renders on an item page (a prepared kind, a document, a frame,
+     *  the looks-done evidence…). The item door's ONE table (components/thread/item-page.ts) maps it to
+     *  its kit widget and picks at most one, by the machine's state. */
+    artifactKind?: ItemArtifactKind }> | null;
   /** THE ONE-NAVIGATION LAW (Aug 4): inside a room, a rail link must open IN the room (the host's
    *  focus/summoned-stage opener), never page-navigate away — clicking Clara's draft from the EG
    *  Bank room dumped the user on a separate item page. Return true = handled; false = fall
@@ -451,13 +460,20 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
    *  "Thread →" uses). Absent (the project room) → the room's own in-room focus (onOpenHref), never a
    *  separate page hop. */
   onOpenThread?: (itemId: string) => void;
+  /** W16 · A PARKED RUN'S GATE owns this item (a handoff: the approval card, or an input station) —
+   *  mounted as the page's ONE action widget in the thread. Not prepared work, so the settled gate
+   *  (a handoff is judged none) never drops it; its own card settles in place when answered. */
+  gate?: { kind: 'gate' | 'input_gate'; node: React.ReactNode } | null;
+  /** W16 · a meeting with a calendar event on file: its source widget is the kit's EVENT widget
+   *  (time · attendees · join) instead of the source card. */
+  sourceEvent?: React.ReactNode | null;
 }) {
   // ══ W15.2 · SETTLED ITEMS DROP THEIR ACTION CARDS (one gate for every card kind) ════════════════
   // When THE MACHINE says this item's work is settled (closed, or judged owed-nothing), no prepared
   // card and no decision mounts in its room — a Send on settled work is a claim about work that does
   // not exist. The conversation and the drawer's history stay readable. A project room (no item
   // machine on its view) is untouched.
-  const itemSettled = (view as { machineState?: { state?: string } | null }).machineState?.state === 'settled';
+  const itemSettled = view.machineState?.state === 'settled';
   const artifacts = itemSettled ? [] : artifactsIn;
   const decision = itemSettled ? null : decisionIn;
   const router = useRouter();
@@ -1030,7 +1046,12 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     && !isAgedProposal(t) && !isAgedAnticipation(t));
   // HISTORY FOLDS (law: the user reads ONE thing) — the newest 3 turns show; everything older
   // waits in the drawer — the ONLY compression the continuous record has.
-  const visibleTail = fresh.slice(-3);
+  // W16 · ON AN ITEM PAGE the stream carries only the reader's OWN exchange (from their first word
+  // on); every engine narration is the record, filed in the drawer's History. The project door keeps
+  // its newest-three tail.
+  const firstUserTurn = turns.findIndex((t) => t.role === 'user');
+  const itemExchange = firstUserTurn < 0 ? [] : turns.slice(firstUserTurn).filter((t) => stream.includes(t)).slice(-4);
+  const visibleTail = inRoom ? fresh.slice(-3) : itemExchange;
   const visibleSet = new Set(visibleTail);
   const historyTurns = stream.filter((t) => !visibleSet.has(t));
 
@@ -1633,12 +1654,79 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   // ── THE TIMELINE, DERIVED ────────────────────────────────────────────────────────────────────
   const items: ThreadItem[] = [];
 
+  // ══ W16 · THE ITEM PAGE IS A FEW KIT WIDGETS (law `the-item-page-is-a-few-widgets`) ═════════════
+  // An ITEM door is: Clara's ONE sentence · the SOURCE widget · AT MOST ONE action widget chosen by
+  // THE MACHINE's single state (components/thread/item-page.ts composeItemPage — one composition for
+  // every item kind) · then only the reader's own exchange. No MOVE card, no offer line, no gap line,
+  // no folded ask, no engine narration in the stream (it is filed in the drawer's History). A widget
+  // is offered only when this page actually MOUNTS its card — a withdrawn target has no card, so it
+  // has no widget and no button (the dead "Review reply draft" class is structurally gone).
+  const itemPage = inRoom ? null : (() => {
+    const byArtifact = (k: ItemArtifactKind) => (artifacts ?? []).find((a) => a.artifactKind === k && !!a.node) ?? null;
+    // WHAT THIS PAGE HAS MOUNTED, by artifact kind — the table only ever picks from this.
+    const mounted: ItemArtifactsMounted = {};
+    for (const a of artifacts ?? []) if (a.artifactKind && a.node) mounted[a.artifactKind] = true;
+    if (liftedAsk?.checklist?.length) mounted.ask = true;
+    if (decisionIsPrimary) mounted.decision = true;
+    if (gate?.node) mounted[gate.kind] = true;
+    // W16 · a booked meeting (the machine's `scheduled` over a calendar event) mounts the event itself.
+    if (view.machineState?.eventId) mounted.booked_event = true;
+    const plan = composeItemPage({
+      machine: view.machineState ?? null, gateOpen: !!gate?.node, mounted,
+      brief: composed ?? null, who: view.anchor?.who ? spokenName(view.anchor.who) : null,
+      ask: view.anchor?.ask ?? null, title: null,
+      source: sourceEvent ? 'event' : objectCard ? 'source' : null,
+    });
+    const own = plan.artifact && !['ask', 'decision', 'gate', 'input_gate', 'booked_event'].includes(plan.artifact) ? byArtifact(plan.artifact) : null;
+    return { plan, card: own };
+  })();
+  if (itemPage) {
+    const { plan, card } = itemPage;
+    // CLARA — one sentence, the SOURCE widget directly under it (the thing the sentence is about),
+    // then THE ONE ACTION WIDGET with its deed inside it (components/thread/item-page.ts itemPageItems).
+    const actionNode: React.ReactNode = (plan.artifact === 'gate' || plan.artifact === 'input_gate') && gate?.node ? gate.node
+      : plan.artifact === 'booked_event' && view.machineState?.eventId ? <EventCard pointer={{ eventId: view.machineState.eventId }} />
+      : plan.artifact === 'ask' && liftedAsk ? askCard({ ...liftedAsk, text: '' }, 'item-ask')
+      : plan.artifact === 'decision' && decision ? (
+        <DecisionCard spec={decision}
+          {...(decision.onChosen ? { onChosen: decision.onChosen } : {})}
+          {...(decision.onResolved ? { onResolved: decision.onResolved } : {})}
+          {...(decision.onDismiss ? { onDismiss: decision.onDismiss } : {})} />
+      ) : card?.node ? (
+        <div id={cardDomId(card.key)} className="scroll-mt-8 rounded-2xl">{card.node}</div>
+      ) : null;
+    items.push(...itemPageItems(plan, {
+      seat: { id: seatId, name: seatName, ...(seatLabel ? { roleLabel: seatLabel } : {}) },
+      shimmer: showShimmer ? (
+        <div className="space-y-1.5 py-0.5" aria-hidden>
+          <div className="h-3 w-4/5 rounded bg-neutral-100 animate-pulse" />
+        </div>
+      ) : null,
+      source: sourceEvent ? <div className="pt-0.5">{sourceEvent}</div> : objectCard ? <div className="pt-0.5">{objectCard}</div> : null,
+      action: actionNode ? { node: actionNode, by: card?.by ?? null } : null,
+    }));
+    // THE READER'S OWN EXCHANGE — from their first word on (answers, and what an answer presents).
+    itemExchange.forEach((t, i) => {
+      const key = `x${i}`;
+      if (t.role === 'user') { items.push({ type: 'user_bubble', id: key, text: t.text }); return; }
+      const extras = turnExtras(t);
+      items.push({
+        type: 'actor_bubble', id: key,
+        actorId: t.author?.role ?? t.author?.name ?? seatId,
+        actorName: t.author?.name ? t.author.name.split(' ')[0] : seatName,
+        ...(t.author?.name ? {} : { actorRoleLabel: seatLabel }),
+        ...(t.text ? { text: t.text } : {}),
+        ...(extras ? { cards: [{ kind: 'custom' as const, id: `${key}-extras`, node: extras }] } : {}),
+      });
+    });
+  }
+
   // THE OPENING IS A MESSAGE (owner walk, Sep 14: "this can just look like a message, so remove
   // border and the 'pinned' label"). The seat and the behaviour are unchanged — it opens the room,
   // it never folds, it carries the ONE CTA row and the folded ask; only its chrome is gone (the
   // kit's `Pinned` now renders in the actor-bubble grammar), and it no longer labels its own
   // mechanism at the reader.
-  items.push({
+  if (!itemPage) items.push({
     type: 'pinned', id: 'brief', actorId: seatId, actorName: seatName, actorRoleLabel: seatLabel,
     ...(openingText ? { text: openingText } : {}),
     ...(pinnedNode ? { node: pinnedNode } : {}),
@@ -1648,7 +1736,8 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   // THE LATE BRIEF ARRIVES AS AN APPEND (W3.5 (a); registry precedence #1: "if composition genuinely
   // cannot land in time, the brief arrives as an appended turn, never a swap"). The opening the
   // reader met stays exactly as painted; the composed words land beneath it as a new message.
-  const lateBrief = !composed && view.lateBrief?.text ? view.lateBrief.text : null;
+  // (W16: an item page speaks ONE sentence — the late brief is the next open's material, never a second bubble.)
+  const lateBrief = !itemPage && !composed && view.lateBrief?.text ? view.lateBrief.text : null;
   if (lateBrief) {
     items.push({
       type: 'actor_bubble', id: 'late-brief', actorId: seatId, actorName: seatName,
@@ -1681,7 +1770,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   // ONE AGENDA PER ROOM (Sep 8): when a composed brief stands, the ask has ALREADY spoken inside
   // the pinned card (`foldedAsk`) — a bubble here would be the second delivery with the second CTA
   // row the owner walked into. This seat is the ask's home only while no composed position exists.
-  if (liftedAsk && !foldedAsk) {
+  if (!itemPage && liftedAsk && !foldedAsk) {
     items.push({
       type: 'actor_bubble', id: 'lifted-ask', actorId: seatId, actorName: seatName,
       actorRoleLabel: seatLabel, text: liftedAsk.text,
@@ -1696,7 +1785,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
 
   // INLINE COMPONENTS: the judged DECISION renders as a conversation card, SEATED ABOVE the MOVE —
   // on a decide item the choice comes first; the reply's content depends on it.
-  if (decision && decision.options.length >= 2) {
+  if (!itemPage && decision && decision.options.length >= 2) {
     items.push({
       type: 'actor_bubble', id: 'decision', actorId: seatId, actorName: seatName, actorRoleLabel: seatLabel,
       cards: [{
@@ -1721,7 +1810,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   // THE FRESH TAIL — three grammars, derived STRUCTURALLY from each turn (never styled per call
   // site): user bubble · a coworker's own first-person speech (their face) · the narrator's muted
   // EVENT LINE. A `prep:*` narration FOLDS entirely when its artifact card is on the rail.
-  visibleTail.forEach((t, i) => {
+  if (!itemPage) visibleTail.forEach((t, i) => {
     const key = `t${i}`;
     if (t.role === 'user') { items.push({ type: 'user_bubble', id: key, text: t.text }); return; }
     // A COMPONENT IS A TURN: the anchor turn IS the card — its moment in the story, its words
@@ -1764,7 +1853,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   });
 
   // Cards without a visible anchor turn — the stream's end (never above later talk).
-  endArtifacts.forEach((art, i) => {
+  if (!itemPage) endArtifacts.forEach((art, i) => {
     items.push({
       type: 'actor_bubble', id: `end-${art.key}-${i}`,
       actorId: art.by ?? seatId, actorName: art.by ? art.by.split(' ')[0] : seatName,

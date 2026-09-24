@@ -81,10 +81,21 @@ describe('looks done', () => {
     expect(looksDoneEvidenceOf([{ ...e, key: 'entity' }], 'unclear', 'user')).toBeNull();
     expect(looksDoneEvidenceOf([e], 'unclear', 'counterparty')).toBeNull();
   });
+  it('W16 · only the SAME conversation (or a held meeting for a meeting-shaped obligation) raises it', () => {
+    // a teammate's mail to the same contact on ANOTHER thread (person key) never looks done
+    expect(looksDoneEvidenceOf([{ ...e, key: 'person' }], 'unclear', 'user')).toBeNull();
+    expect(looksDoneEvidenceOf([e], 'unclear', 'user')?.scope).toBe('same_conversation');
+    const met: Evidence = { type: 'calendar', id: 'm1', at: '2026-09-03T10:00:00Z', title: 'Call', status: 'held', key: 'person', deed: 'meeting_held' };
+    expect(looksDoneEvidenceOf([met], 'unclear', 'user')).toBeNull();
+    expect(looksDoneEvidenceOf([met], 'unclear', 'user', { meetingShaped: true })?.scope).toBe('held_meeting');
+    // a record written before the scoping law is not live
+    expect(looksDoneLive({ sig: 'e1', refusedSig: null, evidence: { scope: undefined } })).toBe(false);
+  });
   it('a refusal is sticky for its evidence', () => {
     expect(looksDoneLive({ sig: 'e1', refusedSig: 'e1' })).toBe(false);
     expect(looksDoneLive({ sig: 'e1,e2', refusedSig: 'e1' })).toBe(true);
-    expect(looksDoneLine(looksDoneEvidenceOf([e], 'unclear', 'user')!)).toBe('Sam sent “Re: changes” Sep 21');
+    // ⟲ W16 · the confirm widget's plain line (who · deed · when; the title is the page's own source).
+    expect(looksDoneLine(looksDoneEvidenceOf([e], 'unclear', 'user')!)).toBe('Sam replied on Sep 21');
   });
   it('ranks below real work', () => {
     expect(attentionRank({ key: 'a', entityId: 'a', source: 'commitment', whyNow: '', looksDone: true, dueToday: true })).toBe(6);

@@ -120,7 +120,10 @@ console.log('\nA · (a) the composed brief reaches the first paint (compose befo
 
   const rail = src('components/home/item-rail.tsx');
   gate('A8 the rail renders the late brief as an APPENDED actor bubble beneath the pinned opening, only while no composed brief was painted',
-    /const lateBrief = !composed && view\.lateBrief\?\.text \? view\.lateBrief\.text : null;/.test(rail)
+    // ⟲ RE-POINTED (W16 · THE ITEM PAGE IS A FEW KIT WIDGETS): the append rule holds where a second
+    // bubble is allowed (the project door); an ITEM page speaks ONE sentence, so a late composition is
+    // the next open's material — never a second bubble and never a swap (the no-mutation law holds).
+    /const lateBrief = !itemPage && !composed && view\.lateBrief\?\.text \? view\.lateBrief\.text : null;/.test(rail)
     && /type: 'actor_bubble', id: 'late-brief'/.test(rail));
   gate('A9 THE FALLBACK IS ONE VOICE — no grey entity-summary line, no You owe/They owe lines, no stored next_move card, no echoesAnchor',
     !/secondarySummary/.test(rail) && !/owesYou/.test(rail) && !/owesThem/.test(rail)

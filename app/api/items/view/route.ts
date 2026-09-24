@@ -121,7 +121,9 @@ export async function GET(request: NextRequest) {
             const st = await workStateOf(supabase, user.id, { kind: linkKind === 'inbox_item' ? 'inbox' : 'commitment', id }, { row: itemRow, prepared: prepState });
             // W11.1 · LOOKS DONE: the evidence line rides the word (who · what · when — its one home is
             // lib/evidence/looks-done.ts; the room renders it, never composes it).
-            return { state: st.state, word: STATE_WORDS[st.state], moot: st.mootAskKeys ?? [], line: st.looksDoneLine ?? st.scheduledLine ?? null /* W15.2 · on scheduled: the when */, liveAsk: st.liveAsk };
+            return { state: st.state, word: STATE_WORDS[st.state], moot: st.mootAskKeys ?? [], line: st.looksDoneLine ?? st.scheduledLine ?? null /* W15.2 · on scheduled: the when */, liveAsk: st.liveAsk,
+              // W16 · on a scheduled BOOKING: the event itself — the item page's one widget is the kit's event widget over it.
+              eventId: st.state === 'scheduled' ? st.scheduledEventId ?? null : null };
           } catch { return null; /* non-fatal — the word is an enhancement */ }
         })
       : Promise.resolve(null);
@@ -233,8 +235,8 @@ export async function GET(request: NextRequest) {
     // input — W11.4), in ONE flight, awaited here beside the brief's last-good read.
     const [room, machine, sourceItemId, sourceMeeting] = await Promise.all([roomP, machineP, sourceItemIdP, sourceMeetingP]);
     mark('wave2');
-    const machineState: { state: string; word: string | null; line?: string | null } | null = machine
-      ? { state: machine.state, word: machine.word, ...(machine.line ? { line: machine.line } : {}) } : null;
+    const machineState: { state: string; word: string | null; line?: string | null; eventId?: string } | null = machine
+      ? { state: machine.state, word: machine.word, ...(machine.line ? { line: machine.line } : {}), ...(machine.eventId ? { eventId: machine.eventId } : {}) } : null;
     const mootAskKeys: string[] = machine?.moot ?? [];
     // ── THE BRIEF, AS THE FIRST PAINT CARRIES IT: last-good (one select, read beside wave 1/2) —
     // W13.5 · SERVE-TIME TRUTH (lib/room/serve-truth): re-validated against the CURRENT board before
@@ -273,9 +275,17 @@ export async function GET(request: NextRequest) {
       : room.entity;
     const siblings = room.siblings;
     const looseBrief = r?.text ?? null;
-    // Q6 · the move carries its own `offer` mark (an unstaged CTA is the CoS's offer, not a button).
-    const looseMove = r?.move ?? null;
-    const looseOffers = r?.offers ?? [];
+    // W16 · SERVE-TIME CONTROL TRUTH — THE ITEM PAGE RENDERS NO MOVE. Its ONE control is the action
+    // widget the page's composition (components/thread/item-page.ts) picks from THE MACHINE's state
+    // served below, mounted only from what this door serves LIVE (the one reader's `prepared` list ·
+    // the machine's state · a non-moot live ask). The composed move and its offers never leave this
+    // door. WHY THE DEAD BUTTON SLIPPED: W13.5 re-validated the move against the BOARD (a live
+    // prepared entry existed), but the click needed a CARD mounted on the page (the rail's
+    // `cardForMove`), and nothing tied the two — the page could hold no card for a board-live target,
+    // and the click fell through to "That prepared work isn't on the board right now". A control this
+    // door does not serve cannot be dead at click.
+    const looseMove = null;
+    const looseOffers: Array<{ label: string; say: string }> = [];
     const looseBriefAt = r?.at ?? null; // THE GROUND LAW: narration older than this folds
     // J5 (multi-ask motion) — a commitment extracted as ONE motion carries its clauses as plan
     // steps; the room renders them as the checklist beside the ONE email card (never N surfaces).
@@ -283,6 +293,20 @@ export async function GET(request: NextRequest) {
     // identified-tasks plan is the house's internal work plan, never "what this message should cover".
     const steps = kind === 'commitment' ? motionClausesOf(tasks) : null;
 
+    // W16 · AN INVITE IS FOR SOMEONE — serve whether a prepared invite carries a counterparty (an
+    // attendee who is not one of the user's own forms). One identity read, only when an invite exists;
+    // the door mounts no invite widget without one (the room asks who instead — the pass's floor).
+    const inviteParty = await (async (): Promise<boolean | null> => {
+      const inv = preparedArts.filter(isLiveArtifact).find((a) => a.kind === 'invite');
+      if (!inv) return null;
+      const list = (inv.invite?.attendees ?? []).map((x) => String(x ?? '').trim()).filter(Boolean);
+      if (!list.length) return false;
+      try {
+        const { loadUserForms, isUserForm } = await import('@/lib/prepare/addressee');
+        const forms = await loadUserForms(supabase, user.id);
+        return list.some((x) => !isUserForm(x, forms));
+      } catch { return true; }
+    })();
     const totalMs = Date.now() - t0;
     if (totalMs > VIEW_SLOW_MS) console.log(`[items/view] slow ${totalMs}ms — ${marks.map(([l, m]) => `${l}:${m}ms`).join(' · ')}`);
     return NextResponse.json({
@@ -293,7 +317,7 @@ export async function GET(request: NextRequest) {
         id: `${a.kind}-${i}`, kind: a.kind, title: a.title, content: a.content,
         by: a.by, at: a.at, attachment: a.attachment, provenance: a.provenance,
         ...(a.sendReady === false ? { sendReady: false } : {}),
-        ...(a.invite ? { invite: { title: a.invite.title ?? null, startISO: a.invite.startISO ?? null, proposed: a.invite.proposed === true } } : {}),
+        ...(a.invite ? { invite: { title: a.invite.title ?? null, startISO: a.invite.startISO ?? null, proposed: a.invite.proposed === true, ...(a.kind === 'invite' && inviteParty === false ? { withCounterparty: false } : {}) } } : {}),
         // THE DECISION BRIEF's structured payload — the DecisionCard is its one surface
         // (the strip filters it; the card renders trade-offs + the recommendation).
         ...(a.decision ? { decision: a.decision } : {}),
@@ -308,7 +332,8 @@ export async function GET(request: NextRequest) {
       entity,
       siblings,
       machineState,
-      // THE ONE RESPONDER for a LOOSE room (linked rooms carry it on entity.brief/move/offers).
+      // THE ONE RESPONDER for a LOOSE room — W16: the brief only (the page takes one plain sentence of
+      // it); `move`/`offers` are always empty on this door (see SERVE-TIME CONTROL TRUTH above).
       brief: looseBrief,
       move: looseMove,
       offers: looseOffers,
