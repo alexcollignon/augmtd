@@ -41,7 +41,11 @@ import { decodeEntities } from '@/lib/core/text';
 // only IO on this path. The deck needs to know a card HAS prepared work before it offers to review it,
 // and it may only say so for work the ONE READER calls live (W7.5 — the raw list once chipped a draft
 // the reader withdraws as misaddressed).
-import { liveFromSourceData } from '@/lib/prepare/read';
+// W16.3 · THE CARD'S RECEIPT IS THE ITEM PAGE'S WIDGET — the served `prepared` kind is chosen by the
+// item page's ONE table over THE MACHINE's state + THE ONE READER's live kinds (never a second,
+// source_data-only derivation, which offered "draft ready" for a draft the page withdrew).
+import { receiptKindOfItem } from '@/components/thread/item-page';
+import { rowWhyOf } from '@/lib/home/held-words';
 import type { UserForms } from '@/lib/commitments/extraction-truth';
 // W8.3 · THE KIND FLOOR — the judge's own predicate, read again here for verdicts cached under an
 // older law (pure, client-safe; the judge applies the same one before any AI).
@@ -664,8 +668,8 @@ export const HELD_CLASSES: Record<HeldClassId, { label: string; consequence: str
     deed: 'archive',
   },
   not_judged: {
-    label: 'Not yet judged',
-    consequence: 'never judged against your work — open one and it is judged; none is claimed as yours to do',
+    label: 'Not looked at yet',
+    consequence: 'not looked at yet — open one and I\u2019ll take a look; none is counted as yours to do',
     deed: 'archive',
   },
   quieter_threads: {
@@ -717,7 +721,8 @@ export const HELD_BANDS: Record<HeldBandId, { title: string; sentence: string }>
     title: 'Waiting',
     // W8.3: every row in this band carries a WORK judgment (or the person's own park) — the sentence
     // claims exactly that and nothing a stale understanding could have supplied.
-    sentence: 'judged yours to do, and held only because today’s five were fuller — bring any of them forward',
+    // W16.3 · plain words — the reader's terms, never the machinery's ("judged", "today's five").
+    sentence: 'yours to do — open any of them when you’re ready',
   },
   watched: {
     title: 'Watched',
@@ -848,33 +853,29 @@ export function consequenceOf(cls: HeldClassId, dueDates: Array<string | null | 
     : `${real.length} have real deadlines — the nearest is ${when}`;
 }
 
-/** The per-item line the ledger prints beside a held row — why THIS one is held. Deterministic,
- *  the class's account narrowed by the item's own fact where one exists. */
-export function whyHeldOf(cls: HeldClassId, f: HeldFacts, todayISO?: string): string {
-  // Q9 · THE PARK SPEAKS FIRST, because the person's own instruction outranks every machine account
-  // of why a row is here. "You asked to see this today" is the only why-line on this page authored
-  // by the reader rather than about them.
-  if (f.userParkedUntil && f.userParkDue === true) return 'you asked to see this today';
-  if (cls === 'brought_forward') return 'held for the budget — it touches your calendar';
-  if (cls === 'own_outreach') return 'a reply into your own outbound sequence';
-  if (cls === 'judged_quiet') {
-    return f.judgedResolution === 'answered' ? 'the thread was already answered'
-      : f.judgedResolution === 'expired' ? 'the moment it asked about has passed'
-        : 'judged: nothing to do here';
-  }
-  if (cls === 'bulk_mail') {
-    // The kind floor's own account for a pitch — it was written to the reader, but it owes them nothing.
-    const k = String(rawMailKindOf((f.item.source_data ?? {}) as Record<string, unknown>) ?? '').toLowerCase();
-    return k === 'cold_outreach' ? 'unsolicited outreach — nothing is owed until you answer it' : 'list mail — nobody wrote this to you';
-  }
-  // A notice that EARNED a waiting seat did so on its deadline — the words must say that fact, never
-  // "no reply is possible" inside a band that claims alive (the one-screen-contradiction rule).
-  if (cls === 'notices') return f.deadlineAhead === true && f.budgetOverflow === true
-    ? 'automated, but it names a real deadline'
-    : 'an automated notice — no reply is possible';
-  if (cls === 'cc_watch') return 'you were copied, not asked';
-  if (cls === 'not_judged') return notJudgedWhy(f, todayISO);
-  return f.budgetOverflow ? 'judged work — it did not make today’s five' : 'quiet — nothing has moved on it';
+/** The per-item line the ledger prints beside a held row — why THIS one is here. Deterministic.
+ *  W16.3 · THE ROW'S WHY IS IN THE READER'S WORDS: composed by THE ONE HOME (lib/home/held-words.ts
+ *  `rowWhyOf`) from the item's own facts — its park, the machine's looks-done state (when served),
+ *  its stated due date, who asked and when, the calendar — never the platform's machinery ("judged
+ *  work — it did not make today's five" is retired). */
+export function whyHeldOf(cls: HeldClassId, f: HeldFacts, todayISO?: string, machineState?: string | null): string {
+  const today = todayISO ?? new Date().toISOString().slice(0, 10);
+  const sd = (f.item.source_data ?? {}) as Record<string, unknown>;
+  const u = getUnderstanding(f.item as any) as { ownership?: string } | null;
+  return rowWhyOf({
+    cls, todayISO: today,
+    parkedDue: !!(f.userParkedUntil && f.userParkDue === true),
+    machineState: machineState ?? null,
+    dueDate: statedDueOf(f.item),
+    who: ((sd.from_name as string) || null),
+    receivedAt: typeof sd.received_at === 'string' ? sd.received_at : null,
+    userOwes: u?.ownership === 'you_owe',
+    calendarSoon: f.calendarAdjacent === true,
+    overflow: f.budgetOverflow === true,
+    deadlineAhead: f.deadlineAhead === true,
+    resolution: f.judgedResolution ?? null,
+    mailKind: String(rawMailKindOf(sd) ?? '').toLowerCase() || null,
+  });
 }
 
 /** W8.3 · THE STALE UNDERSTANDING, defined once: an understanding with NO reasoned kind (`mailKind`)
@@ -886,13 +887,11 @@ export function isStaleUnderstanding(sd: Record<string, unknown> | null | undefi
   return !!u && typeof u === 'object' && !u.mailKind;
 }
 
-/** The not-judged row's own why — plain, and the date (when one passed) in plain words. */
+/** The not-judged row's own why — plain, and the date (when one passed) in plain words (W16.3: the
+ *  one home's words — never "judged"). */
 export function notJudgedWhy(f: HeldFacts, today?: string): string {
   const todayISO = today ?? new Date().toISOString().slice(0, 10);
-  const due = statedDueOf(f.item);
-  if (due && due < todayISO) return `its stated date (${plainDay(due, todayISO)}) has passed — never judged`;
-  if (isStaleUnderstanding((f.item.source_data ?? null) as Record<string, unknown> | null)) return 'an early read flagged this — never judged against your work';
-  return 'not judged against your work yet';
+  return rowWhyOf({ cls: 'not_judged', todayISO, dueDate: statedDueOf(f.item) });
 }
 
 export type HeldMember = {
@@ -1030,7 +1029,12 @@ export function selectGraduates(
 export const graduationSentence = (days: number): string =>
   `quiet things file themselves after ${days} days — nothing is deleted, and anything comes back`;
 
-const memberOf = (cls: HeldClassId, m: HeldFacts, user: UserForms | null = null, todayISO?: string): HeldBandRow => {
+/** W16.3 · what the item page would show for one item: THE MACHINE's single state and THE ONE
+ *  READER's LIVE prepared kinds (lib/work/machine.ts workStatesFor — the same reads the page's door
+ *  runs). Served per waiting/watched row by the hydration step (lib/deeds/held-members.ts). */
+export type ItemPageTruth = { state: string | null; liveKinds: string[] };
+
+const memberOf = (cls: HeldClassId, m: HeldFacts, todayISO?: string, truth?: ItemPageTruth | null): HeldBandRow => {
   const sd = (m.item.source_data ?? {}) as Record<string, unknown>;
   // DECODED ONCE, BEFORE THE CLIP (W5b): the clip measures characters the reader will see, and an
   // escaped snippet ("wasn&#39;t") must never reach a card as literal text.
@@ -1041,20 +1045,18 @@ const memberOf = (cls: HeldClassId, m: HeldFacts, user: UserForms | null = null,
   return {
     itemId: String(m.item.id),
     subject: clipSubject(decodeEntities(String((sd as any).subject ?? m.item.work_title ?? '(no subject)'))),
-    why: whyHeldOf(cls, m, todayISO),
+    why: whyHeldOf(cls, m, todayISO, truth?.state ?? null),
     dueDate: statedDueOf(m.item),
     cls,
     from: from ? decodeEntities(from) : null,
     excerpt: body ? clipForDisplay(body, HELD_EXCERPT_CHARS) : null,
-    // THE SENDER FLOOR REACHES THE RECEIPT (W5b, owner walk Sep 23 — an automated "your bot wasn't
-    // admitted" notice wore "draft ready"). Noise never gets drafts; a draft that predates the
-    // floor (or slipped past it) is not prepared work the reader should be offered. A row filed in
-    // a NOISE class serves no prepared kind, so no surface can chip it. The artifact itself is
-    // stripped by the verdict's own consequence module when the item is next judged.
-    // ONE READER PER OBJECT (W7.5): the kind comes from the reader's LIVE set — same floors (time ·
-    // window · claim · THE ADDRESSEE FLOOR with the user's code-owned forms) the room applies.
-    prepared: NOISE_CLASSES.has(cls) ? null
-      : (liveFromSourceData(sd, { user, lastActivityAt: (m.item as { last_activity_at?: string | null }).last_activity_at ?? null })[0]?.kind ?? null),
+    // THE SENDER FLOOR REACHES THE RECEIPT (W5b): a row filed in a NOISE class serves no prepared kind.
+    // W16.3 · THE PILL IS THE PAGE'S WIDGET: otherwise the kind is the one the ITEM PAGE would mount
+    // as its action widget — the page's own table (components/thread/item-page.ts) over the machine's
+    // state and the one reader's LIVE kinds (mailbox identity, ground, settled, staging — every floor
+    // the page's door applies). No served truth for the row → no claim (the page would show none).
+    prepared: NOISE_CLASSES.has(cls) || !truth ? null
+      : (receiptKindOfItem(truth.state, truth.liveKinds) as HeldBandRow['prepared']),
   };
 };
 
@@ -1070,9 +1072,9 @@ const memberOf = (cls: HeldClassId, m: HeldFacts, user: UserForms | null = null,
  */
 export function buildHeldLedger(
   facts: HeldFacts[], todayISO: string,
-  opts: { membersPerClass?: number; offset?: number; rowsPerBand?: number; graduationDays?: number; /** the user's code-owned forms — THE ADDRESSEE FLOOR on the served `prepared` kind */ user?: UserForms | null } = {},
+  opts: { membersPerClass?: number; offset?: number; rowsPerBand?: number; graduationDays?: number; /** the user's code-owned forms (kept for callers; the addressee floor now rides THE ONE READER) */ user?: UserForms | null; /** W16.3 · the item page's truth per rendered row id (machine state + live kinds) */ itemPage?: Record<string, ItemPageTruth> | null } = {},
 ): { total: number; classes: HeldClassOut[]; bands: HeldBandsOut } {
-  const user = opts.user ?? null;
+  const itemPage = opts.itemPage ?? null;
   const perClass = opts.membersPerClass ?? HELD_MEMBERS_PER_CLASS;
   const perBand = opts.rowsPerBand ?? HELD_ROWS_PER_BAND;
   const offset = Math.max(0, opts.offset ?? 0);
@@ -1089,12 +1091,12 @@ export function buildHeldLedger(
       waitingCount++;
       const due = statedDueOf(f.item);
       if (due && due <= todayISO) urgent++;
-      if (waiting.length < perBand) waiting.push(memberOf(cls, f, user, todayISO));
+      if (waiting.length < perBand) waiting.push(memberOf(cls, f, todayISO, itemPage?.[String(f.item.id)] ?? null));
       continue;
     }
     if (band === 'watched') {
       watchedCount++;
-      if (watched.length < perBand) watched.push(memberOf(cls, f, user, todayISO));
+      if (watched.length < perBand) watched.push(memberOf(cls, f, todayISO, itemPage?.[String(f.item.id)] ?? null));
       continue;
     }
     handledCount++;
@@ -1116,7 +1118,7 @@ export function buildHeldLedger(
       consequence: consequenceOf(id, dues, todayISO),
       deed: HELD_CLASSES[id].deed,
       count: members.length,
-      members: members.slice(offset, offset + perClass).map((m) => memberOf(id, m, user, todayISO)),
+      members: members.slice(offset, offset + perClass).map((m) => memberOf(id, m, todayISO, itemPage?.[String(m.item.id)] ?? null)),
       hasMore: offset + perClass < members.length,
     });
   }

@@ -65,15 +65,19 @@ console.log('A · UNJUDGED NEVER CLAIMS — "real, alive, held for the budget" n
   gate('A1 a never-judged overflow row files as `not_judged`', cls === 'not_judged', cls);
   gate('A2 …and lands in HANDLED, never WAITING', bandOf(cls, f) === 'handled');
   const why = whyHeldOf(cls, f, TODAY);
-  gate('A3 …and its why says so plainly, never "real / alive / today’s five"', /judged/.test(why) && !CLAIM.test(why), why);
+  // ⟲ W16.3 · plain words: the why says nobody has looked at it yet — never "judged" (machinery), never a claim.
+  gate('A3 …and its why says so plainly, never "real / alive / today’s five"', /not looked at yet/.test(why) && !/judged/.test(why) && !CLAIM.test(why), why);
   const adj = row({ neverJudged: true, judgedCurrent: false, calendarAdjacent: true, sd: CURRENT('customer') });
   gate('A4 a never-judged row is never BROUGHT FORWARD by calendar adjacency', classifyHeld(adj) === 'not_judged' && bandOf(classifyHeld(adj), adj) === 'handled');
   const judged = row({ neverJudged: false, judgedCurrent: true, sd: CURRENT('customer') });
   gate('A5 a JUDGED-work overflow row still waits (the band is judged work)', bandOf(classifyHeld(judged), judged) === 'waiting');
-  gate('A6 …and its why names the judgment, never "real"', whyHeldOf(classifyHeld(judged), judged, TODAY) === 'judged work — it did not make today’s five');
+  // ⟲ W16.3 · the why speaks the item's own facts (who asked), never the machinery or a claim.
+  gate('A6 …and its why speaks the item\'s facts, never "real" or the machinery', whyHeldOf(classifyHeld(judged), judged, TODAY) === 'Sam asked you'
+    && !CLAIM.test(whyHeldOf(classifyHeld(judged), judged, TODAY)));
   const legacy = row({ sd: CURRENT('customer') });
   gate('A7 THREE-VALUED: facts the caller never computed keep the legacy law (no silent re-filing)', bandOf(classifyHeld(legacy), legacy) === 'waiting');
-  gate('A8 the waiting band sentence claims a judgment, never "real, alive"', /judged/.test(HELD_BANDS.waiting.sentence) && !/\breal\b|\balive\b/.test(HELD_BANDS.waiting.sentence));
+  // ⟲ W16.3 · the band sentence is the reader's words ("yours to do"), never the machinery or "real, alive".
+  gate('A8 the waiting band sentence claims no machinery, never "real, alive"', /yours to do/.test(HELD_BANDS.waiting.sentence) && !/judged|today.s five/.test(HELD_BANDS.waiting.sentence) && !/\breal\b|\balive\b/.test(HELD_BANDS.waiting.sentence));
   gate('A9 `not_judged` is a registered class (label, order, never a standing posture)',
     !!HELD_CLASSES.not_judged && HELD_CLASS_ORDER.includes('not_judged') && POSTURE_ELIGIBILITY.not_judged?.offered === false);
   gate('A10 stale understanding = an understanding with no reasoned kind (pre-M1)',
@@ -84,7 +88,8 @@ console.log('A · UNJUDGED NEVER CLAIMS — "real, alive, held for the budget" n
   gate('A12 the ONE derivation supplies both facts from the SAME judgment read',
     /neverJudged: !judgedAny\.has\(id\)/.test(hm) && /judgedCurrent: judgedCurrentWork\.has\(id\)/.test(hm) && /ver === String\(JUDGE_VERSION\)/.test(hm));
   const intro = heldIntro({ total: 30, classes: [{ id: 'notices' }], bands: { waiting: { count: 3, urgent: 1 }, watched: { count: 0 }, handled: { count: 27 } }, servedCount: 5 }, 0);
-  gate('A13 the intro speaks "judged", never "real … all alive"', /3 judged things wait behind today's 5/.test(intro) && !/\breal\b|all alive/.test(intro), intro);
+  // ⟲ W16.3 · plain words: "waiting for you", never "judged … today's 5", never "real … all alive".
+  gate('A13 the intro speaks plainly, never "real … all alive"', /3 more things are waiting for you/.test(intro) && !/judged|today's 5/.test(intro) && !/\breal\b|all alive/.test(intro), intro);
 }
 
 // ═══ B · THE KIND FLOOR (cold outreach · notices) ═══
@@ -191,7 +196,7 @@ console.log('\nF · BULK LABELS — never a batch cap printed as if it were the 
 console.log('\nG · THE TRIAGE CARD — no model reasoning; the evidence is the item’s own source');
 {
   const deck = code('components/triage/triage-deck.tsx');
-  gate('G1 the card renders no reason (no `ctx.reason`, no `verdict.reason`)', !/ctx\??\.reason/.test(deck) && !/verdict\??\.reason/.test(deck) && /const whyLine = row\.why;/.test(deck));
+  gate('G1 the card renders no reason (no `ctx.reason`, no `verdict.reason`)', !/ctx\??\.reason/.test(deck) && !/verdict\??\.reason/.test(deck) && /const whyLine = sentenceCase\(row\.why\);/.test(deck));
   const shaped = shapeDeckContext({ commitment: { id: 'c', description: 'Send the deck', source: 'email' }, lastEmail: { from_name: 'Sam', body: 'Ready when you are.' }, inboxItemId: 'i1', meeting: null });
   gate('G2 the deck context carries NO reason field at all', !('reason' in shaped));
   const read = code('lib/triage/deck-context-read.ts');

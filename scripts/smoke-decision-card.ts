@@ -24,6 +24,12 @@ import {
 import { initialWaitingShape, DEFAULT_WAITING_SHAPE } from '../lib/triage/view-shape';
 import { TRIAGE_KEYS, TRIAGE_VIEW_ALL, TRIAGE_ONE_AT_A_TIME } from '../lib/triage/words';
 import type { DoItem } from '../lib/home/agenda';
+import { buildHeldLedger, whyHeldOf, HELD_BANDS, HELD_CLASS_ORDER, type HeldFacts, type HeldClassId, type ItemPageTruth } from '../lib/home/attention';
+import { heldIntro, rowWhyOf, ROW_JARGON, ROW_WHY_WORDS, sentenceCase } from '../lib/home/held-words';
+import { TRIAGE_SOURCE_WORD, TRIAGE_READY_WORDS, readyWordOf } from '../lib/triage/words';
+import {
+  receiptKindOfItem, composeItemPage, ARTIFACTS_OF_STATE, PAGE_PREPARED_KINDS, type ItemPageState, type ItemArtifactsMounted,
+} from '../components/thread/item-page';
 
 // tsx compiles JSX with the classic runtime (tsconfig `jsx: preserve`), so the rendered components
 // resolve `React` at call time — hand them the one instance (the vitest tier uses the automatic runtime).
@@ -170,6 +176,128 @@ console.log('\nD6 · the evidence renderer is one simple mount line, and it is a
   const frameSrc = code('components/triage/decision-frame.tsx');
   gate('D6.2 the frame knows no kind, no verb, no fetch (agnostic, pure presentation)',
     !/source|commitment|reply|notice|fetch\(|useEffect|onClick/.test(frameSrc));
+}
+
+// ═══ W16.3 · THE PILL IS THE PAGE'S WIDGET ═══
+// Owner walk, Sep 24: a card wore "draft ready" while opening the same item showed NO draft widget (the
+// one reader had withdrawn the draft — signed as another mailbox / superseded). The card's pill is now
+// the prepared kind the item page's own table would mount, over the machine's state + the one reader's
+// LIVE kinds; a withdrawn artifact never reaches the live kinds.
+console.log('\nP · W16.3 — the card\'s "ready" pill == the item page\'s prepared widget');
+const TODAY = '2026-09-24';
+const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&#x27;|&#39;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ');
+const heldRow = (id: string, over: Partial<HeldFacts> = {}, sd: Record<string, unknown> = {}): HeldFacts => ({
+  item: { id, work_title: 'x', source_data: {
+    subject: 'The quarterly numbers', from_name: 'Sam Lee', from_address: 'sam@acme.test', received_at: '2026-09-22T09:00:00Z',
+    body: 'Could you send the quarterly numbers?',
+    understanding: { role: 'addressed', relevance: 'reply', ownership: 'you_owe', language: 'en', mailKind: 'customer' },
+    draft: { body: 'Here they are.', generated_at: '2026-09-22T10:00:00Z' }, ...sd,
+  } } as never,
+  isEcho: false, judgedNone: false, budgetOverflow: true, neverJudged: false, judgedCurrent: true, ...over,
+});
+const cardOf = (r: ReturnType<typeof buildHeldLedger>['bands']['waiting']['rows'][number]): TriageRow => ({
+  id: r.itemId, item: { source: 'reply', key: r.itemId, entityId: r.itemId, href: `/item/${r.itemId}`, ask: r.subject },
+  who: r.from, title: r.subject, why: r.why, excerpt: r.excerpt, dueDate: r.dueDate, prepared: r.prepared ?? null, cls: r.cls,
+});
+{
+  // P1 · the pure equivalence, over EVERY state × every subset of the prepared kinds.
+  const states = Object.keys(ARTIFACTS_OF_STATE) as ItemPageState[];
+  const kinds = PAGE_PREPARED_KINDS;
+  let checked = 0; const bad: string[] = [];
+  for (const st of states.filter((x) => x !== 'gate_open')) {
+    for (let mask = 0; mask < (1 << kinds.length); mask++) {
+      const live = kinds.filter((_, i) => mask & (1 << i));
+      const mounted: ItemArtifactsMounted = {}; for (const k of live) mounted[k] = true;
+      const plan = composeItemPage({ machine: { state: st }, mounted, brief: null, who: null, ask: null, title: null, source: null });
+      const pageKind = plan.artifact && (kinds as readonly string[]).includes(plan.artifact) ? plan.artifact : null;
+      const pill = receiptKindOfItem(st, live);
+      checked++;
+      if (pill !== pageKind) bad.push(`${st}/${live.join('+')}: pill ${pill} vs page ${pageKind}`);
+    }
+  }
+  gate(`P1 over ${checked} state × live-kind fixtures the pill kind IS the page's prepared widget (never one without the other)`, bad.length === 0, bad.slice(0, 3).join(' | '));
+  gate('P1b no machine state → no pill (the page shows no widget)', receiptKindOfItem(null, ['reply_draft']) === null);
+  gate('P1c every prepared kind the table can choose has ONE ready word', kinds.every((k) => !!readyWordOf(k)) && Object.keys(TRIAGE_READY_WORDS).length === kinds.length);
+
+  // P2 · THE WITHDRAWN DRAFT — the owner's case, end to end through the REAL ledger + the REAL card.
+  const withdrawn: Record<string, ItemPageTruth> = { w1: { state: 'awaiting_approval', liveKinds: [] } };
+  const wRow = buildHeldLedger([heldRow('w1')], TODAY, { itemPage: withdrawn }).bands.waiting.rows[0];
+  gate('P2 a stored draft the one reader WITHDREW serves no prepared kind (the source_data draft no longer speaks)', !!wRow && wRow.prepared === null, JSON.stringify(wRow?.prepared));
+  const wPage = composeItemPage({ machine: { state: 'awaiting_approval' }, mounted: {}, brief: null, who: null, ask: null, title: null, source: 'source' });
+  const wHtml = text(deck([cardOf(wRow)]));
+  gate('P2b …the item page shows no action widget AND the card shows no "ready" pill', wPage.action === null && !/draft ready|ready/i.test(wHtml.replace(/When you.re ready/i, '')), wHtml.slice(0, 200));
+  const live: Record<string, ItemPageTruth> = { l1: { state: 'awaiting_approval', liveKinds: ['reply_draft'] } };
+  const lRow = buildHeldLedger([heldRow('l1')], TODAY, { itemPage: live }).bands.waiting.rows[0];
+  const lPage = composeItemPage({ machine: { state: 'awaiting_approval' }, mounted: { reply_draft: true }, brief: null, who: null, ask: null, title: null, source: 'source' });
+  gate('P3 a LIVE draft: the page mounts the email widget AND the card says "Draft ready"… (one reader, one answer)',
+    lRow?.prepared === 'reply_draft' && lPage.action === 'email' && /draft ready/.test(text(deck([cardOf(lRow)]))));
+  const nRow = buildHeldLedger([heldRow('n1')], TODAY).bands.waiting.rows[0];
+  gate('P4 no served page truth for a row → no pill (never a guess from source_data)', nRow?.prepared === null);
+  const ldRow = buildHeldLedger([heldRow('d1')], TODAY, { itemPage: { d1: { state: 'looks_done', liveKinds: ['reply_draft'] } } }).bands.waiting.rows[0];
+  const ldHtml = text(deck([cardOf(ldRow)]));
+  gate('P5 LOOKS DONE with a live draft: the page shows the confirm widget, the card wears no draft pill and says "Looks done — confirm"',
+    ldRow?.prepared === null && composeItemPage({ machine: { state: 'looks_done' }, mounted: { reply_draft: true, looks_done: true }, brief: null, who: null, ask: null, title: null, source: null }).action === 'confirm'
+    && !/draft ready/.test(ldHtml) && /Looks done — confirm/.test(ldHtml), ldHtml.slice(0, 240));
+  const att = code('lib/home/attention.ts'); const hm = code('lib/deeds/held-members.ts');
+  const deckSrc2 = code('components/triage/triage-deck.tsx'); const hv = code('components/home/home-view.tsx');
+  gate('P6 source: the ledger no longer derives a pill from source_data; it reads the page\'s table over the served truth',
+    !/liveFromSourceData/.test(att) && /receiptKindOfItem\(truth\.state, truth\.liveKinds\)/.test(att));
+  gate('P7 source: the served truth is THE MACHINE\'s batched reader (the one reader\'s live kinds), read beside the bodies for the pill rows',
+    /itemPageTruthFor\(client, userId, pillIds\)/.test(hm) && /workStatesFor\(client, userId, chunk\.map/.test(hm)
+    && /liveKinds: \(st\?\.all \?\? \[\]\)\.filter\(isLiveArtifact\)/.test(code('lib/work/machine.ts'))
+    && /itemPage: derived\.itemPage \?\? null/.test(code('lib/deeds/held-cache.ts')));
+  gate('P8 source: the card words its pill from the kind by ONE table; the Home\'s handed rows choose it through the same page table',
+    /const chip = readyWordOf\(row\.prepared\);/.test(deckSrc2) && !/'draft ready'|'invite ready'/.test(deckSrc2)
+    && /receiptKindOfItem\(it\.machineState \?\? null/.test(hv) && /machineState: c\.machine\?\.state \?\? null/.test(hv));
+}
+
+// ═══ W16.3 · PLAIN WORDS ═══
+console.log('\nJ · W16.3 — the card and the list speak the reader\'s words, from the item\'s own facts');
+{
+  // J1 · every class × every fact shape the ledger can serve — no machinery word.
+  const variants: Array<[string, Partial<HeldFacts>, Record<string, unknown>]> = [
+    ['plain overflow', {}, { understanding: { ownership: 'none', mailKind: 'customer' }, from_name: '' }],
+    ['asked', {}, {}],
+    ['due ahead', {}, { understanding: { role: 'addressed', relevance: 'reply', ownership: 'you_owe', language: 'en', mailKind: 'customer', deadline: '2026-10-13' } }],
+    ['past due', {}, { understanding: { role: 'addressed', relevance: 'reply', ownership: 'you_owe', language: 'en', mailKind: 'customer', deadline: '2026-09-13' } }],
+    ['calendar', { calendarAdjacent: true }, {}],
+    ['parked', { userParkedUntil: TODAY, userParkDue: true, judgedNone: true }, {}],
+    ['never judged', { neverJudged: true, judgedCurrent: false }, {}],
+    ['answered', { judgedNone: true, judgedResolution: 'answered' }, {}],
+    ['quiet', { budgetOverflow: false }, {}],
+  ];
+  const whys: string[] = [];
+  for (const cls of HELD_CLASS_ORDER as HeldClassId[]) for (const [, over, sd] of variants) {
+    whys.push(whyHeldOf(cls, heldRow('j', over, sd), TODAY));
+    whys.push(whyHeldOf(cls, heldRow('j', over, sd), TODAY, 'looks_done'));
+  }
+  const offenders = whys.filter((w) => ROW_JARGON.test(w));
+  gate(`J1 ${whys.length} row whys (every class × fact shape) carry no machinery word ("judged", "today's five", "held", "seat", "budget")`, offenders.length === 0, offenders.slice(0, 3).join(' | '));
+  const intros = [0, 3].flatMap((served) => [0, 1].map((urgent) => heldIntro({ total: 9, classes: [], bands: { waiting: { count: 3, urgent }, watched: { count: 1 }, handled: { count: 5 } }, servedCount: served }, 0)));
+  intros.push(heldIntro({ total: 0, classes: [], bands: { waiting: { count: 0, urgent: 0 }, watched: { count: 0 }, handled: { count: 0 } } }, 0));
+  const listWords = [...intros, HELD_BANDS.waiting.sentence, ...Object.values(ROW_WHY_WORDS), ...Object.values(TRIAGE_SOURCE_WORD), ...Object.values(TRIAGE_READY_WORDS)];
+  const listOff = listWords.filter((w) => ROW_JARGON.test(w));
+  gate('J2 the list\'s intro, the waiting sentence, the source and ready words carry none either', listOff.length === 0, listOff.join(' | '));
+  gate('J3 the retired strings are gone from every source that speaks them',
+    !/did not make today/.test(code('lib/home/attention.ts')) && !/judged thing/.test(code('lib/home/held-words.ts'))
+    && !/today’s five were fuller/.test(code('lib/home/attention.ts')) && !/'mail'/.test(code('lib/triage/words.ts').split('TRIAGE_SOURCE_WORD')[1]?.split(';')[0] ?? "'mail'"));
+
+  // J4 · THE WORDS COME FROM THE ITEM'S OWN FACTS — rendered through the REAL card.
+  const r = (id: string, over: Partial<HeldFacts>, sd: Record<string, unknown>, truth?: ItemPageTruth) =>
+    buildHeldLedger([heldRow(id, over, sd)], TODAY, truth ? { itemPage: { [id]: truth } } : {}).bands.waiting.rows[0];
+  const asked = text(deck([cardOf(r('a1', {}, {}))]));
+  gate('J4 who asked + when → "Sam asked you on Sep 22" (the sender\'s first name, the arrival day)', /Sam asked you on Sep 22/.test(asked), asked.slice(0, 240));
+  const due = text(deck([cardOf(r('a2', {}, { understanding: { role: 'addressed', relevance: 'reply', ownership: 'you_owe', language: 'en', mailKind: 'customer', deadline: '2026-10-13' } }))]));
+  gate('J5 a stated date → "Due Oct 13" (the date moved off the meta line into the why — said once)', /Due Oct 13/.test(due) && (due.match(/Oct 13/g) ?? []).length === 1, due.slice(0, 240));
+  const plain = text(deck([cardOf(r('a3', {}, { understanding: { ownership: 'none', mailKind: 'customer' } }))]));
+  gate('J6 nothing more specific → "Waiting for you"', /Waiting for you/.test(plain), plain.slice(0, 240));
+  gate('J7 the machine says looks done → "Looks done — confirm"', /Looks done — confirm/.test(text(deck([cardOf(r('a4', {}, {}, { state: 'looks_done', liveKinds: [] }))]))));
+  gate('J8 the kind label is plain ("Email"), never the lane token "mail"', /\bEmail\b/.test(asked) && !/\bmail\b/.test(asked.replace(/Email/g, '')));
+  const all = [asked, due, plain].join(' ');
+  gate('J9 no rendered card word is machinery (judged · today\'s five · held · seat · budget)', !ROW_JARGON.test(all), (all.match(ROW_JARGON) ?? [])[0]);
+  gate('J10 the ladder is ONE home, and the card only sentence-cases it', rowWhyOf({ cls: 'quieter_threads', todayISO: TODAY, overflow: true }) === 'waiting for you'
+    && sentenceCase('waiting for you') === 'Waiting for you' && /const whyLine = sentenceCase\(row\.why\);/.test(code('components/triage/triage-deck.tsx'))
+    && /return rowWhyOf\(\{/.test(code('lib/home/attention.ts')));
 }
 
 console.log(`\n${failures.length ? '❌' : '✅'} ${pass} passed, ${failures.length} failed`);

@@ -28,7 +28,7 @@ import {
   whyNowOf, rankAttention, classifyHeld, bandOf, internalDomainsOf, isInternalBridge, selectGraduates,
   buildHeldLedger, ATTENTION_BUDGET, MAX_ADJACENCY_PROMOTIONS, HELD_MEMBERS_PER_CLASS,
   seatClockOf, kindFlooredForSeat,
-  type AttentionRow, type HeldFacts, type HeldClassId, type HeldBandId,
+  type AttentionRow, type HeldFacts, type HeldClassId, type HeldBandId, type ItemPageTruth,
 } from '@/lib/home/attention';
 import { readLeanPool, rulesReadBody, hydrateSource, CLASSIFY_KEYS, PREPARED_KEYS, DEED_KEYS } from '@/lib/home/lean-source';
 import { loadUserForms } from '@/lib/prepare/addressee';
@@ -70,6 +70,11 @@ export type HeldDerivation = {
   /** THE USER'S CODE-OWNED FORMS (W7.5) — handed to the pure ledger so its served `prepared` kind
    *  passes THE ADDRESSEE FLOOR exactly as the ONE READER does. Null = the floor stays silent. */
   userForms: UserForms | null;
+  /** W16.3 · THE ITEM PAGE'S TRUTH for the rows the payload renders in the waiting/watched bands
+   *  (THE MACHINE's state + THE ONE READER's live kinds, by item id) — set by `hydrateHeldBodies`,
+   *  read by the ledger so a row's "ready" pill and its looks-done why are the page's own. Absent →
+   *  no row claims prepared work. */
+  itemPage?: Record<string, ItemPageTruth>;
 };
 
 /**
@@ -349,7 +354,39 @@ export async function hydrateHeldBodies(
     ...ledger.bands.waiting.rows, ...ledger.bands.watched.rows, ...ledger.classes.flatMap((c) => c.members),
   ].map((m) => m.itemId));
   const served = derived.facts.filter((f) => ids.has(String(f.item.id))).map((f) => f.item);
-  return hydrateSource(client, userId, served as never, [...PREPARED_KEYS, 'body'], served.length);
+  // W16.3 · THE PILL IS THE PAGE'S WIDGET — the rows that can wear a pill (waiting + watched) get the
+  // item page's own truth: THE MACHINE's batched reader (lib/work/machine.ts workStatesFor → THE ONE
+  // READER preparedStatesFor, every floor incl. the mailbox identity and the exact ground), beside the
+  // body read. Chunked (no id list grows a URL past its bound); a failed read leaves the map empty,
+  // which serves NO pill (never a guessed one).
+  const pillIds = [...new Set([...ledger.bands.waiting.rows, ...ledger.bands.watched.rows].map((m) => m.itemId))];
+  const truthP = itemPageTruthFor(client, userId, pillIds)
+    .then((m) => { derived.itemPage = m; })
+    .catch(() => { derived.itemPage = {}; });
+  const [out] = await Promise.all([hydrateSource(client, userId, served as never, [...PREPARED_KEYS, 'body'], served.length), truthP]);
+  return out;
+}
+
+/** How many item ids one machine read carries (a PostgREST `in()` list rides the URL). */
+export const ITEM_PAGE_TRUTH_CHUNK = 100;
+
+/** W16.3 · THE ITEM PAGE'S TRUTH for a set of inbox items — the machine's state and the one reader's
+ *  LIVE prepared kinds, from the SAME batched reader the Home's deck uses (no second derivation). */
+export async function itemPageTruthFor(
+  client: DBClient, userId: string, itemIds: string[],
+): Promise<Record<string, ItemPageTruth>> {
+  const out: Record<string, ItemPageTruth> = {};
+  if (!itemIds.length) return out;
+  const { workStatesFor } = await import('@/lib/work/machine');
+  for (let i = 0; i < itemIds.length; i += ITEM_PAGE_TRUTH_CHUNK) {
+    const chunk = itemIds.slice(i, i + ITEM_PAGE_TRUTH_CHUNK);
+    const states = await workStatesFor(client, userId, chunk.map((id) => ({ kind: 'inbox' as const, id })));
+    for (const id of chunk) {
+      const st = states.get(`inbox:${id}`);
+      out[id] = { state: st?.state ?? null, liveKinds: st?.liveKinds ?? [] };
+    }
+  }
+  return out;
 }
 
 /**

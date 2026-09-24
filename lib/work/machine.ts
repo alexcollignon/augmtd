@@ -487,8 +487,8 @@ export async function workStateOf(
 export async function workStatesFor(
   client: SupabaseClient, userId: string,
   items: Array<{ kind: 'inbox' | 'commitment'; id: string; /** prefetched row, when the caller holds it */ row?: { status?: string | null; source_data?: unknown; last_activity_at?: string | null } }>,
-): Promise<Map<string, WorkMachineState & { /** when the item was FIRST judged — the deck's "surfaced today" delta rides this */ judgedFirstAt?: string | null }>> {
-  const out = new Map<string, WorkMachineState & { judgedFirstAt?: string | null }>();
+): Promise<Map<string, WorkMachineState & { /** when the item was FIRST judged — the deck's "surfaced today" delta rides this */ judgedFirstAt?: string | null; /** W16.3 · THE ONE READER's LIVE prepared kinds (what the item page can mount) */ liveKinds?: PreparedArtifact['kind'][] }>> {
+  const out = new Map<string, WorkMachineState & { judgedFirstAt?: string | null; liveKinds?: PreparedArtifact['kind'][] }>();
   if (!items.length) return out;
   try {
     const keyOf = (i: { kind: string; id: string }) => `${i.kind}:${i.id}`;
@@ -591,6 +591,7 @@ export async function workStatesFor(
         ...(looksDoneLive(looksDoneByKey.get(key)) && looksDoneByKey.get(key)?.evidence ? { looksDoneLine: looksDoneLine(looksDoneByKey.get(key)!.evidence) } : {}),
         ...(asks.mootKeys.length ? { mootAskKeys: asks.mootKeys } : {}),
         judgedFirstAt: j?.firstAt ?? null,
+        liveKinds: (st?.all ?? []).filter(isLiveArtifact).map((a) => a.kind),
       });
     }
   } catch { /* the machine word is an enhancement — rows render without it */ }

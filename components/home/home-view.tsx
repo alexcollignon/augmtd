@@ -17,6 +17,10 @@ import { pickWhispers, toWhisper, sortDoorRows, servedWho, whisperBody, whisperP
 // W11.2 · "looks done — confirm" — the machine's word, from its one client-safe home.
 import { LOOKS_DONE_WORD, CONFIRM_WORDS } from '@/lib/evidence/looks-done-word';
 import { cardFacts } from '@/lib/triage/deck-context';
+// W16.3 · THE CARD'S PILL IS THE ITEM PAGE'S WIDGET (one table) and its date speaks plainly (one home).
+import { receiptKindOfItem } from '@/components/thread/item-page';
+import { readyWordOf } from '@/lib/triage/words';
+import { dueWordsOf } from '@/lib/home/held-words';
 import { createClient } from '@/lib/supabase/client';
 import {
   EnvelopeIcon, CalendarDaysIcon, CheckCircleIcon, ClockIcon, UsersIcon, FolderIcon,
@@ -2057,6 +2061,7 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
     prepared: oneClaimPrepared(m.preparedBy ?? (m.draft ? 'draft' : null), m.machine),
     preparedKind: m.preparedKind ?? (m.draft ? 'reply_draft' : null),
     stateWord: machineWord(m.machine, m.preparedBy ?? (m.draft ? 'draft' : null)),
+    machineState: m.machine?.state ?? null,
   }));
   const agendaNoticeItems: DoItem[] = (b?.actionNotices ?? []).filter((a) => !clearedIds.has(a.itemId) && !dismissed.has(a.itemId)).map((a) => ({
     source: 'notice', key: `n-${a.itemId}`, entityId: a.itemId, href: door(a.itemId, `/item/${a.itemId}?kind=email`),
@@ -2067,6 +2072,7 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
     prepared: oneClaimPrepared(a.preparedBy ?? null, a.machine),
     preparedKind: a.preparedKind ?? null,
     stateWord: machineWord(a.machine, a.preparedBy ?? null),
+    machineState: a.machine?.state ?? null,
   }));
   const agendaCommitItems: DoItem[] = looseCommitments.map((c) => ({
     source: 'commitment', key: `c-${c.id}`, entityId: c.id, href: door(c.id, `/item/${c.id}?kind=commitment`),
@@ -2080,6 +2086,7 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
     prepared: oneClaimPrepared(c.prepared ?? null, c.machine),
     preparedKind: c.preparedKind ?? null,
     stateWord: machineWord(c.machine, c.prepared ?? null),
+    machineState: c.machine?.state ?? null,
   }));
   const liveDeals = (b?.slippingDeals ?? []).filter((d) => !dismissedDeals.has(d.key));
   // THE BRIEF de-dup: items the brain SENTENCED live in the prose — they leave the deck (hero kept).
@@ -2164,21 +2171,30 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
   // rather than becoming blank space with a label over it.
   const handedRow = (it: DoItem): DeckHeldRow => {
     const w = toWhisper(it);
+    // W16.3 · THE PILL IS THE ITEM PAGE'S WIDGET: the receipt is the prepared kind the item page's own
+    // table (components/thread/item-page.ts receiptKindOfItem) would mount for THE MACHINE's state over
+    // THE ONE READER's live lead kind — worded by the one ready-word table. No machine state, or a state
+    // whose widget is not prepared work (looks done · scheduled · an ask …) → no receipt at all; the
+    // row then speaks the machine's plain state word.
+    const pageKind = receiptKindOfItem(it.machineState ?? null, it.prepared ? [it.preparedKind ?? null] : []);
+    const receipt = readyWordOf(pageKind);
+    // THE DATE, PLAINLY: the card's meta line no longer prints it, so the why carries it ("due Sep 13")
+    // when the urgency word does not (lib/home/held-words.ts — the one home).
+    const urgency = w.urgency ?? (it.dueDate ? dueWordsOf(it.dueDate, todayISOStr) : null);
     // THE CARD'S OWN FACTS (W3.6, lib/triage/deck-context.ts `cardFacts`): the card's header shows
     // the who, so its TITLE is the raw ask (never "Name — ask", the name said twice); the receipt
     // rides ONCE, as the chip, so the card's subline drops it. The LIST keeps its own grammar —
     // `line` is the whisper sentence and `why` still carries the receipt (a list row has no chip).
     const who = servedWho(it);
-    const facts = cardFacts({ sentence: w.sentence, body: whisperBody(it), who, urgency: w.urgency, receipt: w.receipt, note: w.note });
+    const facts = cardFacts({ sentence: w.sentence, body: whisperBody(it), who, urgency, receipt, note: receipt ? null : (it.stateWord ?? null) });
     const why = facts.listWhy;
     return {
       id: it.entityId, href: it.href, line: w.sentence, why,
       cardTitle: facts.title, cardWhy: facts.why,
       // THE PROJECT REFERENCE — served (tagByAtom, tracked-only), never said twice.
       project: whisperProject(it, facts.title),
-      // THE LIVE PREPARED KIND — THE ONE READER's lead kind, as the brief served it (kind-true,
-      // expired excluded). The card words its chip from it; it never mounts a renderer off it.
-      preparedKind: it.prepared ? (it.preparedKind ?? null) : null,
+      // THE PAGE'S KIND — the card words its chip from it; it never mounts a renderer off it.
+      preparedKind: pageKind,
       // …and its KIND rides along, so the ledger's per-row verbs reach ITS door (a commitment
       // settles through the commitments route; a deal has no per-row door and wears no verbs).
       source: it.source as DeckHeldRow['source'],
@@ -2186,10 +2202,7 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
       // commitment's counterparty is the same who here as in the whisper it was worded from.
       who,
       dueDate: it.dueDate ?? null,
-      // The prepared RECEIPT as a word ("drafted" / "ready to send"), never the ledger's artifact
-      // token: mounting an artifact card off a word the Home never promised would be a second,
-      // guessing renderer. The word is a chip; the artifact stays the ledger's own fact.
-      preparedWord: w.receipt ?? null,
+      preparedWord: receipt,
     };
   };
   const deckHeldRows: DeckHeldRow[] = restRows

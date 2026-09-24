@@ -7543,6 +7543,87 @@
    "note": "Sep 24 (owner walk on \"When you're ready\"): preferred the one-at-a-time card over the list (\"why not this as only option\"); the card first painted short, then the evidence loaded and pushed Dismiss/Done down (visible delay + layout shift); \"we should have a more standardized component, so there's no expansion beyond a viewport height — I don't want the user to scroll for the buttons\". Cause: the Sep-21 card area was a min-height FLOOR (a tall card or late evidence grew past it), the verbs' tails (Later whens, posture offer) opened beneath the pills, and a v1 \"list\" stamp reopened the list from the door. Fixed by W15.3 (uncommitted)."
   },
   {
+   "id": "the-card-says-what-the-page-shows",
+   "name": "THE CARD SAYS WHAT THE PAGE SHOWS",
+   "aliases": [
+    "THE PILL IS THE PAGE'S WIDGET",
+    "THE ROW'S WHY IN THE READER'S WORDS",
+    "NO MACHINERY WORDS ON THE CARD"
+   ],
+   "tier": 2,
+   "domain": "deck · surfaces",
+   "statement": "A triage card and a held-list row wear a \"ready\" pill (draft ready · follow-up ready · invite ready · forward ready · ready to review · words ready) EXACTLY when opening that item shows that prepared widget: the pill's kind is chosen by the item page's own table (components/thread/item-page.ts `receiptKindOfItem` = `actionOf` over THE MACHINE's single state + THE ONE READER's LIVE prepared kinds, served per waiting/watched row by the ledger's hydration step through `workStatesFor` — every floor the page's door applies: mailbox identity, exact ground, settled, staging, addressee, time) and worded by ONE table (lib/triage/words.ts `readyWordOf`). A withdrawn artifact, a state whose widget is not prepared work (looks done, scheduled, an ask, preparing …), or a row with no served truth wears NO pill — never a guess from stored source data. The Home's handed rows (commitments, deals) choose their receipt through the same table over their served machine state. The row's WHY is the reader's words, composed in ONE home (lib/home/held-words.ts `rowWhyOf`) from the item's own facts, first rung wins: the person's own park (\"you asked to see this today\") · the machine's looks-done (\"looks done — confirm\") · the stated date (\"due Sep 13\" / \"was due Sep 13\") · who asked and when (\"Sam asked you on Sep 22\") · a counterparty on the calendar within two days (\"you meet Sam soon\") · \"waiting for you\"; handled classes keep their own plain account. No card or list word is the platform's machinery — \"judged\", \"today's five\", \"held\", \"seat\", \"budget\" (ROW_JARGON) — and the card's kind label is plain (\"Email\", \"Commitment\", \"From a meeting\"), never the lane token \"mail\". The date is said once (the why carries it; the card's meta line no longer repeats it).",
+   "homes": [
+    "components/thread/item-page.ts",
+    "lib/home/held-words.ts",
+    "lib/home/attention.ts",
+    "lib/deeds/held-members.ts",
+    "lib/deeds/held-cache.ts",
+    "lib/work/machine.ts",
+    "lib/triage/words.ts",
+    "components/triage/triage-deck.tsx",
+    "components/home/home-view.tsx",
+    "lib/home/agenda.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-decision-card",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "P1-P1c",
+      "J1-J2",
+      "J10"
+     ],
+     "note": "W16.3: over every page state × every subset of prepared kinds (704 fixtures) the pill kind IS the page's prepared widget; no state → no pill; one ready word per kind; 144 row whys (every class × fact shape, with and without looks-done) and the list's intro / waiting sentence / source and ready words carry no ROW_JARGON; tests/unit/row-words"
+    },
+    {
+     "suite": "smoke-decision-card",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "P2-P5",
+      "J4-J9"
+     ],
+     "note": "W16.3: the owner's WITHDRAWN DRAFT end to end through the REAL ledger + a server render of the REAL deck — no prepared kind, no pill, and the page shows no widget; a live draft → the email widget AND \"Draft ready\"; no served truth → no pill; looks done → confirm widget, no pill, \"Looks done — confirm\"; rendered whys from the item's facts (\"Sam asked you on Sep 22\", \"Due Oct 13\" said once, \"Waiting for you\"), \"Email\" never \"mail\", no machinery word in any rendered card"
+    },
+    {
+     "suite": "smoke-decision-card",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "P6-P8",
+      "J3"
+     ],
+     "note": "W16.3: the ledger no longer reads source_data for its pill (receiptKindOfItem over the served truth); the truth is workStatesFor's live kinds, read beside the bodies and carried into the payload; the card words its pill by the one table and the Home's handed rows choose theirs through the page table; the retired strings are gone"
+    }
+   ],
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W16.3",
+   "fn": "receiptKindOfItem · rowWhyOf · readyWordOf · buildHeldLedger (itemPage) · TriageDeck (server render)",
+   "collides_with": [
+    {
+     "law": "the-item-page-is-a-few-widgets",
+     "precedence": "the item page's table is the ONE authority on which prepared widget an item shows; this law only makes every card/list pill a reader of that table — it adds no row and never overrides the page"
+    },
+    {
+     "law": "a-claim-renders",
+     "precedence": "a pill is a claim; it now renders by construction (the page mounts exactly that widget). A CLAIM RENDERS stays the general law; this is its triage-card/held-list seat, stricter (the page's choice, not merely a live artifact)"
+    },
+    {
+     "law": "the-list-says-only-what-was-judged",
+     "precedence": "the band still seats a row only on a cached work verdict — unchanged; this law decides only how rows and the list are SPOKEN: in the reader's words, never \"judged\" (\"not yet judged\" is spoken \"not looked at yet\"; the band sentence \"yours to do\")"
+    },
+    {
+     "law": "one-decision-per-screen",
+     "precedence": "the frame, heights and verbs are untouched; this law decides only the head's words and pill inside the frame"
+    }
+   ],
+   "note": "Sep 24 (owner walk on the one-at-a-time card): an email card wore \"draft ready\" while opening the same item showed NO draft widget — the ledger derived its pill from the row's stored source_data through the pure reader (no mailbox-identity floor, an approximate ground, no machine state), while the page used THE ONE READER's IO verdict + the machine's single state. The card's why read \"judged work — it did not make today's five\" and its kind label read \"mail\". Fixed by W16.3 (uncommitted). NOT VERIFIED IN THE BROWSER (no walk was run by this wave)."
+  },
+  {
    "id": "one-thread-component",
    "name": "ONE THREAD COMPONENT",
    "aliases": [

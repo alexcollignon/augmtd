@@ -164,6 +164,23 @@ export function actionOf(
   return artifact ? { widget: WIDGET_OF_ARTIFACT[artifact], artifact } : null;
 }
 
+/** THE ONE READER's prepared kinds, as the table names them (the kinds a "ready" pill may speak). */
+export const PAGE_PREPARED_KINDS: readonly PreparedKind[] = ['reply_draft', 'nudge_draft', 'invite', 'forward', 'deliverable', 'paste_pack'];
+const isPreparedKind = (k: unknown): k is PreparedKind => (PAGE_PREPARED_KINDS as readonly unknown[]).includes(k);
+
+/** W16.3 · THE CARD'S RECEIPT IS THE ITEM PAGE'S WIDGET — pure. The prepared kind a triage card /
+ *  held-list row may wear as its "ready" pill is EXACTLY the prepared artifact this table would put
+ *  forward as the item page's one action widget, given THE MACHINE's state and THE ONE READER's
+ *  LIVE kinds (withdrawn artifacts never reach `liveKinds`). No state, a state whose row names no
+ *  prepared kind (looks done, scheduled, preparing …), or no live kind in its row → null: the page
+ *  would show no prepared widget, so no surface may say one is ready. */
+export function receiptKindOfItem(state: string | null | undefined, liveKinds: readonly (string | null | undefined)[]): PreparedKind | null {
+  const mounted: ItemArtifactsMounted = {};
+  for (const k of liveKinds) if (isPreparedKind(k)) mounted[k] = true;
+  const chosen = actionOf(state ? { state } : null, mounted);
+  return chosen && isPreparedKind(chosen.artifact) ? chosen.artifact : null;
+}
+
 /** The widget alone (hosts that only need the kind — the header's emphasis). */
 export const actionWidgetOf = (machine: ItemPageFacts['machine'], mounted: ItemArtifactsMounted, gateOpen = false): ItemActionWidget | null =>
   actionOf(machine, mounted, gateOpen)?.widget ?? null;
