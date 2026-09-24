@@ -14,6 +14,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 // W11.3 · a source card's excerpt is a DISPLAY clip — EXCERPT_MARK never renders.
 import { clipForDisplay } from '@/lib/utils/clip-for-prompt';
+// W16.4 · a source's words are plain text for every host (the page and the card alike) — decoded ONCE here.
+import { decodeEntities } from '@/lib/core/text';
 
 /** The source card's excerpt budget — clipped by THE ONE CLIPPER, the cut declared. */
 export const MEETING_SOURCE_EXCERPT_CHARS = 280;
@@ -61,43 +63,74 @@ const labelOf = (a: unknown): string | null => {
   return String(o.name ?? o.displayName ?? '').trim() || String(o.email ?? '').trim() || null;
 };
 
+/** The meeting row + its calendar event, as the one reader selects them. */
+const MEETING_SOURCE_COLS = 'id, title, start_time, created_at, attendees, calendar_event_id, summary';
+const MEETING_EVENT_COLS = 'id, title, start_time, attendees';
+type MeetingRow = Record<string, unknown>;
+
+/** The pure shaping half (W16.4 — one shaper for the page's single read AND the deck's batched read). */
+export function meetingSourceFromRows(
+  mt: MeetingRow | null | undefined, ev: MeetingRow | null | undefined, isUser?: (who: string) => boolean,
+): MeetingSource | null {
+  if (!mt || !mt.id) return null;
+  const names: string[] = [];
+  for (const a of Array.isArray(mt.attendees) ? mt.attendees as unknown[] : []) { const l = labelOf(a); if (l) names.push(l); }
+  let title = decodeEntities(String(mt.title ?? '').trim()) || 'Meeting';
+  let startISO = (mt.start_time as string | null) ?? (mt.created_at as string | null) ?? null;
+  if (ev) {
+    if (ev.title) title = decodeEntities(String(ev.title));
+    if (ev.start_time) startISO = String(ev.start_time);
+    for (const a of Array.isArray(ev.attendees) ? ev.attendees as unknown[] : []) { const l = labelOf(a); if (l) names.push(l); }
+  }
+  const seen = new Set<string>();
+  const attendees = names.filter((n) => {
+    const k = n.toLowerCase();
+    if (seen.has(k) || (isUser && isUser(n))) return false;
+    seen.add(k); return true;
+  });
+  const summary = typeof mt.summary === 'string' ? decodeEntities(mt.summary).replace(/\s+/g, ' ').trim() : '';
+  return {
+    id: String(mt.id),
+    addressId: String(mt.calendar_event_id ?? mt.id),
+    title, startISO, attendees,
+    excerpt: summary ? clipForDisplay(summary, MEETING_SOURCE_EXCERPT_CHARS) : null,
+  };
+}
+
 /** Read a meeting-born commitment's source meeting (transcript row + its calendar event). */
 export async function meetingSourceOf(
   client: SupabaseClient, userId: string, meetingId: string,
   isUser?: (who: string) => boolean,
 ): Promise<MeetingSource | null> {
+  return (await meetingSourcesOf(client, userId, [meetingId], isUser)).get(meetingId) ?? null;
+}
+
+/** THE ONE READ, batched (W16.4 — the deck's handed set): two `in()` reads for the whole set,
+ *  never one per card. Unreadable → absent from the map. Zero AI. */
+export async function meetingSourcesOf(
+  client: SupabaseClient, userId: string, meetingIds: string[],
+  isUser?: (who: string) => boolean,
+): Promise<Map<string, MeetingSource>> {
+  const out = new Map<string, MeetingSource>();
+  const ids = [...new Set(meetingIds.filter(Boolean))];
+  if (!ids.length) return out;
   try {
-    const { data: mt } = await client.from('meeting_transcripts')
-      .select('id, title, start_time, created_at, attendees, calendar_event_id, summary')
-      .eq('id', meetingId).eq('user_id', userId).maybeSingle();
-    if (!mt) return null;
-    const names: string[] = [];
-    for (const a of Array.isArray(mt.attendees) ? mt.attendees as unknown[] : []) { const l = labelOf(a); if (l) names.push(l); }
-    let title = String(mt.title ?? '').trim() || 'Meeting';
-    let startISO = (mt.start_time as string | null) ?? (mt.created_at as string | null) ?? null;
-    if (mt.calendar_event_id) {
-      const { data: ev } = await client.from('calendar_events').select('title, start_time, attendees')
-        .eq('id', mt.calendar_event_id as string).eq('user_id', userId).maybeSingle();
-      if (ev) {
-        if (ev.title) title = String(ev.title);
-        if (ev.start_time) startISO = String(ev.start_time);
-        for (const a of Array.isArray(ev.attendees) ? ev.attendees as unknown[] : []) { const l = labelOf(a); if (l) names.push(l); }
-      }
+    const { data: mts, error } = await client.from('meeting_transcripts').select(MEETING_SOURCE_COLS)
+      .eq('user_id', userId).in('id', ids);
+    if (error || !mts?.length) return out;
+    const evIds = [...new Set((mts as MeetingRow[]).map((m) => m.calendar_event_id).filter((x): x is string => typeof x === 'string' && !!x))];
+    const evById = new Map<string, MeetingRow>();
+    if (evIds.length) {
+      const { data: evs, error: evErr } = await client.from('calendar_events').select(MEETING_EVENT_COLS)
+        .eq('user_id', userId).in('id', evIds);
+      if (!evErr) for (const e of (evs ?? []) as MeetingRow[]) evById.set(String(e.id), e);
     }
-    const seen = new Set<string>();
-    const attendees = names.filter((n) => {
-      const k = n.toLowerCase();
-      if (seen.has(k) || (isUser && isUser(n))) return false;
-      seen.add(k); return true;
-    });
-    const summary = typeof mt.summary === 'string' ? mt.summary.replace(/\s+/g, ' ').trim() : '';
-    return {
-      id: String(mt.id),
-      addressId: String(mt.calendar_event_id ?? mt.id),
-      title, startISO, attendees,
-      excerpt: summary ? clipForDisplay(summary, MEETING_SOURCE_EXCERPT_CHARS) : null,
-    };
-  } catch { return null; }
+    for (const mt of mts as MeetingRow[]) {
+      const shaped = meetingSourceFromRows(mt, mt.calendar_event_id ? evById.get(String(mt.calendar_event_id)) : null, isUser);
+      if (shaped) out.set(shaped.id, shaped);
+    }
+  } catch { /* an unreadable source is no source */ }
+  return out;
 }
 
 // ── A COMMITMENT'S SOURCE MESSAGE IS ITS OWN (stabilization W11.1 · ONE OBJECT, ONE DOOR) ─────────
@@ -126,18 +159,27 @@ export type EmailSource = {
 /** The pure shaping half (the gate holds it): an `emails` row → the source message facts. */
 export function emailSourceFromRow(row: Record<string, unknown> | null | undefined, ownWords: (body: string) => string): EmailSource | null {
   if (!row || !row.id) return null;
-  const body = typeof row.body === 'string' ? ownWords(row.body) : '';
+  // Decoded ONCE, before the quote strip and the clip (W5b/W16.4 — "wasn&#39;t" never reaches a card).
+  const body = typeof row.body === 'string' ? ownWords(decodeEntities(row.body)) : '';
   const text = body.replace(/\s+/g, ' ').trim();
   return {
     id: String(row.id),
     threadId: (row.thread_id as string | null) ?? null,
-    subject: (row.subject as string | null) || null,
-    from: (row.from_name as string | null) || (row.from_address as string | null) || null,
+    subject: decodeEntities((row.subject as string | null) || '') || null,
+    from: decodeEntities((row.from_name as string | null) || '') || (row.from_address as string | null) || null,
     receivedAt: (row.received_at as string | null) ?? null,
     excerpt: text ? clipForDisplay(text, EMAIL_SOURCE_EXCERPT_CHARS) : null,
     authoredByUser: row.is_from_user === true,
   };
 }
+
+/** The columns THE ONE READ selects — the single and the batched read share them. */
+const EMAIL_SOURCE_COLS = 'id, thread_id, subject, body, from_name, from_address, received_at, is_from_user';
+/** The message's OWN words (the quoted tail stripped) — the one strip both reads use. */
+const sourceOwnWords = async (): Promise<(b: string) => string> => {
+  const { topMessageOf } = await import('@/lib/inbox/top-message');
+  return (b: string) => topMessageOf(b) || b;
+};
 
 /** THE ONE READ of an email-born commitment's source message: `commitments.source_id` IS the
  *  `emails.id` (see the header). One bounded SELECT, zero AI; unreadable → null. */
@@ -145,12 +187,32 @@ export async function emailSourceOf(client: SupabaseClient, userId: string, emai
   if (!emailId) return null;
   try {
     const { data, error } = await client.from('emails')
-      .select('id, thread_id, subject, body, from_name, from_address, received_at, is_from_user')
+      .select(EMAIL_SOURCE_COLS)
       .eq('id', emailId).eq('user_id', userId).maybeSingle();
     if (error || !data) return null;
-    const { topMessageOf } = await import('@/lib/inbox/top-message');
-    return emailSourceFromRow(data as Record<string, unknown>, (b) => topMessageOf(b) || b);
+    return emailSourceFromRow(data as Record<string, unknown>, await sourceOwnWords());
   } catch { return null; }
+}
+
+/** THE SAME READ, batched (W16.4 — the deck's handed set): the SAME columns, the SAME shaper, the
+ *  SAME own-words strip, each message BY ITS ID — one `in()` read for the whole set, never one per
+ *  card and never the thread's newest. Unreadable → absent from the map. */
+export async function emailSourcesOf(client: SupabaseClient, userId: string, emailIds: string[]): Promise<Map<string, EmailSource>> {
+  const out = new Map<string, EmailSource>();
+  const ids = [...new Set(emailIds.filter(Boolean))];
+  if (!ids.length) return out;
+  try {
+    const { data, error } = await client.from('emails')
+      .select(EMAIL_SOURCE_COLS)
+      .eq('user_id', userId).in('id', ids);
+    if (error || !data) return out;
+    const own = await sourceOwnWords();
+    for (const row of data as Record<string, unknown>[]) {
+      const shaped = emailSourceFromRow(row, own);
+      if (shaped) out.set(shaped.id, shaped);
+    }
+  } catch { /* an unreadable source is no source */ }
+  return out;
 }
 
 // ── WHY THIS COMMITMENT EXISTS (stabilization W15.4 · A PROMISE IS QUOTED OR IT ISN'T A PROMISE) ──
@@ -206,4 +268,36 @@ export async function sourceQuoteOf(client: SupabaseClient, userId: string, comm
     }
     return sourceQuoteFrom({ quote: c.source_quote as string, source: c.source as string, direction: c.direction as string, authoredByUser, from, counterparty: (c.counterparty as string | null) ?? null });
   } catch { return null; }
+}
+
+/** THE SAME READ, batched (W16.4 — the deck's handed set): the SAME columns, the SAME shaper, one
+ *  `in()` over the commitments and one over their source messages' authors. Tolerant of the pending
+ *  `source_quote` column the same way (an error is no quote). Commitments without a quote are absent. */
+export async function sourceQuotesOf(client: SupabaseClient, userId: string, commitmentIds: string[]): Promise<Map<string, SourceQuote>> {
+  const out = new Map<string, SourceQuote>();
+  const ids = [...new Set(commitmentIds.filter(Boolean))];
+  if (!ids.length) return out;
+  try {
+    const { data: cs, error } = await client.from('commitments')
+      .select('id, source_quote, source, source_id, direction, counterparty')
+      .eq('user_id', userId).in('id', ids);
+    if (error || !cs) return out;
+    const quoted = (cs as Record<string, unknown>[]).filter((c) => !!c.source_quote);
+    const emailIds = [...new Set(quoted.filter((c) => c.source === 'email' && c.source_id).map((c) => String(c.source_id)))];
+    const author = new Map<string, { authoredByUser: boolean; from: string | null }>();
+    if (emailIds.length) {
+      const { data: es, error: eErr } = await client.from('emails').select('id, is_from_user, from_name, from_address')
+        .eq('user_id', userId).in('id', emailIds);
+      if (!eErr) for (const e of (es ?? []) as Record<string, unknown>[]) {
+        author.set(String(e.id), { authoredByUser: e.is_from_user === true, from: (e.from_name as string | null) || (e.from_address as string | null) || null });
+      }
+    }
+    for (const c of quoted) {
+      const a = c.source === 'email' && c.source_id ? author.get(String(c.source_id)) : undefined;
+      const q = sourceQuoteFrom({ quote: c.source_quote as string, source: c.source as string, direction: c.direction as string,
+        authoredByUser: a ? a.authoredByUser : null, from: a?.from ?? null, counterparty: (c.counterparty as string | null) ?? null });
+      if (q) out.set(String(c.id), q);
+    }
+  } catch { /* additive — no quote */ }
+  return out;
 }

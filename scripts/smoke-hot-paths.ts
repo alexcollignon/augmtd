@@ -80,7 +80,8 @@ const WHOLE_READ_ALLOW: Record<string, string> = {
 };
 /** Declared body reads on the hot files — each bounded, each a served row. */
 const BODY_READ_ALLOW: Record<string, string> = {
-  'lib/triage/deck-context-read.ts · emails': 'the founding lines the handed cards quote — one id-keyed read for the chosen emails, ≤ DECK_CONTEXT_MAX_IDS',
+  // ⟲ W16.4: the deck-context reader reads no mail itself any more — the card's source message is read
+  // by the one source reader (lib/commitments/source.ts emailSourcesOf, by id, ≤ DECK_CONTEXT_MAX_IDS).
   'lib/home/prepare-action.ts · emails': 'the forward lane (POST, AI) — not a page load',
   'lib/home/item-context.ts · emails': 'the prepare lane (POST, AI) — not a page load',
 };
@@ -323,8 +324,12 @@ async function pure() {
   ok('the brief\'s deck pool reads DECK_KEYS (+ body), the FYI pool FYI_KEYS, commitments by column',
     /keys: DECK_KEYS, withBody: true/.test(brief) && /keys: FYI_KEYS/.test(brief) && /select\(OPEN_COMMITMENT_COLS\)/.test(brief) && !/from\('commitments'\)\.select\('\*'\)/.test(brief));
   const dcr = read('lib/triage/deck-context-read.ts');
-  ok('the deck-context thread listing is body-free; bodies are read for the chosen emails only',
-    /const EMAIL_COLS = 'id, thread_id, from_name, from_address, received_at, is_from_user';/.test(dcr) && /select\('id, body'\)\.eq\('user_id', userId\)\.in\('id', bodyIds\)/.test(dcr));
+  // ⟲ RE-POINTED (W16.4 — stricter): no thread listing at all; the ONLY body read is the one source
+  // reader's, BY ID, for exactly the handed commitments' source messages (bounded by the handed set).
+  const srcMod = read('lib/commitments/source.ts');
+  ok('the deck-context read lists no thread mail; bodies are read by id for the handed sources only (the one source reader)',
+    !/from\('emails'\)/.test(dcr) && /emailSourcesOf\(client, userId, sourceEmailIds\)/.test(dcr)
+    && /export async function emailSourcesOf\([\s\S]{0,500}\.select\(EMAIL_SOURCE_COLS\)\s*\.eq\('user_id', userId\)\.in\('id', ids\)/.test(srcMod));
   // ⟲ RE-POINTED (W14.1): the ONE reader reads READER_FACT_KEYS (PREPARED + the notice law's facts +
   // the thread for the exact ground) — still a projection, never the whole source_data.
   ok('the prepared batch reader reads a declared lean key set and hydrates an invite\'s words', /keys: READER_FACT_KEYS/.test(read('lib/prepare/read.ts')) && /const READER_FACT_KEYS: readonly string\[\] = \[\.\.\.ONE_READER_KEYS, 'thread_id'\];/.test(read('lib/prepare/read.ts')) && /some\(\(a\) => a\.kind === 'invite'\)/.test(read('lib/prepare/read.ts')));

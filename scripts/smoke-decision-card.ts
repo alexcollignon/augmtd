@@ -300,5 +300,182 @@ console.log('\nJ · W16.3 — the card and the list speak the reader\'s words, f
     && /return rowWhyOf\(\{/.test(code('lib/home/attention.ts')));
 }
 
-console.log(`\n${failures.length ? '❌' : '✅'} ${pass} passed, ${failures.length} failed`);
-if (failures.length) { for (const f of failures) console.log(`   ✗ ${f}`); process.exit(1); }
+// ═══ W16.4 · THE CARD'S EVIDENCE IS THE PAGE'S SOURCE ═══
+// Owner walk, Sep 24: the one-at-a-time card for a commitment ("Fix the incomplete survey question",
+// source = the counterparty's Aug 10 request on a very long shared thread) showed the THREAD'S NEWEST
+// message (Sep 3, "+97 earlier") while the item page showed the commitment's OWN message (W11.1). The
+// card now mounts exactly what the page mounts, read by the one source reader. These gates run the
+// REAL server reader (readDeckContexts) and the REAL page readers (emailSourceOf · sourceQuoteOf ·
+// meetingSourceOf) over one in-memory table fixture, then server-render the REAL deck and the page's
+// own mounts and demand the card's evidence IS the page's source widget.
+type Row = Record<string, unknown>;
+function tableClient(tables: Record<string, Row[]>) {
+  const at = (r: Row, path: string): unknown => {
+    if (!path.includes('->>')) return r[path];
+    const [a, b] = path.split('->>'); const o = r[a] as Row | undefined; return o ? o[b] : undefined;
+  };
+  const from = (table: string) => {
+    const st = { filters: [] as Array<(r: Row) => boolean>, cols: '*', order: null as null | { c: string; asc: boolean }, limit: Infinity, single: false };
+    const run = () => {
+      let rows = (tables[table] ?? []).filter((r) => st.filters.every((f) => f(r)));
+      if (st.order) { const { c, asc } = st.order; rows = [...rows].sort((x, y) => (String(at(x, c) ?? '') < String(at(y, c) ?? '') ? -1 : 1) * (asc ? 1 : -1)); }
+      rows = rows.slice(0, st.limit);
+      const proj = rows.map((r) => {
+        if (st.cols.trim() === '*') return { ...r };
+        const o: Row = {};
+        for (const part of st.cols.split(',').map((x) => x.trim()).filter(Boolean)) {
+          const [alias, path] = part.includes(':') ? part.split(':') : [part, part];
+          o[alias.includes('->>') ? alias.split('->>')[1] : alias] = at(r, path) ?? null;
+        }
+        return o;
+      });
+      return { data: st.single ? proj[0] ?? null : proj, error: null };
+    };
+    const q: Record<string, unknown> = {};
+    Object.assign(q, {
+      select: (c?: string) => { if (typeof c === 'string') st.cols = c; return q; },
+      eq: (c: string, v: unknown) => { st.filters.push((r) => at(r, c) === v); return q; },
+      in: (c: string, v: unknown[]) => { st.filters.push((r) => v.includes(at(r, c))); return q; },
+      order: (c: string, o?: { ascending?: boolean }) => { st.order = { c, asc: o?.ascending !== false }; return q; },
+      limit: (n: number) => { st.limit = n; return q; },
+      neq: () => q, not: () => q, is: () => q, or: () => q, gte: () => q, lte: () => q, gt: () => q, lt: () => q, ilike: () => q, range: () => q,
+      maybeSingle: () => { st.single = true; return q; },
+      single: () => { st.single = true; return q; },
+      then: (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) => Promise.resolve().then(run).then(res, rej),
+    });
+    return q;
+  };
+  return { from } as never;
+}
+const U = 'u-owner';
+const uid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const C_EMAIL = uid(1), C_MEET = uid(2), C_NOQUOTE = uid(3), E_SRC = uid(10), E_OWN = uid(11), MT = uid(20), EV = uid(21), I_THREAD = uid(30), I_MAIL = uid(31);
+const LATER = Array.from({ length: 97 }, (_, i) => ({
+  id: uid(100 + i), user_id: U, thread_id: 'thr-long', subject: 'Re: Survey launch', is_from_user: i % 2 === 0,
+  from_name: i === 96 ? 'Dana Lee' : 'Sam Rivera', from_address: i === 96 ? 'dana@acme.test' : 'sam@acme.test',
+  received_at: `2026-${i < 60 ? '08' : '09'}-${String(i < 60 ? 11 + Math.floor(i / 3) : 1 + Math.floor((i - 60) / 20)).padStart(2, '0')}T10:${String(i % 60).padStart(2, '0')}:00Z`,
+  body: i === 96 ? 'The dashboard changes are implemented and live on staging.' : `Status note ${i} on the rollout.`,
+}));
+const TABLES: Record<string, Row[]> = {
+  commitments: [
+    { id: C_EMAIL, user_id: U, description: 'Fix the incomplete survey question', source: 'email', source_id: E_SRC, thread_id: 'thr-long', direction: 'you_owe', counterparty: 'Sam Rivera', source_quote: 'could you fix the incomplete survey question before launch?' },
+    { id: C_MEET, user_id: U, description: 'Share the workshop notes', source: 'meeting', source_id: MT, thread_id: null, direction: 'you_owe', counterparty: 'Sam Rivera', source_quote: 'we will share the workshop notes' },
+    { id: C_NOQUOTE, user_id: U, description: 'Send the revised plan', source: 'email', source_id: E_OWN, thread_id: 'thr-short', direction: 'you_owe', counterparty: 'Sam Rivera', source_quote: null },
+  ],
+  emails: [
+    { id: E_SRC, user_id: U, thread_id: 'thr-long', subject: 'Survey launch', is_from_user: false, from_name: 'Sam Rivera', from_address: 'sam@acme.test', received_at: '2026-08-10T09:00:00Z',
+      body: 'Hi,\n\nCould you fix the incomplete survey question before launch? Question 7 stops mid-sentence.\n\nOn Fri, Aug 7, 2026, Dana Lee <dana@acme.test> wrote:\n> The dashboard draft is attached.' },
+    ...LATER,
+    { id: E_OWN, user_id: U, thread_id: 'thr-short', subject: 'Plan', is_from_user: true, from_name: 'Alex Morgan', from_address: 'alex@ourco.example', received_at: '2026-09-20T09:00:00Z', body: 'I will send the revised plan on Monday.' },
+  ],
+  inbox_items: [
+    // The long thread's item was last touched by the unrelated newest message — the old card's source.
+    { id: I_THREAD, user_id: U, source: 'email', source_id: LATER[96].id, source_data: { thread_id: 'thr-long' }, last_activity_at: '2026-09-03T10:00:00Z' },
+  ],
+  meeting_transcripts: [
+    { id: MT, user_id: U, title: 'Workshop prep', start_time: '2026-09-18T09:00:00Z', created_at: '2026-09-18T09:00:00Z', attendees: [{ name: 'Sam Rivera' }], calendar_event_id: EV, summary: 'We agreed the workshop notes go out this week.' },
+  ],
+  calendar_events: [{ id: EV, user_id: U, title: 'Workshop prep with Acme', start_time: '2026-09-18T09:00:00Z', attendees: [{ displayName: 'Dana Lee', email: 'dana@acme.test' }] }],
+};
+const between = (html: string) => html.slice(html.indexOf('data-decision-scroll'), html.indexOf('data-decision-actions'));
+
+void (async () => {
+  console.log('\nE · W16.4 — the card\'s evidence IS the item page\'s source (commitment · email · meeting)');
+  const db = tableClient(TABLES);
+  const { readDeckContexts } = await import('../lib/triage/deck-context-read');
+  const { emailSourceOf, emailSourcesOf, sourceQuoteOf, sourceQuotesOf, meetingSourceOf, meetingSourcesOf } = await import('../lib/commitments/source');
+  const { loadUserForms, isUserForm } = await import('../lib/prepare/addressee');
+  const { EmailSourceMount, MeetingSourceMount, SourceObjectMount } = await import('../components/room/source-object');
+  const { loadDeckContext } = await import('../lib/triage/deck-context-door');
+  const { loadThreadDoor } = await import('../lib/inbox/thread-door');
+  const { objectIdForDoor } = await import('../lib/room/door');
+
+  // THE DOORS, SERVED BY THE REAL SERVER READER over the fixture (no network): the deck-context door
+  // answers with readDeckContexts; the thread door with the route's own message shape.
+  const THREAD_PAYLOAD = {
+    id: I_MAIL, subject: 'Quarterly numbers', fromName: 'Sam Rivera', fromAddress: 'sam@acme.test', receivedAt: '2026-09-22T09:00:00Z', attachments: [], invite: null,
+    messages: [
+      { id: 'm1', from: 'alex@ourco.example', fromName: 'Alex Morgan', receivedAt: '2026-09-20T09:00:00Z', body: 'Sharing the draft numbers.', isFromUser: true },
+      { id: 'm2', from: 'sam@acme.test', fromName: 'Sam Rivera', receivedAt: '2026-09-21T09:00:00Z', body: 'Thanks, one question on Q3.', isFromUser: false },
+      { id: 'm3', from: 'sam@acme.test', fromName: 'Sam Rivera', receivedAt: '2026-09-22T09:00:00Z', body: 'Could you send the final quarterly numbers?', isFromUser: false },
+    ],
+  };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init?: { body?: string }) => {
+    if (url === '/api/home/deck-context') {
+      const { ids } = JSON.parse(init?.body ?? '{}') as { ids: string[] };
+      return { ok: true, json: async () => ({ contexts: await readDeckContexts(db, U, ids) }) };
+    }
+    if (url === `/api/inbox/${I_MAIL}/thread`) return { ok: true, json: async () => THREAD_PAYLOAD };
+    return { ok: false, json: async () => null };
+  }) as never;
+  try {
+    const [cEmail, cMeet, cNoQuote] = await Promise.all([loadDeckContext(C_EMAIL), loadDeckContext(C_MEET), loadDeckContext(C_NOQUOTE)]);
+    await loadThreadDoor(I_MAIL);
+
+    // ── E1–E4 · THE COMMITMENT ON A LONG THREAD WHOSE NEWEST MESSAGE IS UNRELATED ──
+    // The page's facts, exactly as app/api/commitments/[id] serves them and item-detail maps them.
+    const pageEmail = await emailSourceOf(db, U, E_SRC);
+    const pageQuote = (await sourceQuoteOf(db, U, C_EMAIL))?.line ?? null;
+    const pageFacts = pageEmail ? { id: pageEmail.id, threadId: pageEmail.threadId, subject: pageEmail.subject, from: pageEmail.from, receivedAt: pageEmail.receivedAt, excerpt: pageEmail.excerpt, quote: pageQuote } : null;
+    const pageHtml = pageFacts ? render(React.createElement(EmailSourceMount, { source: pageFacts, onOpen: noop })) : '';
+    const cardHtml = between(deck([row(C_EMAIL, 'commitment', null, 'Fix the incomplete survey question')]));
+    gate('E1 the server context carries the commitment\'s OWN source message (by its id), never the thread\'s newest',
+      cEmail?.email?.id === E_SRC && cEmail.email.receivedAt === '2026-08-10T09:00:00Z' && cEmail.inboxItemId === I_THREAD, JSON.stringify(cEmail));
+    gate('E2 the card\'s evidence IS the item page\'s source widget (same mount, same served facts, same render)',
+      !!pageHtml && cardHtml.includes(pageHtml), `card: ${text(cardHtml).slice(0, 200)} | page: ${text(pageHtml).slice(0, 200)}`);
+    gate('E3 …it shows the Aug 10 ask in its own words and NOT the thread\'s newest (no "Dashboard", no "+97 earlier", no quoted tail)',
+      /incomplete survey question before launch/.test(text(cardHtml)) && !/dashboard changes|earlier/i.test(text(cardHtml)) && !/draft is attached/.test(text(cardHtml)), text(cardHtml).slice(0, 300));
+    gate('E4 the quote rides ("Sam Rivera asked: “…”") and the rest of the thread is ONE door away ("Open thread")',
+      text(cardHtml).includes('Sam Rivera asked: “could you fix the incomplete survey question before launch?”') && /data-source-quote/.test(cardHtml) && />Open thread</.test(cardHtml), text(cardHtml).slice(0, 300));
+
+    // ── E5 · NO QUOTE → the page's source alone (the user's own message), no quote line ──
+    const own = await emailSourceOf(db, U, E_OWN);
+    const ownHtml = own ? render(React.createElement(EmailSourceMount, { source: { id: own.id, threadId: own.threadId, subject: own.subject, from: own.from, receivedAt: own.receivedAt, excerpt: own.excerpt, quote: null } })) : '';
+    const noQuoteCard = between(deck([row(C_NOQUOTE, 'commitment', null, 'Send the revised plan')]));
+    gate('E5 a commitment with no quote: the card is the page\'s source card alone (no quote line; no thread item → no door)',
+      cNoQuote?.quote === null && !!ownHtml && noQuoteCard.includes(ownHtml) && !/data-source-quote/.test(noQuoteCard) && !/Open thread/.test(noQuoteCard));
+
+    // ── E6 · A MEETING-BORN COMMITMENT → the meeting source (the page's MeetingSourceMount) ──
+    const forms = await loadUserForms(db, U);
+    const pageMeeting = await meetingSourceOf(db, U, MT, (who) => isUserForm(who, forms));
+    const meetPageHtml = pageMeeting ? render(React.createElement(MeetingSourceMount, { meeting: pageMeeting, onOpen: noop })) : '';
+    const meetCard = between(deck([row(C_MEET, 'commitment', null, 'Share the workshop notes')]));
+    gate('E6 a meeting-born commitment: the card\'s evidence IS the page\'s meeting source card (title · attendees · summary · door)',
+      !!meetPageHtml && meetCard.includes(meetPageHtml) && /Workshop prep with Acme/.test(meetCard) && cMeet?.meeting?.addressId === EV && cMeet.email === null, text(meetCard).slice(0, 240));
+
+    // ── E7 · AN EMAIL ITEM → the page's object card over the SAME thread door ──
+    const mailPageHtml = render(React.createElement(SourceObjectMount, { itemId: I_MAIL, onOpenThread: noop }));
+    const mailCard = between(deck([row(I_MAIL, 'reply', 'Could you send the final quarterly numbers?')]));
+    gate('E7 an email item: the card mounts the item page\'s object card over the same door (+N earlier, subject, the door) — the page\'s own',
+      objectIdForDoor({ kind: 'item', itemKind: 'inbox', id: I_MAIL }, { sourceItemId: null }) === I_MAIL
+      && mailPageHtml.length > 0 && mailCard.includes(mailPageHtml) && /Could you send the final quarterly numbers\?/.test(text(mailCard)), text(mailCard).slice(0, 240));
+
+    // ── E8 · ONE READER — the batched forms ARE the single reads (same columns, same shaper) ──
+    const batchE = (await emailSourcesOf(db, U, [E_SRC, E_OWN]));
+    const batchQ = (await sourceQuotesOf(db, U, [C_EMAIL, C_MEET, C_NOQUOTE]));
+    const batchM = (await meetingSourcesOf(db, U, [MT], (who) => isUserForm(who, forms)));
+    gate('E8 the batched reads equal the page\'s single reads, fact for fact (email · quote · meeting); another user reads nothing',
+      JSON.stringify(batchE.get(E_SRC)) === JSON.stringify(pageEmail) && JSON.stringify(batchE.get(E_OWN)) === JSON.stringify(own)
+      && batchQ.get(C_EMAIL)?.line === pageQuote && !batchQ.has(C_NOQUOTE) && batchQ.get(C_MEET)?.lead === 'Said in the meeting'
+      && JSON.stringify(batchM.get(MT)) === JSON.stringify(pageMeeting)
+      && (await emailSourcesOf(db, 'someone-else', [E_SRC])).size === 0);
+  } finally { globalThis.fetch = realFetch; }
+
+  // ── E9–E10 · SOURCE FLOORS ──
+  const so = code('lib/commitments/source.ts'); const dcr = code('lib/triage/deck-context-read.ts'); const deckSrc = code('components/triage/triage-deck.tsx');
+  gate('E9 one reader: the single and batched email reads share the columns + the shaper; the meeting read delegates; the quote read shares its select',
+    (so.match(/\.select\(EMAIL_SOURCE_COLS\)/g) ?? []).length === 2 && (so.match(/emailSourceFromRow\(/g) ?? []).length >= 3
+    && /return \(await meetingSourcesOf\(client, userId, \[meetingId\], isUser\)\)\.get\(meetingId\) \?\? null;/.test(so)
+    && (so.match(/\.select\('id, source_quote, source, source_id, direction, counterparty'\)/g) ?? []).length === 2
+    && (so.match(/sourceQuoteFrom\(\{/g) ?? []).length >= 2);
+  gate('E10 the deck reads through the one source reader, and the card mounts the page\'s own mounts (no thread-door tail for a commitment)',
+    /emailSourcesOf\(client, userId, sourceEmailIds\)/.test(dcr) && /sourceQuotesOf\(client, userId,/.test(dcr) && /meetingSourcesOf\(client, userId, meetingIds, isUser\)/.test(dcr)
+    && !/from\('emails'\)|newestByThread|founding/.test(dcr)
+    && /<EmailSourceMount source=\{ctx\.email\} quote=\{ctx\.quote\}/.test(deckSrc) && /<MeetingSourceMount meeting=\{ctx\.meeting\}/.test(deckSrc)
+    && /<SourceObjectMount itemId=\{row\.id\}/.test(deckSrc) && !/<SourceObjectMount itemId=\{ctx\./.test(deckSrc)
+    && (deckSrc.match(/<TriageEvidence row=\{row\} \/>/g) ?? []).length === 1);
+})().catch((e) => { failures.push(`E threw: ${String(e)}`); console.log(e); }).then(() => {
+  console.log(`\n${failures.length ? '❌' : '✅'} ${pass} passed, ${failures.length} failed`);
+  if (failures.length) { for (const f of failures) console.log(`   ✗ ${f}`); process.exit(1); }
+});

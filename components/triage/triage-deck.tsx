@@ -59,6 +59,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import type { DoItem } from '@/lib/home/agenda';
 // THE ROW KIT — the deck's OWN doors, not a second set. Every resolving verb in this file is one of
@@ -73,19 +74,19 @@ import type { HeldClassId } from '@/lib/home/attention';
 import {
   TRIAGE_KEYS, TRIAGE_VERBS, TRIAGE_EXIT_LABEL, TRIAGE_HINTS, TRIAGE_UNDO_LABEL,
   TRIAGE_SOURCE_WORD, TRIAGE_THREADED, TRIAGE_VIEW_ALL,
-  laterOptions, whenWords, triageReceipt, triageEnd, initialOf, verbsOfRank, readyWordOf,
+  laterOptions, triageReceipt, triageEnd, initialOf, verbsOfRank, readyWordOf,
   type TriageTally, type TriageVerb, type TriageMessage,
 } from '@/lib/triage/words';
 // W16.3 · the card's why-line is printed as a sentence (its words' one home: lib/home/held-words.ts).
 import { sentenceCase } from '@/lib/home/held-words';
 // THE ONE THREAD-DOOR READER (lib/inbox/thread-door.ts) — shared with the room's object card, so
 // the tail a deck warms is the tail a room shows, read once.
-import { loadThreadTail, loadThreadDoor, peekThreadDoor } from '@/lib/inbox/thread-door';
-// THE FOUNDING CONTEXT OF A HANDED COMMITMENT (W3.6) — one batched read for the whole handed set,
-// and THE ONE OBJECT CARD for an email-sourced one (the mount reads the same thread door).
+import { loadThreadTail, peekThreadDoor } from '@/lib/inbox/thread-door';
+// THE SOURCE OF A HANDED COMMITMENT (W3.6 → W16.4) — one batched read for the whole handed set,
+// through the one source reader; the card mounts it with THE ITEM PAGE'S OWN mounts.
 import { loadDeckContext, peekDeckContext } from '@/lib/triage/deck-context-door';
 import type { DeckContext } from '@/lib/triage/deck-context';
-import { SourceObjectMount } from '@/components/room/source-object';
+import { SourceObjectMount, EmailSourceMount, MeetingSourceMount } from '@/components/room/source-object';
 // W15.1 · THE ONE THREAD COMPONENT — the evidence renders through the kit's one source card.
 import { SourceObjectCard } from '@/components/thread/source-object-card';
 // W15.3 · THE ONE DECISION CARD — one fixed geometry for every kind; the evidence scrolls inside it
@@ -250,48 +251,42 @@ function TriageCard({ row }: { row: TriageRow }) {
   );
 }
 
-// ── THE EVIDENCE — the current renderer, behind the frame's fixed height (W15.3). ────────────────
-// For a mail row the thread's tail, author-named, each message's own words clipped by the one
-// clipper. While it is being read the card shows what it already has (the served first words) —
-// and with nothing served yet, the evidence skeleton INSIDE the scroll region, so the card's own
-// height never changes when the read lands. If the read comes back empty, the served excerpt IS the
-// content. Pure content: no verb, no deed, no keyboard.
+// ── THE EVIDENCE — THE ITEM PAGE'S OWN SOURCE WIDGET (W15.3 frame · W16.4 one rule, every kind). ──
+// Owner walk, Sep 24: a commitment's card showed its thread's NEWEST message ("+97 earlier") while
+// its page showed the message the promise came from. The card now mounts exactly what the item page
+// mounts, from the same reader — never a second derivation:
+//   · an email item      → SourceObjectMount over the item's own thread door (the page's object card);
+//   · a commitment       → EmailSourceMount over its OWN source message (lib/commitments/source.ts
+//                          emailSourceOf, served batched by the deck-context door) + its quote
+//                          (W15.4); the rest of the conversation is its one door, "Open thread";
+//   · a meeting-born one → MeetingSourceMount over its meeting (meetingSourceOf).
+// While a read is in flight the card shows the served first words, else the evidence skeleton INSIDE
+// the scroll region — the card's own height never changes when the read lands. Pure content: no
+// verb, no deed, no keyboard (the one door is navigation, never a deed).
 function TriageEvidence({ row }: { row: TriageRow }) {
-  const [tail, setTail] = useState<TriageMessage[] | null>(() => peekThreadDoor(row.id)?.tail ?? null);
+  const router = useRouter();
   const threaded = TRIAGE_THREADED.includes(row.item.source);
   const [tailRead, setTailRead] = useState<boolean>(() => !!peekThreadDoor(row.id));
+  const [hasTail, setHasTail] = useState<boolean>(() => (peekThreadDoor(row.id)?.tail.length ?? 0) > 0);
 
-  // LAZY, ON THE CARD IN HAND. The cache makes a revisit free; a stale component that resolves
-  // after the reader has moved on writes to nothing (the guard below).
+  // LAZY, ON THE CARD IN HAND. The door's cache makes a revisit free (and the mount below reads the
+  // same cache); a stale component that resolves after the reader has moved on writes to nothing.
   useEffect(() => {
-    if (!threaded) { setTail(null); return; }
+    if (!threaded) { setHasTail(false); return; }
     let live = true;
-    void loadTail(row.id).then((t) => { if (live) { setTail(t); setTailRead(true); } }, () => { if (live) setTailRead(true); });
+    void loadTail(row.id).then((t) => { if (live) { setHasTail(t.length > 0); setTailRead(true); } }, () => { if (live) setTailRead(true); });
     return () => { live = false; };
   }, [row.id, threaded]);
 
-  // A HANDED COMMITMENT HAS NO THREAD OF ITS OWN — its founding context comes through the deck
-  // context door (coalesced across the whole handed set), and when the obligation was born in a
-  // thread that has an inbox item, THE ONE OBJECT CARD mounts it once its door has answered (so the
-  // card never swaps a served line for an empty frame).
+  // A HANDED COMMITMENT'S SOURCE comes through the deck-context door (coalesced across the whole
+  // handed set) — the item page's own source facts, read by the one source reader.
   const founded = row.item.source === 'commitment';
   const [ctx, setCtx] = useState<DeckContext | null>(() => (founded ? peekDeckContext(row.id) : null));
   const [ctxRead, setCtxRead] = useState<boolean>(() => !founded || !!peekDeckContext(row.id));
-  const [objectReady, setObjectReady] = useState<boolean>(() => {
-    const c = founded ? peekDeckContext(row.id) : null;
-    return !!(c?.inboxItemId && peekThreadDoor(c.inboxItemId));
-  });
   useEffect(() => {
-    if (!founded) { setCtx(null); setObjectReady(false); return; }
+    if (!founded) { setCtx(null); return; }
     let live = true;
-    void loadDeckContext(row.id).then((c) => {
-      if (!live) return;
-      setCtx(c); setCtxRead(true);
-      if (c?.inboxItemId) {
-        if (peekThreadDoor(c.inboxItemId)) { setObjectReady(true); return; }
-        void loadThreadDoor(c.inboxItemId).then((d) => { if (live) setObjectReady(!!d && (d.tail.length > 0 || !!d.subject)); });
-      }
-    }, () => { if (live) setCtxRead(true); });
+    void loadDeckContext(row.id).then((c) => { if (live) { setCtx(c); setCtxRead(true); } }, () => { if (live) setCtxRead(true); });
     return () => { live = false; };
   }, [row.id, founded]);
 
@@ -301,31 +296,20 @@ function TriageEvidence({ row }: { row: TriageRow }) {
 
   return (
     <div className="flex flex-col gap-3 px-5">
-      {/* W15.1 · ONE THREAD COMPONENT — every lane of the evidence is the kit's one source card
-          (own words, older messages folded, fixed max height, the render floor); no deck markup. */}
-      {threaded && tail && tail.length > 0 ? (
-        <SourceObjectCard card={{
-          kind: 'source', id: `triage-${row.id}`, source: 'email',
-          messages: tail.map((m) => ({ id: m.id, author: m.author, body: m.body, when: m.at ? whenWords(m.at.slice(0, 10)) : null })),
-        }} />
+      {/* W15.1 · ONE THREAD COMPONENT — every lane is the kit's one source card, mounted through the
+          SAME mount the item page uses (components/room/source-object.tsx); no deck markup. */}
+      {threaded && hasTail ? (
+        <SourceObjectMount itemId={row.id} onOpenThread={() => router.push(row.item.href)} />
       ) : row.excerpt ? (
         <SourceObjectCard card={{ kind: 'source', id: `triage-x-${row.id}`, source: 'email', excerpt: row.excerpt }} />
       ) : founded && ctx ? (
-        // THE FOUNDING CONTEXT (W3.6): the thread itself through THE ONE OBJECT CARD once its door
-        // has answered; until then (or with no inbox item) the newest message as a compact line in
-        // the tail's own grammar; a meeting-born obligation names its meeting. Absent → nothing.
-        ctx.inboxItemId && objectReady ? (
-          <SourceObjectMount itemId={ctx.inboxItemId} />
-        ) : ctx.founding ? (
-          <SourceObjectCard card={{
-            kind: 'source', id: `triage-f-${row.id}`, source: 'email',
-            who: ctx.founding.who, when: ctx.founding.at ? whenWords(ctx.founding.at.slice(0, 10)) : null,
-            excerpt: ctx.founding.line,
-          }} />
+        ctx.email ? (
+          <EmailSourceMount source={ctx.email} quote={ctx.quote}
+            // THE ONE DOOR — the rest of the conversation lives on the thread's own item.
+            onOpen={ctx.inboxItemId ? () => router.push(`/item/${ctx.inboxItemId}?kind=email`) : undefined} />
         ) : ctx.meeting ? (
-          <span className="text-[12px] text-neutral-500">
-            {[`From ${ctx.meeting.title}`, ctx.meeting.date ? whenWords(ctx.meeting.date) : null].filter(Boolean).join(' · ')}
-          </span>
+          // THE ONE NOTE ADDRESS: /meetings/<calendarEventId ?? transcriptId> — served as `addressId`.
+          <MeetingSourceMount meeting={ctx.meeting} onOpen={() => router.push(`/meetings/${ctx.meeting!.addressId}`)} />
         ) : null
       ) : null}
       {/* ── BOTTOM · NOTHING (Q9v2 · 3, AMENDED Sep 21) — the reply slot is PARKED by owner call: no

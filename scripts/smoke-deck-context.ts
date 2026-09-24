@@ -15,7 +15,9 @@
 // Zero AI, zero DB, zero network. Run: npx tsx scripts/smoke-deck-context.ts
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { readFileSync } from 'fs';
-import { cardFacts, shapeDeckContext, FOUNDING_EXCERPT_CHARS } from '../lib/triage/deck-context';
+import { cardFacts, shapeDeckContext } from '../lib/triage/deck-context';
+import { emailSourceFromRow, sourceQuoteFrom, EMAIL_SOURCE_EXCERPT_CHARS } from '../lib/commitments/source';
+import { topMessageOf } from '../lib/inbox/top-message';
 import { initialOf } from '../lib/triage/words';
 import { EXCERPT_MARK } from '../lib/utils/clip-for-prompt';
 
@@ -62,46 +64,46 @@ ok('the card\'s avatar reads the who alone — never the title', /initialOf\(row
 ok('   …and no who is the neutral glyph, never a letter', initialOf(null) === '·' && initialOf('') === '·' && initialOf('acme') === 'A');
 
 // ── DC3 · FOUNDING CONTEXT ──────────────────────────────────────────────────────────────────────
-console.log('\nDC3 · FOUNDING CONTEXT');
+// ⟲ RE-POINTED (W16.4 — THE CARD'S EVIDENCE IS THE ITEM PAGE'S SOURCE): the context no longer
+// composes a "founding line" from the thread's newest message (the Sep 24 walk: an Aug 10 ask on a
+// long thread showed the thread's Sep 3 message). It carries the ONE SOURCE READER's own shapes —
+// the source message BY ITS ID, its quote, the meeting — and the card mounts the page's own mounts.
+// The clip/own-words/marker assertions moved to the one shaper (lib/commitments/source.ts
+// emailSourceFromRow), asserted here on its output; the render parity lives in smoke-decision-card E.
+console.log('\nDC3 · FOUNDING CONTEXT (the item page\'s own source)');
 {
   const long = `${'word '.repeat(120)}end.`;
-  const e = shapeDeckContext({
-    commitment: { id: 'c1', description: 'Send the deck', source: 'email' },
-    lastEmail: { from_name: 'Sam', body: `${long}\n\nOn Mon, Acme wrote:\n> the chain`, received_at: '2026-09-20T10:00:00Z', is_from_user: false },
-    inboxItemId: 'i1', meeting: null,
-  });
-  ok('an email-born commitment carries its source, its thread\'s inbox item and the newest message', e.source === 'email' && e.inboxItemId === 'i1' && e.founding?.who === 'Sam');
-  // ⟲ RE-POINTED (W11.3 — THE MARKER NEVER RENDERS): the card's line is a DISPLAY clip (boundary +
-  // "…"); the prompt-side EXCERPT_MARK must never reach a surface.
-  ok('   …the line is the message\'s OWN words, clipped for display — "…", never the prompt marker',
-    !!e.founding && e.founding.line.endsWith('…') && !e.founding.line.includes(EXCERPT_MARK) && !e.founding.line.includes('the chain')
-    && e.founding.line.length <= FOUNDING_EXCERPT_CHARS + 2);
-  // ⟲ RE-POINTED (W8.3 — THE NO-INTERNAL-TEXT LAW reaches the triage card): the judge's reason no
-  // longer rides the context at all — it printed raw on the card ("The stated deadline … passed 47
-  // days ago…"). The gate now asserts its ABSENCE, which is the stronger statement.
+  const email = emailSourceFromRow({ id: 'e1', thread_id: 't1', subject: 'The deck', from_name: 'Sam', body: `${long}\n\nOn Mon, Acme wrote:\n> the chain`, received_at: '2026-09-20T10:00:00Z', is_from_user: false }, (b) => topMessageOf(b) || b);
+  const quote = sourceQuoteFrom({ quote: 'could you send the deck?', source: 'email', direction: 'you_owe', authoredByUser: false, from: 'Sam' });
+  const e = shapeDeckContext({ commitment: { id: 'c1', description: 'Send the deck', source: 'email' }, email, quote, inboxItemId: 'i1', meeting: null });
+  ok('an email-born commitment carries its source, its OWN source message, its quote and the thread\'s item (the door)',
+    e.source === 'email' && e.email?.id === 'e1' && e.email.from === 'Sam' && e.quote === 'Sam asked: “could you send the deck?”' && e.inboxItemId === 'i1');
+  // ⟲ RE-POINTED (W11.3 — THE MARKER NEVER RENDERS): the excerpt is a DISPLAY clip (boundary + "…").
+  ok('   …the excerpt is the message\'s OWN words, clipped for display — "…", never the prompt marker',
+    !!e.email?.excerpt && e.email.excerpt.endsWith('…') && !e.email.excerpt.includes(EXCERPT_MARK) && !e.email.excerpt.includes('the chain')
+    && e.email.excerpt.length <= EMAIL_SOURCE_EXCERPT_CHARS + 2);
+  // ⟲ RE-POINTED (W8.3 — THE NO-INTERNAL-TEXT LAW reaches the triage card): no reason field at all.
   ok('   …and the judge\'s reason NEVER rides along (no field to render)', !('reason' in e));
-  const mine = shapeDeckContext({ commitment: { id: 'c', description: 'x', source: 'email' }, lastEmail: { from_name: 'Acme', body: 'On it.', is_from_user: true }, inboxItemId: null, meeting: null });
-  ok('the user\'s own last message is authored "You"', mine.founding?.who === 'You' && mine.inboxItemId === null);
-  const m = shapeDeckContext({ commitment: { id: 'c2', description: 'Share the notes', source: 'meeting' }, lastEmail: null, inboxItemId: 'ignored', meeting: { title: 'Weekly sync', start_time: '2026-09-18T09:00:00Z' } });
-  ok('a meeting-born commitment names its meeting and date, and never mounts an inbox item', m.meeting?.title === 'Weekly sync' && m.meeting.date === '2026-09-18' && m.inboxItemId === null && m.founding === null);
-  // ⟲ RE-POINTED (W8.3): no reason exists to drop — the shape carries none.
+  const mine = shapeDeckContext({ commitment: { id: 'c', description: 'x', source: 'email' }, email: emailSourceFromRow({ id: 'e2', body: 'On it.', is_from_user: true }, (b) => b), quote: null, inboxItemId: null, meeting: null });
+  ok('the user\'s own message carries its authorship (the quote\'s lead reads it)', mine.email?.authoredByUser === true && mine.inboxItemId === null);
+  const meeting = { id: 'mt1', addressId: 'ev1', title: 'Weekly sync', startISO: '2026-09-18T09:00:00Z', attendees: ['Sam'], excerpt: null };
+  const m = shapeDeckContext({ commitment: { id: 'c2', description: 'Share the notes', source: 'meeting' }, email: null, quote: null, inboxItemId: 'ignored', meeting });
+  ok('a meeting-born commitment carries its meeting source, and never an inbox item or an email', m.meeting?.title === 'Weekly sync' && m.meeting.addressId === 'ev1' && m.inboxItemId === null && m.email === null);
   ok('   …and carries no reason to restate the title with', !('reason' in m));
-  const f = shapeDeckContext({ commitment: { id: 'c3', description: 'x', source: 'email' }, lastEmail: null, inboxItemId: null, meeting: null });
-  ok('absent facts are null, never placeholders (and no reason field exists)', !('reason' in f) && f.founding === null && f.meeting === null);
-  ok('the shaper is pure (no fetch, no clock, no React)', !!shaper && !/fetch\(|useState|new Date\(|Date\.now/.test(shaper));
+  const f = shapeDeckContext({ commitment: { id: 'c3', description: 'x', source: 'email' }, email: null, quote: null, inboxItemId: null, meeting: null });
+  ok('absent facts are null, never placeholders (and no reason field exists)', !('reason' in f) && f.email === null && f.meeting === null && f.quote === null);
+  ok('the shaper is pure (no fetch, no clock, no React) and composes no line of its own',
+    !!shaper && !/fetch\(|useState|new Date\(|Date\.now/.test(shaper) && !/topMessageOf|clipForDisplay|founding/.test(shaper.replace(/\/\/[^\n]*/g, '')));
 
-  ok('the card reads founding context through the deck-context door, for commitments only',
+  ok('the card reads its source through the deck-context door, for commitments only',
     /const founded = row\.item\.source === 'commitment';/.test(card)
     && /loadDeckContext\(row\.id\)/.test(card) && /peekDeckContext\(row\.id\)/.test(card));
-  ok('   …an email-born one mounts THE ONE OBJECT CARD (never authored excerpt markup for the thread)',
-    /import \{ SourceObjectMount \} from '@\/components\/room\/source-object'/.test(deck)
-    && /<SourceObjectMount itemId=\{ctx\.inboxItemId\} \/>/.test(card));
-  ok('   …only once its door answered (a served line never swaps for an empty frame)',
-    /ctx\.inboxItemId && objectReady \?/.test(card) && /loadThreadDoor\(c\.inboxItemId\)/.test(card));
-  // ⟲ RE-POINTED (W8.3): the why line is the ledger's served clause ALONE — the judge's reason never
-  // joins it (the no-internal-text law; smoke-waiting-truth asserts the same from its side).
-  ok('   …a meeting-born one names its meeting; the why line is the served clause alone (no judge reason)',
-    /From \$\{ctx\.meeting\.title\}/.test(card)
+  ok('   …an email-born one mounts THE PAGE\'S EmailSourceMount over its OWN message + quote (never the thread door\'s tail)',
+    /import \{ SourceObjectMount, EmailSourceMount, MeetingSourceMount \} from '@\/components\/room\/source-object'/.test(deck)
+    && /<EmailSourceMount source=\{ctx\.email\} quote=\{ctx\.quote\}/.test(card)
+    && !/<SourceObjectMount itemId=\{ctx\.inboxItemId\}/.test(card) && !/loadThreadDoor\(c\.inboxItemId\)/.test(card));
+  ok('   …a meeting-born one mounts the page\'s MeetingSourceMount; the why line is the served clause alone (no judge reason)',
+    /<MeetingSourceMount meeting=\{ctx\.meeting\}/.test(card)
     // ⟲ W16.3: the served clause is printed as a sentence (sentenceCase) — still the served clause alone.
     && /const whyLine = sentenceCase\(row\.why\);/.test(card) && !/ctx\??\.reason/.test(card));
   ok('the project reference rides the card\'s source line (served, tracked-only, never doubled)',
@@ -115,22 +117,24 @@ console.log('\nDC3 · FOUNDING CONTEXT');
     && /preparedKind: pageKind,/.test(home)
     && /prepared: d\.preparedKind \?\? null/.test(held)
     && !/import\([^)]*prepare\/read|from '@\/lib\/prepare\/read'|from\('item_deliverables'\)/.test(reader));
-  // ⟲ RE-POINTED (W8.3): the item's OWN source leads (source email → its inbox row), the thread is
-  // the fallback (thread-first showed an unrelated email as a commitment's evidence), and the judge's
-  // verdicts are no longer read at all (the no-internal-text law — the card had printed the reason).
-  ok('the reader resolves source email → inbox item (thread as the fallback) and meeting titles — never verdicts',
-    /\.in\('source_data->>thread_id', threadIds\)/.test(reader)
-    && /\.in\('source_id', sourceEmailIds\)/.test(reader)
-    && /from\('meeting_transcripts'\)/.test(reader)
-    && /\(c\.source_id \? itemBySource\.get\(c\.source_id\) : undefined\)\s*\?\? \(c\.thread_id \? itemByThread\.get/.test(reader)
-    && !/'judgment'/.test(reader));
+  // ⟲ RE-POINTED (W16.4): the evidence is read by THE ONE SOURCE READER (batched), BY ITS ID; the
+  // inbox item (source row → its item, the thread's newest item as the fallback) is only the door.
+  ok('the reader reads through the one source reader — the source message by id, its quote, its meeting — never verdicts',
+    /import \{ emailSourcesOf, sourceQuotesOf, meetingSourcesOf \} from '@\/lib\/commitments\/source'/.test(reader)
+    && /email: c\.source === 'email' && c\.source_id \? emails\.get\(c\.source_id\) \?\? null : null,/.test(reader)
+    && /\.in\('source_id', sourceEmailIds\)/.test(reader) && /\.in\('source_data->>thread_id', threadIds\)/.test(reader)
+    && /\(c\.source_id \? itemBySource\.get\(c\.source_id\) : undefined\) \?\? \(thread \? itemByThread\.get/.test(reader)
+    && !/from\('emails'\)/.test(reader) && !/'judgment'/.test(reader));
 }
 
 // ── DC4 · FAST ──────────────────────────────────────────────────────────────────────────────────
 console.log('\nDC4 · FAST (one batched read, coalesced door, stamped freshness)');
+// ⟲ RE-POINTED (W16.4): the in() reads now live partly in the one source reader's batched forms.
+const sourceMod = src('lib/commitments/source.ts');
 ok('the reader batches the whole handed set: one commitments read + ONE parallel wave of in() reads',
   /await Promise\.all\(\[/.test(reader)
-  && (reader.match(/\.in\(/g) ?? []).length >= 6
+  && (reader.match(/\.in\(/g) ?? []).length >= 3
+  && ['emailSourcesOf', 'sourceQuotesOf', 'meetingSourcesOf'].every((fn) => new RegExp(`export async function ${fn}\\([\\s\\S]{0,900}\\.in\\('id',`).test(sourceMod))
   && !/for \([^)]*\) \{[^}]*await client\.from/.test(reader));
 ok('   …bounded (a stack\'s opening, never the account)', /export const DECK_CONTEXT_MAX_IDS = \d+;/.test(reader) && /\.slice\(0, DECK_CONTEXT_MAX_IDS\)/.test(route));
 ok('the route is auth-gated, session-client, zero-AI, and declares its budget',

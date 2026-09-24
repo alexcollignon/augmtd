@@ -10,72 +10,59 @@
 // source thread or meeting, the judge's reason, the tracked project, the live prepared artifact.
 //
 // PURE, CLIENT-SAFE, ZERO-AI, ZERO-IO. The server reader (deck-context-read.ts) gathers the facts in
-// one batched pass and hands them to `shapeDeckContext`; the Home's handed row composes its card
-// facts through `cardFacts`. Both live here so a CLI gate can import them.
+// one batched pass through THE ONE SOURCE READER and hands them to `shapeDeckContext`; the Home's
+// handed row composes its card facts through `cardFacts`. Both live here so a CLI gate can import them.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-// W11.3 · the founding line is a DISPLAY clip — EXCERPT_MARK never renders on a card.
-import { clipForDisplay, clipLabel } from '@/lib/utils/clip-for-prompt';
-import { topMessageOf } from '@/lib/inbox/top-message';
-import { decodeEntities } from '@/lib/core/text';
+// W16.4 · THE CARD'S EVIDENCE IS THE ITEM PAGE'S SOURCE (owner walk, Sep 24): a commitment extracted
+// from an Aug 10 request on a very long shared thread showed, on the one-at-a-time card, the THREAD'S
+// NEWEST message (Sep 3, "+97 earlier") — the card mounted the thread's inbox item through the thread
+// door, whose tail is the newest, while the item page (W11.1) showed the commitment's OWN message.
+// Two derivations, two answers. The context now carries exactly what the page serves, read by THE
+// ONE SOURCE READER (lib/commitments/source.ts emailSourceOf / sourceQuoteOf / meetingSourceOf, in
+// their batched form): the source MESSAGE, its quote, the meeting. No founding line is composed here.
+import type { EmailSource, MeetingSource, SourceQuote } from '@/lib/commitments/source';
 
-/** One line of the founding message — the same excerpt law as every other card body. */
-export const FOUNDING_EXCERPT_CHARS = 220;
-
-/** What a commitment card knows about where it came from and why it is held. Every field is
- *  ABSENT (null) when the server does not hold the fact — a labelled empty space is worse than a
- *  shorter card. */
+/** What a commitment card knows about where it came from. Every field is ABSENT (null) when the
+ *  server does not hold the fact — a labelled empty space is worse than a shorter card. */
 export type DeckContext = {
   /** The commitment's own source kind — the obligation arrived through mail, a meeting, or a hand. */
   source: 'email' | 'meeting' | 'manual' | null;
-  /** The inbox item whose thread IS the founding object — mounted through THE ONE OBJECT CARD. */
+  /** The inbox item that holds the source message's THREAD — the card's "Open thread" door only
+   *  (the rest of the conversation). Never the evidence: its door's tail is the thread's newest. */
   inboxItemId: string | null;
-  /** The thread's newest message, when the thread has no inbox item to mount (compact line). */
-  founding: { who: string | null; line: string; at: string | null } | null;
-  /** A meeting-sourced commitment: the meeting it was said in. */
-  meeting: { title: string; date: string | null } | null;
+  /** W16.4 · the commitment's OWN source message — lib/commitments/source.ts `EmailSource`, exactly
+   *  as the item page mounts it (EmailSourceMount). */
+  email: EmailSource | null;
+  /** W15.4 · why it exists, in the source's own words ("Sam asked: “…”") — `SourceQuote.line`. */
+  quote: string | null;
+  /** A meeting-born commitment: the meeting it was said in — lib/commitments/source.ts `MeetingSource`. */
+  meeting: MeetingSource | null;
   // W8.3 · NO `reason`. The judge's reason is the brain talking to itself (THE NO-INTERNAL-TEXT LAW,
   // W7.3) — the triage card printed it raw ("The stated deadline (2026-08-07) passed 47 days ago with
   // zero movement, but …"). The context no longer carries it at all, so no card can render it.
 };
 
-/** The raw facts the reader hands in, per commitment. */
+/** The facts the reader hands in, per commitment — each already served by the one source reader. */
 export type DeckContextFacts = {
-  commitment: { id: string; description: string | null; source: string | null };
-  /** Newest message of the commitment's thread (or its source email). */
-  lastEmail: { from_name?: string | null; from_address?: string | null; body?: string | null; received_at?: string | null; is_from_user?: boolean | null } | null;
+  commitment: { id: string; description?: string | null; source: string | null };
+  /** The source message read BY ITS ID (`commitments.source_id`) — never the thread's newest. */
+  email: EmailSource | null;
+  quote: SourceQuote | null;
   inboxItemId: string | null;
-  meeting: { title?: string | null; start_time?: string | null; created_at?: string | null } | null;
+  meeting: MeetingSource | null;
 };
 
-/** THE SHAPER — pure. Grounded-or-absent per field; never a placeholder. */
+/** THE SHAPER — pure. Grounded-or-absent per field; each fact only for its own source kind. */
 export function shapeDeckContext(f: DeckContextFacts): DeckContext {
   const src = f.commitment.source;
   const source: DeckContext['source'] = src === 'email' || src === 'meeting' || src === 'manual' ? src : null;
-
-  let founding: DeckContext['founding'] = null;
-  if (source === 'email' && f.lastEmail) {
-    // DECODED ONCE, before the quote strip and the clip (W5b — an escaped snippet body read
-    // "wasn&#39;t" on the card).
-    const raw = decodeEntities(String(f.lastEmail.body ?? ''));
-    const own = raw.trim() ? topMessageOf(raw) : '';
-    const line = clipForDisplay(String(own ?? '').replace(/\s+/g, ' ').trim(), FOUNDING_EXCERPT_CHARS);
-    const who = f.lastEmail.is_from_user ? 'You'
-      : (f.lastEmail.from_name?.trim() || f.lastEmail.from_address?.trim() || null);
-    if (line) founding = { who, line, at: f.lastEmail.received_at ?? null };
-  }
-
-  let meeting: DeckContext['meeting'] = null;
-  if (source === 'meeting' && f.meeting?.title?.trim()) {
-    const iso = f.meeting.start_time ?? f.meeting.created_at ?? null;
-    meeting = { title: clipLabel(f.meeting.title.trim(), 90), date: iso ? String(iso).slice(0, 10) : null };
-  }
-
   return {
     source,
     inboxItemId: source === 'email' ? f.inboxItemId : null,
-    founding,
-    meeting,
+    email: source === 'email' ? f.email : null,
+    quote: f.quote?.line ?? null,
+    meeting: source === 'meeting' ? f.meeting : null,
   };
 }
 

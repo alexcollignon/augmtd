@@ -12,7 +12,9 @@
 import type { DeckContext } from '@/lib/triage/deck-context';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 
-const LS_KEY = 'aug-deck-context-v1';
+// v2 (W16.4): the context carries the item page's source shape — a v1 blob (the thread's newest line)
+// is never read back.
+const LS_KEY = 'aug-deck-context-v2';
 /** The deck is an action surface: 15 minutes, the deck/horizon freshness demand. */
 export const DECK_CONTEXT_MAX_AGE_MS = 15 * 60 * 1000;
 

@@ -126,12 +126,17 @@ console.log('\nC4 · EVERY HOST MOUNTS THE ONE COMPONENT');
     ['components/home/item-detail.tsx', /import \{[^}]*\bSourceObjectMount\b[^}]*\bEmailSourceMount\b[^}]*\} from '@\/components\/room\/source-object'/],
     ['components/home/forward-card.tsx', /import \{ SourceObjectMount \} from '@\/components\/room\/source-object'/],
     ['components/triage/triage-deck.tsx', /import \{ SourceObjectCard \} from '@\/components\/thread\/source-object-card'/],
+    // W16.4 · the card mounts the item page's own source mounts (the same kit card underneath).
+    ['components/triage/triage-deck.tsx', /import \{ SourceObjectMount, EmailSourceMount, MeetingSourceMount \} from '@\/components\/room\/source-object'/],
     ['components/home/decision-card.tsx', /kind: 'source', id: `decision-object-/],
   ];
   for (const [f, re] of hosts) ok(`${f} mounts the one component`, re.test(read(f)));
   const deck = stripComments(read('components/triage/triage-deck.tsx'));
   ok('the triage evidence renders every lane through the kit card (no deck-authored tail/excerpt markup)',
-    (deck.match(/<SourceObjectCard card=/g) ?? []).length >= 3
+    // ⟲ RE-POINTED (W16.4): the tail and the commitment's source are the item page's own mounts (each
+    // renders the kit card); the served excerpt is the kit card directly. Still no deck markup.
+    (deck.match(/<SourceObjectCard card=/g) ?? []).length >= 1
+    && /<SourceObjectMount itemId=\{row\.id\}/.test(deck) && /<EmailSourceMount source=\{ctx\.email\}/.test(deck) && /<MeetingSourceMount meeting=\{ctx\.meeting\}/.test(deck)
     && !/\{displayText\(m\.body\)\}/.test(deck) && !/\{displayText\(row\.excerpt\)\}/.test(deck) && !/\{displayText\(ctx\.founding\.line\)\}/.test(deck));
   const detail = stripComments(read('components/home/item-detail.tsx'));
   ok('the commitment drawer\'s source message is the kit card (no drawer-local markup)',
