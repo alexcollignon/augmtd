@@ -176,8 +176,8 @@ export function stagedRowVerdict(args: {
 //     for the next sweep), one item per open at the serving edge, ≤ 5 labels per resolve.
 // Bump STAGING_LAW_VERSION whenever the staging law's rules change: every standing row then re-verifies.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-/** 1 = W6 (provenance + evidence) — the unstamped era · 2 = W13.1 (the requirement's kind + the dates). */
-export const STAGING_LAW_VERSION = 2;
+import { STAGING_LAW_VERSION } from '@/lib/prepare/staging-law';
+export { STAGING_LAW_VERSION };
 /** How many items with stale staging one preparation pass re-verifies (the rest wait, reported). */
 export const REVERIFY_PER_PASS = 6;
 
@@ -837,6 +837,34 @@ export function baseTaskId(label: string): string {
  * draft that rides it as the answer. A typed supply or a user-supplied row is never unstaged
  * (`onlyResolverRows`). Non-fatal.
  */
+/** W13.3 · file every MACHINE pool draft on the item that carries one of `fileIds` into the version
+ *  chain (`version_of: 'superseded:unstaged'`), so the one reader stops serving it. Pure DB write,
+ *  zero AI; a hand-held (user-edited) row is never touched; a sent row is history already. */
+export async function supersedeDraftsRiding(
+  client: SupabaseClient, userId: string, poolKind: string, itemId: string, fileIds: string[], reason: string,
+): Promise<number> {
+  let filed = 0;
+  try {
+    const { isPoolRowHeldAnyKind } = await import('@/lib/prepare/hand');
+    const { data: rows, error } = await client.from('item_deliverables').select('id, content, metadata, task_id')
+      .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', itemId);
+    if (error) return 0;
+    for (const r of (rows ?? []) as Array<{ id: string; content: unknown; metadata: Record<string, unknown> | null; task_id: string | null }>) {
+      const m = r.metadata ?? {};
+      const fid = (m.attachment as { fileId?: unknown } | undefined)?.fileId;
+      if (typeof fid !== 'string' || !fileIds.includes(fid)) continue;
+      if (m.version_of || m.sent_at || m.role === 'base') continue;
+      if (String(r.task_id ?? '').startsWith('require:')) continue; // the requirement rows themselves are the writer's
+      if (isPoolRowHeldAnyKind(r)) continue;
+      const { error: upErr } = await client.from('item_deliverables')
+        .update({ metadata: { ...m, version_of: 'superseded:unstaged', unstaged: { at: new Date().toISOString(), reason } } })
+        .eq('user_id', userId).eq('id', r.id);
+      if (!upErr) filed++;
+    }
+  } catch { /* non-fatal */ }
+  return filed;
+}
+
 export async function unstageRequirement(
   client: SupabaseClient, userId: string,
   args: {
@@ -853,12 +881,24 @@ export async function unstageRequirement(
     const { data: rows, error } = await client.from('item_deliverables').select('id, metadata')
       .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', args.itemId).eq('task_id', requireTaskId(args.label));
     if (!error) {
-      const ids = ((rows ?? []) as Array<{ id: string; metadata: Record<string, unknown> | null }>)
-        .filter((r) => !args.onlyResolverRows || (r.metadata?.source === 'requirement_resolution' && !r.metadata?.via && !!r.metadata?.attachment))
-        .map((r) => r.id);
+      const picked = ((rows ?? []) as Array<{ id: string; metadata: Record<string, unknown> | null }>)
+        .filter((r) => !args.onlyResolverRows || (r.metadata?.source === 'requirement_resolution' && !r.metadata?.via && !!r.metadata?.attachment));
+      const ids = picked.map((r) => r.id);
       if (ids.length) {
         const { error: delErr } = await client.from('item_deliverables').delete().eq('user_id', userId).in('id', ids);
-        if (!delErr) removed = ids.length;
+        if (!delErr) {
+          removed = ids.length;
+          // W13.3 · THE UNSTAGED FILE LEAVES THE DRAFTS THAT RODE IT (found live: the requirement was
+          // unstaged with no base row, and the doc-send draft kept sending the old file with "the
+          // report now includes … Document is attached"). The ONE unstage writer settles the
+          // consequence: every MACHINE draft on this item carrying an unstaged file is filed into the
+          // version chain (`version_of`), which the one reader never serves. The user's hand wins —
+          // a draft they edited stays. Non-fatal.
+          const fileIds = picked
+            .map((r) => ((r.metadata ?? {}) as { attachment?: { fileId?: unknown } }).attachment?.fileId)
+            .filter((f): f is string => typeof f === 'string');
+          if (fileIds.length) await supersedeDraftsRiding(client, userId, poolKind, args.itemId, fileIds, args.reason);
+        }
       }
     }
   } catch { /* non-fatal */ }

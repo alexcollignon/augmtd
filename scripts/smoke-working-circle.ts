@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// SMOKE — W11.2 THE WORKING CIRCLE + ONE ROW PER CONVERSATION + "LOOKS DONE — CONFIRM".
+// SMOKE — W11.2 THE WORKING CIRCLE + "LOOKS DONE — CONFIRM" (+ W13.4 ONE ITEM, ONE ROW).
 // ZERO AI, ZERO network, ZERO DB: pure functions + the real loaders against an in-memory double.
 //
 //   C · THE CIRCLE — same-side co-senders count; the counterparty never; the same organisation never
@@ -15,12 +15,13 @@
 //   P · LOOKS DONE (b) — the pure predicate, the sticky refusal, the machine state + word, the rank
 //       below real work, the why-now, the one settle door writes it, one click each way on the row.
 //   S · THE SWEEPS (c) — the same code picks circle evidence up; no hand-picked list anywhere.
-//   R · ONE ROW PER CONVERSATION — the rank folds, the lead is the most urgent, nothing dropped, the
-//       held list folds by conversation, the brief serves the groups, the Home words one row.
+//   R · W13.4 ONE ITEM, ONE ROW (owner call, Sep 24 — the W11.2 conversation fold is RETIRED): every
+//       live item is its own row with its own hands; nothing is held back for sharing a conversation;
+//       served + held = all rows; no row says "N open on this thread"; the fold module is gone.
 // Fixtures: generic fakes only (Acme / Sam / Jo).
 // Run: npx tsx scripts/smoke-working-circle.ts
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   inferCircle, countingCircle, circleRows, sameOrganisation, isMachineAddress, loadCircle, setCirclePersistence,
@@ -34,7 +35,6 @@ import { looksDoneEvidenceOf, looksDoneLive, looksDoneLine, noteLooksDone, refus
 import { LOOKS_DONE_WORD as CLIENT_WORD } from '../lib/evidence/looks-done-word';
 import { deriveState, STATE_WORDS, LOOKS_DONE_WORD } from '../lib/work/machine';
 import { rankAttention, attentionRank, whyNowOf, type AttentionRow } from '../lib/home/attention';
-import { foldByConversation, conversationKeyOf, conversationSentence, foldedIntoOf } from '../lib/home/conversation-fold';
 import { foldHeldRows, foldCountWord } from '../lib/home/held-list';
 import { ITEM_PLAN_REGISTRY } from '../lib/store/item-plans';
 import type { Evidence } from '../lib/evidence/match';
@@ -327,47 +327,48 @@ async function main() {
   const lookWriters = ['lib/work/evidence-settle.ts', 'app/api/work/looks-done/route.ts'];
   ok('S3 the looks-done state has exactly two writers: the one settle door (evidence) and the user\'s own Not yet',
     /noteLooksDone/.test(src(lookWriters[0])) && /refuseLooksDone/.test(src(lookWriters[1])));
-  ok('S4 zero AI anywhere in the circle / looks-done / fold family', ['lib/evidence/circle.ts', 'lib/evidence/looks-done.ts', 'lib/home/conversation-fold.ts'].every((f) => !/getAIClient|aiCreate|aiCall|getSystemClient/.test(src(f))));
+  ok('S4 zero AI anywhere in the circle / looks-done family', ['lib/evidence/circle.ts', 'lib/evidence/looks-done.ts'].every((f) => !/getAIClient|aiCreate|aiCall|getSystemClient/.test(src(f))));
 
-  // ── R · ONE ROW PER CONVERSATION ──
-  console.log('\nR · ONE ROW PER CONVERSATION');
-  const conv = conversationKeyOf({ threadId: 'tClient' });
+  // ── R · W13.4 ONE ITEM, ONE ROW (the W11.2 conversation fold is retired) ──
+  console.log('\nR · ONE ITEM, ONE ROW (W13.4)');
   const rows: AttentionRow[] = [
-    row({ entityId: 'a', key: 'c-a', conversationKey: conv, overdue: true, dueDate: '2026-08-28' }),
-    row({ entityId: 'b', key: 'c-b', conversationKey: conv, dueToday: true }),
-    row({ entityId: 'c', key: 'c-c', conversationKey: conv }),
+    row({ entityId: 'a', key: 'c-a', overdue: true, dueDate: '2026-08-28' }),
+    row({ entityId: 'b', key: 'c-b', dueToday: true }),
+    row({ entityId: 'c', key: 'c-c' }),
     row({ entityId: 'd', key: 'r-d' }), row({ entityId: 'e', key: 'r-e' }),
   ];
   const r = rankAttention(rows, 5);
-  ok('R1 three live rows of ONE conversation take ONE seat — the lead is the MOST URGENT member (due today outranks an older overdue)',
-    r.served.filter((x) => x.conversationKey === conv).length === 1 && r.served[0].entityId === 'b'
-    && r.conversations.length === 1 && JSON.stringify(r.conversations[0].memberIds) === JSON.stringify(['b', 'a', 'c']) && r.served.length === 3);
-  const tight = rankAttention(rows, 1);
-  const accounted = new Set([...tight.served, ...tight.held, ...tight.folded.map((f) => f.row)].map((x) => x.entityId));
-  ok('R2 NOTHING IS DROPPED: served + held + folded account for every row; a held conversation holds ONE lead',
-    accounted.size === rows.length && tight.held.filter((x) => x.conversationKey === conv).length <= 1 && tight.folded.length === 2);
-  const legacy = rankAttention(rows.map((x) => ({ ...x, conversationKey: undefined })), 5);
-  ok('R3 rows with no conversation key rank exactly as before (the legacy behaviour)', legacy.served.length === 5 && legacy.conversations.length === 0 && legacy.folded.length === 0);
-  ok('R4 the conversation key: thread first, else the source message; a meeting is never folded',
-    conversationKeyOf({ threadId: 't1', sourceEmailId: 'm1' }) === 't:t1' && conversationKeyOf({ sourceEmailId: 'm1' }) === 'm:m1' && conversationKeyOf({}) === null
-    && foldByConversation([{ k: null }, { k: null }], (x) => x.k).length === 2 && foldedIntoOf(r.conversations).get('a') === 'b');
-  ok('R5 the row\'s ONE sentence: "<who> — 3 open on this thread: …"',
-    conversationSentence('Kim', ['Send the revised deck', 'Confirm the pricing', 'Book the review']) === 'Kim — 3 open on this thread: Send the revised deck; Confirm the pricing; Book the review'
-    && /^Kim — 5 open on this thread: .*; …$/.test(conversationSentence('Kim', ['a1 thing', 'b2 thing', 'c3 thing', 'd4 thing', 'e5 thing'])));
-  const heldRows = [{ id: '1', who: 'Kim', subject: 'Send the deck', conv: conv }, { id: '2', who: 'Kim', subject: 'Confirm pricing', conv: conv }, { id: '3', who: 'Kim', subject: 'Other', conv: null }];
-  const folds = foldHeldRows(heldRows, (x) => ({ who: x.who, subject: x.subject, conversation: x.conv }));
-  ok('R6 THE HELD LIST folds by conversation first (different asks, one row + its count), who+subject otherwise',
-    folds.length === 2 && folds[0].members.length === 2 && folds[0].conversation === true && foldCountWord(2, true) === '+1 more open on this thread' && foldCountWord(2) === '+1 more like this');
+  ok('R1 three live items from ONE conversation take THREE seats — each its own row, individually trackable',
+    r.served.length === 5 && ['a', 'b', 'c'].every((id) => r.served.some((x) => x.entityId === id)) && r.held.length === 0);
+  const tight = rankAttention(rows, 2);
+  const accounted = [...tight.served, ...tight.held].map((x) => x.entityId);
+  ok('R2 NOTHING IS DROPPED: served + held = all rows, each exactly once (no third "folded" bucket)',
+    accounted.length === rows.length && new Set(accounted).size === rows.length && tight.served.length === 2
+    && JSON.stringify(Object.keys(tight).sort()) === JSON.stringify(['held', 'refused', 'served']));
+  ok('R3 the rank no longer carries a conversation key or groups (the AttentionRow type, the rank, the module)',
+    !/conversationKey|foldByConversation|ConversationGroup/.test(src('lib/home/attention.ts'))
+    && !existsSync('lib/home/conversation-fold.ts'));
+  const heldRows = [{ id: '1', who: 'Kim', subject: 'Send the deck' }, { id: '2', who: 'Kim', subject: 'Confirm pricing' }, { id: '3', who: 'Kim', subject: 'Send the deck' }];
+  const folds = foldHeldRows(heldRows, (x) => ({ who: x.who, subject: x.subject }));
+  ok('R4 THE HELD LIST: different asks on one conversation are different rows; only a who+subject echo counts "+N more like this"',
+    folds.length === 2 && folds[0].members.length === 2 && folds[1].members.length === 1 && foldCountWord(2) === '+1 more like this'
+    && !/on this thread/.test(src('lib/home/held-list.ts')) && !/conversation/.test(src('lib/home/held-list.ts')));
   const brief = src('app/api/home/brief/route.ts');
-  ok('R7 THE BRIEF keys every row by its conversation (mail thread · commitment thread else source message) and serves the groups; members are held back, never seated alone',
-    /conversationKey: source === 'commitment'/.test(brief) && /conversations, folded \} = rankAttention\(ordered, ATTENTION_BUDGET\)/.test(brief)
-    && /heldBack: \[\.\.\.held\.map\(\(r\) => r\.entityId\), \.\.\.folded\.map\(\(x\) => x\.row\.entityId\)\]/.test(brief) && /conversations: attention\.conversations/.test(brief));
-  ok('R8 THE HOME words the lead\'s ONE row (conversationSentence), never seats a folded member (whispers · next-up · the remainder), and hands the held list its key',
-    /sentence: conversationSentence\(servedWho\(i\)/.test(home) && /!foldedInto\.has\(i\.entityId\)/.test(home)
-    && /seatedAtoms\.has\(foldedInto\.get\(r\.item\.entityId\) \?\? ''\)/.test(home) && /conversationKey: convKeyOfAtom\.get\(it\.entityId\) \?\? null/.test(home)
-    && /conversation: r\.conversation \?\? null/.test(src('components/home/held-quiet.tsx')));
-  ok('R9 ONE FACT, ONE HOME: the fold is a view — no conversation row is written anywhere',
-    !/\.insert\(|\.upsert\(|upsertPlan|insertPlan/.test(src('lib/home/conversation-fold.ts')));
+  ok('R5 THE BRIEF holds back only what the budget or the seat contract held — never a member for sharing a conversation; no groups served',
+    /const \{ served, held, refused \} = rankAttention\(ordered, ATTENTION_BUDGET\)/.test(brief)
+    && /heldBack: held\.map\(\(r\) => r\.entityId\),/.test(brief) && !/conversationKey|conversations: attention|folded\.map|rankAttention[^\n]*folded/.test(brief)
+    && !/conversation-fold/.test(brief));
+  ok('R6 THE HOME renders every live item as its own row: no lead sentence, no foldedInto guard on whispers · next-up · the remainder',
+    !/conversationSentence|foldedInto|toRowWhisper|convKeyOfAtom|conversation-fold/.test(home)
+    && /const whispers: Whisper\[\] = whisperItems\.map\(\(i\) => toWhisper\(i\)\)/.test(home)
+    && /const nextUp: Whisper\[\] = nextUpItems\.map\(\(i\) => toWhisper\(i\)\)/.test(home));
+  ok('R7 no surface says "N open on this thread" (the Home, the held list, the held view)',
+    ['components/home/home-view.tsx', 'components/home/held-quiet.tsx', 'lib/home/held-list.ts', 'lib/home/calm.ts', 'lib/home/attention.ts']
+      .every((f) => !/open on this thread/.test(src(f))) && !/conversationKey/.test(src('components/home/held-quiet.tsx')));
+  ok('R8 each row keeps its own hands: the whisper still mounts the row kit\'s own doors and the looks-done Done / Not yet stay on the row',
+    /useRowActions\(item, handlers\)/.test(home) && /looksDone && \(/.test(home) && /refuseLooksDoneOnRow\(item\)/.test(home));
+  ok('R9 the conversation DELTA (the data-level anti-hoarding fix) stays: extraction still reconciles a conversation\'s open items',
+    existsSync('lib/work/conversation-delta.ts') && typeof validateDelta === 'function' && typeof applyDeltaPlan === 'function');
   ok('R10 the settings door: Settings → Team mounts "People you work with" over its own route (RLS client, the user\'s click only)',
     /<WorkingCircle \/>/.test(src('components/settings/team-section.tsx')) && /createClient\(\)/.test(src('app/api/settings/working-circle/route.ts'))
     && /decideCircle\(supabase, user\.id/.test(src('app/api/settings/working-circle/route.ts')) && /People you work with/.test(src('components/settings/working-circle.tsx')));

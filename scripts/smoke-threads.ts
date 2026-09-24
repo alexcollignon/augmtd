@@ -1434,9 +1434,11 @@ console.log('\nT8 · THE CALM HOME — one sentence, five whispers, one door');
     !!home && /for \(const e of agenda\.entries\) \{/.test(home)
     // (RE-POINTED Sep 18: the remainder also drops DAY-ANCHORED rows — they are SERVED and already
     //  rendering under their meeting, so counting them again would be one row in two homes.)
-    // (⟲ RE-POINTED W11.2 — ONE ROW PER CONVERSATION: a member folded under a SEATED conversation lead
-    //  rides that lead's one row, so the remainder drops it too — still one pass, one order.)
-    && /const restRows = sortDoorRows\(\n\s+flatRows\.filter\(\(r\) => !whisperKeys\.has\(r\.item\.key\) && !anchoredIds\.has\(r\.item\.entityId\)\n\s+&& !seatedAtoms\.has\(foldedInto\.get\(r\.item\.entityId\) \?\? ''\)\),\n\s+\(r\) => r\.item,\n\s+\);/.test(home)
+    // (⟲ RE-POINTED W13.4 — ONE ITEM, ONE ROW: the W11.2 conversation fold is retired, so the
+    //  remainder drops only the seated whispers and the day-anchored rows — every other live item is
+    //  its own row; nothing rides another's seat.)
+    && /const restRows = sortDoorRows\(\n\s+flatRows\.filter\(\(r\) => !whisperKeys\.has\(r\.item\.key\) && !anchoredIds\.has\(r\.item\.entityId\)\),\n\s+\(r\) => r\.item,\n\s+\);/.test(home)
+    && !/foldedInto|seatedAtoms/.test(home)
     && !!calm && !/fetch\(|supabase|aiCall/.test(calm));
   // T8.13a RETIRED Sep 13 — THE ONE DERIVATION existed so the SENTENCE's counts could never
   // disagree with the surface. With no sentence there is no second derivation to keep honest: the

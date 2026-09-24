@@ -14,8 +14,6 @@ import { ClientOpenFrame } from '@/components/home/item-open-frame';
 import { WorkRow as DoRow, useExit, useCommitmentAct, useRowActions, ctaFor, RowControls, RowHoverRail, EffortDate, InitiativeTag, prefetchItem, fmtDue, exitCls, DO_META } from '@/components/work/work-row';
 // THE CALM HOME (docs/threads-plan.md) — the pick, the words, the receipts, all pure.
 import { pickWhispers, toWhisper, sortDoorRows, servedWho, whisperBody, whisperProject, CALM_MAX_WHISPERS, type Whisper } from '@/lib/home/calm';
-// W11.2 · ONE ROW PER CONVERSATION — the served groups, worded by the one fold module (pure, client-safe).
-import { foldedIntoOf, conversationSentence } from '@/lib/home/conversation-fold';
 // W11.2 · "looks done — confirm" — the machine's word, from its one client-safe home.
 import { LOOKS_DONE_WORD } from '@/lib/evidence/looks-done-word';
 import { cardFacts } from '@/lib/triage/deck-context';
@@ -154,9 +152,6 @@ type Brief = {
     /** THE CATCHING-UP FACT, when the serve carries one: the backlog pass filing right now. The
      *  CoS's line speaks it; ABSENT MEANS SILENT — never inferred, never guessed from a count. */
     catchUp?: { filing?: number | null } | null;
-    /** W11.2 · ONE ROW PER CONVERSATION: conversations holding ≥2 live rows — the lead takes the
-     *  one seat and speaks for every member ("Sam — 3 open on this thread: …"). */
-    conversations?: Array<{ key: string; lead: string; memberIds: string[] }>;
   } | null;
 };
 // A deal the verdict flags as SLIPPING (gone-quiet/stalled with something open on you) — surfaced proactively
@@ -2142,27 +2137,8 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
     ? served.map((s) => itemByAtom.get(s.entityId)).filter((i): i is DoItem => !!i)
     : pickWhispers(flatRows.map((r) => r.item), CALM_MAX_WHISPERS)
   ).filter((i) => !heldBackIds.has(i.entityId) && !anchoredIds.has(i.entityId));
-  // ── W11.2 · ONE ROW PER CONVERSATION (the serve folded them; the Home words the lead's ONE row).
-  //    A member folded under a lead never takes a line of its own; the lead's row names how many are
-  //    open on the conversation and opens the conversation's own mail room when one of its members
-  //    is the thread's mail item (else the lead's room). Counted over the members PRESENT after this
-  //    session's clears — a conversation cleared down to one reads as a plain row again.
-  const convGroups = b?.attention?.conversations ?? [];
-  const foldedInto = foldedIntoOf(convGroups);
-  const groupOfLead = new Map(convGroups.map((g) => [g.lead, g]));
-  const convKeyOfAtom = new Map(convGroups.flatMap((g) => g.memberIds.map((id) => [id, g.key] as const)));
-  const toRowWhisper = (i: DoItem): Whisper => {
-    const w = toWhisper(i);
-    const g = groupOfLead.get(i.entityId);
-    if (!g) return w;
-    const members = g.memberIds.map((id) => itemByAtom.get(id)).filter((m): m is DoItem => !!m);
-    if (members.length < 2) return w;
-    const mail = members.find((m) => m.source === 'reply' || m.source === 'notice');
-    return { ...w, item: mail && mail.entityId !== i.entityId ? { ...i, href: mail.href } : i,
-      sentence: conversationSentence(servedWho(i), members.map((m) => whisperBody(m)), members.length) };
-  };
   const whisperKeys = new Set(whisperItems.map((i) => i.key));
-  const whispers: Whisper[] = whisperItems.map((i) => toRowWhisper(i));
+  const whispers: Whisper[] = whisperItems.map((i) => toWhisper(i));
   const dealKeyOf = new Map(flatRows.filter((r) => r.dealKey).map((r) => [r.item.key, r.dealKey!]));
   // THE REMAINDER IS SORTED, IN ONE STATED ORDER (owner, Sep 8; re-seated Sep 17). The calm module's
   // ONE order (fires · asks · due today · dated ahead · the deck's own order) still decides it — what
@@ -2170,12 +2146,9 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
   // This list is the door's COUNT and the source of the non-mail rows the ledger cannot see itself.
   // (An ANCHORED row is SERVED, not held — it is already rendering under its meeting, so it is not
   //  part of the door's remainder either. One row, one home, one count.)
-  // (W11.2: a member whose conversation's lead is SEATED rides that lead's one row — it is neither
-  //  the door's remainder nor a held row of its own; a held lead keeps its members beside it.)
-  const seatedAtoms = new Set([...whisperItems.map((i) => i.entityId), ...anchoredIds]);
+  // (W13.4 · ONE ITEM, ONE ROW: every live item is its own row — nothing rides another's seat.)
   const restRows = sortDoorRows(
-    flatRows.filter((r) => !whisperKeys.has(r.item.key) && !anchoredIds.has(r.item.entityId)
-      && !seatedAtoms.has(foldedInto.get(r.item.entityId) ?? '')),
+    flatRows.filter((r) => !whisperKeys.has(r.item.key) && !anchoredIds.has(r.item.entityId)),
     (r) => r.item,
   );
   // THE LEDGER'S SCOPE GAP, closed honestly: /api/home/held accounts for PENDING MAIL, so a held
@@ -2215,8 +2188,6 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
       // token: mounting an artifact card off a word the Home never promised would be a second,
       // guessing renderer. The word is a chip; the artifact stays the ledger's own fact.
       preparedWord: w.receipt ?? null,
-      // W11.2 · the conversation it belongs to (served groups only) — the held list folds by it.
-      conversationKey: convKeyOfAtom.get(it.entityId) ?? null,
     };
   };
   const deckHeldRows: DeckHeldRow[] = restRows
@@ -2257,8 +2228,8 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
     // (`Array.from` deliberately, not `restRows.map` — THE WALL IS STILL GONE, and the gate that
     //  says so reads that literal as the wall's own render. This is a handful of rows, not a deck.)
     : Array.from(restRows, (r) => r.item)
-  ).filter((i) => !whisperKeys.has(i.key) && !foldedInto.has(i.entityId)).slice(0, NEXT_UP_MAX);
-  const nextUp: Whisper[] = nextUpItems.map((i) => toRowWhisper(i));
+  ).filter((i) => !whisperKeys.has(i.key)).slice(0, NEXT_UP_MAX);
+  const nextUp: Whisper[] = nextUpItems.map((i) => toWhisper(i));
   // (THE DAY SHAPE + THE ONE SENTENCE retired here, Sep 13 — the "free until …" clause existed only
   //  as the sentence's tail, and the calendar's own home is /meetings. The composed briefing still
   //  powers ordering + de-dup via `sentencedIds`; it simply never speaks on this page.)

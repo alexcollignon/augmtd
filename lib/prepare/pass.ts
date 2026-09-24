@@ -1162,7 +1162,7 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
     await writeDeliverable(admin, userId, {
       kind: 'commitment', entityId: w.entityId, taskId: 'prepare-pass-docsend', type: 'draft',
       title: `Send ${cTop.filename}`.slice(0, 100), content: cBody, gist: `send draft with ${cTop.filename}`,
-      metadata: { source: 'preparation_pass', ...(paC ? { agentName: paC.name } : {}), ...stampC(cAddr), attachment: { fileId: cTop.id, filename: cTop.filename, source: cTop.source }, provenance: { item: w.title.slice(0, 100), ...(w.entity ? { entity: w.entity.name } : {}) } },
+      metadata: { source: 'preparation_pass', ...(paC ? { agentName: paC.name } : {}), ...stampC(cAddr), attachment: { fileId: cTop.id, filename: cTop.filename, source: cTop.source }, ...(await import('@/lib/prepare/requirements')).stagingStamp(), provenance: { item: w.title.slice(0, 100), ...(w.entity ? { entity: w.entity.name } : {}) } },
     }).catch(() => {});
     return { did: 'docsend', worker: paC?.name };
   }

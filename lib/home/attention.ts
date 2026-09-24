@@ -48,8 +48,6 @@ import { kindFloor } from '@/lib/work/kind-floor';
 // W8.3 · THE ONE SHORT-DATE GRAMMAR — a served sentence never prints a raw ISO date.
 import { fmtMonthDay } from '@/lib/utils/format-date';
 import { HELD_BAND_ROWS_BOUND } from '@/lib/deeds/held-words-bulk';
-// W11.2 · ONE ROW PER CONVERSATION — the one fold (pure, client-safe), read by the rank below.
-import { foldByConversation, type ConversationGroup } from '@/lib/home/conversation-fold';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -225,10 +223,6 @@ export type AttentionRow = {
   /** THE FRESH SEAT: this work was FIRST JUDGED within the day — the deck's own "surfaced today"
    *  fact (`machine.judgedFirstAt`), never a second derivation of newness. */
   fresh?: boolean;
-  /** W11.2 · ONE ROW PER CONVERSATION — the conversation this row belongs to (lib/home/conversation-
-   *  fold.ts `conversationKeyOf`: `t:<thread>` / `m:<source message>`). Rows sharing a key take ONE
-   *  seat; absent = the row is its own conversation (the legacy behaviour, exactly). */
-  conversationKey?: string | null;
   /** W11.2 · LOOKS DONE — the machine's `looks_done` state: user-side evidence the judge did not
    *  close on. Seated only BELOW every row of real work (rank 6). */
   looksDone?: boolean;
@@ -345,11 +339,6 @@ export function rankAttention(
   rows: AttentionRow[], budget: number = ATTENTION_BUDGET,
 ): {
   served: AttentionRow[]; held: AttentionRow[]; refused: Array<{ row: AttentionRow; refusal: 'self' | 'not_alive' }>;
-  /** W11.2 · the conversations that fold ≥2 eligible rows under ONE seat (lead = its most urgent). */
-  conversations: ConversationGroup[];
-  /** …and every non-lead member, with the lead it rides under. Neither served nor held on its own:
-   *  its lead's row speaks for it (a held lead's members are held with it — see the caller). */
-  folded: Array<{ row: AttentionRow; into: string }>;
 } {
   const eligible: AttentionRow[] = [];
   const refused: Array<{ row: AttentionRow; refusal: 'self' | 'not_alive' }> = [];
@@ -365,21 +354,16 @@ export function rankAttention(
       || (Number(rowNeedsShaping(a.r)) - Number(rowNeedsShaping(b.r)))
       || (a.i - b.i))
     .map((x) => x.r);
-  // W11.2 · ONE ROW PER CONVERSATION: AFTER the rank (so a conversation's position IS its most
-  // urgent member's), members sharing a conversation fold under that lead — one seat, never three.
-  const folds = foldByConversation(ordered, (r) => r.conversationKey ?? null);
-  const leads = folds.map((f) => f.lead);
-  const conversations: ConversationGroup[] = folds.filter((f) => f.key && f.members.length > 1)
-    .map((f) => ({ key: f.key!, lead: f.lead.entityId, memberIds: f.members.map((m) => m.entityId) }));
-  const folded = folds.flatMap((f) => f.members.slice(1).map((row) => ({ row, into: f.lead.entityId })));
+  // W13.4 · ONE ITEM, ONE ROW (owner call, Sep 24 — the W11.2 conversation fold is retired): every
+  // eligible row takes its own seat, individually trackable. Grouping related work is what a
+  // user-created PROJECT is for; the conversation DELTA (lib/work/conversation-delta.ts) keeps the
+  // data itself from hoarding.
   const cap = Math.max(0, budget);
   // A REFUSED ROW IS HELD, NEVER DELETED — it leads the held list so the ledger sees it first.
   return {
-    served: leads.slice(0, cap),
-    held: [...refused.map((x) => x.row), ...leads.slice(cap)],
+    served: ordered.slice(0, cap),
+    held: [...refused.map((x) => x.row), ...ordered.slice(cap)],
     refused,
-    conversations,
-    folded,
   };
 }
 
