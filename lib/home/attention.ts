@@ -111,7 +111,7 @@ function clipClause(s: string, max = WHY_NOW_MAX_CHARS): string {
 
 /** THE RECEIPT HALF, mapped (never authored) — the same mapping `calm.receiptOf` prints. */
 function receiptWord(f: WhyNowFacts): string | null {
-  return receiptWordOf(f.prepared ?? null, f.preparedKind ?? null, f.source);
+  return receiptWordOf(f.prepared ?? null, f.preparedKind ?? null, f.source, f.stateWord ?? null);
 }
 
 /** THE WHY-YOU HALF — what this lane means for the person reading it. Honest per lane: a `notice`
@@ -220,12 +220,29 @@ export type AttentionRow = {
   anchoredToEventId?: string | null;
   /** Is the adjacency meeting TODAY? Only a computed `false` demotes (see `attentionRank`). */
   adjacencyToday?: boolean;
-  /** THE FRESH SEAT: this work was FIRST JUDGED within the day — the deck's own "surfaced today"
-   *  fact (`machine.judgedFirstAt`), never a second derivation of newness. */
+  /** THE FRESH SEAT — W14.3 · FRESH MEANS ARRIVED: the item's OWN newest activity is inside
+   *  `FRESH_ARRIVAL_HOURS` (computed by `seatClockOf`, never judgment time — see THE ORDER below). */
   fresh?: boolean;
+  /** W14.3 · the item's own newest activity (ISO) — inbox: last_activity_at / newest inbound;
+   *  commitment: its source message's arrival (else created_at), lifted by newer thread activity.
+   *  Read only as a within-band tiebreak; absent sorts last. */
+  activityAt?: string | null;
+  /** W14.3 · SIGNS OF LIFE (`seatClockOf`): activity inside `LIFE_WINDOW_DAYS` or a stated deadline
+   *  within `NEAR_DEADLINE_DAYS`. Three-valued: only a computed `false` drops an overdue / due-today
+   *  row out of its band. */
+  lifeSign?: boolean;
+  /** W14.3 · STALENESS DEMOTES (`seatClockOf`): no activity for `STALE_AFTER_DAYS`+ and no deadline
+   *  within `NEAR_DEADLINE_DAYS`. Only a computed `true` refuses the seat (the row is HELD). */
+  stale?: boolean;
+  /** W14.3 · THE KIND FLOOR AT THE SEAT (`kindFlooredForSeat` → lib/work/kind-floor.ts): a notice
+   *  with no you_owe, an unanswered pitch/newsletter, the platform's own mail. Only `true` refuses. */
+  kindFloored?: boolean;
   /** W11.2 · LOOKS DONE — the machine's `looks_done` state: user-side evidence the judge did not
    *  close on. Seated only BELOW every row of real work (rank 6). */
   looksDone?: boolean;
+  /** W14.4 · the one work judgment ruled `none` for this item, or its machine state reads settled —
+   *  a seat is for work; such a row is HELD (never deleted). Only a computed `true` refuses. */
+  judgedNothing?: boolean;
 };
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -262,16 +279,70 @@ export type SeatVerdict = {
   /** May this row occupy one of the day's five at all? */
   seated: boolean;
   /** Why not — the word the ledger and the gates read. */
-  refusal: 'self' | 'not_alive' | null;
+  refusal: SeatRefusal | null;
   /** Seated, but with nothing staged: the honest word rides its why-now and its CTA is an offer. */
   needsShaping: boolean;
 };
 
-/** THE SEAT TESTS (pure). One row, three facts, one verdict — every caller reads THIS. */
+/** Why a row may not sit — W14.3 adds the KIND FLOOR (a notice / pitch with no move in it) and
+ *  STALENESS (weeks quiet, no deadline near). Every refusal is HELD, never deleted. */
+export type SeatRefusal = 'self' | 'not_alive' | 'kind_floor' | 'stale' | 'judged_none';
+
+/** THE SEAT TESTS (pure). One row, its facts, one verdict — every caller reads THIS. */
 export function seatVerdict(r: AttentionRow): SeatVerdict {
   if (r.selfAuthored === true) return { seated: false, refusal: 'self', needsShaping: false };
   if (!aliveByContract(r.provedAlive)) return { seated: false, refusal: 'not_alive', needsShaping: false };
+  if (r.kindFloored === true) return { seated: false, refusal: 'kind_floor', needsShaping: false };
+  if (r.stale === true) return { seated: false, refusal: 'stale', needsShaping: false };
+  // W14.4 · THE JUDGE SAID NOTHING IS OWED — a row the one work judgment ruled `none` (or whose
+  // machine state reads settled) never takes a seat, whatever carve-out kept it on the deck
+  // (owner call Sep 24: the dunning-notice carve-out applies only when there is work to do).
+  if (r.judgedNothing === true) return { seated: false, refusal: 'judged_none', needsShaping: false };
   return { seated: true, refusal: null, needsShaping: !r.prepared };
+}
+
+/**
+ * W14.3 · THE KIND FLOOR AT THE SEAT — the judge's own predicate (lib/work/kind-floor.ts), asked
+ * again at serve time for EVERY inbox row, whatever law its cached verdict was written under (the
+ * owner's Sep 24 five held a marketplace notice and a domain-sale pitch). Same inputs the judge
+ * hands it: the reasoned kind, the ownership key, whether the user has written into the thread,
+ * the sender. A commitment has no mail kind — the caller never asks.
+ */
+export function kindFlooredForSeat(it: { source_data?: unknown }, userEngaged?: boolean): boolean {
+  const sd = (it.source_data ?? {}) as Record<string, unknown>;
+  const u = getUnderstanding(it as any);
+  return kindFloor({
+    kind: (sd.kind_override as string) || u?.mailKind || rawMailKindOf(sd) || null,
+    ownership: u?.ownership ?? null, userEngaged: userEngaged === true, fromEmail: fromEmailOf(sd),
+  }).refuses;
+}
+
+/** W14.3 · the seat clock's numbers, stated once (see THE ORDER on `attentionRank`). */
+export const FRESH_ARRIVAL_HOURS = 36;
+export const LIFE_WINDOW_DAYS = 14;
+export const STALE_AFTER_DAYS = 21;
+export const NEAR_DEADLINE_DAYS = 7;
+
+/**
+ * W14.3 · THE SEAT CLOCK (pure — the caller hands `now`). Three facts from TWO inputs: the item's
+ * own newest activity and its stated deadline. Never judgment time: a backfill that judges a
+ * hundred old items in one morning makes none of them "fresh". An absent `activityAt` computes
+ * nothing (every fact stays undefined → the legacy behaviour holds).
+ */
+export function seatClockOf(
+  f: { activityAt?: string | null; dueDate?: string | null }, now: Date,
+): { fresh?: boolean; lifeSign?: boolean; stale?: boolean } {
+  const at = f.activityAt ? Date.parse(f.activityAt) : NaN;
+  if (!Number.isFinite(at)) return {};
+  const ageMs = now.getTime() - at;
+  const day = 86_400_000;
+  const due = typeof f.dueDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(f.dueDate) ? Date.parse(`${f.dueDate.slice(0, 10)}T12:00:00Z`) : NaN;
+  const deadlineNear = Number.isFinite(due) && Math.abs(due - now.getTime()) <= NEAR_DEADLINE_DAYS * day;
+  return {
+    fresh: ageMs <= FRESH_ARRIVAL_HOURS * 3_600_000,
+    lifeSign: ageMs <= LIFE_WINDOW_DAYS * day || deadlineNear,
+    stale: ageMs >= STALE_AFTER_DAYS * day && !deadlineNear,
+  };
 }
 
 /** Does this row wear the seat word? (The surfaces read the served clause; the gates read this.) */
@@ -297,51 +368,66 @@ export function provedAliveOf(sourceData: unknown): boolean | null {
 }
 
 /**
- * THE RANK, against CURRENT context (A2): the next calendar event's adjacency outranks age; a
- * consequence today outranks a bigger consequence next week.
- *   0 · calendar-adjacent TODAY — someone will ask you about this before the day is out
- *   1 · FRESH — first judged within the day (see below)
- *   2 · prepared AND overdue — the work is done and the clock has passed; one click clears it
- *   3 · due today
- *   4 · calendar-adjacent LATER (tomorrow's meeting) — a real reason, but not today's shape
- *   5 · everything else, in the order the caller handed it (the judged weight order)
+ * THE RANK, against CURRENT context (A2) — W14.3 · THE TOP FIVE ARE WHAT MATTERS NOW.
  *
- * THE FRESH SEAT (Sep 18, the owner: "we need to be able to present helpfulness almost instantly…
- * the user can't wait half a day"). His morning Home held two WEEK-OLD rows floating alone — both
- * seated purely because their counterparties sit on the day's calendar — while the night's real
- * arrivals sat in the ledger waiting for a sweep. So: AT EQUAL BAND, A FRESH ARRIVAL OUTRANKS A
- * STALE CALENDAR-ADJACENT ROW, **unless the adjacency meeting is TODAY** — today's meeting still
- * wins, because it is the day's own shape and nothing else on the deck can state a why-now that
- * strong. `adjacencyToday` is three-valued the way `provedAlive` is: only a computed `false`
- * demotes, so a caller that has not computed the day keeps the old behaviour exactly.
+ * THE ORDER, stated once (the owner, Sep 24, looking at a five that held a weeks-old client task, an
+ * automated marketplace notice, a domain-sale pitch and a task about a provider the company no
+ * longer uses: "some of the items here are old … the order/priority also matters a bit"):
+ *
+ *   SEAT TESTS FIRST (`seatVerdict`) — a row that fails one is HELD, never deleted:
+ *     · our own coworker's mail, a row proved quiet (Q4/Q7);
+ *     · THE KIND FLOOR — a notice nobody owes a move on, an unanswered pitch or newsletter, the
+ *       platform's own mail (lib/work/kind-floor.ts, asked at serve time whatever law cached the
+ *       verdict);
+ *     · STALENESS — no activity for 21+ days and no deadline within 7 days. It stays in "When
+ *       you're ready" under its own honest held class.
+ *   THEN FOUR BANDS (the number is the served `rank`):
+ *     0 · calendar-adjacent TODAY — someone will ask you about this before the day is out
+ *     1 · FRESH ARRIVAL — the item's OWN newest activity inside 36h. NEVER judgment time: the Sep 24
+ *         cause was a not-judged backfill that judged hundreds of old items in one morning, and
+ *         "first judged today" made every one of them read fresh and take the seats.
+ *     2 · overdue or due today WITH SIGNS OF LIFE — activity in the last 14 days or a stated
+ *         deadline within 7 days. An overdue row nobody has touched in weeks is not today's shape.
+ *     3 · everything else (a meeting tomorrow included — a real reason, but not today's)
+ *     (6 · LOOKS DONE, W11.2 — a confirmation, not work: below every row of real work.)
+ *   WITHIN A BAND: soonest due first → at equal urgency a PREPARED row before a needs-shaping one
+ *   (Q4: finished preparation is what a seat is for) → most recent activity → the caller's order
+ *   (the entity's judged priority weight). No other tiebreak exists.
+ *
+ * THREE-VALUED, like `provedAlive`: `adjacencyToday`, `lifeSign` and `stale` demote only when
+ * COMPUTED (`seatClockOf`); a caller that never computed them keeps the old behaviour exactly.
  */
 export function attentionRank(r: AttentionRow): number {
   // W11.2 · a row that LOOKS DONE is a confirmation, not work — it ranks below everything real.
   if (r.looksDone) return 6;
   if (r.calendarAdjacent && r.adjacencyToday !== false) return 0;
   if (r.fresh) return 1;
-  if (r.prepared && r.overdue) return 2;
-  if (r.dueToday) return 3;
-  if (r.calendarAdjacent) return 4;
-  return 5;
+  if ((r.overdue || r.dueToday) && r.lifeSign !== false) return 2;
+  return 3;
+}
+
+/** W14.3 · the within-band comparator (THE ORDER above): due → prepared → activity → caller order. */
+function withinBand(a: AttentionRow, b: AttentionRow): number {
+  const due = (r: AttentionRow) => (typeof r.dueDate === 'string' && r.dueDate ? r.dueDate.slice(0, 10) : '9999-12-31');
+  const act = (r: AttentionRow) => (r.activityAt ? Date.parse(r.activityAt) || 0 : 0);
+  return due(a).localeCompare(due(b))
+    || (Number(rowNeedsShaping(a)) - Number(rowNeedsShaping(b)))
+    || (act(b) - act(a));
 }
 
 /**
- * THE ONE CHOKE POINT (A2 × Q4). THE SEAT TESTS FIRST, then the rank, then the cut at the budget.
- * NOTHING IS DROPPED — everything the contract refuses and everything the budget cannot seat is
- * returned as `held`, and the held-quiet ledger accounts for every one of them.
- *
- * Stable: rows of equal rank keep the caller's order, so the judged weight ordering survives the
- * cut. Within one rank, Q4's preference applies — A PREPARED ROW OUTRANKS A NEEDS-SHAPING ROW at
- * equal urgency (finished preparation is what a seat is FOR; the shaping offer can wait a day).
+ * THE ONE CHOKE POINT (A2 × Q4 × W14.3). THE SEAT TESTS FIRST, then the band, then THE ORDER within
+ * it, then the cut at the budget. NOTHING IS DROPPED — everything the contract refuses and
+ * everything the budget cannot seat is returned as `held`, and the held-quiet ledger accounts for
+ * every one of them. Rows equal on every fact keep the caller's order (the judged weight order).
  */
 export function rankAttention(
   rows: AttentionRow[], budget: number = ATTENTION_BUDGET,
 ): {
-  served: AttentionRow[]; held: AttentionRow[]; refused: Array<{ row: AttentionRow; refusal: 'self' | 'not_alive' }>;
+  served: AttentionRow[]; held: AttentionRow[]; refused: Array<{ row: AttentionRow; refusal: SeatRefusal }>;
 } {
   const eligible: AttentionRow[] = [];
-  const refused: Array<{ row: AttentionRow; refusal: 'self' | 'not_alive' }> = [];
+  const refused: Array<{ row: AttentionRow; refusal: SeatRefusal }> = [];
   for (const r of rows) {
     const v = seatVerdict(r);
     if (v.seated) eligible.push(r);
@@ -351,7 +437,7 @@ export function rankAttention(
     .map((r, i) => ({ r, i }))
     .sort((a, b) =>
       (attentionRank(a.r) - attentionRank(b.r))
-      || (Number(rowNeedsShaping(a.r)) - Number(rowNeedsShaping(b.r)))
+      || withinBand(a.r, b.r)
       || (a.i - b.i))
     .map((x) => x.r);
   // W13.4 · ONE ITEM, ONE ROW (owner call, Sep 24 — the W11.2 conversation fold is retired): every

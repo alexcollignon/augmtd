@@ -162,7 +162,7 @@ async function supplyTypedFact(
   let settled = false;
   if (!remaining.length) {
     const { settleAsksForItem } = await import('@/lib/room/turns');
-    await settleAsksForItem(supabase, userId, item.kind === 'commitment' ? 'commitment' : 'inbox_item', item.id);
+    await settleAsksForItem(supabase, userId, item.kind === 'commitment' ? 'commitment' : 'inbox_item', item.id, { why: 'answered' });
     settled = true;
   }
 

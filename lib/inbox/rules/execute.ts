@@ -202,6 +202,8 @@ export async function executeRuleDeeds(
                   source_data: { ...sdCur, [landed.includes('trash') ? 'trashed_at' : 'archived_at']: now, resolved_at: now, resolved_by_rule: job.ruleId },
                   updated_at: now,
                 }).eq('id', item.id).eq('user_id', args.userId).eq('status', 'pending');
+                // W14.2 · the dismissed item's asks die with it (archive, never delete).
+                await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(sb, args.userId, 'inbox_item', String(item.id))).catch(() => 0);
               }
               if (landed.includes('mark_read')) await sb.from('inbox_items').update({ is_read: true }).eq('id', item.id).eq('user_id', args.userId);
             }

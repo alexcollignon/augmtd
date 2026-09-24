@@ -74,6 +74,8 @@ export async function POST(
       .update({ status: 'dismissed', source_data: { ...sourceData, resolved_at: movedAt }, updated_at: movedAt })
       .eq('id', id)
       .eq('user_id', user.id);
+    // W14.2 · the dismissed item's asks die with it (archive, never delete).
+    await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(supabase, user.id, 'inbox_item', id)).catch(() => 0);
 
     await supabase.from('learning_signals').insert({
       user_id: user.id,

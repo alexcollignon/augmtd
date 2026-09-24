@@ -1991,8 +1991,11 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     });
     await settleAsksForItem(sb, PERSONAL, 'inbox_item', 'zz-p34-item');
     const { data: t1 } = await sb.from('room_turns').select('component, text').eq('user_id', PERSONAL).eq('room_key', rk).eq('dedupe_key', 'requires:zz-p34-item').maybeSingle();
-    check('P34 live · resolution settles the ask (component strips, the text stays as history)',
-      !!t1 && t1.component === null && String(t1.text).includes('ZZ quarterly pack'));
+    // ⟲ RE-POINTED (W14.2 — the undo restores asks): the settle no longer NULLS the component, it
+    // RE-KEYS it (no ask reader matches `input_checklist_settled`) so the ONE reopen can restore it.
+    // The affordance still dies everywhere; the text still stays as history.
+    check('P34 live · resolution settles the ask (the checklist affordance dies — re-keyed, restorable — the text stays as history)',
+      !!t1 && (t1.component as { key?: string } | null)?.key === 'input_checklist_settled' && String(t1.text).includes('ZZ quarterly pack'));
     await writeRoomTurn(sb, PERSONAL, rk, {
       role: 'system', text: 'To finish these I need the shared ZZ artifact.',
       component: { key: 'input_checklist', state: { items: ['ZZ shared artifact'], taskId: null, covers: ['inbox:zz-a', 'commitment:zz-b'] } },
@@ -2004,7 +2007,7 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     await settleAsksForItem(sb, PERSONAL, 'commitment', 'zz-b');
     const { data: t3 } = await sb.from('room_turns').select('component').eq('user_id', PERSONAL).eq('room_key', rk).eq('dedupe_key', 'requires:zz-a').maybeSingle();
     check('P34 live · a MERGED ask (one artifact, many items) survives until the LAST covered item resolves',
-      midOk && t3?.component === null);
+      midOk && (t3?.component as { key?: string } | null)?.key === 'input_checklist_settled'); // ⟲ W14.2 (re-keyed, not nulled)
     await sb.from('room_turns').delete().eq('user_id', PERSONAL).eq('room_key', rk);
   }
 

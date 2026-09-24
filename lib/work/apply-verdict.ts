@@ -112,9 +112,19 @@ export async function applyVerdictConsequences(
     if (verdict.work !== 'none' && !['reply', 'send_file', 'produce'].includes(verdict.work)) {
       try {
         const { settleAsksForItem } = await import('@/lib/room/turns');
-        await settleAsksForItem(client, userId, input.kind === 'commitment' ? 'commitment' : 'inbox_item', input.id);
+        // why 'verdict' — a class change retires the ask; an undo of a LATER resolution never revives it.
+        await settleAsksForItem(client, userId, input.kind === 'commitment' ? 'commitment' : 'inbox_item', input.id, { why: 'verdict' });
       } catch { /* coherence is an enhancement — the verdict still applies */ }
     }
+
+    // ── 0c. W14.2 · A HIDDEN ASK IS NOT A LIVE ONE (census Sep 24: 3 engine asks every label of which
+    // the moot predicate refuses — the rail hid them, the table kept them live, nothing archived
+    // them). On EVERY verdict write the item's engine asks the machine now hides (the same
+    // `askIsMoot` + `verdictRequireLabels` facts) ARCHIVE — never deleted, stamped `mooted`. ──
+    try {
+      const { archiveMootAsksForItem } = await import('@/lib/room/ask-lifecycle');
+      await archiveMootAsksForItem(client, userId, { kind: input.kind === 'commitment' ? 'commitment' : 'inbox', id: input.id }, verdict);
+    } catch { /* the sweep's lane is the net */ }
 
     // ── 1. RESOLUTION from a dispositioned none. ──
     if (verdict.work === 'none' && (verdict.resolution === 'expired' || verdict.resolution === 'answered')) {
@@ -145,8 +155,9 @@ export async function applyVerdictConsequences(
             base: expired ? 'expired' : 'done_elsewhere', itemKind: 'inbox', itemId: input.id,
             door: 'judge_resolution', source: (it.source_data ?? null) as Record<string, unknown> | null,
           }).catch(() => 0);
-          // Law 3 (experience spec): the resolved item's asks settle with it.
-          import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'inbox_item', input.id)).catch(() => {});
+          // Law 3 (experience spec): the resolved item's asks settle with it — AWAITED (W14.2: a
+          // fire-and-forget settle died with the function on a verdict dismiss; census C3).
+          await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'inbox_item', input.id)).catch(() => 0);
           await narrateAndLog(client, userId, input, String(it.work_title ?? ''), verdict, expired);
         }
       } else {
@@ -163,7 +174,7 @@ export async function applyVerdictConsequences(
           await logPendingOutcomes(client, userId, pendingPrep, {
             base: expired ? 'expired' : 'done_elsewhere', itemKind: 'commitment', itemId: input.id, door: 'judge_resolution',
           }).catch(() => 0);
-          import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', input.id)).catch(() => {});
+          await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', input.id)).catch(() => 0);
           await narrateAndLog(client, userId, input, String(c.description ?? ''), verdict, expired);
         }
       }
@@ -283,7 +294,12 @@ export async function applyVerdictConsequences(
         narrationBacked = !!poolArt;
       }
       if (!narrationBacked) {
-        await client.from('room_turns').delete().eq('user_id', userId).eq('dedupe_key', `prep:inbox:${input.id}`).then(() => {}, () => {});
+        // W14.2 · ARCHIVE, NEVER DELETE (the narration is the record; the pass re-narrates the current
+        // lane, and W13.5's key release lets that re-narration land live).
+        const { prepNarrationKeys } = await import('@/lib/prepare/narration');
+        await client.from('room_turns').update({ archived_at: new Date().toISOString() })
+          .eq('user_id', userId).in('dedupe_key', prepNarrationKeys('inbox', input.id)).is('archived_at', null)
+          .then(() => {}, () => {});
       }
     }
   } catch { /* non-fatal */ }

@@ -53,7 +53,7 @@ export async function executeResolveInboxItem(
 
   // Law 3 (experience spec): the resolved item's room asks settle with it (component strips,
   // text stays as history) — every manual Done/Dismiss flows through this ONE resolver.
-  import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'inbox_item', itemId)).catch(() => {});
+  await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'inbox_item', itemId)).catch(() => 0); // W14.2: awaited — a fire-and-forget settle dies with the function
 
   // Learning signal (non-fatal) — same shape the routes wrote.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -120,7 +120,7 @@ export async function executeResolveCommitment(
     itemKind: 'commitment', itemId: args.commitmentId, door: 'resolve_commitment',
   }).catch(() => 0);
 
-  import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', args.commitmentId)).catch(() => {});
+  await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', args.commitmentId)).catch(() => 0); // W14.2: awaited — a fire-and-forget settle dies with the function
   await logActivity(client, userId, {
     type: args.resolution === 'done' ? 'commitment_done' : 'dismissed',
     title: `${args.resolution === 'done' ? 'Marked done' : 'Dismissed'}: ${String(c.description).slice(0, 80)}`,

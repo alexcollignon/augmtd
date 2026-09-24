@@ -66,7 +66,8 @@ describe('deriveState — the one ladder', () => {
       liveAsk: true,
       prepared: [artifact({ kind: 'reply_draft' })],
     }));
-    expect(result).toEqual({ state: 'committed', verdictWork: 'reply', primary: 'none' });
+    // ⟲ RE-POINTED (W14.1): + the ladder's own lead kind (the rung rests on no artifact).
+    expect(result).toEqual({ state: 'committed', verdictWork: 'reply', primary: 'none', leadKind: null });
   });
 
   it('decide + decision material (decision brief with ≥2 options) → awaiting_decision', () => {
@@ -74,7 +75,8 @@ describe('deriveState — the one ladder', () => {
       verdict: { work: 'decide' },
       prepared: [artifact({ kind: 'deliverable', decision: { options: [{ label: 'A' }, { label: 'B' }], recommendation: null, why: null } })],
     }));
-    expect(result).toEqual({ state: 'awaiting_decision', verdictWork: 'decide', primary: 'decide' });
+    // ⟲ RE-POINTED (W14.1): + leadKind — the rung rests on the decision.
+    expect(result).toEqual({ state: 'awaiting_decision', verdictWork: 'decide', primary: 'decide', leadKind: 'decision' });
   });
 
   it('decide + decision material sourced from the verdict\'s own options (door/machine parity)', () => {
@@ -96,7 +98,8 @@ describe('deriveState — the one ladder', () => {
       liveAsk: true,
       prepared: [artifact({ kind: 'reply_draft' })],
     }));
-    expect(result).toEqual({ state: 'awaiting_input', verdictWork: 'reply', primary: 'supply' });
+    // ⟲ RE-POINTED (W14.1): + leadKind — an ask rests on no artifact (the draft stays on the door).
+    expect(result).toEqual({ state: 'awaiting_input', verdictWork: 'reply', primary: 'supply', leadKind: null });
   });
 
   it('decision material is checked BEFORE the live-ask branch — decide wins over a live ask ' +
@@ -111,7 +114,8 @@ describe('deriveState — the one ladder', () => {
 
   it('a send-shaped artifact (sendReady !== false) → awaiting_approval, primary send', () => {
     const result = deriveState(base({ prepared: [artifact({ kind: 'reply_draft' })] }));
-    expect(result).toEqual({ state: 'awaiting_approval', verdictWork: 'reply', primary: 'send' });
+    // ⟲ RE-POINTED (W14.1): + leadKind — the send-shaped artifact's kind.
+    expect(result).toEqual({ state: 'awaiting_approval', verdictWork: 'reply', primary: 'send', leadKind: 'reply_draft' });
   });
 
   it('each SEND_KINDS member is send-shaped', () => {
@@ -123,12 +127,14 @@ describe('deriveState — the one ladder', () => {
 
   it('a send-shaped artifact with sendReady:false is NOT send-shaped → awaiting_input (missing input)', () => {
     const result = deriveState(base({ prepared: [artifact({ kind: 'invite', sendReady: false })] }));
-    expect(result).toEqual({ state: 'awaiting_input', verdictWork: 'reply', primary: 'supply' });
+    // ⟲ RE-POINTED (W14.1): + leadKind — the unfireable invite is what the rung rests on.
+    expect(result).toEqual({ state: 'awaiting_input', verdictWork: 'reply', primary: 'supply', leadKind: 'invite' });
   });
 
   it('a deliverable document (no decision) → ready, primary review', () => {
     const result = deriveState(base({ prepared: [artifact({ kind: 'deliverable' })] }));
-    expect(result).toEqual({ state: 'ready', verdictWork: 'reply', primary: 'review' });
+    // ⟲ RE-POINTED (W14.1): + leadKind — the document.
+    expect(result).toEqual({ state: 'ready', verdictWork: 'reply', primary: 'review', leadKind: 'deliverable' });
   });
 
   it('a paste_pack is finished work to READ, not to send → ready (never awaiting_approval)', () => {

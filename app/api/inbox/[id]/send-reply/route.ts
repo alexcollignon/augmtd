@@ -235,6 +235,10 @@ export async function POST(
         },
       })
       .eq('id', id).eq('user_id', user.id);
+    // W14.2 · A SENT ITEM'S ASKS AND NARRATION GO WITH IT — the asks settle (the reply is out), and the
+    // prep narration ("drafted the reply — ready to review") archives now that nothing unsent backs it.
+    await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(supabase, user.id, 'inbox_item', id)).catch(() => 0);
+    await import('@/lib/prepare/narration').then(({ settlePrepNarration }) => settlePrepNarration(supabase, user.id, { kind: 'inbox', id }, { retired: 1 })).catch(() => 0);
 
     // Swap the mailbox label to AUGMTD/Done (honors auto_label). Non-fatal, after() so it never
     // blocks the send response. We have the connection + thread id already, but reconcileItemLabel

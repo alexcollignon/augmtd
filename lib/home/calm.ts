@@ -147,7 +147,35 @@ export function sortDoorRows<T>(rows: T[], itemOf: (r: T) => DoItem, today: Date
 /** MAPPED, never authored: the row's served preparation decides the word.
  *  `prepared` is the deck's own token — 'draft' (in-house) or a coworker's name. */
 export function receiptOf(item: DoItem): string | null {
-  return receiptWordOf(item.prepared ?? null, item.preparedKind ?? null, item.source);
+  return receiptWordOf(item.prepared ?? null, item.preparedKind ?? null, item.source, item.stateWord ?? null);
+}
+
+// ── W14.1 · THE RECEIPT KIND FOLLOWS THE LADDER (census H: Home said "decision laid out" while the
+// room said "ready to review" — `leadKindOf` ranks a live decision brief above a document, but the
+// machine's ladder only leads with a decision on a DECIDE verdict; otherwise the document is what the
+// state rests on). When the machine's word is served, the receipt is worded by the rung that word
+// names (lib/work/machine.ts `deriveState` → `leadKind`), never by the reader's own ranking. The
+// words are the machine's STATE_WORDS, spelled here because this module is client-safe (it cannot
+// import the machine at runtime); scripts/smoke-reader-parity.ts gates the spelling and the mapping.
+const LADDER_DECISION_WORD = 'decision laid out';   // STATE_WORDS.awaiting_decision
+const LADDER_REVIEW_WORD = 'ready to review';       // STATE_WORDS.ready
+const LADDER_SEND_WORD = 'ready to send';           // STATE_WORDS.awaiting_approval
+/** The rungs that rest on NO prepared artifact — a receipt there would claim work the ladder does not
+ *  count (STATE_WORDS.preparing · STATE_WORDS.committed). */
+const LADDER_NO_RECEIPT_WORDS = new Set(['in motion', 'sent — awaiting them']);
+const SEND_RECEIPT_KINDS = new Set(['invite', 'forward', 'reply_draft', 'nudge_draft']);
+
+/** The receipt KIND for a row, derived from the machine's served word: the kind the ladder's rung
+ *  rests on (`false` = the rung rests on nothing prepared — no receipt). No served word → the reader's
+ *  kind stands (no ladder to reconcile with). Pure; exported for the gate. */
+export function ladderReceiptKind(preparedKind: string | null, stateWord: string | null | undefined): string | null | false {
+  const w = String(stateWord ?? '').trim();
+  if (!w) return preparedKind;
+  if (w === LADDER_DECISION_WORD) return 'decision';
+  if (w === LADDER_REVIEW_WORD) return preparedKind === 'deliverable' || preparedKind === 'paste_pack' ? preparedKind : 'deliverable';
+  if (w === LADDER_SEND_WORD) return preparedKind && SEND_RECEIPT_KINDS.has(preparedKind) ? preparedKind : null;
+  if (LADDER_NO_RECEIPT_WORDS.has(w)) return false;
+  return preparedKind;
 }
 
 /** THE ONE RECEIPT MAPPING (W2.1 — A CLAIM RENDERS · TIME TRUTH): the word is chosen by WHAT is
@@ -155,9 +183,12 @@ export function receiptOf(item: DoItem): string | null {
  *  invite used to read "ready to send" from any draft row — even one whose proposed time had
  *  passed. The token (`prepared`) says who; the kind says what; this table says the word.
  *  Both deck printers (calm.receiptOf and attention.receiptWord) read it. */
-export function receiptWordOf(prepared: string | null, preparedKind: string | null, source: DoItem['source']): string | null {
+export function receiptWordOf(prepared: string | null, preparedKind: string | null, source: DoItem['source'], stateWord?: string | null): string | null {
   if (!prepared) return null;
-  switch (preparedKind) {
+  // W14.1 · the kind comes from the machine's ladder when its word is served (see `ladderReceiptKind`).
+  const kind = ladderReceiptKind(preparedKind, stateWord);
+  if (kind === false) return null;
+  switch (kind) {
     case 'invite': return 'invite prepared';
     case 'forward': return 'forward prepared';
     case 'paste_pack': return 'words ready';

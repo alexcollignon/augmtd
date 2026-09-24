@@ -574,7 +574,7 @@ export async function cascadeConversationSettlement(
             source: (it.source_data ?? null) as Record<string, unknown> | null,
           }).catch(() => 0);
           out.cascaded.push(String(it.id));
-          import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'inbox_item', String(it.id))).catch(() => {});
+          await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'inbox_item', String(it.id))).catch(() => 0); // W14.2: awaited — a fire-and-forget settle dies with the function
           try {
             const { logActivity } = await import('@/lib/activity/log');
             await logActivity(client, userId, {

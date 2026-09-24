@@ -97,6 +97,15 @@ async function stampAmbientSent(
       door: 'items_execute', source: sd, preparedAt: typeof art.generated_at === 'string' ? art.generated_at : null,
     });
   } catch { /* bookkeeping only */ }
+  // W14.2 · THE NARRATION FOLLOWS ITS ARTIFACT FROM THE SEND DOOR: the prepared invite/forward is
+  // spent; its prep narration archives when the item holds nothing else live (THE ONE settle).
+  try {
+    const itemKind = kind === 'commitment' || kind === 'followup' ? 'commitment' as const : kind === 'email' || kind === 'awareness' ? 'inbox' as const : null;
+    if (itemKind) {
+      const { settlePrepNarration } = await import('@/lib/prepare/narration');
+      await settlePrepNarration(supabase, userId, { kind: itemKind, id: entityId }, { retired: 1 });
+    }
+  } catch { /* narration hygiene is never fatal */ }
 }
 
 export async function POST(request: NextRequest) {

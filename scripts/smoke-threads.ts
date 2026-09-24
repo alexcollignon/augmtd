@@ -1212,7 +1212,8 @@ console.log('\nT8 · THE CALM HOME — one sentence, five whispers, one door');
   // chosen by WHAT is prepared (THE ONE READER's lead kind: an invite says "invite prepared"), and
   // `receiptOf` delegates to it. The law (mapped, never authored per row) is unchanged.
   gate('T8.7 receipts are MAPPED from served state (prepared-by → the word), never authored per row',
-    !!calm && /export function receiptOf\(item: DoItem\): string \| null \{\s*return receiptWordOf\(item\.prepared \?\? null, item\.preparedKind \?\? null, item\.source\);/.test(calm)
+    // ⟲ RE-POINTED (W14.1): + the machine's served word (the receipt kind follows the ladder).
+    !!calm && /export function receiptOf\(item: DoItem\): string \| null \{\s*return receiptWordOf\(item\.prepared \?\? null, item\.preparedKind \?\? null, item\.source, item\.stateWord \?\? null\);/.test(calm)
     && /source === 'reply'\) return 'reply ready';/.test(calm)
     && /prepared === 'draft' \? 'drafted' : 'ready to send'/.test(calm)
     && /case 'invite': return 'invite prepared';/.test(calm)
@@ -1652,7 +1653,8 @@ console.log('\nT11 · THE READ MARKER — the project raising its hand');
     !!turnsRoute && turnsRoute.indexOf('readRoomMarker(supabase') < turnsRoute.indexOf('stampRoomMarker(supabase')
     // ⟲ RE-POINTED (W13.6): the same turns are served through the ask truth net (a false ask speaks
     // its floor on this paint); readAt is still the pre-stamp marker.
-    && /return NextResponse\.json\(\{ turns: await truthfulAskTurns\(turns as never\[\]\), readAt \}\)/.test(turnsRoute));
+    // ⟲ RE-POINTED (W14.2): the turns first pass the narration floor (servedNarrationTurns), then the ask net.
+    && /const served = await servedNarrationTurns\(supabase, user\.id, turns\);\s*return NextResponse\.json\(\{ turns: await truthfulAskTurns\(served as never\[\]\), readAt \}\)/.test(turnsRoute) /* ⟲ W14.2: the same turns pass the narration floor first */);
 
   // 3 — THE UNREAD FACT: non-user live turns newer than the marker; ABSENT without a marker.
   gate('T11.6 unread counts LIVE, NON-USER turns newer than the marker',

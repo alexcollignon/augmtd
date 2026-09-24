@@ -32,6 +32,8 @@ export async function reopenInboxItem(client: Client, userId: string, id: string
     type: 'restored', title: `Restored: ${itemTitle}`, entityType: 'inbox_item', entityId: id,
     ...(opts.note ? { metadata: { reason: opts.note } } : {}),
   });
+  // W14.2 · THE UNDO IS SYMMETRIC — the asks the resolution settled come back with the item.
+  await import('@/lib/room/turns').then(({ restoreAsksForItem }) => restoreAsksForItem(client as SupabaseClient, userId, 'inbox_item', id)).catch(() => 0);
   return { ok: true };
 }
 
@@ -56,6 +58,8 @@ export async function reopenCommitment(client: Client, userId: string, id: strin
     type: 'restored', title: `Restored: ${c?.description || 'a commitment'}`, entityType: 'commitment', entityId: id,
     ...(opts.note ? { metadata: { reason: opts.note } } : {}),
   });
+  // W14.2 · THE UNDO IS SYMMETRIC — the asks the resolution settled come back with the commitment.
+  await import('@/lib/room/turns').then(({ restoreAsksForItem }) => restoreAsksForItem(client as SupabaseClient, userId, 'commitment', id)).catch(() => 0);
   return { ok: true };
 }
 
@@ -71,6 +75,7 @@ export async function reopenInboxItems(
   client: Client, userId: string, ids: string[], opts: { onlyReasons?: string[] } = {},
 ): Promise<{ reopened: number; skipped: number; failed: number }> {
   const out = { reopened: 0, skipped: 0, failed: 0 };
+  const reopenedIds: string[] = [];
   const uniq = [...new Set(ids.map(String))];
   const CHUNK = 200;
   const CONCURRENCY = 8;
@@ -100,11 +105,13 @@ export async function reopenInboxItems(
           .eq('id', r.id).eq('user_id', userId).eq('status', r.status)
           .select('id');
         if (uerr) out.failed++;
-        else if (((upd ?? []) as unknown[]).length) out.reopened++;
+        else if (((upd ?? []) as unknown[]).length) { out.reopened++; reopenedIds.push(r.id); }
         else out.skipped++;
       }
     };
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, todo.length) || 1 }, worker));
   }
+  // W14.2 · the batch undo is symmetric too — one read finds the members that had settled asks.
+  if (reopenedIds.length) await import('@/lib/room/turns').then(({ restoreAsksForItems }) => restoreAsksForItems(client as SupabaseClient, userId, 'inbox_item', reopenedIds)).catch(() => 0);
   return out;
 }

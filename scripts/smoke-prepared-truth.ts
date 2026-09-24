@@ -143,7 +143,9 @@ console.log('\nB · prepared words never claim an undone deed');
     && /export function stampTruth</.test(rd)
     && (rd.match(/stampTruth\(/g) ?? []).length >= 2
     // ⟲ RE-POINTED (W11.1): + `thread_id` (the signature floor finds the thread's mailbox).
-    && /select\('description, created_at, status, direction, counterparty(?:, thread_id)?'\)/.test(rd)
+    // ⟲ RE-POINTED (W14.1 · ONE READER, ONE ANSWER): the single reader IS the batched reader over one
+    // item — one commitment-facts select serves both (the per-item select is gone by construction).
+    && /const states = await preparedStatesFor\(client, userId, \[\{ kind, id: item\.id \}\]\);/.test(rd)
     && /select\('id, description, created_at, status, direction, counterparty(?:, thread_id)?'\)\.eq\('user_id', userId\)\.in\('id', commitIds\)/.test(rd));
   const row = (over: Record<string, unknown>) => ({ id: 'r', task_id: null, type: 'draft', title: 'x', content: 'body', created_at: '2026-09-20T10:00:00Z', metadata: {}, ...over });
   const facts = commitmentTruthFacts({ description: 'Redistribute the group allocation', created_at: '2026-09-18T10:00:00Z', status: 'open', direction: 'you_owe' });

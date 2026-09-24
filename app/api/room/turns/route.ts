@@ -57,7 +57,12 @@ export async function GET(request: NextRequest) {
     // W13.6 · THE ASK SPEAKS TRUE ON THIS PAINT: a stored ask claiming readiness is served with the
     // deterministic floor while the repair above re-speaks it (zero AI, never blocks on a model).
     const { truthfulAskTurns } = await import('@/lib/room/legacy-ask-speech');
-    return NextResponse.json({ turns: await truthfulAskTurns(turns as never[]), readAt });
+    // W14.2 · THE NARRATION FOLLOWS ITS ARTIFACT AT READ TIME: a `prep:<kind>:<id>` narration is
+    // served only while THE ONE READER holds a live artifact for that item (the reader withdraws at
+    // read time — the durable settle lands later, from the sweep). Decided before the paint; zero AI.
+    const { servedNarrationTurns } = await import('@/lib/prepare/narration');
+    const served = await servedNarrationTurns(supabase, user.id, turns);
+    return NextResponse.json({ turns: await truthfulAskTurns(served as never[]), readAt });
   } catch (e) {
     console.error('[room/turns GET]', e);
     return NextResponse.json({ error: 'failed' }, { status: 500 });

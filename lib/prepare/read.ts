@@ -16,7 +16,7 @@
 // receipts · the machine · the room grounding board · prepare-action · smokes.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { leanSelect, foldLean, foldLeanRows, hydrateBodies, isLeanSource, PREPARED_KEYS, ONE_READER_KEYS } from '@/lib/home/lean-source';
+import { leanSelect, foldLeanRows, hydrateBodies, hydrateSource, isLeanSource, ONE_READER_KEYS } from '@/lib/home/lean-source';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { inviteOutsideStatedWindow, vetDraft, signsAsOtherIdentity, mailboxIdentityOf, type MailboxIdentity, type ProposedFrom } from '@/lib/prepare/truth';
 import { addresseeOfStamp, addresseeFromNudgeTitle, addresseeWithdrawn, loadUserForms, type Addressee } from '@/lib/prepare/addressee';
@@ -277,19 +277,23 @@ export function commitmentTruthFacts(row: CommitFactsRow | null | undefined): It
     counterparty: typeof row.counterparty === 'string' ? row.counterparty : null,
   };
 }
-/** An inbox row's source_data → its truth facts. The completion floor stays OFF for inbox replies
- *  (a reply may truthfully recount a deed done on another thread — the house cannot verify it);
- *  only the window floor applies. */
+/** An inbox row's source_data → its truth facts. W14.1 · ONE READER, ONE ANSWER: the obligation is
+ *  OPEN exactly when the item's own understanding says the user owes it (`ownership === 'you_owe'` —
+ *  the same fact `DraftVetFacts` documents), so the completion and inverted-chase floors judge an
+ *  inbox reply as they judge a you_owe commitment's. Before W14.1 this was hard-wired `false`: a
+ *  machine reply announcing undone work on mail the user owes was served live (census A). Any other
+ *  ownership (awaiting · none · unread understanding) keeps the floors off — fail-safe. */
 export function inboxTruthFacts(sd: unknown): ItemTruthFacts | null {
-  const s = (sd ?? null) as { subject?: unknown; body?: unknown; received_at?: unknown } | null;
+  const s = (sd ?? null) as { subject?: unknown; body?: unknown; received_at?: unknown; understanding?: unknown } | null;
   if (!s) return null;
   const text = [typeof s.subject === 'string' ? s.subject : '', typeof s.body === 'string' ? s.body.slice(0, 4000) : ''].filter(Boolean).join('\n');
-  return { text: text || null, anchorIso: typeof s.received_at === 'string' ? s.received_at : null, obligationOpen: false };
+  const ownership = (s.understanding && typeof s.understanding === 'object') ? (s.understanding as { ownership?: unknown }).ownership : null;
+  return { text: text || null, anchorIso: typeof s.received_at === 'string' ? s.received_at : null, obligationOpen: ownership === 'you_owe' };
 }
 
 type PreparedFrom = { emailId?: string | null; receivedAt?: string | null } | null;
 type SourceData = {
-  draft?: { body?: string; generated_at?: string; sent_at?: string; prepared_from?: PreparedFrom; attachment?: { fileId: string; filename: string; source?: string }; addressee?: unknown } | null;
+  draft?: { body?: string; generated_at?: string; sent_at?: string; prepared_from?: PreparedFrom; attachment?: { fileId: string; filename: string; source?: string }; addressee?: unknown; stagingLaw?: unknown } | null;
   nudge_draft?: { body?: string; generated_at?: string; sent_at?: string; prepared_from?: PreparedFrom; addressee?: unknown } | null;
   // THE READER READS EVERYTHING (trichotomy T1 find: a fresh prepared invite existed and the
   // canonical reader missed it — every consumer under-reported preparedness for schedule/forward
@@ -362,13 +366,44 @@ export function stampExpiry<T extends PreparedArtifact>(arts: T[], now: number =
   return arts;
 }
 
+/** W14.1 · a stored source_data draft's own staging stamp is older than the current law (or absent). Pure. */
+export function draftStagingStale(draft: { stagingLaw?: unknown } | null | undefined): boolean {
+  const v = Number(draft?.stagingLaw);
+  return !Number.isFinite(v) || v < STAGING_LAW_VERSION;
+}
+
+/** W14.1 · THE POOL PROVES A SOURCE_DATA ATTACHMENT: a reply draft (source_data) whose file a CURRENT-
+ *  law resolver row (`require:<label>`, source requirement_resolution, not a typed supply, not filed)
+ *  stages for this item is proven — the resolver re-verified that match under today's law. Clears
+ *  `stagingStale` in place. The pure half of the one reader's floor; exported for the gate. */
+export function proveStagingByPool<T extends PreparedArtifact>(arts: T[], pool: Array<Record<string, unknown>>): T[] {
+  if (!arts.some((a) => a.stagingStale && a.payload?.store === 'source_data')) return arts;
+  const proven = new Set<string>();
+  for (const r of pool) {
+    const m = (r.metadata ?? {}) as { source?: unknown; via?: unknown; version_of?: unknown; stagingLaw?: unknown; attachment?: { fileId?: unknown } | null };
+    if (!String(r.task_id ?? '').startsWith('require:') || m.source !== 'requirement_resolution' || m.via || m.version_of) continue;
+    const v = Number(m.stagingLaw);
+    if (typeof m.attachment?.fileId === 'string' && Number.isFinite(v) && v >= STAGING_LAW_VERSION) proven.add(m.attachment.fileId);
+  }
+  for (const a of arts) if (a.stagingStale && a.payload?.store === 'source_data' && a.attachment && proven.has(a.attachment.fileId)) delete a.stagingStale;
+  return arts;
+}
+
 /** The pure half — prepared artifacts already present ON an inbox row's source_data (no queries).
  *  The brief route uses this over rows it already holds; preparedState uses it after fetching.
  *  A SENT DRAFT IS NOT PREPARED WORK (owner walk, Sep 8): all four lanes read `sent_at`. */
 export function preparedFromSourceData(sd: SourceData): PreparedArtifact[] {
   const out: PreparedArtifact[] = [];
   if (sd?.draft?.body && !sd.draft.sent_at) {
+    // W14.1 · THE INBOX LANE'S FILE MATCH IS RE-PROVEN TOO (census B): a MACHINE reply draft riding an
+    // attachment is trusted only when its file match carries the CURRENT staging-law stamp — the
+    // draft's own (`draft.stagingLaw`, the doc-send lane stamps it) or a current-law resolver row for
+    // the same file in the item's pool (`proveStagingByPool`, applied by THE ONE READER). Unproven →
+    // `stagingStale` → withdrawn → the re-prepare trip re-runs the send through today's verifier.
+    // The user's hand is never judged (stampTruth skips it).
+    const stagingStale = !!sd.draft.attachment && !isHandHeld('reply_draft', sd.draft) && draftStagingStale(sd.draft);
     out.push({
+      ...(stagingStale ? { stagingStale: true } : {}),
       kind: 'reply_draft', title: null, content: sd.draft.body,
       by: sd.prepared_by?.worker ?? null, at: sd.draft.generated_at ?? null,
       attachment: sd.draft.attachment ?? null, provenance: null,
@@ -605,82 +640,77 @@ const sentStampOf = (sd: SourceData, pool: Array<Record<string, unknown>>): bool
 
 const EMPTY_STATE: PreparedState = { all: [], live: [], expired: [], stale: [], outsideWindow: [], falseClaim: [], misaddressed: [], sentStamp: false, badge: null, leadKind: null };
 
-/** THE ONE READER — everything prepared for ONE item, across all storage places, with the exact
- *  ground check (one emails query). */
+/** W14.1 · the keys THE ONE READER reads off an inbox row: the prepared lanes, the notice law's
+ *  facts + the understanding (the completion floor's obligation) and the thread (the ground). */
+const READER_FACT_KEYS: readonly string[] = [...ONE_READER_KEYS, 'thread_id'];
+
+// ── W14.1 · THE ONE GROUND PATH — the exact ground check, batched (zero AI, one paged read) ──
+/** One item's ground request: its thread (null = none resolvable), its own date (an inbox row's
+ *  received_at — groundOf's fallback when the thread has no inbound; null for commitments). */
+export type GroundRequest = { key: string; threadId: string | null; fallbackAt: string | null };
+type Ground = { emailId: string | null; receivedAt: string | null };
+
+/** The pure half of `groundOf`, over the newest inbound per thread already read — so the batch and
+ *  the single path cannot answer differently for the same rows. Exported for the gate. */
+export function groundFromNewest(req: GroundRequest, newest: Map<string, { id: string; receivedAt: string | null }> | null): Ground {
+  const none: Ground = { emailId: null, receivedAt: null };
+  if (!newest) return none;                                   // the read failed — exempt (never stale)
+  const n = req.threadId ? newest.get(req.threadId) : undefined;
+  if (n) return { emailId: n.id, receivedAt: n.receivedAt };
+  return req.fallbackAt ? { emailId: null, receivedAt: req.fallbackAt } : none;
+}
+
+/** Every requested item's CURRENT ground (lib/prepare/ground.ts `groundOf`'s rule — the newest inbound
+ *  on its thread, else the row's own date), in ONE paged emails read over the batch's threads. Before
+ *  W14.1 the single reader asked `groundOf` per item while the batch APPROXIMATED inbox staleness
+ *  (last_activity_at) and never judged a commitment stale at all — Home said "ready to send" on a
+ *  commitment the room had withdrawn as superseded (census H). One path now serves both. */
+export async function groundsFor(client: SupabaseClient, userId: string, reqs: GroundRequest[]): Promise<Map<string, Ground>> {
+  const out = new Map<string, Ground>();
+  if (!reqs.length) return out;
+  const threads = [...new Set(reqs.map((r) => r.threadId).filter((t): t is string => !!t))];
+  let newest: Map<string, { id: string; receivedAt: string | null }> | null = new Map();
+  try {
+    const PAGE = 1000;
+    for (let i = 0; i < threads.length && newest; i += 100) {
+      const chunk = threads.slice(i, i + 100);
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await client.from('emails').select('thread_id, id, received_at')
+          .eq('user_id', userId).eq('is_from_user', false).in('thread_id', chunk)
+          .order('received_at', { ascending: false }).range(from, from + PAGE - 1);
+        if (error) { newest = null; break; }
+        for (const r of (data ?? []) as Array<{ thread_id: string; id: string; received_at: string | null }>) {
+          if (!newest.has(String(r.thread_id))) newest.set(String(r.thread_id), { id: String(r.id), receivedAt: r.received_at ?? null });
+        }
+        if ((data ?? []).length < PAGE) break;
+      }
+    }
+  } catch { newest = null; }
+  for (const r of reqs) out.set(r.key, groundFromNewest(r, newest));
+  return out;
+}
+
+/** THE ONE READER — everything prepared for ONE item, across all storage places. W14.1 · ONE READER,
+ *  ONE ANSWER: the single read IS the batched reader over one item — one derivation (the notice law,
+ *  the staging proof, the exact ground, the truth floors, the addressees), so a room and a Home row
+ *  can never disagree about the same object's prepared state. */
 export async function preparedState(
   client: SupabaseClient, userId: string,
   item: { kind: 'inbox_item' | 'commitment'; id: string },
 ): Promise<PreparedState> {
-  const out: PreparedArtifact[] = [];
-  let sd: SourceData = null;
-  let pool: Array<Record<string, unknown>> = [];
-  // THE ITEM'S OWN FACTS (W5a) — what the truth floors judge against. One row read per kind.
-  let facts: ItemTruthFacts | null = null;
-  // W11.1 · THE MAILBOX SIGNS — where the item's thread lives (inbox: its own connection column;
-  // commitment: its thread's synced mail), read only when a machine draft exists and the user has
-  // more than one mailbox.
-  let itemConnId: string | null = null;
-  let itemThreadId: string | null = null;
-  try {
-    if (item.kind === 'inbox_item') {
-      // THE HOT-PATH LAW (event-spine P0): the one reader's declared keys + `body` (the window floor
-      // reads the item's words) — never `html_body` / `thread_history`.
-      const { data: raw } = await client.from('inbox_items').select(leanSelect('work_state, connection_id', { keys: ONE_READER_KEYS, withBody: true })).eq('id', item.id).eq('user_id', userId).maybeSingle();
-      const data = raw ? foldLean(raw as unknown as Record<string, unknown>, { keys: ONE_READER_KEYS, withBody: true }) as { source_data: unknown; work_state?: string | null; connection_id?: string | null } : null;
-      sd = data?.source_data as SourceData;
-      facts = inboxTruthFacts(sd);
-      itemConnId = data?.connection_id ?? null;
-      out.push(...await stripNoticeDrafts(preparedFromSourceData(sd), sd, data?.work_state));
-    } else {
-      const { data: c } = await client.from('commitments').select('description, created_at, status, direction, counterparty, thread_id').eq('id', item.id).eq('user_id', userId).maybeSingle();
-      facts = commitmentTruthFacts(c as CommitFactsRow | null);
-      itemThreadId = ((c as { thread_id?: string | null } | null)?.thread_id) ?? null;
-    }
-    // Deliverables hang off items under the plan-kind key ('email' for inbox-backed, 'commitment' for commitments).
-    const poolKind = item.kind === 'inbox_item' ? 'email' : 'commitment';
-    const { data: dels } = await client.from('item_deliverables')
-      .select(POOL_SELECT)
-      .eq('user_id', userId).eq('kind', poolKind).eq('entity_id', item.id)
-      .order('created_at', { ascending: false }).limit(8);
-    pool = (dels ?? []) as Array<Record<string, unknown>>;
-    // W13 · the item's BASE files — the truth floors judge a draft riding one as not the work.
-    { const bases = baseFileIdsOf(pool); if (facts && bases.length) facts = { ...facts, baseFileIds: bases }; }
-    out.push(...(item.kind === 'inbox_item'
-      ? await stripNoticeDrafts(poolRowsToArtifacts(pool, poolKind), sd, null)
-      : poolRowsToArtifacts(pool, poolKind)));
-    // THE GROUND LAW — stale is DERIVED here, never stored: an artifact whose ground predates
-    // the item's newest inbound is SUPERSEDED (the counterparty's new message is their supply).
-    // Unstamped/unresolvable artifacts are exempt (conservative — the pass re-stamps on rewrite).
-    try {
-      const { groundOf, groundMoved } = await import('@/lib/prepare/ground');
-      const current = await groundOf(client, userId, { kind: item.kind === 'inbox_item' ? 'inbox' : 'commitment', id: item.id });
-      if (current.receivedAt) for (const a of out) { if (groundMoved(a.ground, current)) markGroundMoved(a); }
-    } catch { /* staleness is a protection, never a blocker */ }
-    // TIME TRUTH + A CLAIM RENDERS (W5a): an invite outside the item's stated window and words that
-    // announce an undone deed are derived FALSE here, at the one reader — never "ready" anywhere.
-    if (facts && needsIdentityCheck(out)) {
-      const boxes = await loadMailboxIdentities(client, userId);
-      if (boxes) {
-        const conn = itemConnId ?? (itemThreadId ? (await connectionsOfThreads(client, userId, [itemThreadId])).get(itemThreadId) ?? null : null);
-        facts = { ...facts, mailbox: mailboxFactsFor(conn, boxes) };
-      }
-    }
-    stampTruth(out, facts);
-    // TRUE ADDRESSEES (W7.3): words addressed to the user, or to someone who is not the item's
-    // counterparty, are derived WRONG here — never "ready" anywhere; the re-prepare trip replaces them.
-    if (hasAddressed(out)) stampAddressees(out, { counterparty: facts?.counterparty ?? null, user: await loadUserForms(client, userId) });
-  } catch { /* non-fatal — prepared work is an enhancement */ }
-  return toState(out, sentStampOf(sd, pool));
+  const kind = item.kind === 'inbox_item' ? 'inbox' as const : 'commitment' as const;
+  const states = await preparedStatesFor(client, userId, [{ kind, id: item.id }]);
+  return states.get(`${kind}:${item.id}`) ?? EMPTY_STATE;
 }
 
-/** THE BATCHED READER — a whole deck/board in two queries. The ground check here is the machine's
- *  documented APPROXIMATION (safe direction): an inbox artifact is stale when the row's
- *  `last_activity_at` postdates its stamp (+5s). Commitments carry no activity clock, so a pooled
- *  commitment artifact is never approximated stale here (the single reader does the exact check).
- *  Keys of the returned map: `inbox:<id>` / `commitment:<id>`. */
+/** THE BATCHED READER — a whole deck/board in a handful of bounded reads, and (W14.1) the ONLY
+ *  derivation: `preparedState` is this over one item. Per item, in order: the artifacts (source_data +
+ *  the WHOLE pool — no silent cap), THE NOTICE LAW (`stripNoticeDrafts`, inbox), THE STAGING PROOF
+ *  (`proveStagingByPool`), THE GROUND LAW (exact, `groundsFor` — for inbox AND commitments), then the
+ *  truth floors and the addressees. Keys of the returned map: `inbox:<id>` / `commitment:<id>`. */
 export async function preparedStatesFor(
   client: SupabaseClient, userId: string,
-  items: Array<{ kind: 'inbox' | 'commitment'; id: string; /** prefetched row, when the caller holds it */ row?: { source_data?: unknown; last_activity_at?: string | null } }>,
+  items: Array<{ kind: 'inbox' | 'commitment'; id: string; /** prefetched row, when the caller holds it */ row?: { source_data?: unknown; last_activity_at?: string | null; work_state?: string | null } }>,
 ): Promise<Map<string, PreparedState>> {
   const out = new Map<string, PreparedState>();
   if (!items.length) return out;
@@ -694,8 +724,8 @@ export async function preparedStatesFor(
       inboxNeedingRows.length
         // THE HOT-PATH LAW: body-free; the one floor that reads the item's words (an invite's stated
         // window) gets them below, for exactly the rows carrying an invite.
-        ? client.from('inbox_items').select(leanSelect('id, last_activity_at, connection_id', { keys: PREPARED_KEYS })).eq('user_id', userId).in('id', inboxNeedingRows)
-            .then((r) => ({ data: foldLeanRows((r.data ?? []) as unknown as Array<Record<string, unknown>>, { keys: PREPARED_KEYS }) }))
+        ? client.from('inbox_items').select(leanSelect('id, last_activity_at, connection_id, work_state', { keys: READER_FACT_KEYS })).eq('user_id', userId).in('id', inboxNeedingRows)
+            .then((r) => ({ data: foldLeanRows((r.data ?? []) as unknown as Array<Record<string, unknown>>, { keys: READER_FACT_KEYS }) }))
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
       inboxIds.length
         ? fetchAllRows<Record<string, unknown>>((from, to) => client.from('item_deliverables').select(`entity_id, ${POOL_SELECT}`)
@@ -708,15 +738,20 @@ export async function preparedStatesFor(
             .order('created_at', { ascending: false }).range(from, to))
         : Promise.resolve([] as Array<Record<string, unknown>>),
       // THE ITEM'S OWN FACTS for commitments (W5a) — one batched read, so the window and the
-      // completion floors hold on a whole deck exactly as they hold on the single reader.
+      // completion floors hold on a whole deck exactly as they hold on one item.
       commitIds.length
         ? client.from('commitments').select('id, description, created_at, status, direction, counterparty, thread_id').eq('user_id', userId).in('id', commitIds)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
     ]);
     const commitFacts = new Map<string, ItemTruthFacts | null>();
-    for (const r of (commitFactsRes.data ?? []) as Array<Record<string, unknown>>) commitFacts.set(String(r.id), commitmentTruthFacts(r as CommitFactsRow));
-    const rows = new Map<string, { source_data?: unknown; last_activity_at?: string | null }>();
+    const commitThread = new Map<string, string>();
+    for (const r of (commitFactsRes.data ?? []) as Array<Record<string, unknown>>) {
+      commitFacts.set(String(r.id), commitmentTruthFacts(r as CommitFactsRow));
+      if (r.thread_id) commitThread.set(String(r.id), String(r.thread_id));
+    }
+    const rows = new Map<string, { source_data?: unknown; last_activity_at?: string | null; work_state?: string | null; connection_id?: string | null }>();
     for (const r of (inboxRes.data ?? []) as Array<Record<string, unknown>>) rows.set(String(r.id), r as never);
+    const rowOf = (i: (typeof items)[number]) => (i.row ?? rows.get(i.id)) as { source_data?: unknown; work_state?: string | null; connection_id?: string | null } | undefined;
     const poolBy = new Map<string, Array<Record<string, unknown>>>();
     for (const r of [...poolEmail, ...poolCommit]) {
       const k = String(r.entity_id);
@@ -726,18 +761,60 @@ export async function preparedStatesFor(
     // THE WINDOW FLOOR'S WORDS: a body-free row carrying an invite gets its body (bounded id read).
     await hydrateBodies(client, userId, items
       .filter((i) => i.kind === 'inbox')
-      .map((i) => ({ id: i.id, source_data: (i.row ?? rows.get(i.id))?.source_data }))
+      .map((i) => ({ id: i.id, source_data: rowOf(i)?.source_data }))
       .filter((r) => isLeanSource(r.source_data) && preparedFromSourceData(r.source_data as SourceData).some((a) => a.kind === 'invite')));
+    // W14.1 · THE READER'S FACTS on a caller's lean row (the notice law's keys, the understanding, the
+    // thread) — hydrated only for rows carrying something prepared; every row is read (no silent cap).
+    const withArts = items.filter((i) => i.kind === 'inbox'
+      && (preparedFromSourceData(rowOf(i)?.source_data as SourceData).length > 0 || (poolBy.get(i.id)?.length ?? 0) > 0))
+      .map((i) => ({ id: i.id, source_data: rowOf(i)?.source_data }));
+    if (withArts.length) await hydrateSource(client, userId, withArts, READER_FACT_KEYS, withArts.length);
+    // THE NOTICE LAW's last fact: `work_state` decides only for a row the brain never understood —
+    // read (one bounded read) for exactly those rows carrying a reply/nudge draft the caller's row lacks it on.
+    const workStateOf = new Map<string, string | null>();
+    for (const i of items) { const r = rowOf(i); if (r && 'work_state' in r) workStateOf.set(i.id, r.work_state ?? null); }
+    const needWs = items.filter((i) => {
+      if (i.kind !== 'inbox' || workStateOf.has(i.id)) return false;
+      const sd = rowOf(i)?.source_data as Record<string, unknown> | null | undefined;
+      if (sd?.understanding) return false;
+      return [...preparedFromSourceData(sd as SourceData), ...poolRowsToArtifacts(poolBy.get(i.id) ?? [], 'email')].some((a) => a.kind === 'reply_draft' || a.kind === 'nudge_draft');
+    }).map((i) => i.id);
+    for (let k = 0; k < needWs.length; k += 100) {
+      const { data: ws, error: wsErr } = await client.from('inbox_items').select('id, work_state').eq('user_id', userId).in('id', needWs.slice(k, k + 100));
+      if (!wsErr) for (const r of (ws ?? []) as Array<{ id: string; work_state: string | null }>) workStateOf.set(String(r.id), r.work_state ?? null);
+    }
     // TRUE ADDRESSEES (W7.3): who the user is — read ONCE for the whole batch, only when needed.
     let userForms: UserForms | null = null;
     const artsOf = new Map<string, PreparedArtifact[]>();
     for (const item of items) {
-      const row = item.row ?? rows.get(item.id);
-      const sd = (row?.source_data ?? null) as SourceData;
+      const sd = (rowOf(item)?.source_data ?? null) as SourceData;
       const pool = poolBy.get(item.id) ?? [];
-      artsOf.set(keyOf(item), item.kind === 'inbox'
-        ? [...preparedFromSourceData(sd), ...poolRowsToArtifacts(pool, 'email')]
-        : poolRowsToArtifacts(pool, 'commitment'));
+      const arts = item.kind === 'inbox'
+        // THE NOTICE LAW AT THE READER — one call over BOTH lanes (source_data + pool), with the row's
+        // real work_state (the single reader used to pass it for one lane and null for the other).
+        ? await stripNoticeDrafts([...preparedFromSourceData(sd), ...poolRowsToArtifacts(pool, 'email')], sd, workStateOf.get(item.id) ?? null)
+        : poolRowsToArtifacts(pool, 'commitment');
+      artsOf.set(keyOf(item), proveStagingByPool(arts, pool));
+    }
+    // THE GROUND LAW — stale is DERIVED here, never stored, EXACTLY (W14.1 — no approximation): an
+    // artifact whose ground predates the item's newest inbound is SUPERSEDED. Unstamped artifacts are
+    // exempt (conservative — the pass re-stamps on rewrite), so only items carrying a stamp are asked.
+    {
+      const reqs: GroundRequest[] = [];
+      for (const item of items) {
+        if (!(artsOf.get(keyOf(item)) ?? []).some((a) => !!a.ground?.receivedAt)) continue;
+        const sd = (rowOf(item)?.source_data ?? null) as { thread_id?: unknown; received_at?: unknown } | null;
+        reqs.push(item.kind === 'inbox'
+          ? { key: keyOf(item), threadId: typeof sd?.thread_id === 'string' && sd.thread_id ? sd.thread_id : null, fallbackAt: typeof sd?.received_at === 'string' ? sd.received_at : null }
+          : { key: keyOf(item), threadId: commitThread.get(item.id) ?? null, fallbackAt: null });
+      }
+      if (reqs.length) {
+        const { groundMoved } = await import('@/lib/prepare/ground');
+        const grounds = await groundsFor(client, userId, reqs);
+        for (const [key, current] of grounds) {
+          if (current.receivedAt) for (const a of artsOf.get(key) ?? []) if (groundMoved(a.ground, current)) markGroundMoved(a);
+        }
+      }
     }
     // W11.1 · THE MAILBOX SIGNS — the batch's connections, read once, only for items carrying a machine
     // draft and only for a user with more than one mailbox (else nothing further is read).
@@ -746,30 +823,21 @@ export async function preparedStatesFor(
     const boxes = checkKeys.length ? await loadMailboxIdentities(client, userId) : null;
     if (boxes) {
       const inboxCheck = checkKeys.filter((i) => i.kind === 'inbox');
-      const known = (i: { id: string; row?: unknown }) => ((i.row ?? rows.get(i.id)) as { connection_id?: string | null } | undefined)?.connection_id ?? null;
+      const known = (i: (typeof items)[number]) => rowOf(i)?.connection_id ?? null;
       for (const i of inboxCheck) { const c = known(i); if (c) connOf.set(keyOf(i), c); }
       const missing = inboxCheck.filter((i) => !connOf.has(keyOf(i))).map((i) => i.id);
       if (missing.length) {
         const { data: cr } = await client.from('inbox_items').select('id, connection_id').eq('user_id', userId).in('id', missing);
         for (const r of (cr ?? []) as Array<{ id: string; connection_id: string | null }>) if (r.connection_id) connOf.set(`inbox:${r.id}`, r.connection_id);
       }
-      const commitThread = new Map<string, string>();
-      for (const r of (commitFactsRes.data ?? []) as Array<{ id: string; thread_id?: string | null }>) if (r.thread_id) commitThread.set(String(r.id), String(r.thread_id));
       const tids = [...new Set(checkKeys.filter((i) => i.kind === 'commitment').map((i) => commitThread.get(i.id)).filter((t): t is string => !!t))];
       const byThread = await connectionsOfThreads(client, userId, tids);
       for (const i of checkKeys) if (i.kind === 'commitment') { const t = commitThread.get(i.id); const c = t ? byThread.get(t) : null; if (c) connOf.set(keyOf(i), c); }
     }
     for (const item of items) {
-      const row = item.row ?? rows.get(item.id);
-      const sd = (row?.source_data ?? null) as SourceData;
+      const sd = (rowOf(item)?.source_data ?? null) as SourceData;
       const pool = poolBy.get(item.id) ?? [];
       const arts = artsOf.get(keyOf(item)) ?? [];
-      // The staleness approximation (see the function doc): last_activity past the stamp.
-      const lastAct = Date.parse(String(row?.last_activity_at ?? '')) || 0;
-      if (lastAct) for (const a of arts) {
-        const pAt = Date.parse(String(a.ground?.receivedAt ?? '')) || 0;
-        if (pAt && lastAct > pAt + 5000) markGroundMoved(a);
-      }
       const itemFacts = item.kind === 'inbox' ? inboxTruthFacts(sd) : commitFacts.get(item.id) ?? null;
       const bases = baseFileIdsOf(pool);
       const baseFacts = itemFacts && bases.length ? { ...itemFacts, baseFileIds: bases } : itemFacts;

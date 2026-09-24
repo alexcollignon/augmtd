@@ -915,7 +915,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     !src('components/home/item-rail.tsx').includes(".split(':')[1] ?? null") &&
     !src('components/entities/entity-room.tsx').includes('rail.move.ref.includes'));
 
-  check('WG1: THE WORKERS READ THE ONE GROUNDING (production-floor step 1) — a message NAMING a registered project pulls that project\'s FULL room page (the SAME assembleRoomGrounding the room/chief read) into the worker context on BOTH runtimes (native loop + AgentOS bridge); deterministic focus entry (the shared matcher, zero AI), tags stripped, THE ADDRESSED-NAME STRIP (found live: "Clara, report on EG Bank" matched the entity "Madalena Clara" — the envelope is never the subject)',
+  check('WG1: THE WORKERS READ THE ONE GROUNDING (production-floor step 1) — a message NAMING a registered project pulls that project\'s FULL room page (the SAME assembleRoomGrounding the room/chief read) into the worker context on BOTH runtimes (native loop + AgentOS bridge); deterministic focus entry (the shared matcher, zero AI), tags stripped, THE ADDRESSED-NAME STRIP (found live: "Clara, report on Acme" matched the entity "Sam Clara" — the envelope is never the subject)',
     src('lib/work/worker-grounding.ts').includes('THE WORKERS READ THE ONE GROUNDING') &&
     src('lib/work/worker-grounding.ts').includes('assembleRoomGrounding') &&
     src('lib/work/worker-grounding.ts').includes('THE ADDRESSED-NAME STRIP') &&
@@ -1926,7 +1926,8 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     (src('lib/work/machine.ts').match(/deriveState\(\{/g)?.length ?? 0) >= 2 &&
     src('lib/work/machine.ts').includes('poolRowsToArtifacts') &&
     src('lib/prepare/read.ts').includes('export function poolRowsToArtifacts') &&
-    src('lib/work/machine.ts').includes('STALENESS APPROXIMATION'));
+    // ⟲ RE-POINTED (W14.1): the approximation is retired — ONE exact ground path serves deck and room.
+    src('lib/work/machine.ts').includes('STALENESS — ONE GROUND PATH') && src('lib/prepare/read.ts').includes('export async function groundsFor('));
 
   check('CV3: EVERY SURFACE SPEAKS THE MACHINE (adoption, Aug 14 — measured live: 90 deck states derived in ~214ms, one batched call). The deck: the brief route computes workStatesFor ONCE for all served actionable rows (inbox rows passed PREFETCHED — the batch refetches nothing) and attaches an optional `machine {state, word}` to mustRespond/actionNotices/commitments/priorities; a cached brief without the field renders exactly as before. The render: the word folds into the row\'s EXISTING muted second line (same grey, same size, no pill/icon/affordance — the row\'s click stays the door); silent states (preparing/unjudged/settled) render NOTHING; awaiting_approval suppresses when the prepared chip already says it (never both). The deep-dive: /api/items/view serves machineState (workStateOf, meetings skipped) and the stage header meta line speaks the same word under the same rules. ONE mapping (STATE_WORDS) — no surface paraphrases',
     src('app/api/home/brief/route.ts').includes('workStatesFor') &&

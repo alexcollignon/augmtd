@@ -483,7 +483,7 @@ async function defaultAfterSettle(client: DBClient, userId: string, id: string, 
     const { settleMirrorRows } = await import('@/lib/inbox/commitment-mirrors');
     await settleMirrorRows(client, userId, id, { reason, stampAt });
   } catch { /* archive-only, best-effort */ }
-  import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', id)).catch(() => {});
+  await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(client, userId, 'commitment', id)).catch(() => 0); // W14.2: awaited — a fire-and-forget settle dies with the function
   import('@/lib/home/bust-brief').then(({ softBustBrief }) => softBustBrief(client, userId)).catch(() => {});
 }
 

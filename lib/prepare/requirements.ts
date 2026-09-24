@@ -283,7 +283,17 @@ export function standingCandidateOf(
   row: { content?: unknown; metadata?: unknown }, fileAt: string | null | undefined,
 ): UniversalCandidate | null {
   if (!isResolverStagedRow(row.metadata)) return null;
-  const att = ((row.metadata ?? {}) as { attachment: { fileId: string; filename?: string; source?: string } }).attachment;
+  return carriedFileCandidateOf(row, fileAt);
+}
+
+/** The FILE a row carries (`metadata.attachment`) → a candidate: its real id and source, the row's
+ *  snippet, the file's own date. The shared half of `standingCandidateOf` and W14.1's carried-file
+ *  lookup. null = the row carries no file. Pure. */
+export function carriedFileCandidateOf(
+  row: { content?: unknown; metadata?: unknown }, fileAt: string | null | undefined,
+): UniversalCandidate | null {
+  const att = ((row.metadata ?? {}) as { attachment?: { fileId?: string; filename?: string; source?: string } | null }).attachment;
+  if (!att || typeof att.fileId !== 'string' || !att.fileId) return null;
   const source = (['kb', 'gdrive', 'onedrive', 'dropbox', 'pool'].includes(String(att.source)) ? att.source : 'kb') as UniversalCandidate['source'];
   const filename = String(att.filename ?? 'file');
   return {
@@ -291,6 +301,88 @@ export function standingCandidateOf(
     snippet: String(row.content ?? '').replace(/\s+/g, ' ').slice(0, 200),
     entityId: null, score: 1, fileAt: effectiveFileAt({ fileAt: fileAt ?? null, filename }),
   } as UniversalCandidate;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// W14.1 · THE FILE A WITHDRAWN DRAFT CARRIED IS STILL THE ITEM'S STANDING FILE (census G, found on an
+// open you_owe commitment: the ONLY trace of the pre-request document was a doc-send draft the unstage
+// writer had filed `superseded:unstaged` — no `require:` row, no `base:` row — so W13.6's
+// `standingAsBase` had nothing to promote and the room never offered "Current version (to update)").
+// The resolver's standing-file lookup also reads the file carried by the item's own UNSTAGED or
+// WITHDRAWN machine draft (pool rows filed `superseded:unstaged|withdrawn`; an inbox item's stored
+// reply draft whose file match is unproven). It is the item's own material (provenance holds); the
+// same pick re-judges it (its kind rides that call), and the SAME code rules decide the base — new
+// work, the file predates the request, the request names it. Nothing else changes: no rule relaxed.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+const CARRIED_FILED = new Set(['superseded:unstaged', 'superseded:withdrawn']);
+
+/** Pure: which rows' files count as the item's carried standing files — filed (unstaged/withdrawn)
+ *  MACHINE drafts carrying a file (never a base, a requirement row, a supplied file or a sent row),
+ *  plus an inbox item's stored reply draft whose file the reader holds unproven (`draftUnproven`).
+ *  One entry per file id, newest first as given. */
+export function carriedDraftFileRows(
+  pool: Array<{ task_id?: unknown; type?: unknown; content?: unknown; metadata?: unknown }>,
+  inboxDraft?: { body?: unknown; attachment?: unknown; sent_at?: unknown; edited_by_user_at?: unknown } | null,
+  draftUnproven = false,
+): Array<{ content: unknown; metadata: Record<string, unknown> }> {
+  const out: Array<{ content: unknown; metadata: Record<string, unknown> }> = [];
+  const seen = new Set<string>();
+  const push = (content: unknown, metadata: Record<string, unknown>) => {
+    const fid = (metadata.attachment as { fileId?: unknown } | undefined)?.fileId;
+    if (typeof fid !== 'string' || !fid || seen.has(fid)) return;
+    seen.add(fid); out.push({ content, metadata });
+  };
+  for (const r of pool) {
+    const m = (r.metadata ?? {}) as Record<string, unknown>;
+    const task = String(r.task_id ?? '');
+    if (!CARRIED_FILED.has(String(m.version_of ?? '')) || m.role === 'base' || m.sent_at) continue;
+    if (task.startsWith('require:') || task.startsWith('base:') || r.type === 'file' || r.type === 'sent') continue;
+    // A draft's WORDS are not the file's content — the candidate carries no snippet (the pick and the
+    // base row must never read a withdrawn send's claims as a description of the document).
+    push(null, m);
+  }
+  if (inboxDraft && draftUnproven && !inboxDraft.sent_at && inboxDraft.attachment && typeof inboxDraft.attachment === 'object') {
+    push(null, { attachment: inboxDraft.attachment });
+  }
+  return out;
+}
+
+/** Pure: the ONE requirement label a carried file belongs to — the only label, else the one label
+ *  whose own words name the file (a distinctive token). Ambiguous → none (never guessed). */
+export function labelForCarriedFile(filename: string, labels: string[]): string | null {
+  if (labels.length === 1) return labels[0];
+  const named = labels.filter((l) => requestNamesFile(filename, l));
+  return named.length === 1 ? named[0] : null;
+}
+
+/** The item's carried files (see the block above) — one bounded pool read (+ one row read for an
+ *  inbox item), zero AI; unreadable → none. */
+export async function carriedDraftFiles(
+  client: SupabaseClient, userId: string, args: { itemKind: 'inbox' | 'commitment'; itemId: string },
+): Promise<Array<{ content: unknown; metadata: Record<string, unknown> }>> {
+  try {
+    const { data, error } = await client.from('item_deliverables').select('task_id, type, content, metadata, created_at')
+      .eq('user_id', userId).eq('kind', args.itemKind === 'commitment' ? 'commitment' : 'email').eq('entity_id', args.itemId)
+      .order('created_at', { ascending: false });
+    if (error) return [];
+    const pool = (data ?? []) as Array<{ task_id: string | null; type: string | null; content: string | null; metadata: Record<string, unknown> | null }>;
+    type StoredDraft = { body?: unknown; attachment?: unknown; sent_at?: unknown; edited_by_user_at?: unknown; stagingLaw?: unknown };
+    let draft: StoredDraft | null = null;
+    let unproven = false;
+    if (args.itemKind === 'inbox') {
+      const { data: it, error: itErr } = await client.from('inbox_items').select('draft:source_data->draft').eq('id', args.itemId).eq('user_id', userId).maybeSingle();
+      if (!itErr) {
+        const stored = ((it as { draft?: unknown } | null)?.draft ?? null) as StoredDraft | null;
+        draft = stored;
+        const { draftStagingStale, proveStagingByPool, preparedFromSourceData } = await import('@/lib/prepare/read');
+        if (stored?.attachment && draftStagingStale(stored)) {
+          const arts = proveStagingByPool(preparedFromSourceData({ draft: stored } as never), pool as Array<Record<string, unknown>>);
+          unproven = arts.some((a) => a.stagingStale && a.payload?.store === 'source_data');
+        }
+      }
+    }
+    return carriedDraftFileRows(pool, draft, unproven);
+  } catch { return []; }
 }
 
 /** The item's standing resolver rows for these requirement labels — one bounded read, zero AI. */
@@ -1121,6 +1213,23 @@ export async function resolveRequirements(
     // demotion, or by the doc-send lane's base offer) keeps naming it in the ask — the resolver and the
     // lane then post the SAME ask (same labels, same base), so neither re-composes the other's words.
     const standingBases = await standingBaseRows(admin, userId, { itemKind: args.itemKind, itemId: args.itemId, labels: requires.map((r) => r.label) });
+    // W14.1 · THE CARRIED FILE: a label with neither a standing `require:` row nor a base row reads the
+    // file the item's own unstaged/withdrawn draft carried — re-judged by the same pick, promoted to
+    // the base by the same code rules (`standingAsBase`). One bounded read; none → nothing changes.
+    const openLabels = requires.map((r) => r.label)
+      .filter((l) => !standingByTask.has(requireTaskId(l)) && !standingBases.has(baseTaskId(l)));
+    const carriedByLabel = new Map<string, UniversalCandidate>();
+    if (openLabels.length) {
+      const carried = await carriedDraftFiles(admin, userId, { itemKind: args.itemKind, itemId: args.itemId });
+      const carriedDates = carried.length ? await standingFileDates(admin, userId, carried) : new Map<string, string | null>();
+      for (const row of carried) {
+        const att = (row.metadata.attachment ?? {}) as { fileId: string; filename?: string };
+        const label = labelForCarriedFile(String(att.filename ?? ''), openLabels);
+        if (!label || carriedByLabel.has(label)) continue;
+        const cand = carriedFileCandidateOf(row, carriedDates.get(att.fileId) ?? null);
+        if (cand) carriedByLabel.set(label, cand);
+      }
+    }
 
     // ── Retrieval: the universal resolver per label (pool-first, entity-affinity). ──
     const perLabel: Array<{ label: string; candidates: UniversalCandidate[]; kind?: RequirementKind | null; standing?: UniversalCandidate | null }> = [];
@@ -1132,7 +1241,7 @@ export async function resolveRequirements(
         label: r.label, kind: kindOf(r.kind),
         // A standing POINTER row is never its own candidate (its id is the row's, not the file's).
         candidates: cands.filter((c) => (c.score >= CONFIDENT || c.source === 'pool') && !(c.source === 'pool' && standingRowIds.has(c.id))),
-        standing: row ? standingCandidateOf(row, standingDates.get(fid) ?? null) : null,
+        standing: row ? standingCandidateOf(row, standingDates.get(fid) ?? null) : (carriedByLabel.get(r.label) ?? null),
       });
     }
 
@@ -1221,8 +1330,15 @@ export async function resolveRequirements(
         // W13 · a resolver-staged row for this label that no longer holds (the file predates a
         // new-work ask, or an old file the request never names) is UNSTAGED — the base is kept as
         // context, the requirement goes back to missing.
-        const base = labelBase ?? standingBase;
-        if (pick.demoted) await unstageRequirement(admin, userId, {
+        // W14.1 · the carried file (an unstaged/withdrawn draft's) is the base when the SAME rules say
+        // so — new work, the file predates the request, the request names it.
+        const carriedCand = carriedByLabel.get(label) ?? null;
+        const carriedBase = !labelBase && !standingBase && carriedCand && standingAsBase({
+          kind: pick.kind ?? null, standing: carriedCand, requestAt: request.requestAt,
+          requestText: `${args.itemTitle}\n${label}\n${request.requestText}`,
+        }) ? carriedCand : null;
+        const base = labelBase ?? standingBase ?? carriedBase;
+        if (pick.demoted || carriedBase) await unstageRequirement(admin, userId, {
           itemKind: args.itemKind, itemId: args.itemId, label,
           reason: base ? 'the file predates a request for new work — it is the base, not the deliverable' : 'no longer the deliverable',
           base: base ? { fileId: base.id, filename: base.filename, source: base.source, fileAt: effectiveFileAt(base), snippet: base.snippet } : null,

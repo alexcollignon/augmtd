@@ -83,6 +83,8 @@ export async function POST(
       })
       .eq('id', id)
       .eq('user_id', user.id);
+    // W14.2 · the dismissed item's asks die with it (archive, never delete).
+    await import('@/lib/room/turns').then(({ settleAsksForItem }) => settleAsksForItem(supabase, user.id, 'inbox_item', id)).catch(() => 0);
 
     // Log learning signal
     await supabase.from('learning_signals').insert({

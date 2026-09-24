@@ -72,12 +72,17 @@ console.log('\nAT1 · THE BUDGET LAW — at most five, cut at the one serving ch
   // RE-POINTED (Sep 18, THE FRESH SEAT): the ladder grew two rungs — a fresh arrival above the
   // clock's rows, and a calendar adjacency that is NOT today below them. The law it was written for
   // is unchanged and still asserted: today's calendar still outranks everything.
+  // RE-POINTED (W14.3, THE TOP FIVE ARE WHAT MATTERS NOW): the ladder is FOUR bands — overdue and
+  // due-today share one (with signs of life), and a not-today adjacency joins "everything else".
+  // Every ordering the old ladder asserted between these rows still holds (cal › fresh › the
+  // clock's rows › the tail), and the prepared row still leads the due-today row (Q4, within band).
+  // The band law itself is gated in full by scripts/smoke-seat-order.ts.
   ok('calendar adjacency TODAY outranks everything', attentionRank(cal) === 0);
   ok('   …then a fresh arrival', attentionRank(row({ key: 'f', fresh: true })) === 1);
   ok('   …then prepared + overdue', attentionRank(prepOver) === 2);
-  ok('   …then due today', attentionRank(today) === 3);
-  ok('   …then an adjacency that is not today', attentionRank(row({ key: 'l', calendarAdjacent: true, adjacencyToday: false })) === 4);
-  ok('   …then the caller\'s own judged order', attentionRank(plain) === 5);
+  ok('   …then due today (the same band — the clock\'s rows)', attentionRank(today) === 2);
+  ok('   …then an adjacency that is not today', attentionRank(row({ key: 'l', calendarAdjacent: true, adjacencyToday: false })) === 3);
+  ok('   …then the caller\'s own judged order', attentionRank(plain) === 3);
   ok('the ranked cut respects that order',
     rankAttention([plain, today, prepOver, cal], 3).served.map((r) => r.key).join(',') === 'cal,prep,today');
   ok('an equal-rank tie keeps the deck\'s order (stable)',
@@ -1003,11 +1008,15 @@ async function anchorGates() {
     ok('a fresh row with nothing else still sits above the judged tail',
       attentionRank(fresh) < attentionRank(row({})));
 
-    // THE FRESHNESS FACT IS THE DECK'S OWN — never a second derivation of "new".
+    // THE FRESHNESS FACT IS ONE DEFINITION — RE-POINTED (W14.3 · FRESH MEANS ARRIVED): it was the
+    // machine's "first judged inside 24h", and a not-judged backfill made hundreds of OLD items read
+    // fresh in one morning. Stricter now: fresh is the seat clock's (the item's own newest activity),
+    // and the judgment-time fact is NEVER read as newness. "surfaced today" keeps its own word.
     const brief = src('app/api/home/brief/route.ts');
-    ok('fresh reads the machine batch\'s own surfaced fact',
-      /fresh: machineOf\(entityId\)\?\.surfaced === true/.test(brief));
-    ok('   …which is judgedFirstAt inside 24h (one definition, already served)',
+    ok('fresh reads the seat clock (the item\'s own activity), never the surfaced fact',
+      /\.\.\.seatClockOf\(\{ activityAt: rowActivityAt, dueDate: f\.dueDate \?\? null \}, now\)/.test(brief)
+      && !/fresh: machineOf\(entityId\)\?\.surfaced/.test(brief));
+    ok('   …while "surfaced today" stays the judgedFirstAt-inside-24h word (one definition, already served)',
       /judgedFirstAt && Date\.parse\(st\.judgedFirstAt\) > dayAgo/.test(brief));
     ok('the overflow is COUNTED and served (the night never vanishes into weather)',
       /const freshHeld = held\.filter\(\(r\) => r\.fresh === true\)/.test(brief)

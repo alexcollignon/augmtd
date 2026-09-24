@@ -61,9 +61,12 @@ console.log('\nA · source floors');
   const attention = src('lib/home/attention.ts');
   gate('A5 ONE receipt mapping (calm.receiptWordOf) words the chip by KIND; attention delegates to it and authors no vocabulary of its own',
     /export function receiptWordOf\(/.test(calm) && /case 'invite': return 'invite prepared';/.test(calm)
-    && /return receiptWordOf\(item\.prepared \?\? null, item\.preparedKind \?\? null, item\.source\);/.test(calm)
+    // ⟲ RE-POINTED (W14.1): both printers hand the machine's served word too — the receipt KIND follows
+    // the ladder's rung (calm.ladderReceiptKind), never the reader's own ranking.
+    && /return receiptWordOf\(item\.prepared \?\? null, item\.preparedKind \?\? null, item\.source, item\.stateWord \?\? null\);/.test(calm)
     && /import \{ urgencyOf, receiptWordOf \} from '@\/lib\/home\/calm';/.test(attention)
-    && /return receiptWordOf\(f\.prepared \?\? null, f\.preparedKind \?\? null, f\.source\);/.test(attention)
+    && /return receiptWordOf\(f\.prepared \?\? null, f\.preparedKind \?\? null, f\.source, f\.stateWord \?\? null\);/.test(attention)
+    && /const kind = ladderReceiptKind\(preparedKind, stateWord\);\s*if \(kind === false\) return null;/.test(calm)
     && !/return f\.prepared === 'draft' \? 'drafted' : 'ready to send';/.test(attention));
   gate('A6 preparedKind rides the whole deck seam (agenda DoItem · AttentionRow · WhyNowFacts · home-view rows)',
     /preparedKind\?: string \| null;/.test(src('lib/home/agenda.ts'))
