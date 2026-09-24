@@ -30,6 +30,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { preparedState, isLiveArtifact, type PreparedState } from '@/lib/prepare/read';
+import { needsReprepareTrip } from '@/lib/room/open-kicks';
 import { anchorOf, activityAtOf, linkKindOf, looseRoomKeyOf, looseTitleOf, ANCHOR_ROW_SELECT, foldAnchorRow } from '@/lib/room/item-anchor';
 import { deriveGap, isOpenStep, isSendBlocked, motionClausesOf } from '@/lib/home/item-gaps';
 import type { ItemPlanKind, ItemPlanTask } from '@/lib/home/item-plan';
@@ -120,7 +121,7 @@ export async function GET(request: NextRequest) {
             const st = await workStateOf(supabase, user.id, { kind: linkKind === 'inbox_item' ? 'inbox' : 'commitment', id }, { row: itemRow, prepared: prepState });
             // W11.1 · LOOKS DONE: the evidence line rides the word (who · what · when — its one home is
             // lib/evidence/looks-done.ts; the room renders it, never composes it).
-            return { state: st.state, word: STATE_WORDS[st.state], moot: st.mootAskKeys ?? [], line: st.looksDoneLine ?? null };
+            return { state: st.state, word: STATE_WORDS[st.state], moot: st.mootAskKeys ?? [], line: st.looksDoneLine ?? null, liveAsk: st.liveAsk };
           } catch { return null; /* non-fatal — the word is an enhancement */ }
         })
       : Promise.resolve(null);
@@ -183,12 +184,24 @@ export async function GET(request: NextRequest) {
     // work through the budgeted warm door instead (lib/room/warm-client.ts).
     const warm = request.nextUrl.searchParams.get('warm') === '1';
     const onOpen = (work: () => Promise<unknown>) => { if (!warm) after(async () => { try { await work(); } catch { /* non-fatal */ } }); };
+    // ── THE GROUND LAW's on-open trip (Aug 13) — W13.5 · THE RE-PREPARE TRIP ON WITHDRAWAL: the served
+    // view just derived that something prepared here is not LIVE (superseded · outside the stated
+    // window · a false claim · a file matched under an older staging law · riding the base · signed
+    // as another mailbox — W5a/W5c/W13) — re-prepare in the background (budgeted per item,
+    // lib/room/open-kicks), and the room's compose runs AFTER it, so the opening this open appends
+    // is written against the corrected board (the new-work ask, the base offered), not the withdrawn one.
+    const tripDue = needsReprepareTrip(preparedArts) && (linkKind === 'inbox_item' || linkKind === 'commitment');
     {
       // joinCompose: THE WARM may be composing this very room right now (the deck warmed it; the
       // reader clicked it) — the open joins that flight instead of paying the model twice.
       const uid = user.id;
       const anchorForBrief = { title: looseTitleOf(linkKind, itemRow), who: anchor.who, ask: anchor.ask, prepared: anchor.prepared };
-      onOpen(() => joinCompose(uid, looseKey, () => ensureLooseRoomBrief(supabase, uid, looseKey, anchorForBrief)));
+      const staleRow = (itemRowRes.data ?? null) as { work_title?: string; description?: string; created_at?: string } | null;
+      const eid = (linkRes.data?.entity_id as string | undefined) ?? null;
+      onOpen(async () => {
+        if (tripDue) { const { reprepareTrip } = await import('@/lib/room/open-kicks'); await reprepareTrip(supabase, uid, linkKind, id, staleRow, eid); }
+        await joinCompose(uid, looseKey, () => ensureLooseRoomBrief(supabase, uid, looseKey, anchorForBrief));
+      });
     }
 
     // RECOGNIZE-ON-OPEN (the coverage tail — lib/room/open-kicks.ts): an unverdicted item gets
@@ -199,16 +212,7 @@ export async function GET(request: NextRequest) {
       onOpen(async () => { const { recognizeOnOpen } = await import('@/lib/room/open-kicks'); await recognizeOnOpen(supabase, uid, linkKind, id); });
     }
 
-    // ── THE GROUND LAW's on-open trip (Aug 13): the served view just derived that something
-    // prepared here is not LIVE (superseded · outside the stated window · a false claim · expired —
-    // W5a/W5c) — re-prepare in the background so the next poll serves work built from the present.
-    // Idempotent; the lanes re-check the ground and no-op once re-prepared (lib/room/open-kicks.ts).
-    if (preparedArts.some((a) => !isLiveArtifact(a)) && (linkKind === 'inbox_item' || linkKind === 'commitment')) {
-      const uid = user.id;
-      const staleRow = (itemRowRes.data ?? null) as { work_title?: string; description?: string; created_at?: string } | null;
-      const eid = (linkRes.data?.entity_id as string | undefined) ?? null;
-      onOpen(async () => { const { reprepareTrip } = await import('@/lib/room/open-kicks'); await reprepareTrip(supabase, uid, linkKind, id, staleRow, eid); });
-    }
+    // (THE GROUND LAW's on-open trip is scheduled above, chained BEFORE the compose — W13.5.)
 
     const tasks = (Array.isArray(planRes.data?.tasks) ? planRes.data!.tasks : []) as ItemPlanTask[];
     // GAP only from a FRESH plan (P5b): a plan older than the item's latest thread activity describes a
@@ -232,12 +236,33 @@ export async function GET(request: NextRequest) {
     const machineState: { state: string; word: string | null; line?: string | null } | null = machine
       ? { state: machine.state, word: machine.word, ...(machine.line ? { line: machine.line } : {}) } : null;
     const mootAskKeys: string[] = machine?.moot ?? [];
-    // ── THE BRIEF, AS THE FIRST PAINT CARRIES IT: last-good (one select, read beside wave 1/2).
-    const r = await lastGoodP;
+    // ── THE BRIEF, AS THE FIRST PAINT CARRIES IT: last-good (one select, read beside wave 1/2) —
+    // W13.5 · SERVE-TIME TRUTH (lib/room/serve-truth): re-validated against the CURRENT board before
+    // the paint. A MOVE whose object is not live is dropped (never a dead button); a brief any of
+    // whose claims no longer render is not served (the rail's one honest fallback line speaks).
+    const lastGood = await lastGoodP;
+    const serve = await (async () => {
+      const { serveTimeTruth, boardRefOf } = await import('@/lib/room/serve-truth');
+      if (!lastGood) return serveTimeTruth<NonNullable<typeof lastGood>>(null, { board: [], hasDecision: true, hasAsk: true });
+      const { preparedWordsOf } = await import('@/lib/room/grounding');
+      const words = prepState ? preparedWordsOf(prepState).list : [];
+      const board = linkKind === 'meeting' ? [] : [{ ref: boardRefOf(linkKind === 'inbox_item' ? 'inbox' : 'commitment', id), prepared: words }];
+      return serveTimeTruth(lastGood, {
+        board,
+        // Unknown → true: a doubt never withholds a brief (the net only removes a claim it can disprove).
+        hasDecision: words.includes('decision brief') || !machine || machine.state === 'awaiting_decision',
+        hasAsk: machine?.liveAsk ?? true,
+      });
+    })();
+    if (serve.withheld || serve.moveDropped) {
+      console.log(`[items/view] serve-time truth ${looseKey}: ${serve.withheld ? `withheld last-good (${serve.dropped.map((d) => d.slice(0, 60)).join(' | ')})` : 'dropped a dead MOVE'}`);
+    }
+    const r = serve.response ? { ...serve.response, ...(lastGood?.staleVersion ? { staleVersion: true as const } : {}) } : null;
     // PENDING = nothing current was painted — the compose (a real open's after()) may land one, and
     // the client's one late re-check APPENDS it. A warm schedules no compose, but its payload is the
     // open's first paint when joined, and the joined open's kick composes — so it says the same.
-    const briefPending = !r || !!r.staleVersion;
+    // W13.5: a withheld last-good, or a re-prepare trip about to correct the board, is pending too.
+    const briefPending = !r || !!r.staleVersion || serve.withheld || tripDue;
     mark(briefPending ? 'brief-pending' : 'brief');
     // ONE OBJECT, ONE DOOR: the composition rides the door's OWN fields (brief/move/offers/briefAt)
     // and the linked entity is served VOICELESS — its name and tracked flag are the one connection

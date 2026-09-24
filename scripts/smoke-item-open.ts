@@ -183,7 +183,9 @@ async function main() {
     gate('D4 an early exit never leaves a started read unhandled',
       /for \(const p of \[roomP, machineP, sourceItemIdP, sourceMeetingP\]\) void p\.catch\(\(\) => \{\}\);/.test(view));
     gate('D5 the view still schedules its AI only under after() and serves last-good (W8.4 floor intact)',
-      /const onOpen = \(work: \(\) => Promise<unknown>\) => \{ if \(!warm\) after\(/.test(view) && /const r = await lastGoodP;/.test(view));
+      /const onOpen = \(work: \(\) => Promise<unknown>\) => \{ if \(!warm\) after\(/.test(view)
+      // ⟲ RE-POINTED (W13.5): last-good is read once and passed through the serve-time truth before the paint.
+      && /const lastGood = await lastGoodP;/.test(view) && /serveTimeTruth\(lastGood, \{/.test(view));
   }
 
   // ═══ E · THE HELD DOOR ═══

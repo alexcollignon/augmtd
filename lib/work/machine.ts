@@ -46,6 +46,9 @@ export type WorkMachineState = {
    *  moot (the draft itself · the item's own inbound · outlived the verdict). Served so the room
    *  hides the same turns the header ignored — header and room speak ONE claim. */
   mootAskKeys?: string[];
+  /** W13.5 · a live (code-read, non-moot) ask stands on this item — the serve-time truth's
+   *  `hasAsk` (lib/room/serve-truth). Set by the single reader only; absent = unknown. */
+  liveAsk?: boolean;
   /** W11.2 — on `looks_done`: the evidence line (who · what · when), lib/evidence/looks-done.ts. */
   looksDoneLine?: string;
 };
@@ -309,6 +312,7 @@ export async function workStateOf(
       ...deriveState({ open, verdict, judgedAt: (j?.updated_at as string) ?? null, prepared, liveAsk, sentStamp, looksDone }),
       ...(looksDone && ldRec?.evidence ? { looksDoneLine: looksDoneLine(ldRec.evidence) } : {}),
       ...(mootAskKeys.length ? { mootAskKeys } : {}),
+      liveAsk,
     };
   } catch { return none; }
 }

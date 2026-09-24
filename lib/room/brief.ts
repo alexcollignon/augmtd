@@ -139,16 +139,27 @@ export async function briefBeforePaint(
   return { response: fresh ?? await readRoomResponse(client, userId, roomKey, { allowStaleVersion: true }), pending: false, settled };
 }
 
+/** W13.5 · may THE EDITOR (the composer's keep/moot verdict) archive this ask? Never the engine's own
+ *  `requires:` ask (its lifecycle is the resolver's, the code predicate's and the verdict's); a
+ *  coworker's ask, yes. Pure; exported for the gate. */
+export function editorMaySettle(askKey: string | null | undefined): boolean {
+  return !/^requires:/.test(String(askKey ?? ''));
+}
+
 /** Back-compat text read (older consumers/gates). */
 export async function readRoomBrief(client: SupabaseClient, userId: string, roomKey: string): Promise<string | null> {
   return (await readRoomResponse(client, userId, roomKey))?.text ?? null;
 }
 
 /** W5c · the board line's LIVENESS mark — the hidden artifacts (expired · withdrawn), so the brief's
- *  sig moves whenever a prepared thing stops (or starts) being live. Pure; exported for the gate. */
+ *  sig moves whenever a prepared thing stops (or starts) being live. Pure; exported for the gate.
+ *  W13.5 · the mark carries each hidden artifact's WORDS + THE ONE READER's reason (never just a
+ *  count): a withdrawal whose reason changes (a file matched under an older staging law → riding the
+ *  base → re-prepared) moves the sig too, so the opening recomposes on each withdrawal, not once. A
+ *  row with nothing hidden marks nothing (its sig is unchanged by this). */
 export function boardLivenessMark(b: { expired?: string[]; withdrawn?: string[] }): string {
-  const x = b.expired?.length ?? 0, w = b.withdrawn?.length ?? 0;
-  return x || w ? `:x${x}w${w}` : '';
+  const x = b.expired ?? [], w = b.withdrawn ?? [];
+  return x.length || w.length ? `:x[${x.join('+')}]w[${w.join('+')}]` : '';
 }
 /** THE BOARD DIGEST — judged verb · live prepared words · liveness mark · evidence count per item,
  *  hashed WHOLE. Pure; exported for the gate (a liveness change must move it). */
@@ -521,6 +532,16 @@ async function composeAndStore(
       const idx = Number(v?.n) - 1;
       const ask = liveAsks[idx];
       if (!ask?.turnId || String(v?.verdict) !== 'moot') continue;
+      // ── W13.5 · THE ENGINE'S OWN ASK IS NOT THE EDITOR'S TO SETTLE (found live: an unstaged
+      // new-work requirement's ask was mooted here, beside a withdrawn draft, and the room offered
+      // nothing actionable). An engine `requires:` ask lives and dies by the RESOLVER (a staged file
+      // clears it), the code's mootness predicate (lib/room/ask-mootness — hidden at render) and the
+      // verdict (apply-verdict settles it). An AI moot of it is refused — kept, logged, still counted
+      // as rendering. A coworker's ask keeps the editor's settle (its speech is theirs to be answered).
+      if (!editorMaySettle(ask.key)) {
+        console.warn('[room-respond] kept an engine ask the editor called moot:', ask.key);
+        continue;
+      }
       mooted++;
       const { data: t } = await client.from('room_turns').select('component, author').eq('id', ask.turnId).eq('user_id', userId).maybeSingle();
       if (!t) continue;

@@ -132,19 +132,26 @@ async function main() {
   {
     const view = src('app/api/items/view/route.ts');
     gate('E1 the view has NO await on a compose (no briefBeforePaint, no awaited ensure*/joinCompose); it reads last-good in one select',
-      !/await[^;\n]*(ensureLooseRoomBrief|ensureRoomBrief|joinCompose|briefBeforePaint|paintP)/.test(view)
+      // ⟲ RE-POINTED (W13.5): the ONE awaited compose sits inside the onOpen/after() block, chained after
+      // the budgeted re-prepare trip; outside it nothing awaits a compose. Last-good is read in one select
+      // and re-validated against the current board before the paint (lib/room/serve-truth).
+      !/await[^;\n]*(ensureLooseRoomBrief|ensureRoomBrief|joinCompose|briefBeforePaint|paintP)/.test(view.replace(/onOpen\(async \(\) => \{\s*\n\s*if \(tripDue\)[\s\S]*?anchorForBrief\)\);\s*\n\s*\}\);/, ''))
       && !/briefBeforePaint\(/.test(view)
       && /const lastGoodP = readRoomResponse\(supabase, user\.id, looseKey, \{ allowStaleVersion: true \}\)/.test(view)
-      && /const r = await lastGoodP;/.test(view));
+      && /const lastGood = await lastGoodP;/.test(view));
     gate('E2 the compose runs under after() through the SAME joinCompose + ensureLooseRoomBrief (one flight with the warm)',
-      /onOpen\(\(\) => joinCompose\(uid, looseKey, \(\) => ensureLooseRoomBrief\(supabase, uid, looseKey, anchorForBrief\)\)\);/.test(view));
+      // ⟲ RE-POINTED (W13.5): the same joinCompose + ensureLooseRoomBrief, under onOpen, after the trip.
+      /onOpen\(async \(\) => \{\s*\n\s*if \(tripDue\) \{[^\n]*\}\s*\n\s*await joinCompose\(uid, looseKey, \(\) => ensureLooseRoomBrief\(supabase, uid, looseKey, anchorForBrief\)\);/.test(view));
     gate('E3 `?warm=1` schedules NOTHING: every after() in the door sits behind the one `onOpen` guard (compose · recognize · re-prepare)',
       /const warm = request\.nextUrl\.searchParams\.get\('warm'\) === '1';/.test(view)
       && /const onOpen = \(work: \(\) => Promise<unknown>\) => \{ if \(!warm\) after\(/.test(view)
       && (view.match(/\bafter\(async/g) ?? []).length === 1
-      && /onOpen\(async \(\) => \{ const \{ recognizeOnOpen \}/.test(view) && /onOpen\(async \(\) => \{ const \{ reprepareTrip \}/.test(view));
+      // ⟲ RE-POINTED (W13.5): the re-prepare trip rides the compose's onOpen block (it runs first).
+      && /onOpen\(async \(\) => \{ const \{ recognizeOnOpen \}/.test(view)
+      && /onOpen\(async \(\) => \{\s*\n\s*if \(tripDue\) \{ const \{ reprepareTrip \} = await import\('@\/lib\/room\/open-kicks'\);/.test(view));
     gate('E4 pending = nothing current painted (no last-good / an older version) → the client\'s ONE late re-check APPENDS',
-      /const briefPending = !r \|\| !!r\.staleVersion;/.test(view));
+      // ⟲ RE-POINTED (W13.5): a withheld last-good, or a trip about to correct the board, is pending too.
+      /const briefPending = !r \|\| !!r\.staleVersion \|\| serve\.withheld \|\| tripDue;/.test(view));
     const kicks = src('lib/room/open-kicks.ts');
     gate('E5 the open\'s background work has ONE home (recognize · trip · the joined-open kick), composing through the same sig-gated door',
       /export async function recognizeOnOpen\(/.test(kicks) && /export async function reprepareTrip\(/.test(kicks)
@@ -226,14 +233,16 @@ async function main() {
     const code = room.replace(/\/\/[^\n]*/g, '');
     gate('I1 the project door serves LAST-GOOD in the read wave (one select, older version allowed) — no briefBeforePaint, no await on a compose',
       /readRoomResponse\(supabase, uid, id, \{ allowStaleVersion: true \}\)/.test(code)
-      && /await Promise\.all\(\[buildRoomView\(supabase, uid, id, null\), lastGoodP\]\)/.test(code)
+      // ⟲ RE-POINTED (W13.5): the current board (serve-time truth) rides the same read wave.
+      && /await Promise\.all\(\[\s*buildRoomView\(supabase, uid, id, null\), lastGoodP, entityServeBoard\(supabase, uid, id\),\s*\]\)/.test(code)
       && !/briefBeforePaint/.test(code) && !/await\s+paintP/.test(code)
       && !/await\s+(?:joinCompose|ensureRoomBrief)\(/.test(code.replace(/after\(async \(\) => \{[^\n]*\}\);/g, '')));
     gate('I2 the compose runs ONLY under after() (joinCompose-wrapped), and `?warm=1` schedules none (a pure read)',
       /if \(request\.nextUrl\.searchParams\.get\('warm'\) !== '1'\) \{\n\s+after\(async \(\) => \{ try \{ await joinCompose\(uid, id, \(\) => ensureRoomBrief\(supabase, uid, id\)\); \} catch/.test(code)
       && (code.match(/ensureRoomBrief\(/g) ?? []).length === 1);
     gate('I3 pending = nothing CURRENT painted (the item door\'s rule); the stale flag rides',
-      /const briefPending = !r \|\| !!r\.staleVersion;/.test(code) && /\n      briefPending,\n/.test(code)
+      // ⟲ RE-POINTED (W13.5): a withheld last-good is pending too.
+      /const briefPending = !r \|\| !!r\.staleVersion \|\| serve\.withheld;/.test(code) && /\n      briefPending,\n/.test(code)
       && /briefStaleVersion: true/.test(code));
     const eroom = src('components/entities/entity-room.tsx');
     gate('I4 the project room\'s ONE late re-check is a pure read (`?warm=1`) on the item door\'s window, and lands as an APPEND',

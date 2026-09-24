@@ -424,7 +424,10 @@
     "lib/prepare/truth.ts",
     "lib/room/brief.ts",
     "lib/room/grounding.ts",
-    "lib/room/render-plan.ts"
+    "lib/room/render-plan.ts",
+    "lib/room/serve-truth.ts",
+    "app/api/entities/[id]/room/route.ts",
+    "app/api/items/view/route.ts"
    ],
    "gates": [
     {
@@ -486,6 +489,29 @@
      "kind": "source",
      "cost": "zero-ai",
      "note": "W13.1: a draft that says a file is attached shows that file as a chip, and Send attaches exactly the chips that stand"
+    },
+    {
+     "suite": "smoke-room-truth",
+     "ids": [
+      "A1-A5",
+      "B1-B2"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "serveTimeTruth · moveTargetLive · boardLivenessMark",
+     "note": "W13.5: last-good is re-validated against the CURRENT board at serve time — a MOVE whose object is not live is dropped (never a dead button); a brief whose claims no longer render is not served (the honest fallback speaks); the sig carries each artifact's liveness with the reader's reason"
+    },
+    {
+     "suite": "smoke-room-truth",
+     "ids": [
+      "A6-A8",
+      "B3",
+      "C2",
+      "C4"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W13.5: both doors (items/view, entities room) serve last-good only through serveTimeTruth; the entity door never lets the room-view builder's own last-good slip past the net; a lane that re-runs a withdrawn send and lands on an ask/base retires it through the one superseding writer"
     }
    ],
    "version_key": null,
@@ -711,7 +737,8 @@
     "lib/room/open-kicks.ts",
     "lib/room/warm-client.ts",
     "components/home/item-open-frame.tsx",
-    "app/(main)/@modal/(.)item/[id]/loading.tsx"
+    "app/(main)/@modal/(.)item/[id]/loading.tsx",
+    "lib/room/serve-truth.ts"
    ],
    "gates": [
     {
@@ -781,6 +808,17 @@
      "kind": "pure",
      "cost": "zero-ai",
      "note": "W11.4 THE ITEM OPENS NOW: the intercepting route's loading boundary paints the room's frame at the click (no await, no deep-dive import; the held name from the hover warm's keys) and starts the open's reads there; the deep-dive joins the flight or takes its landing ONCE (one view + one object request per open; a hover warm's landing is never handed to an open, so the open's after() work still runs once); the judge waits for the view to settle (bounded); the view door chains each wave-2 read on its own input; the held door answers in a transition with an immediate pending word. The no-mutation pairing (mayReplaceInPlace, the appended late brief) is untouched"
+    },
+    {
+     "suite": "smoke-room-truth",
+     "ids": [
+      "A1",
+      "A3",
+      "C2"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W13.5: the serve-time truth decides BEFORE the first paint (a withheld last-good paints the fallback and marks briefPending — the recompose, run AFTER the on-open re-prepare trip, lands as an APPEND, never a swap)"
     }
    ],
    "version_key": null,
@@ -2021,7 +2059,9 @@
     "lib/knowledge/resolve.ts",
     "lib/prepare/pass.ts",
     "lib/prepare/requirements.ts",
-    "scripts/repair-stale-staging.ts"
+    "scripts/repair-stale-staging.ts",
+    "lib/room/turns.ts",
+    "lib/room/open-kicks.ts"
    ],
    "gates": [
     {
@@ -2071,9 +2111,20 @@
      "kind": "source",
      "cost": "zero-ai",
      "note": "W13.2: every resolver write carries the stamp; the resolver reads the standing rows and re-judges the FILE first in the same pick (the pointer row never its own candidate); `judged` only when the model answered; hold keeps the row and the truth, unproven unstages through the one writer, restamp updates in place; the pass asks reverifyStaleStaging before its lanes under a shared REVERIFY_PER_PASS budget and logs what it left; a withdrawn send is never 'already prepared'"
+    },
+    {
+     "suite": "smoke-room-truth",
+     "ids": [
+      "C1",
+      "C3",
+      "D1-D5"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W13.5 THE ASK MUST STAND: an archived turn never holds its dedupe key hostage (the unique index is not partial on archived_at — the re-posted ask now lands LIVE, the archived turn keeps its session under a released key); the editor never archives the engine's own `requires:` ask; any withdrawal makes the on-open re-prepare trip due, budgeted one per item per window. Outcome over an in-memory table that enforces the production index; tests/unit/room-truth runs THE ONE RESOLVER's demotion to the BASE and finds the ask live"
     }
    ],
-   "fn": "pickArtifacts · verifyArtifactMatch · stagingRole · stagedRowVerdict · unstageRequirement (tests/unit/staged-truth.test.ts) · W13.2: STAGING_LAW_VERSION · stagingLawStale · servingEdgeShouldResolve · reverifyDecision · reverifyStaleStaging · reverifyItemStaging (tests/unit/staging-self-heal.test.ts — resolveRequirements outcome over an in-memory pool with a stubbed model)",
+   "fn": "pickArtifacts · verifyArtifactMatch · stagingRole · stagedRowVerdict · unstageRequirement (tests/unit/staged-truth.test.ts) · W13.2: STAGING_LAW_VERSION · stagingLawStale · servingEdgeShouldResolve · reverifyDecision · reverifyStaleStaging · reverifyItemStaging (tests/unit/staging-self-heal.test.ts — resolveRequirements outcome over an in-memory pool with a stubbed model) · W13.5: writeRoomTurn releases an archived key (releaseArchivedKey · isUniqueViolation) · editorMaySettle (tests/unit/room-truth.test.ts — the ask stands over an archived one)",
    "version_key": "STAGING_LAW_VERSION",
    "status": "holding-uncommitted",
    "broken_by": null,
@@ -2091,7 +2142,7 @@
      "precedence": "the self-heal only ever re-verifies and unstages a RESOLVER pointer row — never a typed supply, a user drop, or the user's file; a draft the user edited is never withdrawn or regenerated by it (the reader never judges hand-held words)"
     }
    ],
-   "fixed_by": "W13.1, W13.2",
+   "fixed_by": "W13.1, W13.2, W13.5",
    "note": "W13.1 (owner live walk on prod after W12): a you_owe commitment asking to ADD detail to slides 7&8 of an interim report staged the PRE-EXISTING report as the requirement (plus a doc-send draft carrying it), and the reply said the report 'now includes' the new slides. No JUDGE_VERSION bump: the judge prompt is unchanged — the kind is reasoned inside the requirements pick. Rows staged before W13 carry no kind: scripts/repair-stale-staging.ts (dry-run, zero AI) lists decisive violations and suspects; --apply --yes --judge (owner-gated) judges the suspects and unstages the new-work ones. W13.2 (owner principle — the platform corrects itself): rows staged under the old law were read as settled by the judge's serving edge and never re-checked; only the one-shot repair fixed them. The staging law is now versioned and every older-law row re-verifies on its next touch (bounded; an AI failure never unstages); the repair became an optional accelerator over the same function. Fixed by W13.2 (uncommitted)."
   },
   {

@@ -167,7 +167,10 @@ console.log('\nC · the header speaks the same claim as the brief');
   const view = src('app/api/items/view/route.ts');
   gate('C3 the view door serves LIVE only (a false pack never reaches the card) and its re-prepare trip fires on EVERY non-live artifact (stale · expired · outsideWindow · falseClaim)',
     /prepared: preparedArts\.filter\(isLiveArtifact\)\.map/.test(view)
-    && /preparedArts\.some\(\(a\) => !isLiveArtifact\(a\)\)/.test(view));
+    // ⟲ RE-POINTED (W13.5): ONE trip predicate for both open paths (lib/room/open-kicks needsReprepareTrip
+    // — any artifact !isLiveArtifact), proven over every non-live flag in smoke-room-truth C1.
+    && /const tripDue = needsReprepareTrip\(preparedArts\)/.test(view)
+    && /return arts\.some\(\(a\) => !isLiveArtifact\(a\)\);/.test(src('lib/room/open-kicks.ts')));
   const detail = src('components/home/item-detail.tsx');
   gate('C4 the header word is the machine\'s word (machineWordOf reads view.machineState) — one derivation, no second author',
     /function machineWordOf\(view: ItemViewData \| null\): string \| null \{\s*const m = view\?\.machineState;/.test(detail));
@@ -232,7 +235,8 @@ console.log('\nF · W5c: hidden artifacts re-prepare, leave the brief, and never
     && /nonLive: !!args\.supersede/.test(src('lib/prepare/paste-pack.ts')));
   const view = src('app/api/items/view/route.ts');
   gate('F3 the on-open trip covers every non-live artifact and LOGS its outcome (a no-op is never silent)',
-    /preparedArts\.some\(\(a\) => !isLiveArtifact\(a\)\) && \(linkKind === 'inbox_item' \|\| linkKind === 'commitment'\)/.test(view)
+    // ⟲ RE-POINTED (W13.5): the predicate is needsReprepareTrip (every non-live artifact), same kinds.
+    /needsReprepareTrip\(preparedArts\) && \(linkKind === 'inbox_item' \|\| linkKind === 'commitment'\)/.test(view)
     // ⟲ RE-POINTED (W8.4): the trip moved to ONE home shared with the joined-open kick
     // (lib/room/open-kicks.ts reprepareTrip) — the door schedules it; the log line lives with it.
     && /await reprepareTrip\(supabase, uid, linkKind, id, staleRow, eid\);/.test(view)
@@ -254,7 +258,8 @@ console.log('\nF · W5c: hidden artifacts re-prepare, leave the brief, and never
     before.list.join() === 'calendar invite' && after.list.length === 0
     && after.withdrawn.length === 1 && /outside the window they stated/.test(after.withdrawn[0])
     && boardDigestOf([entry(before)]) !== boardDigestOf([entry(after)])
-    && boardLivenessMark(entry(after)) === ':x0w1' && boardLivenessMark(entry(before)) === '');
+    // ⟲ W13.5: the mark carries the hidden artifact's WORDS + the reader's reason (was a bare count ':x0w1').
+    && boardLivenessMark(entry(after)) === `:x[]w[${after.withdrawn[0]}]` && boardLivenessMark(entry(before)) === '');
   const many = Array.from({ length: 30 }, (_, i) => ({ ref: `inbox:${'x'.repeat(30)}${i}`, judgedWork: 'reply', prepared: ['reply draft'], expired: [] as string[], withdrawn: [] as string[], evidence: [] as string[] }));
   const manyHidden = many.map((b, i) => (i === 29 ? { ...b, prepared: [], withdrawn: ['reply draft — its words claimed work that is not done'] } : b));
   const brief = src('lib/room/brief.ts');
