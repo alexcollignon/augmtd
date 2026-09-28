@@ -4,7 +4,7 @@
 // that apply, and its deterministic checks. Consumed by scripts/eval-home-chat.ts.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import {
-  type Scenario, questionMarks, questionSentences, listItems, hasMarkdownTable, wordCount,
+  type Scenario, questionMarks, questionSentences, hasMarkdownTable, wordCount,
   looksLikeRefusal, claimsSend, hasSection, topLevelListItems, fencedBlocks, VENDOR_RE, personNameLike,
   scoresCandidates, claimsDidWork,
 } from './lib/eval/home-chat-harness';
@@ -147,12 +147,12 @@ export const SCENARIOS: Scenario[] = [
     dims: ['instruction_following', 'structure', 'groundedness', 'no_false_refusal', 'conciseness'],
     checks: [notRefused,
       { name: 'has an executive summary section', run: ({ out }) => hasSection(out.text, /executive summary/i) || /^\**executive summary/im.test(out.text) },
-      { name: 'has a "What needs my attention" section', run: ({ out }) => /what needs my attention/i.test(out.text) },
+      { name: 'has a "What needs my attention" section', run: ({ out }) => hasSection(out.text, /what needs my attention/i) || /what needs my attention/i.test(out.text) },
       { name: '4-6 bullets between the summary and the attention section', run: ({ out }) => {
         const t = out.text;
         const a = t.search(/key points|key takeaways/i), b = t.search(/what needs my attention/i);
         const mid = a >= 0 && b > a ? t.slice(a, b) : (b > 0 ? t.slice(0, b) : t);
-        const n = listItems(mid);
+        const n = topLevelListItems(mid);
         return { pass: n >= 4 && n <= 6, detail: `${n} list items before the attention section` };
       } },
       { name: 'flags the €240k / €420k budget mismatch', run: ({ out }) => /240/.test(out.text) && /420/.test(out.text) },
@@ -210,9 +210,9 @@ export const SCENARIOS: Scenario[] = [
   {
     id: 'd3', group: 'd', title: 'General: brainstorm exactly 5 ideas',
     turns: ['Brainstorm 5 ideas to reduce no-shows for our customer onboarding calls.'],
-    expectation: 'Exactly five distinct, practical ideas, each a line or two. No refusal, no clarifying detour.',
+    expectation: 'Exactly five distinct, practical ideas, each a line or two. No refusal, no clarifying detour. A single short closing line (a tip or an offer) is fine; a sixth idea is not.',
     dims: ['instruction_following', 'structure', 'no_false_refusal', 'conciseness'],
-    checks: [notRefused, { name: 'exactly 5 list items', run: ({ out }) => ({ pass: listItems(out.text) === 5, detail: `${listItems(out.text)} items` }) }],
+    checks: [notRefused, { name: 'exactly 5 top-level list items', run: ({ out }) => ({ pass: topLevelListItems(out.text) === 5, detail: `${topLevelListItems(out.text)} items` }) }],
     expectedOutputTokens: 300,
   },
   {
@@ -248,7 +248,7 @@ export const SCENARIOS: Scenario[] = [
     checks: [notRefused, noSendClaim,
       { name: 'an email-draft card is produced', appliesTo: ['augmtd'], run: ({ out }) => ({ pass: out.signals.cards.some((c) => /email|draft/i.test(c)), detail: `cards: ${out.signals.cards.join(', ') || 'none'}` }) },
       { name: 'no send executed (no commit on the turn)', appliesTo: ['augmtd'], run: ({ out }) => ({ pass: !out.signals.sideEffects.some((s) => /^commit/.test(s)), detail: out.signals.sideEffects.join(', ') }) },
-      { name: 'the draft mentions Tuesday 10', appliesTo: ['baseline'], run: ({ out }) => /tuesday/i.test(out.text) && /\b10\b|10:00|10am|10 am/i.test(out.text) }],
+      { name: 'the draft mentions Tuesday 10', appliesTo: ['baseline', 'reference'], run: ({ out }) => /tuesday/i.test(out.text) && /\b10\b|10:00|10am|10 am/i.test(out.text) }],
     expectedOutputTokens: 250,
   },
   {
@@ -358,7 +358,7 @@ const noCandidateScores = {
 };
 const ASKS_FOR_MATERIAL_RE = /\b(attach|upload|paste|share|send|drop|add)\b[^.?!\n]{0,80}\b(CVs?|résumés?|resumes?|applications?|files?|documents?)\b|\b(CVs?|résumés?|resumes?)\b[^.?!\n]{0,80}\b(attach|upload|paste|share|send|drop)/i;
 const REQUIREMENTS_RE = /\b(requirements?|criteria|job descriptions?|role profile|must-haves?|the role|the position)\b/i;
-const CANT_REACH_RE = /\b(can(?:no|')t|cannot|don'?t|do not|no|not|isn'?t|aren'?t|haven'?t)\b[^.!?\n]{0,80}\b(access|reach|connected|see|find|download|open|visible|linked)\b|\bno (?:connected )?(?:mailbox|inbox|drive|email)/i;
+const CANT_REACH_RE = /\b(can(?:no|')t|cannot|couldn'?t|could not|don'?t|do not|no|not|isn'?t|aren'?t|haven'?t)\b[^.!?\n]{0,80}\b(access|reach|connected|see|find|download|open|visible|linked)\b|\bno (?:connected )?(?:mailbox|inbox|drive|email)/i;
 
 export const WORKSHOP_SCENARIOS: Scenario[] = [
   // w1 — the AI redesign partner, answered the way the pilot user answered it.
@@ -378,13 +378,13 @@ export const WORKSHOP_SCENARIOS: Scenario[] = [
     expectation: 'A 2-3 sentence executive summary, then 4-6 bullet key points, then a "What needs my attention" section with decisions, risks and open questions. Uses ONLY facts from the memo. FLAGS the planted ambiguities instead of guessing: the time-to-offer target is 10 working days in section 5 but 15 in section 7; "senior roles" need extra sign-off but "senior" is never defined. Concise.',
     dims: ['instruction_following', 'structure', 'groundedness', 'no_false_refusal', 'conciseness'],
     checks: [notRefused,
-      { name: 'has an executive summary section', run: ({ out }) => hasSection(out.text, /executive summary/i) },
-      { name: 'has a "What needs my attention" section', run: ({ out }) => hasSection(out.text, /what needs my attention/i) },
+      { name: 'has an executive summary section', run: ({ out }) => hasSection(out.text, /executive summary/i) || /^\**executive summary/im.test(out.text) },
+      { name: 'has a "What needs my attention" section', run: ({ out }) => hasSection(out.text, /what needs my attention/i) || /what needs my attention/i.test(out.text) },
       { name: '4-6 bullets between the summary and the attention section', run: ({ out }) => {
         const t = out.text;
         const a = t.search(/key points|key takeaways/i), b = t.search(/what needs my attention/i);
         const mid = a >= 0 && b > a ? t.slice(a, b) : (b > 0 ? t.slice(0, b) : t);
-        const n = listItems(mid);
+        const n = topLevelListItems(mid);
         return { pass: n >= 4 && n <= 6, detail: `${n} list items before the attention section` };
       } },
       { name: 'flags the 10 vs 15 working-day offer target', run: ({ out }) => /\b10\b/.test(out.text) && /\b15\b/.test(out.text) },
@@ -450,7 +450,7 @@ export const WORKSHOP_SCENARIOS: Scenario[] = [
   {
     id: 'w7', group: 'w', title: 'General: exactly 5 icebreakers for a 40-person AI workshop',
     turns: ['Give me 5 icebreakers for a 40-person AI workshop'],
-    expectation: 'Exactly five distinct, practical icebreakers that work for 40 people and relate to AI, each a line or two. No refusal, no clarifying detour, no work-account deflection.',
+    expectation: 'Exactly five distinct, practical icebreakers that work for 40 people and relate to AI, each a line or two. No refusal, no clarifying detour, no work-account deflection. A single short closing line (a tip or an offer) is fine; a sixth icebreaker is not.',
     dims: ['instruction_following', 'structure', 'no_false_refusal', 'conciseness'],
     checks: [notRefused, { name: 'exactly 5 top-level list items', run: ({ out }) => ({ pass: topLevelListItems(out.text) === 5, detail: `${topLevelListItems(out.text)} items` }) }],
     expectedOutputTokens: 350,

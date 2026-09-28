@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest';
 import {
   questionSentences, listItems, hasMarkdownTable, looksLikeRefusal, claimsSend, parseJudge, estimateCost,
   runEval, renderReport, judgeMean, buildJudgePrompt, personNameLike, scoresCandidates, claimsDidWork, fencedBlocks,
-  topLevelListItems, VENDOR_RE, DEFAULT_RATES,
+  topLevelListItems, VENDOR_RE, DEFAULT_RATES, hasSection, statsFor, parityVerdict, mergeResults,
 } from '../../scripts/lib/eval/home-chat-harness';
 import { SCENARIOS, WORKSHOP_SCENARIOS, PACKS, ACME_HR_MEMO, selectScenarios } from '../../scripts/eval-home-chat.fixtures';
 import { classifySupabaseRequest } from '../../scripts/lib/eval/no-persist';
@@ -130,5 +130,36 @@ describe('the no-persist guard', () => {
     expect(classifySupabaseRequest(`${SB}/storage/v1/object/list/files`, 'POST', SB)).toEqual({ allow: true });
     expect(classifySupabaseRequest(`${SB}/storage/v1/object/files/a.docx`, 'POST', SB).allow).toBe(false);
     expect(classifySupabaseRequest('https://bedrock-runtime.eu-central-1.amazonaws.test/model/x/invoke', 'POST', SB)).toEqual({ allow: true });
+  });
+});
+
+describe('W24 — fair checks, a robust judge reader, repeats', () => {
+  it('counts enumerations fairly (numbered headings, bold numbers, indented lists; a trailing tip is not an item)', () => {
+    expect(topLevelListItems('### 1. A\ntext\n- detail\n### 2. B\n### 3. C\n### 4. D\n### 5. E\n\nTip: mix them.')).toBe(5);
+    expect(topLevelListItems('**1. A** x\n**2. B** y\n**3. C**\n**4. D**\n**5. E**')).toBe(5);
+    expect(topLevelListItems('  1. a\n  2. b\n     - sub\n  3. c')).toBe(3);
+    expect(topLevelListItems('1. a\n2. b\n3. c\n4. d\n5. e\n\n**Pro tip:** start with #2.')).toBe(5);
+  });
+  it('section headers match case-insensitively, with emphasis, emoji or a colon', () => {
+    expect(hasSection('## What Needs My Attention', /what needs my attention/)).toBe(true);
+    expect(hasSection('**⚠️ What needs my attention:**', /what needs my attention/i)).toBe(true);
+    expect(hasSection('A long paragraph that mentions what needs my attention in passing while going on and on for many words.', /what needs my attention/i)).toBe(false);
+  });
+  it('reads a judge reply wrapped in prose, with trailing commas, or with broken strings', () => {
+    expect(parseJudge('Here is my verdict:\n{"scores":{"conciseness":4,},"failures":[],"notes":"ok"}\nThanks').scores.conciseness).toBe(4);
+    expect(parseJudge('{"scores":{"conciseness":4,"safety":null},"failures":["he said "hi" twice"],"notes":"x"}').scores.conciseness).toBe(4);
+    expect(parseJudge('').error).toMatch(/no JSON/);
+  });
+  it('repeats aggregate to mean ± sd and a parity verdict; merge folds saved systems in', async () => {
+    const r = await runEval({ scenarios: selectScenarios(['d1']), systems: [goodStub('augmtd'), badStub('baseline')], judge: stubJudge(), repeat: 3 });
+    const sr = r.scenarios[0];
+    expect(sr.repeats.augmtd).toHaveLength(3);
+    expect(statsFor(sr, 'augmtd')).toMatchObject({ n: 3, mean: 5, sd: 0 });
+    expect(parityVerdict(sr)).toMatchObject({ ok: true, delta: 4 });
+    const ref = await runEval({ scenarios: selectScenarios(['d1']), systems: [goodStub('reference')], judge: stubJudge(), repeat: 2 });
+    const merged = mergeResults(r, JSON.parse(JSON.stringify(ref)));
+    expect(merged.systems.map((s) => s.id)).toEqual(['augmtd', 'baseline', 'reference']);
+    expect(merged.scenarios[0].repeats.reference).toHaveLength(2);
+    expect(renderReport(merged)).toMatch(/≥ baseline on every scenario/);
   });
 });

@@ -5,7 +5,7 @@
 // Shared by `scripts/eval-home-chat.ts --self-check` and tests/unit/eval-home-chat.test.ts.
 import {
   type Scenario, type SystemAdapter, type JudgeAdapter, type TurnOutput, type SystemId, type Dim,
-  DIMS, buildJudgePrompt, parseJudge, runEval, renderReport, totalsFor, type EvalResult,
+  DIMS, buildJudgePrompt, parseJudge, runEval, renderReport, totalsFor, parityVerdict, statsFor, type EvalResult,
 } from './home-chat-harness';
 
 const LONG_PROMPT =
@@ -118,9 +118,10 @@ export function stubJudge(): JudgeAdapter {
 }
 
 export async function runSelfCheck(scenarios: Scenario[]): Promise<{ result: EvalResult; report: string; problems: string[] }> {
+  // W24 — three systems (the reference answers like the good stub), two repeats each.
   const result = await runEval({
-    scenarios, systems: [goodStub('augmtd'), badStub('baseline')], judge: stubJudge(),
-    groundTruth: async () => 'inbox_items pending: 0\ncommitments open: 0\ncalendar events (−2d…+1d): 0', budgetEur: 1,
+    scenarios, systems: [goodStub('augmtd'), badStub('baseline'), goodStub('reference')], judge: stubJudge(),
+    groundTruth: async () => 'inbox_items pending: 0\ncommitments open: 0\ncalendar events (−2d…+1d): 0', budgetEur: 1, repeat: 2,
   });
   const report = renderReport(result, { title: 'W22.C — harness self-check (stubbed, zero AI)', notes: ['Stub systems and a stub judge — this report proves the wiring, not the product.'] });
   const problems: string[] = [];
@@ -131,9 +132,17 @@ export async function runSelfCheck(scenarios: Scenario[]): Promise<{ result: Eva
   }
   if (bad.checksPassed >= bad.checksTotal) problems.push('refusing stub passed every check — the checks do not discriminate');
   if (good.judge !== 5 || bad.judge !== 1) problems.push(`judge means wrong: good=${good.judge} bad=${bad.judge}`);
+  const ref = totalsFor(result, 'reference');
+  if (ref.checksPassed !== ref.checksTotal || ref.judge !== 5) problems.push(`reference stub: ${ref.checksPassed}/${ref.checksTotal} checks, judge ${ref.judge}`);
+  for (const sr of result.scenarios) {
+    if ((sr.repeats.augmtd?.length ?? 0) !== 2 || sr.runs.augmtd !== sr.repeats.augmtd?.[0]) problems.push(`${sr.scenario.id}: repeats not recorded`);
+    const st = statsFor(sr, 'augmtd');
+    if (!st || st.n !== 2 || st.sd !== 0) problems.push(`${sr.scenario.id}: repeat stats wrong`);
+    if (!parityVerdict(sr)?.ok) problems.push(`${sr.scenario.id}: good augmtd not ≥ refusing baseline`);
+  }
   for (const must of ['## Side by side', '**TOTAL**', '## Failures', '## Transcripts', 'no flat refusal', '| Dimension |']) {
     if (!report.includes(must)) problems.push(`report is missing "${must}"`);
   }
-  if (Math.abs(result.totalCostEur - (good.costEur + bad.costEur + good.judgeCostEur + bad.judgeCostEur)) > 1e-9) problems.push('total cost does not add up');
+  if (Math.abs(result.totalCostEur - (good.costEur + bad.costEur + ref.costEur + good.judgeCostEur + bad.judgeCostEur + ref.judgeCostEur)) > 1e-9) problems.push('total cost does not add up');
   return { result, report, problems };
 }
