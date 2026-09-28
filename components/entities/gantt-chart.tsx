@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ChevronRightIcon } from '@heroicons/react/24/outline';
 import { itemStateOf } from '@/lib/work-items/states';
+import { rowDoorOf } from '@/lib/work-items/gantt-date';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 
 // ── GanttChart — the ONE shared timeline (Home Timeline lens + the project/deal room). TWO-PANE
@@ -23,7 +24,9 @@ export type GanttItem = {
   /** The event trail — dated actions on this item (ascending), from lib/work-items/gantt-badges. */
   events?: Array<{ date: string; label: string }>;
 };
-export type GanttGroup = { id: string; name: string; statusDot?: string; items: GanttItem[] };
+// `roomless`: a band with no room behind it (the Timeline's loose band) — its name and its address-less
+// rows render as plain text, never as a button that opens nothing (THE ADDRESS LAW, W20).
+export type GanttGroup = { id: string; name: string; statusDot?: string; roomless?: boolean; items: GanttItem[] };
 
 // STATUS (what state the work is in) — distinct from the EVENT marker (when it happened / is due).
 // The ONE item-state palette — lib/work-items/states.ts.
@@ -152,7 +155,9 @@ export default function GanttChart({ groups, today, onOpenGroup, emptyLine }: {
                 <div className="flex items-center gap-1.5 px-3 border-b border-neutral-100 bg-white" style={{ height: ROW_H }}>
                   <button onClick={() => toggle(g.id)} className="flex-shrink-0 text-neutral-300 hover:text-neutral-600 transition-colors"><ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} /></button>
                   {g.statusDot && <span className={`w-2 h-2 rounded-full flex-shrink-0 ${g.statusDot}`} />}
-                  <button onClick={() => onOpenGroup?.(g.id, 'overview')} className="min-w-0 flex-1 text-left text-[12.5px] font-semibold text-neutral-800 truncate hover:text-indigo-600 transition-colors" disabled={!onOpenGroup}>{g.name}</button>
+                  {onOpenGroup && !g.roomless
+                    ? <button onClick={() => onOpenGroup(g.id, 'overview')} className="min-w-0 flex-1 text-left text-[12.5px] font-semibold text-neutral-800 truncate hover:text-indigo-600 transition-colors">{g.name}</button>
+                    : <span className="min-w-0 flex-1 text-left text-[12.5px] font-semibold text-neutral-800 truncate">{g.name}</span>}
                   <span className="flex-shrink-0 text-[10px] font-medium text-neutral-300 tabular-nums whitespace-nowrap">{g.items.length}{g.undatedCount > 0 ? ` · ${g.undatedCount} undated` : ''}</span>
                 </div>
                 <div className="overflow-hidden transition-[max-height] duration-300 ease-out" style={{ maxHeight: open ? g.items.length * ROW_H : 0 }}>
@@ -163,6 +168,7 @@ export default function GanttChart({ groups, today, onOpenGroup, emptyLine }: {
                     const titleTone = isDone ? 'text-neutral-400' : 'text-neutral-700';
                     const trail = it.events?.length ? ` — ${it.events.map((e) => `${e.label} ${fmtDate(e.date)}`).join(' · ')}` : '';
                     const tip = `${it.title}${who ? ` · ${who}` : ''} · ${status.label}${trail}`;
+                    const door = rowDoorOf(it.href);
                     const inner = (
                       <>
                         <span className={`text-[12px] ${titleTone} truncate min-w-0 flex-1 group-hover/l:text-indigo-600 transition-colors`}>{it.title}</span>
@@ -172,9 +178,13 @@ export default function GanttChart({ groups, today, onOpenGroup, emptyLine }: {
                     return (
                       <div key={idx} className={`flex items-center gap-2 pl-8 pr-3 border-b border-neutral-50 last:border-b-0 hover:bg-neutral-50/50 transition-colors ${isDone ? 'opacity-75' : ''}`} style={{ height: ROW_H }}>
                         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${status.dot}`} title={status.label} />
-                        {it.href
-                          ? <Link href={it.href} title={tip} className="min-w-0 flex-1 flex items-baseline gap-1.5 group/l">{inner}</Link>
-                          : <button onClick={() => onOpenGroup?.(g.id, 'work')} title={tip} className="min-w-0 flex-1 flex items-baseline gap-1.5 text-left group/l" disabled={!onOpenGroup}>{inner}</button>}
+                        {/* THE ADDRESS LAW (W20): its own door, else the project's Work tab, else
+                            plain text — a row with no address is never styled as a link. */}
+                        {door
+                          ? <Link href={door} title={tip} className="min-w-0 flex-1 flex items-baseline gap-1.5 group/l">{inner}</Link>
+                          : onOpenGroup && !g.roomless
+                            ? <button onClick={() => onOpenGroup(g.id, 'work')} title={tip} className="min-w-0 flex-1 flex items-baseline gap-1.5 text-left group/l">{inner}</button>
+                            : <span title={tip} className="min-w-0 flex-1 flex items-baseline gap-1.5">{inner}</span>}
                       </div>
                     );
                   })}
@@ -221,12 +231,14 @@ export default function GanttChart({ groups, today, onOpenGroup, emptyLine }: {
                       const x = xOf(it.date);
                       const dateStr = fmtDateY(it.date, today);
                       const tip = `${it.title} · ${isOverdue ? 'Overdue' : status.label} · ${dateStr}`;
+                      const door = rowDoorOf(it.href);
+                      const opens = !!door || (!!onOpenGroup && !g.roomless);
                       return (
                         // The AXIS row opens the same place its label does — the item's own room
                         // when it has one (href), else the project's Work tab.
                         <div key={idx}
-                          onClick={() => { if (it.href) router.push(it.href); else onOpenGroup?.(g.id, 'work'); }}
-                          className={`relative border-b border-neutral-50 last:border-b-0 cursor-pointer hover:bg-neutral-50/50 transition-colors ${isDone ? 'opacity-75' : ''}`} style={{ height: ROW_H }}>
+                          onClick={opens ? () => { if (door) router.push(door); else onOpenGroup?.(g.id, 'work'); } : undefined}
+                          className={`relative border-b border-neutral-50 last:border-b-0 ${opens ? 'cursor-pointer ' : ''}hover:bg-neutral-50/50 transition-colors ${isDone ? 'opacity-75' : ''}`} style={{ height: ROW_H }}>
                           {/* THE EVENT TRAIL — dated action ticks along the track (what happened, when,
                               by whom); hover a tick for its story. Out-of-range events are skipped. */}
                           {(it.events ?? []).filter((e) => inRange(e.date)).map((e, j) => (

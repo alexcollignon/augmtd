@@ -131,6 +131,11 @@ export type ItemPageFacts = {
    *  (`inFlight: false`, kept so the landed artifact takes the seat even while the machine's frozen
    *  state still reads `preparing`). Null = this open produces nothing; nothing is reserved. */
   slot?: { artifact: ItemArtifactKind; inFlight: boolean } | null;
+  /** W20.B · THE LEAD — the artifact the item's NEWEST words ask for first (a schedule offer: the
+   *  counterparty set a meeting time — lib/prepare/schedule-offer.ts). Chosen before the row's own
+   *  order, but only when the state's row allows that kind and the door has it MOUNTED — still ONE
+   *  widget per screen; never a substitute for a state that does not offer it. */
+  lead?: ItemArtifactKind | null;
 };
 
 export type ItemPagePlan = {
@@ -169,11 +174,13 @@ const isPageState = (x: string): x is ItemPageState => Object.prototype.hasOwnPr
  *  the kit widget that renders it. A state whose artifacts are not mounted (withdrawn, not landed)
  *  renders NO widget — never a substitute, never a bare button. */
 export function actionOf(
-  machine: ItemPageFacts['machine'], mounted: ItemArtifactsMounted, gateOpen = false,
+  machine: ItemPageFacts['machine'], mounted: ItemArtifactsMounted, gateOpen = false, lead: ItemArtifactKind | null = null,
 ): { widget: ItemActionWidget; artifact: ItemArtifactKind } | null {
   const state = gateOpen ? 'gate_open' : machine?.state ?? '';
   if (!isPageState(state)) return null;
-  const artifact = ARTIFACTS_OF_STATE[state].find((k) => mounted[k] === true) ?? null;
+  const row = ARTIFACTS_OF_STATE[state];
+  const artifact = (lead && row.includes(lead) && mounted[lead] === true ? lead : null)
+    ?? row.find((k) => mounted[k] === true) ?? null;
   return artifact ? { widget: WIDGET_OF_ARTIFACT[artifact], artifact } : null;
 }
 
@@ -202,7 +209,7 @@ export const actionWidgetOf = (machine: ItemPageFacts['machine'], mounted: ItemA
 export function composeItemPage(f: ItemPageFacts): ItemPagePlan {
   // W17 · the table first; else the artifact THIS OPEN reserved a seat for, once it has landed.
   const slotArt = f.slot?.artifact ?? null;
-  const chosen = actionOf(f.machine, f.mounted, f.gateOpen === true)
+  const chosen = actionOf(f.machine, f.mounted, f.gateOpen === true, f.lead ?? null)
     ?? (slotArt && f.mounted[slotArt] === true && f.machine?.state !== 'settled' ? { widget: WIDGET_OF_ARTIFACT[slotArt], artifact: slotArt } : null);
   const action = chosen?.widget ?? null;
   const pending = !chosen && slotArt && f.slot?.inFlight === true && f.machine?.state !== 'settled'

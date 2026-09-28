@@ -40,13 +40,18 @@ export type RoomChatTurnShape = {
   collection?: unknown;
   event?: unknown;
   change?: unknown;
+  /** W20.B · the chat's cards (lib/present/turn-card `ChatCards` — invite · email draft · bulk deed ·
+   *  collection · event · change), one field for every kind the ONE table knows. */
+  cards?: Record<string, unknown[] | undefined>;
 };
+
+const hasCards = (c: RoomChatTurnShape['cards']): boolean => !!c && Object.values(c).some((v) => Array.isArray(v) && v.length > 0);
 
 /** THE ONE "is this a card turn" predicate — a turn carrying a live affordance. Fold and render both
  *  read it; a second hand-kept list is how the two drifted. */
 export function hasTurnComponent(t: RoomChatTurnShape): boolean {
   return !!(t.checklist?.length || t.actions?.length || t.standingSpec || t.workflowDraft || t.approval
-    || t.collection || t.event || t.change || t.key === 'founding-proposal' || t.dkey === 'founding-proposal');
+    || t.collection || t.event || t.change || hasCards(t.cards) || t.key === 'founding-proposal' || t.dkey === 'founding-proposal');
 }
 
 /** The seat's own answer: a system turn with no durable handle (no key, no component, no author) —

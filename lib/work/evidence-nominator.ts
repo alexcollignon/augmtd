@@ -43,6 +43,7 @@ import {
 import { loadActorContext } from '@/lib/evidence/actor';
 import type { ActorContext, EvidenceEvent } from '@/lib/evidence/types';
 import type { WorkspaceFeatures } from '@/lib/workspace/types';
+import { obligationAnchorOf } from '@/lib/work/obligation-anchor'; // W20.C · THE ONE ANCHOR
 
 export { addressesOf, sameAddress, chunked, attendeeAddressByName, registryAddress, mergePoolEmails, EVIDENCE_PER_TYPE, POOL_MAX_PER_SOURCE, SCOPE_CHUNK, POOL_SCOPED_MAX, SETTLE_MATCH };
 export type { Evidence, PoolEmail, WorkKeys, MatchOptions };
@@ -67,7 +68,8 @@ export type EvidenceScope = { addresses: string[]; threadIds: string[]; entityId
 export type OpenWork = {
   kind: 'commitment' | 'inbox';
   id: string;
-  /** evidence must be strictly AFTER this moment (commitment: created_at · inbox: last activity). */
+  /** evidence must be strictly AFTER this moment — THE ONE ANCHOR (W20.C, lib/work/obligation-anchor
+   *  `obligationAnchorOf`: commitment created_at · inbox the current message / newest inbound). */
   afterISO: string;
   counterpartyEmail: string | null;
   threadId?: string | null;
@@ -277,7 +279,7 @@ export async function loadOpenWork(client: SupabaseClient, userId: string, regis
   for (const c of cRows) {
     const r = resolved.get(String(c.id));
     out.push({
-      kind: 'commitment', id: String(c.id), afterISO: String(c.created_at ?? ''), counterpartyEmail: r?.primary ?? null,
+      kind: 'commitment', id: String(c.id), afterISO: obligationAnchorOf('commitment', c), counterpartyEmail: r?.primary ?? null,
       threadId: (c.thread_id as string) ?? null, fulfiller: String(c.direction) === 'awaiting' ? 'counterparty' : 'user',
       description: String(c.description ?? ''), keys: r?.keys,
     });
@@ -287,7 +289,7 @@ export async function loadOpenWork(client: SupabaseClient, userId: string, regis
     const { from, keys } = inboxKeys({ id: String(it.id), source_data: sd }, registry, iEnts);
     const ask = (sd.understanding as { ask?: string } | null)?.ask;
     out.push({
-      kind: 'inbox', id: String(it.id), afterISO: String(it.last_activity_at ?? it.created_at ?? ''), counterpartyEmail: from,
+      kind: 'inbox', id: String(it.id), afterISO: obligationAnchorOf('inbox', it), counterpartyEmail: from,
       threadId: (sd.thread_id as string) ?? null, fulfiller: 'user',
       description: String(ask || it.work_title || sd.subject || ''), keys,
     });

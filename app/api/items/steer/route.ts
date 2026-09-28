@@ -7,7 +7,9 @@
 // Body: { kind: 'email'|'followup'|'commitment'|'awareness'|'meeting'|'entity', id, text }
 //   kind 'entity' = the PROJECT DOOR (P7c-c2): id is the entity id; the core runs in entity scope.
 // Response (superset of the pre-P6b contract, so the rail upgrades without breakage):
-//   { ok, say, refs, files?, applied?, question?, answer?, draft?, learned?, entityName?, delegated? }
+//   { ok, say, refs, files?, applied?, question?, answer?, draft?, learned?, entityName?, delegated?,
+//     invite?, bulkDeed?, emailDraft?, collection?, event?, change? }
+// `stream: true` → the same payload as the `done` frame of THE ONE STREAM (lib/present/converse-stream).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
@@ -16,7 +18,8 @@ import {
   steerRoomKey, validAnswerKey, writeAskTurn, questionStillLive, writeAnswerTurn, answerTextOf, answerRefsOf,
   type SteerKind,
 } from './answer-door';
-import { collectionHasRows } from '@/lib/present/collection';
+import { cardPayloadOf, cardTurnOf, normalizeTurnCards } from '@/lib/present/turn-card';
+import { converseStreamResponse } from '@/lib/present/converse-stream';
 
 export const maxDuration = 120;
 
@@ -47,6 +50,9 @@ export async function POST(request: NextRequest) {
        *  question written before W19) instead of writing the question a second time. */
       reaskTurnId?: string;
       reaskKey?: string;
+      /** THE WORK SHOWS (W20.B): answer over THE ONE STREAM (progress frames, then one `done` frame
+       *  carrying exactly the JSON payload below) — the rail's composer asks for it. */
+      stream?: boolean;
     };
     const kind = body.kind && VALID.includes(body.kind) ? body.kind : null;
     const id = body.id?.trim();
@@ -90,98 +96,82 @@ export async function POST(request: NextRequest) {
       const reask = reaskTurnId ? { turnId: reaskTurnId, priorKey: validAnswerKey(body.reaskKey) } : null;
       claim = await writeAskTurn(supabase, user.id, chatRoomKey, answerKey, text, reask);
     }
-    const turn = await converse(supabase, user.id, scope, text);
-    // …and THE RESET WINS: a question a New chat archived while the reasoning ran gets no answer.
-    const claimed = claim === 'claimed' && !!answerKey && !!chatRoomKey
-      && await questionStillLive(supabase, user.id, chatRoomKey, answerKey);
+    // ── THE ANSWER, ONE BODY FOR BOTH TRANSPORTS (W20.B) ────────────────────────────────────────
+    // JSON (every non-chat caller) or THE ONE STREAM (the rail's composer: `stream: true`), the same
+    // work runs: the core answers, the card is written as a turn, the payload is composed.
+    const answer = async (onProgress?: (label: string) => void): Promise<Record<string, unknown>> => {
+      const turn = await converse(supabase, user.id, scope, text, onProgress ? { onProgress } : {});
+      // …and THE RESET WINS: a question a New chat archived while the reasoning ran gets no answer.
+      const claimed = claim === 'claimed' && !!answerKey && !!chatRoomKey
+        && await questionStillLive(supabase, user.id, chatRoomKey, answerKey);
 
-    // ── THE ROOM SHOWS WHAT IT READ (W4-C, Sep 22 — docs/component-map.md §6) ───────────────────
-    // The one core already hands back the DATA half of a presenting read (`collection` / `event`).
-    // The Home chat mounted it and the rooms did not — not because a room is different, but
-    // because nothing wrote the turn. A CARD IS A TURN: the pointer rides `room_turns.component`
-    // in the SAME shape the Home chat stores, so the rail paints it live from the response and
-    // finds it standing on the next open. POINTERS ONLY — the rows and the verbs are re-derived at
-    // that open (`GET /api/collections`, `GET /api/events/[id]/card`), so a reloaded card can
-    // never paint a set, or offer a verb, that stopped being true. Non-fatal by construction.
-    // Without a chat key the card still rides as before; with one, only the CLAIMING request writes it.
-    // AN EMPTY SET IS NOT A CARD (W19.2a): a zero-row collection is never written as a card turn —
-    // the answer's sentence carries the empty fact (the core no longer emits one; this is the floor).
-    if (turn.collection && !collectionHasRows(turn.collection.spec)) turn.collection = null;
-    if ((turn.collection || turn.event || turn.change) && (!answerKey || claimed)) {
-      try {
-        const { writeRoomTurn } = await import('@/lib/room/turns');
-        const { collectionTurnComponent, eventTurnComponent } = await import('@/lib/present/pointer');
-        const { changeTurnComponent } = await import('@/lib/present/change');
-        // ONE rule for where this door's turns land (the rail's own door rule — ./answer-door.ts).
-        const roomKey = steerRoomKey(kind, id);
-        if (turn.collection) {
-          await writeRoomTurn(supabase, user.id, roomKey, {
+      // ── A CARD IS A TURN — IN EVERY CHAT (W4-C → W20.B — lib/present/turn-card.ts) ─────────────
+      // The Home door's ONE table now writes this door's cards too: invite · bulk deed · email draft ·
+      // collection · event · change. The pointer rides `room_turns.component` in the SAME shape the
+      // Home chat stores, so the rail paints it live from the response and finds it standing on the
+      // next open (it used to write three kinds and drop the rest — "Here's the invite" over nothing).
+      // AN EMPTY SET IS NOT A CARD (W19.2a) — the table's floor. Without a chat key the card still
+      // rides as before; with one, only the CLAIMING request writes it (exactly-once, W19.B).
+      normalizeTurnCards(turn);
+      const card = cardTurnOf(turn);
+      if (card && (!answerKey || claimed)) {
+        try {
+          const { writeRoomTurn } = await import('@/lib/room/turns');
+          // THE ANSWER'S OWN WORDS (W19.2a): the stored turn is what the rail painted live — the
+          // answer's prose and its tagged refs (the SAME text `answerTextOf` gives the answer row).
+          const fallback = turn.collection?.spec.framing ?? turn.event?.spec.title ?? turn.change?.spec.summary ?? null;
+          await writeRoomTurn(supabase, user.id, steerRoomKey(kind, id), {
             role: 'system',
-            // THE ANSWER'S OWN WORDS (W19.2a): the stored turn is what the rail painted live — the
-            // answer's prose and its tagged refs (the SAME text `answerTextOf` gives the answer row).
-            // It used to store the card's framing instead, so a reload replaced the answer with a
-            // count ("Nothing recorded in the last 7 days."). On the fast path the say IS the framing.
-            text: turn.say?.trim() ? answerTextOf(turn.say) : turn.collection.spec.framing,
+            text: turn.say?.trim() ? answerTextOf(turn.say) : answerTextOf(fallback),
             ...(answerRefsOf(turn.refs) ? { refs: answerRefsOf(turn.refs)! } : {}),
-            dedupeKey: `collection:${turn.collection.id}`,
-            component: collectionTurnComponent(turn.collection.id, turn.collection.spec),
+            // ONE CARD PER OBJECT in a room: a second look at the same object UPDATES the standing
+            // card (its truth is re-derived anyway) instead of stacking a near-identical twin.
+            dedupeKey: card.dedupeKey,
+            component: card.component,
           });
-        } else if (turn.event) {
-          await writeRoomTurn(supabase, user.id, roomKey, {
-            role: 'system',
-            text: turn.say?.trim() || turn.event.spec.title,
-            // ONE CARD PER EVENT in a room: a second look at the same meeting UPDATES the standing
-            // card (its verbs are re-derived anyway) instead of stacking a near-identical twin.
-            dedupeKey: `event:${turn.event.spec.id}`,
-            component: eventTurnComponent(turn.event.spec),
-          });
-        } else if (turn.change) {
-          // THE CONFIRM CARD IN A ROOM (stabilization W0.3b): a POINTER at the change's own row;
-          // the rail re-reads its status on every open, so it never offers Apply twice.
-          await writeRoomTurn(supabase, user.id, roomKey, {
-            role: 'system',
-            text: turn.say?.trim() || turn.change.spec.summary,
-            dedupeKey: `change:${turn.change.spec.id}`,
-            component: changeTurnComponent(turn.change.spec),
-          });
-        }
-      } catch { /* the card is an enhancement — the answer stands without it */ }
-    } else if (claimed && chatRoomKey && answerKey) {
-      // THE ANSWER IS SAVED — the Home door's shape, no handle (the exchange boundary). A failed write
-      // leaves the question an orphan, which the room renders with its "Ask again" line.
-      const ok = await writeAnswerTurn(supabase, user.id, chatRoomKey, turn);
-      if (!ok) console.error('[items/steer] the answer could not be saved', chatRoomKey);
-    }
+        } catch { /* the card is an enhancement — the answer stands without it */ }
+      } else if (claimed && chatRoomKey && answerKey) {
+        // THE ANSWER IS SAVED — the Home door's shape, no handle (the exchange boundary). A failed write
+        // leaves the question an orphan, which the room renders with its "Ask again" line.
+        const ok = await writeAnswerTurn(supabase, user.id, chatRoomKey, turn);
+        if (!ok) console.error('[items/steer] the answer could not be saved', chatRoomKey);
+      }
 
-    return NextResponse.json({
-      ok: true,
-      say: turn.say,
-      refs: turn.refs,
-      ...(turn.files ? { files: turn.files } : {}),
-      ...(turn.applied ? { applied: turn.applied } : {}),
-      // Back-compat fields the rail's pre-P6b renderer reads:
-      ...(turn.refs.length || (!turn.draft && !turn.applied && !turn.delegated && !turn.learned?.length)
-        ? { question: true, answer: turn.say } : {}),
-      ...(turn.draft !== undefined ? { draft: turn.draft } : {}),
-      ...(turn.learned ? { learned: turn.learned } : {}),
-      ...(turn.entityName !== undefined ? { entityName: turn.entityName } : {}),
-      ...(turn.delegated !== undefined ? { delegated: turn.delegated } : {}),
-      // THE PARITY LAW (Aug 4): the chat-approved send / summoned-stage signals — the client
-      // fires the one send door / raises the stage.
-      ...(turn.commit ? { commit: turn.commit } : {}),
-      ...(turn.openStage ? { openStage: turn.openStage } : {}),
-      // ARTIFACTS-INTO-ORIGIN (Aug 9): the dispatched deliverable's card rides into the room.
-      ...(turn.artifact ? { artifact: turn.artifact } : {}),
-      // THE ONE CREATION CARD (Aug 10): a drafted standing task reviews inline in the room too.
-      ...(turn.workflowDraft ? { workflowDraft: turn.workflowDraft } : {}),
-      // THE COLLECTION / EVENT CARD (W4-C): the rail paints the served spec at once; the durable
-      // turn written above is what a reload re-reads. Same contract as the Home ask door.
-      ...(turn.collection ? { collection: turn.collection } : {}),
-      ...(turn.event ? { event: turn.event } : {}),
-      // THE CONFIRM CARD (stabilization W0.3b): the rail paints the served spec; nothing applied.
-      ...(turn.change ? { change: turn.change } : {}),
-      ...(turn.options?.length ? { options: turn.options } : {}),
-    });
+      return {
+        ok: true,
+        say: turn.say,
+        refs: turn.refs,
+        ...(turn.files ? { files: turn.files } : {}),
+        ...(turn.applied ? { applied: turn.applied } : {}),
+        // Back-compat fields the rail's pre-P6b renderer reads:
+        ...(turn.refs.length || (!turn.draft && !turn.applied && !turn.delegated && !turn.learned?.length)
+          ? { question: true, answer: turn.say } : {}),
+        ...(turn.draft !== undefined ? { draft: turn.draft } : {}),
+        ...(turn.learned ? { learned: turn.learned } : {}),
+        ...(turn.entityName !== undefined ? { entityName: turn.entityName } : {}),
+        ...(turn.delegated !== undefined ? { delegated: turn.delegated } : {}),
+        // THE PARITY LAW (Aug 4): the chat-approved send / summoned-stage signals — the client
+        // fires the one send door / raises the stage.
+        ...(turn.commit ? { commit: turn.commit } : {}),
+        ...(turn.openStage ? { openStage: turn.openStage } : {}),
+        // ARTIFACTS-INTO-ORIGIN (Aug 9): the dispatched deliverable's card rides into the room.
+        ...(turn.artifact ? { artifact: turn.artifact } : {}),
+        // THE ONE CREATION CARD (Aug 10): a drafted standing task reviews inline in the room too.
+        ...(turn.workflowDraft ? { workflowDraft: turn.workflowDraft } : {}),
+        // THE CARDS (W20.B — the ONE table): every card the core returned rides the response, the
+        // rail paints it at once; the durable turn written above is what a reload re-reads. Nothing
+        // has been sent, acted or applied — each card's own click is the deed.
+        ...cardPayloadOf(turn),
+        ...(turn.options?.length ? { options: turn.options } : {}),
+      };
+    };
+
+    // THE WORK SHOWS (W20.B — lib/present/converse-stream.ts, the Home door's transport): the core's
+    // per-tool labels ("Putting the invite together…") reach the room while it works.
+    if (body.stream === true) {
+      return converseStreamResponse((send) => answer((label) => send({ type: 'progress', label })), { label: 'items/steer' });
+    }
+    return NextResponse.json(await answer());
   } catch (e) {
     console.error('[items/steer]', e);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

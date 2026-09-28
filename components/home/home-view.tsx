@@ -40,7 +40,7 @@ import { WelcomeWizard } from '@/components/home/welcome-wizard';
 import { OrbSeat, useOrbEntrance, type OrbEntrance } from '@/components/home/orb-entrance';
 import { TeamReadyCard } from '@/components/home/team-ready-card';
 import { AllConversations } from '@/components/one/all-conversations';
-import { OneHomeHeader, type FlatRow } from '@/components/one/one-home';
+import type { FlatRow } from '@/components/one/one-home';
 import ViewSwitcher, { type HomeView as HomeViewLens } from '@/components/home/view-switcher';
 // THE ATTENTION ARC (docs/attention-plan.md): the day frame beneath the whispers (A4 · A5 · A6) and
 // the held-quiet ledger behind the one door (A3).
@@ -269,93 +269,6 @@ function SenderAvatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' 
 // Coworker avatar — the real worker headshot (role → /workers/*.png), falling back to an initial chip.
 // This is the ONE place the AI team gets a FACE on the Home, so they read as teammates, not gray rows.
 // (HeaderCounts KPI strip removed — it was dead since July 13; the agenda spine owns the counts now.)
-
-// ── "Day cleared" progress ring — a refined circular gauge for the Home header. Meaning:
-// cleared / (cleared + needYou) for TODAY. `needYou` is re-derived live from the same section data
-// the dashboard shows; `cleared` counts what the user handled today (route baseline + this session's
-// Done/Dismiss/Send). The stroke has a CSS transition on stroke-dashoffset so the fill rises smoothly
-// (~450ms) as the user acts — the rise feels satisfying, never a childish badge. Presentation: a thin,
-// smooth stroke with the % prominently set in the centre, a calm uppercase micro-label + quiet
-// "N need you" beside it. Low-chrome: no hard bordered pill — a soft neutral-50 surface. Light +
-// indigo tokens. When there's nothing left (cleared+needYou==0) it reads a calm "All clear".
-// COHERENCE (Living-Home S1): the centre number = agenda ROWS — exactly what is visibly listed under
-// "What needs you" (a bundle counts once), so the ring and the list can never disagree. The fill uses
-// item VOLUME (cleared vs `atoms`, the items inside those rows) so progress still reflects real work.
-// The legend says only what is true: "N handled today" — never "X of Y done" in mismatched units.
-function DayClearedRing({ cleared, rows, atoms }: { cleared: number; rows: number; atoms: number }) {
-  const volume = Math.max(atoms, rows);
-  const total = cleared + volume;
-  const allClear = total === 0 || rows === 0;
-  const pct = total === 0 ? 100 : Math.round((cleared / total) * 100);
-  const R = 21;
-  const C = 2 * Math.PI * R;
-  const offset = C * (1 - pct / 100);
-  const label = allClear ? 'All clear' : `${rows} need${rows === 1 ? 's' : ''} you`;
-  return (
-    <div
-      className="flex-shrink-0 inline-flex items-center gap-3 rounded-2xl bg-neutral-50 px-3.5 py-2"
-      title={allClear ? 'Your day is clear' : `${rows} to work through${atoms > rows ? ` (${atoms} items inside)` : ''} · ${cleared} handled today`}
-      aria-label={allClear ? 'All clear' : label}
-    >
-      <div className="relative w-11 h-11">
-        <svg viewBox="0 0 48 48" className="w-full h-full -rotate-90">
-          <circle cx="24" cy="24" r={R} fill="none" stroke="currentColor" strokeWidth="2.5" className="text-neutral-200/80" />
-          <circle
-            cx="24" cy="24" r={R} fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
-            className={allClear ? 'text-emerald-500' : 'text-indigo-600'}
-            strokeDasharray={C}
-            strokeDashoffset={offset}
-            style={{ transition: 'stroke-dashoffset 450ms cubic-bezier(0.22,1,0.36,1), stroke 300ms ease' }}
-          />
-        </svg>
-        <span className="absolute inset-0 flex items-center justify-center text-[13px] font-semibold tabular-nums tracking-tight text-neutral-900">{rows === 0 ? '✓' : rows}</span>
-      </div>
-      <div className="hidden sm:flex flex-col leading-tight pr-0.5">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.09em] text-neutral-400">Today</span>
-        <span className={`text-[12.5px] font-medium mt-0.5 ${allClear ? 'text-emerald-600' : 'text-neutral-700'}`}>{allClear ? 'All clear' : `${cleared} handled today`}</span>
-      </div>
-    </div>
-  );
-}
-
-// ── Sync-status indicator — a quiet one-line reassurance in the header. Reads freshness:
-//   • "Syncing…" (gentle pulse) while a background load(true) is in flight
-//   • "Updated just now" / "Updated Nm ago" (relative, self-updating each minute) when idle
-//   • a small emerald live dot when the realtime channel is SUBSCRIBED; muted grey on poll-only fallback.
-// Low-chrome: text-[11px] neutral + a 5px dot, sits beside the ring/Activity cluster. Non-fatal —
-// if realtime never connects it just reads poll-only, still updating from the focus/90s poll.
-function relTime(from: Date): string {
-  const s = Math.max(0, Math.floor((Date.now() - from.getTime()) / 1000));
-  if (s < 45) return 'just now';
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  return `${h}h ago`;
-}
-function SyncStatus({ syncing, lastUpdatedAt, realtimeConnected }: { syncing: boolean; lastUpdatedAt: Date | null; realtimeConnected: boolean }) {
-  // Tick every 60s so the relative "Nm ago" stays current without a reload.
-  const [, force] = useState(0);
-  useEffect(() => {
-    const id = window.setInterval(() => force((n) => n + 1), 60_000);
-    return () => window.clearInterval(id);
-  }, []);
-  return (
-    <div
-      className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-medium text-neutral-400 select-none"
-      title={realtimeConnected ? 'Live — updates the moment new mail arrives' : 'Refreshing on a timer'}
-    >
-      <span
-        className={`w-[5px] h-[5px] rounded-full ${realtimeConnected ? 'bg-emerald-500' : 'bg-neutral-300'} ${realtimeConnected && !syncing ? 'animate-pulse' : ''}`}
-        aria-hidden="true"
-      />
-      {syncing ? (
-        <span className="animate-pulse text-neutral-500">Syncing…</span>
-      ) : (
-        <span>Updated {lastUpdatedAt ? relTime(lastUpdatedAt) : 'just now'}</span>
-      )}
-    </div>
-  );
-}
 
 const Label = ({ children, count, icon: Icon }: { children: React.ReactNode; count?: number; icon?: React.ElementType }) => (
   <div className="flex items-center gap-1.5 mb-3">
@@ -1510,7 +1423,6 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
   // The briefing's struck-refs: anything acted on this session (strike-and-collapse; the background
   // re-reason re-authors the prose on the next shape change).
   const actedIds = useMemo(() => new Set([...dismissed, ...clearedIds]), [dismissed, clearedIds]);
-  const [sessionCleared, setSessionCleared] = useState(0); // this session's Done/Dismiss/Send → ring `cleared`
   // LENS PREFETCH (instant-feel): warm the Timeline payload in the background once the dashboard
   // has settled, so switching lenses hydrates from localStorage instead of a skeleton.
   // W17 · SLOW READS OFF THE CRITICAL PATH: "settled" is now a FACT, not a guess. It used to fire on
@@ -1655,12 +1567,6 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
   // THE DAY FRAME (A4 · A5 · A6) — the two quiet zones beneath the whispers. Every absence is
   // earned SERVER-side (an absent key IS the render), so this reads exactly what it was given.
   const { frame: dayFrame } = useDayFrame(view === 'dashboard');
-  // Sync-status indicator state (3 bits): `syncing` = a background load(true) is in flight; `lastUpdatedAt`
-  // = when the last load succeeded (drives "Updated Nm ago"); `realtimeConnected` = the postgres_changes
-  // channel is SUBSCRIBED (emerald live dot) vs. poll-only fallback (muted dot).
-  const [syncing, setSyncing] = useState(false);
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
-  const [realtimeConnected, setRealtimeConnected] = useState(false);
 
   const aliveRef = useRef(true);
   // One brief request at a time — every trigger (mount/focus/poll/realtime) funnels through load(),
@@ -1744,7 +1650,6 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
     if (loadInFlightRef.current) return;
     loadInFlightRef.current = true;
     if (!background) setLoading(true);
-    else setSyncing(true); // drives the header "Syncing…" pulse (background refresh only)
     // THE PAINT WAITS ON THE BRIEF, AND ON NOTHING ELSE (owner, Sep 8 — "Home loads very slowly").
     // /api/workers/home feeds the AMBIENT team rail; it used to ride a Promise.all beside the brief,
     // so every paint cost max(brief, team) — a page held hostage by a lane it doesn't render above
@@ -1813,13 +1718,8 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
         setDismissed((prev) => new Set([...prev].filter((id) => freshIds.has(id))));
         setClearedIds((prev) => new Set([...prev].filter((id) => freshIds.has(id))));
       }
-      // On a background refresh the server now counts this session's actions, so drop the transient
-      // client ring bump to avoid double-counting.
-      if (background) setSessionCleared(0);
       setLoading(false);
-      setSyncing(false);
-      setLastUpdatedAt(new Date()); // "Updated just now" — freshness clock resets on every success
-    }).catch(() => { loadInFlightRef.current = false; if (aliveRef.current) setSyncing(false); });
+    }).catch(() => { loadInFlightRef.current = false; });
   }, [preGenPlans]);
 
   useEffect(() => {
@@ -1908,12 +1808,11 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
           .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'inbox_items', filter: `user_id=eq.${uid}` }, bump)
           .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'commitments', filter: `user_id=eq.${uid}` }, bump)
           .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'commitments', filter: `user_id=eq.${uid}` }, bump)
-          .subscribe((status) => { if (!cancelled) setRealtimeConnected(status === 'SUBSCRIBED'); });
-      } catch { /* non-fatal — the poll still covers refresh; the live dot stays muted */ }
+          .subscribe();
+      } catch { /* non-fatal — the focus/90s poll still covers refresh */ }
     })();
     return () => {
       cancelled = true;
-      setRealtimeConnected(false);
       if (debounce) clearTimeout(debounce);
       if (channel) supabase.removeChannel(channel);
     };
@@ -1943,16 +1842,15 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
 
   const b = brief;
   // Bump the ring's `cleared` by one the first time a given row is acted on (idempotent — a component
-  // may fire twice during its exit animation). All three action surfaces route through this so the ring
-  // rises instantly on Done/Dismiss/Send, no reload.
+  // may fire twice during its exit animation). All three action surfaces route through this so the row
+  // leaves instantly on Done/Dismiss/Send, no reload.
   const bumpCleared = (id: string) => setClearedIds((prev) => {
     markActed(); // note the action time so a racing background refetch won't reset the filter sets
     if (prev.has(id)) return prev;
     const n = new Set(prev); n.add(id);
-    setSessionCleared((c) => c + 1);
     return n;
   });
-  // Reply rows (must-respond digest / focal): remove from the live list AND raise the ring.
+  // Reply rows (must-respond digest / focal): remove from the live list.
   const onDismiss = (id: string) => {
     markActed();
     setDismissed((prev) => { const n = new Set(prev); n.add(id); return n; });
@@ -1970,9 +1868,8 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
   const undoSessionState = (sessionKeys: string[]) => {
     setDismissed((prev) => { const n = new Set(prev); sessionKeys.forEach((k) => n.delete(k)); return n; });
     setClearedIds((prev) => {
-      const n = new Set(prev); let removed = 0;
-      sessionKeys.forEach((k) => { if (n.delete(k)) removed++; });
-      if (removed) setSessionCleared((c) => Math.max(0, c - removed));
+      const n = new Set(prev);
+      sessionKeys.forEach((k) => { n.delete(k); });
       return n;
     });
     load(true, true); // pull the restored item back on screen right away (the reader's own undo)
@@ -2008,7 +1905,6 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
     setClearedIds((prev) => {
       if (!prev.has(entityId)) return prev;
       const n = new Set(prev); n.delete(entityId);
-      setSessionCleared((c) => Math.max(0, c - 1));
       return n;
     });
     load(true, true); // pull the restored item back on screen right away (brief cache already busted)
@@ -2275,10 +2171,6 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
   // "For your awareness" clears via the same session set (dismiss → clearedIds), so its live count
   // decrements as the user dismisses a bystander thread.
   const awarenessLive = (b?.forYourAwareness ?? []).filter((a) => !clearedIds.has(a.itemId)).length;
-  const ringCleared = (b?.dayProgress?.cleared ?? 0) + sessionCleared;
-  // Hide gracefully if counts are missing — and NEVER show "All clear" to a user whose mail isn't
-  // connected or whose first sync is still in flight (a 0-of-0 green ring is a hollow claim).
-  const showRing = !!b?.dayProgress && !(nothing && b?.mail && (b.mail.connections === 0 || b.mail.syncing));
 
   // ── AMBIENT RAIL — the calm "day at a glance" sections. Each is built ONLY when it has content, so
   // an empty lane never renders a bare header. `railNodes` is the ordered, non-empty set; the count
@@ -2481,8 +2373,8 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
               date and greeting, nothing else (the CoS sentence retired Sep 13, owner call: "in
               home, this feels too much"). The ring, the sync line and the ambient rail moved BEHIND
               the door with the deck; Activity keeps a single quiet glyph so it stays reachable
-              from the resting page (one home for it, never two). The other lenses keep the
-              working header they were designed with. */}
+              from the resting page (one home for it, never two). The other lenses carry that
+              same glyph and nothing else (W20). */}
           {view === 'dashboard' ? (
             <div className="relative w-full mb-7">
               {/* Veiled with the greeting: while the orb holds the centre the ground is calm —
@@ -2516,26 +2408,21 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
               </div>
             </div>
           ) : (
-          <OneHomeHeader
-            name={b?.firstName ?? null}
-            greeting={greeting()}
-            todayLine={(b?.schedule?.length ?? 0) > 0
-              ? { time: b!.schedule![0].localTime ?? b!.schedule![0].time, title: b!.schedule![0].title, more: b!.schedule!.length - 1 }
-              : null}
-            right={<>
-              <SyncStatus syncing={syncing} lastUpdatedAt={lastUpdatedAt} realtimeConnected={realtimeConnected} />
-              {showRing && <DayClearedRing cleared={ringCleared} rows={agenda.rows} atoms={agenda.atoms} />}
+            // THE OLD HEADER IS RETIRED ON EVERY LENS (W20, owner walk Sep 28): the date eyebrow,
+            // the greeting, the sync line and the day ring survived on the non-dashboard lenses
+            // after the calm Home retired them on the dashboard. What stays is the dashboard's own
+            // quiet Activity glyph — zero-height, so no header band returns — keeping the drawer
+            // reachable from every lens (one door, one glyph).
+            <div className="relative h-0">
               <button
                 onClick={() => setActivityOpen(true)}
                 title="Activity"
                 aria-label="Open activity"
-                className={`inline-flex items-center gap-1.5 rounded-full bg-neutral-50 h-9 px-3.5 text-[12.5px] font-medium text-neutral-500 hover:bg-indigo-50 hover:text-indigo-700 transition-all duration-200 ${activityOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+                className={`absolute right-0 -top-6 inline-flex items-center justify-center rounded-full w-8 h-8 text-neutral-300 hover:bg-neutral-100 hover:text-indigo-600 transition-all duration-200 ${activityOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
               >
                 <ClockIcon className="w-4 h-4" />
-                <span className="hidden sm:inline">Activity</span>
               </button>
-            </>}
-          />
+            </div>
           )}
         </RiseIn>
         )}

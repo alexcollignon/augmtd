@@ -622,7 +622,8 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     !src('components/home/home-view.tsx').includes('<BriefingBlock') &&
     !src('components/home/home-view.tsx').includes('font-voice mt-2.5') &&
     src('components/home/home-view.tsx').includes('sentencedIds') &&
-    src('components/one/one-home.tsx').includes('text-[20px] font-semibold tracking-tight') &&
+    // ⟲ RE-POINTED W20: the lens header (and its greeting type scale) retired — the calm greeting is the one greeting
+    !/export function OneHomeHeader/.test(src('components/one/one-home.tsx')) && src('components/home/home-view.tsx').includes('<CalmGreeting') &&
     !src('components/home/home-view.tsx').includes('energy sphere'));
   check('SH4: THE COMPOSER IS THE FLOOR — bottom-docked (sticky, mt-auto), the takeover opening upward; the mid-page ask zone is gone',
     src('components/home/home-view.tsx').includes('THE COMPOSER IS THE FLOOR') &&

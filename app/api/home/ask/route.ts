@@ -4,7 +4,8 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdmin } from '@supabase/supabase-js';
 import { converse, type ConverseHistoryTurn, type ConverseAttachment } from '@/lib/converse';
 import { tagOf } from '@/lib/home/ask-refs';
-import { changeTurnComponent } from '@/lib/present/change';
+import { cardPayloadOf, cardTurnOf, normalizeTurnCards } from '@/lib/present/turn-card';
+import { converseStreamResponse } from '@/lib/present/converse-stream';
 
 // 180: a production hand-off (delegation runs synchronously, the artifact comes home) must
 // never be killed by the route budget — the 30s cap predates chat-borne production.
@@ -38,6 +39,7 @@ export async function POST(request: NextRequest) {
       ? body.roomKey : null;
     const persistAnswer = async (turn: Awaited<ReturnType<typeof converse>>): Promise<void> => {
       if (!roomKey || !turn.say?.trim()) return;
+      const card = cardTurnOf(turn);
       try {
         const { writeRoomTurn } = await import('@/lib/room/turns');
         await writeRoomTurn(supabase, user.id, roomKey, {
@@ -49,52 +51,12 @@ export async function POST(request: NextRequest) {
           refs: turn.refs?.length
             ? turn.refs.map((r) => ({ label: r.label, href: r.href ?? null, ...(tagOf(r) ? { tag: tagOf(r) } : {}) }))
             : undefined,
-          // A CARD IS A TURN (threads plan — THE CARD CONTRACT): a prepared invite is DURABLE
-          // state, so it rides the turn as a component and survives the reload that used to eat
-          // it. The payload here is for RENDERING; the send door reads the stored row by id.
-          ...(turn.invite ? { component: { key: 'invite_card', refId: turn.invite.id, state: { invite: turn.invite.invite } } } : {}),
-          // …and a BULK DEED rides as a POINTER only (attention-plan A7): the deed row carries its
-          // own committed state, so a reloaded card reads the truth rather than a frozen preview
-          // that could offer a commit door on a deed that already ran.
-          ...(!turn.invite && turn.bulkDeed ? { component: { key: 'bulk_deed_card', refId: turn.bulkDeed.id } } : {}),
-          // …and so does THE EMAIL CARD. A matched item rides as a POINTER (the card re-reads that
-          // item's own prepared reply, so a reload never paints a draft the room has since moved);
-          // a STANDALONE draft carries its payload for the first paint, and its Send door still
-          // reads the stored row by id.
-          // …and THE COLLECTION CARD (Wave 1, Sep 22) rides as a POINTER and nothing else: the
-          // KIND, its re-read params, and the framing sentence the code composed. The ROWS are
-          // deliberately NOT stored — a reloaded collection re-derives them through
-          // `GET /api/collections`, so a card can never paint a set that stopped being true (the
-          // bulk-deed precedent, applied to a read).
-          ...(!turn.invite && !turn.bulkDeed && turn.collection
-            ? { component: { key: 'collection_card', refId: turn.collection.id,
-                state: { kind: turn.collection.spec.kind, framing: turn.collection.spec.framing,
-                  ...(turn.collection.spec.params ? { params: turn.collection.spec.params } : {}) } } }
-            : {}),
-          // …and THE EVENT CARD (Wave 2, Sep 22) rides as a POINTER for the sharpest version of the
-          // same reason: an event's VERBS are computed from its live state (accepted elsewhere,
-          // moved by its organizer, already passed), so a stored spec would offer buttons that have
-          // stopped being true. What persists is the calendar_events id plus the ARMED proposal;
-          // `GET /api/events/[id]/card` re-derives the rest.
-          ...(!turn.invite && !turn.bulkDeed && !turn.collection && turn.event
-            // `refId` IS the calendar_events id — the card's re-read address (`GET /api/events/
-            // <refId>/card`) and the address its verbs act through. `state.eventId` repeats it so a
-            // reader that keys on state alone resolves too.
-            ? { component: { key: 'event_card', refId: turn.event.spec.id,
-                state: { eventId: turn.event.spec.id,
-                  ...(turn.event.spec.proposal ? { proposal: turn.event.spec.proposal } : {}) } } }
-            : {}),
-          // …and THE CONFIRM CARD (stabilization W0.3b) rides as a POINTER: the change's id and
-          // nothing else. Its status moves (applied elsewhere, expired by the clock), so a reloaded
-          // card re-reads `GET /api/changes/[id]` and can never offer Apply on a change already run.
-          ...(!turn.invite && !turn.bulkDeed && !turn.collection && !turn.event && turn.change
-            ? { component: changeTurnComponent(turn.change.spec) }
-            : {}),
-          ...(!turn.invite && !turn.bulkDeed && !turn.collection && !turn.event && !turn.change && turn.emailDraft
-            ? { component: { key: 'email_draft_card', refId: turn.emailDraft.id,
-                state: { ...(turn.emailDraft.itemId ? { itemId: turn.emailDraft.itemId } : {}),
-                  ...(turn.emailDraft.draft ? { draft: turn.emailDraft.draft } : {}) } } }
-            : {}),
+          // A CARD IS A TURN (threads plan — THE CARD CONTRACT; W20.B — ONE TABLE for both doors,
+          // lib/present/turn-card.ts): the turn's one card rides as its component. An invite or a
+          // standalone email draft carries its first-paint payload (the send door reads the stored row
+          // by id); a bulk deed, a collection, an event and a change ride as POINTERS that re-derive
+          // their truth on reload — a reloaded card can never offer a door that stopped being true.
+          ...(card ? { component: card.component } : {}),
         });
       } catch { /* durability is best-effort — the answer itself still returns */ }
     };
@@ -169,61 +131,36 @@ export async function POST(request: NextRequest) {
       ...(turn.artifacts?.length ? { artifacts: turn.artifacts } : {}),
       // THE ONE CREATION CARD (Aug 10): the drafted standing task reviews inline.
       ...(turn.workflowDraft ? { workflowDraft: turn.workflowDraft } : {}),
-      // THE INVITE CARD: the prepared invite rides the answer and mounts inline (nothing sent).
-      ...(turn.invite ? { invite: turn.invite } : {}),
-      // THE BULK DEED CARD: the previewed deed rides the answer and mounts inline (nothing acted).
-      ...(turn.bulkDeed ? { bulkDeed: turn.bulkDeed } : {}),
-      // THE EMAIL CARD: the drafted reply rides the answer and mounts inline (nothing sent).
-      ...(turn.emailDraft ? { emailDraft: turn.emailDraft } : {}),
-      // THE COLLECTION CARD (Wave 1): the user's own objects ride the answer as typed rows. On a
-      // listing ask `answer` IS the spec's code-written framing; on an analytical one the prose
-      // leads and the card sits beneath it.
-      ...(turn.collection ? { collection: turn.collection } : {}),
-      // THE EVENT CARD (Wave 2): one meeting rides the answer with the verbs code computed for it.
-      // Nothing has fired — the card's own click is the deed.
-      ...(turn.event ? { event: turn.event } : {}),
-      // THE CONFIRM CARD (stabilization W0.3b): a prepared change rides the answer and mounts
-      // inline. Nothing has applied — the card's own click is the deed.
-      ...(turn.change ? { change: turn.change } : {}),
+      // THE CARDS (W20.B — the ONE table, lib/present/turn-card.ts): invite · bulk deed · email draft ·
+      // collection · event · change ride the answer and mount inline. Nothing has been sent, acted,
+      // or applied — each card's own click is the deed.
+      ...cardPayloadOf(turn),
       // The filing nudge never decorates a failed/empty answer (found live: a wrong "File it"
       // chip beside a dead reply compounds the miss).
       ...(focus && turn.say?.trim() ? { focus } : {}),
     });
     if (body.stream === true) {
-      const enc = new TextEncoder();
-      const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          const send = (d: Record<string, unknown>) => {
-            try { controller.enqueue(enc.encode(`data: ${JSON.stringify(d)}\n\n`)); } catch { /* client gone */ }
-          };
-          // Keep-alive: a synchronous production hand-off can run 60-90s with no events — an
-          // idle SSE gets buffered/closed by proxies. Pings are ignored by the client.
-          const ping = setInterval(() => send({ type: 'ping' }), 15000);
-          Promise.all([
-            converse(supabase, user.id, scope, q, {
-              history, attachments,
-              onProgress: (label) => send({ type: 'progress', label }),
-              // TOKEN STREAMING: the answer materializes live; `done` still carries the final
-              // authoritative payload (the honesty floor may amend the preview). The NUL
-              // sentinel clears the preview (pre-tool-call preamble text).
-              onToken: (t) => send(t === '\u0000' ? { type: 'token_reset' } : { type: 'token', t }),
-            }),
-            focusOf(),
-          ]).then(async ([turn, focus]) => {
-            // Persist BEFORE the done frame: the write must not depend on the client still
-            // listening (the whole point of the server owning it).
-            await persistAnswer(turn);
-            send({ type: 'done', ...payloadOf(turn, focus) });
-          })
-            .catch((e) => { console.error('[home/ask] stream error:', e); send({ type: 'error' }); })
-            .finally(() => { clearInterval(ping); try { controller.close(); } catch { /* already closed */ } });
-        },
-      });
-      return new Response(stream, {
-        headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' },
-      });
+      // THE ONE STREAM (W20.B — lib/present/converse-stream.ts, shared with the item door).
+      return converseStreamResponse(async (send) => {
+        const [turn, focus] = await Promise.all([
+          converse(supabase, user.id, scope, q, {
+            history, attachments,
+            onProgress: (label) => send({ type: 'progress', label }),
+            // TOKEN STREAMING: the answer materializes live; `done` still carries the final
+            // authoritative payload (the honesty floor may amend the preview). The NUL
+            // sentinel clears the preview (pre-tool-call preamble text).
+            onToken: (t) => send(t === '\u0000' ? { type: 'token_reset' } : { type: 'token', t }),
+          }),
+          focusOf(),
+        ]);
+        normalizeTurnCards(turn);
+        // Persist BEFORE the done frame: the write must not depend on the client still listening.
+        await persistAnswer(turn);
+        return payloadOf(turn, focus);
+      }, { label: 'home/ask' });
     }
     const [turn, focus] = await Promise.all([converse(supabase, user.id, scope, q, { history, attachments }), focusOf()]);
+    normalizeTurnCards(turn);
     await persistAnswer(turn);
     return NextResponse.json(payloadOf(turn, focus));
   } catch (e) {

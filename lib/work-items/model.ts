@@ -20,6 +20,7 @@ import { inferBucket, type TimeBucket } from './timeframe';
 import { OPEN_COMMITMENT_STATUSES, isOpenCommitmentStatus } from '@/lib/core/statuses';
 import { fetchAllRows } from '@/lib/utils/fetch-all';
 import { MIRROR_SOURCE } from '@/lib/inbox/commitment-mirrors';
+import { refDoorHref } from '@/lib/room/presentation';
 
 // 'event' = a scheduled calendar meeting — a dated CONTEXT point, never an action (no done/dismiss). It
 // rides the same spine so the Timeline shows real meetings, and (Phase 4) projects see them as activity.
@@ -309,7 +310,10 @@ export async function buildWorkItems(
       who: (c.counterparty as string) || null,
       actor: 'you', state,
       when: { explicit, bucket: inferBucket({ explicit, waiting, ageDays: ageDaysOf((c.created_at as string) || null, todayMs), todayStr }) },
-      source: 'commitment', href: '/', at, startAt: ((c.created_at as string) || at).slice(0, 10), projectId: (c.project_id as string) || null, automated: false, initiative: (c.initiative as string) || null, effort: null,
+      source: 'commitment',
+      // THE ADDRESS LAW (W20): a commitment row opens its OWN door, the kind carried — never the
+      // old `'/'` placeholder every Timeline/board row rendered as a link to nowhere.
+      href: refDoorHref(`commit:${c.id}`) ?? `/item/${c.id}?kind=commitment`, at, startAt: ((c.created_at as string) || at).slice(0, 10), projectId: (c.project_id as string) || null, automated: false, initiative: (c.initiative as string) || null, effort: null,
       declared: c.source === 'manual', // the user wrote it — the declaration IS the engagement
       ...LEDGER_DEFAULTS,
     });

@@ -46,6 +46,7 @@ import {
 } from '@/lib/work/evidence-nominator';
 import { loadWorkEntities } from '@/lib/evidence/identity';
 import { fulfillmentSigOf, isCurrentLawSig } from '@/lib/commitments/fulfillment';
+import { obligationAnchorOf } from '@/lib/work/obligation-anchor'; // W20.C · THE ONE ANCHOR
 
 /** Fresh (paid) judgments per account per run, per kind — cache hits are free and never counted. */
 export const EVIDENCE_FRESH_CAP = { commitment: 60, inbox: 30 } as const;
@@ -149,7 +150,7 @@ export async function planUserEvidence(admin: SupabaseClient, userId: string, no
     pending.push({
       kind: 'commitment', id: String(c.id), dueDate: (c.due_date as string) ?? null, createdAt: String(c.created_at ?? ''),
       work: {
-        kind: 'commitment', id: String(c.id), afterISO: String(c.created_at ?? ''), counterpartyEmail: resolved.get(String(c.id))?.primary ?? null,
+        kind: 'commitment', id: String(c.id), afterISO: obligationAnchorOf('commitment', c), counterpartyEmail: resolved.get(String(c.id))?.primary ?? null,
         threadId: (c.thread_id as string) ?? null, fulfiller: String(c.direction) === 'awaiting' ? 'counterparty' : 'user',
         description: String(c.description ?? ''), keys: resolved.get(String(c.id))?.keys,
       },
@@ -163,7 +164,7 @@ export async function planUserEvidence(admin: SupabaseClient, userId: string, no
     pending.push({
       kind: 'inbox', id: String(it.id), dueDate: deadline, createdAt: String(it.created_at ?? ''),
       work: {
-        kind: 'inbox', id: String(it.id), afterISO: String(it.last_activity_at ?? it.created_at ?? ''),
+        kind: 'inbox', id: String(it.id), afterISO: obligationAnchorOf('inbox', it),
         counterpartyEmail: ik.from,
         threadId: (sd.thread_id as string) ?? null, fulfiller: 'user',
         description: String(ask || it.work_title || sd.subject || ''), keys: ik.keys,

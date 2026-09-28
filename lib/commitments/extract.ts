@@ -8,7 +8,7 @@ import { subjectIsCampaignEcho } from '@/lib/inbox/campaign-echo';
 import { isOwnCoworkerSender } from '@/lib/inbox/self-echo';
 import { resolveDeixisInDescriptions } from '@/lib/inbox/deixis';
 import { seatStripsObligation, type SeatFacts } from '@/lib/inbox/recipient-role';
-import { dueDateFromSource, repairSelfParty, denotesUser, isOpenDuplicate, type UserForms } from '@/lib/commitments/extraction-truth';
+import { dueDateFromSource, repairSelfParty, denotesUser, isOpenDuplicate, isAttendanceObligation, type UserForms } from '@/lib/commitments/extraction-truth';
 import { directionFloor } from '@/lib/commitments/direction';
 import { coerceUnderstanding, type ItemUnderstanding } from '@/lib/inbox/item-understanding';
 
@@ -333,7 +333,7 @@ export async function writeCommitments(
     : (meta.ownWords ?? null);
   const quoteLaw = meta.source === 'email' || typeof meta.ownWords === 'string';
   const quoteFloor: Record<QuoteFloorReason | 'legacyUnquoted', number> = { 'no-quote': 0, 'quote-not-in-own-words': 0, 'not-first-person': 0, legacyUnquoted: 0 };
-  const clean = clean0.map((c) => {
+  let clean = clean0.map((c) => {
     // THE DIRECTION FLOOR (W7.4) — who DOES it decides the direction, before anything else reads it.
     const floor = directionFloor(
       { direction: c.direction, description: c.description, counterparty: c.counterparty ?? meta.counterparty ?? null, doer: c.doer ?? null },
@@ -360,6 +360,13 @@ export async function writeCommitments(
   });
   if (quoteFloor['no-quote'] || quoteFloor['quote-not-in-own-words'] || quoteFloor['not-first-person'] || quoteFloor.legacyUnquoted) {
     console.log(`[commitments] quote floor v${COMMITMENT_EXTRACTION_VERSION} ${meta.source}:${meta.sourceId.slice(0, 8)} candidates=${clean0.length} dropped: no-quote=${quoteFloor['no-quote']} not-in-own-words=${quoteFloor['quote-not-in-own-words']} not-first-person=${quoteFloor['not-first-person']}${quoteFloor.legacyUnquoted ? ` legacy-unquoted=${quoteFloor.legacyUnquoted}` : ''}`);
+  }
+  // W20 · THE ATTENDANCE FLOOR (ONE FACT, ONE HOME): "attend the call" is a calendar fact, never a
+  // debt — the zero-AI belt under the prompt's rule. Counted, never silent.
+  const attendance = clean.filter((c) => isAttendanceObligation(c.description));
+  if (attendance.length) {
+    console.log(`[commitments] attendance floor ${meta.source}:${meta.sourceId.slice(0, 8)} dropped=${attendance.length}`);
+    clean = clean.filter((c) => !isAttendanceObligation(c.description));
   }
 
   const { data: existing } = hasCandidates ? await client.from('commitments')
@@ -866,7 +873,7 @@ What counts as ONE commitment — be selective, prefer FEWER and higher-confiden
 - A clear, explicit obligation with an owner. NOT every idea, sub-step, suggestion, aside, or granular task mentioned in passing.
 - When in doubt, LEAVE IT OUT. A short list of real obligations is far better than a long list of maybes.
 
-STRICTLY EXCLUDE and return an empty array if the message is a newsletter, promotion, receipt, invoice, or automated notification. NEVER treat marketing/newsletter calls-to-action as commitments — e.g. "reply with Q2", "submit your story", "subscribe", "reply for early access", "share your feedback", editorial/publishing schedules, or any mass-email ask. Also exclude CONDITIONAL or OPTIONAL offers ("reply if you need…", "let me know if you'd like…", "feel free to…", "happy to … if useful") — these are invitations, not commitments. Ignore pleasantries, vague intentions ("let's catch up sometime"), and anything already done.
+STRICTLY EXCLUDE and return an empty array if the message is a newsletter, promotion, receipt, invoice, or automated notification. NEVER treat marketing/newsletter calls-to-action as commitments — e.g. "reply with Q2", "submit your story", "subscribe", "reply for early access", "share your feedback", editorial/publishing schedules, or any mass-email ask. Also exclude CONDITIONAL or OPTIONAL offers ("reply if you need…", "let me know if you'd like…", "feel free to…", "happy to … if useful") — these are invitations, not commitments. Ignore pleasantries, vague intentions ("let's catch up sometime"), and anything already done. A meeting or call BOTH parties will attend ("Attend the call on Oct 12", "Join the meeting") is a CALENDAR EVENT, not a commitment — leave it out (arranging, preparing for or delivering something at it can still be one).
 
 ${perspective}
 

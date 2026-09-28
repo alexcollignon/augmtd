@@ -21,6 +21,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { readPlan, upsertPlan } from '@/lib/store/item-plans';
 import { aiCall } from '@/lib/ai/call';
 import { dateStatedInText } from '@/lib/utils/user-time';
+import { deedScopedDate } from '@/lib/commitments/deed-date';
 import { topMessageOf } from '@/lib/inbox/top-message';
 import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import { openAgeDays } from '@/lib/commitments/expiry';
@@ -269,9 +270,12 @@ export async function judgeFulfillmentFromEvidence(
     } else if (v === 'promised') {
       // Re-anchor only on a code-verified future date an EMAIL ITSELF states (same grammar as
       // the expired_on law: the model supplies judgment, the text supplies the fact).
+      // W20 · THE DEED-SCOPED DATE (TIME TRUTH): the date must be stated in a sentence about THIS
+      // deed — a meeting date elsewhere in the message is no deadline for the thing owed.
       const nd = String(res.json?.new_due ?? '').slice(0, 10);
       const body = emails.map((c) => c.body).join('\n');
       out = /^\d{4}-\d{2}-\d{2}$/.test(nd) && nd > todayStr && dateStatedInText(body, nd)
+        && deedScopedDate(body, nd, obligation.description)
         ? { verdict: 'promised', newDue: nd, reason }
         : { verdict: 'promised', reason };
       // W19.A — the quote is the model's pick; the CODE verifies it stands in the email's own words.

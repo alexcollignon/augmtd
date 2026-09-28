@@ -75,15 +75,22 @@ console.log('\nS2 · …AND IS NEVER EMITTED — the producers');
   ok('S2.4 the loop attaches a set only WITH rows (an empty read is text for the model, not a card)',
     core.includes('else if (collectionHasRows(out.present)) collection = { id: crypto.randomUUID(), spec: out.present };'));
   const steer = src('app/api/items/steer/route.ts');
+  // ⟲ RE-POINTED W20 (A CLAIM RENDERS IN EVERY CHAT): the floor moved into the ONE card table both doors
+  // write through (lib/present/turn-card `normalizeTurnCards`, and `cardTurnOf` skips a zero-row set too).
+  const tc = src('lib/present/turn-card.ts');
   ok('S2.5 the steer door never writes a zero-row card turn (the floor under the core)',
-    /if \(turn\.collection && !collectionHasRows\(turn\.collection\.spec\)\) turn\.collection = null;\s*\n\s*if \(\(turn\.collection \|\| turn\.event \|\| turn\.change\)/.test(steer));
+    /normalizeTurnCards\(turn\);\s*\n\s*const card = cardTurnOf\(turn\);/.test(steer)
+    && tc.includes('if (turn.collection && !collectionHasRows(turn.collection.spec)) turn.collection = null;')
+    && tc.includes('if (!collectionHasRows(c.spec)) continue;'));
 }
 
 console.log('\nS3 · THE CARD TURN KEEPS THE ANSWER\'S WORDS');
 {
   const steer = src('app/api/items/steer/route.ts');
   ok('S3.1 a collection card turn stores the answer\'s prose (framing only when there is no prose — the fast path, where they are one)',
-    steer.includes('text: turn.say?.trim() ? answerTextOf(turn.say) : turn.collection.spec.framing,')
+    // ⟲ RE-POINTED W20: one card-turn write for every kind; the fallback (no prose) is the card's own framing.
+    steer.includes('text: turn.say?.trim() ? answerTextOf(turn.say) : answerTextOf(fallback),')
+    && steer.includes('const fallback = turn.collection?.spec.framing ?? turn.event?.spec.title ?? turn.change?.spec.summary ?? null;')
     && !/text: turn\.collection\.spec\.framing,/.test(steer));
   ok('S3.2 …with the answer\'s tagged refs, through the ONE refs mapping the answer row uses',
     steer.includes('...(answerRefsOf(turn.refs) ? { refs: answerRefsOf(turn.refs)! } : {}),')

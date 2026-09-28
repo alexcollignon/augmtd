@@ -112,6 +112,7 @@ function clipWords(text: string, max: number): string {
   return (w > max * 0.5 ? cut.slice(0, w) : cut).trim();
 }
 import { COMPONENT_KEYS, gateOf, renderComponentOptions, componentForWork, JUDGE_VERSION, WORK_VERBS, type WorkComponentKey, type WorkGate, type WorkVerb } from '@/lib/work/surface-registry';
+import { obligationAnchorOf } from '@/lib/work/obligation-anchor'; // W20.C · THE ONE ANCHOR
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // JUDGMENTS FOLLOW WHAT MATTERS (stabilization W9.3).
@@ -519,7 +520,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       }
       activityAt = String(it.last_activity_at || it.created_at || '');
       const tid = (sd.thread_id as string) || null;
-      evAfterISO = activityAt; evThreadId = tid;
+      evAfterISO = obligationAnchorOf('inbox', it); evThreadId = tid; // W20.C · THE ONE ANCHOR
       if (tid) {
         const { data: msgs } = await client.from('emails').select('is_from_user, received_at, from_address, from_name, to_addresses, cc_addresses, body')
           .eq('user_id', userId).eq('thread_id', tid);
@@ -579,7 +580,7 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
         const { getPersonEntities } = await import('@/lib/entities/people');
         whoEmail = await resolveCommitmentAddress(client, userId, c as { id: string; counterparty?: string | null; thread_id?: string | null; source?: string | null; source_id?: string | null }, await getPersonEntities(client, userId));
       } catch { whoEmail = null; }
-      evAfterISO = String(c.created_at || ''); evThreadId = (c.thread_id as string) || null;
+      evAfterISO = obligationAnchorOf('commitment', c); evThreadId = (c.thread_id as string) || null; // W20.C
       evFulfiller = String(c.direction) === 'awaiting' ? 'counterparty' : 'user';
       commitDirection = (c.direction as string | null) ?? null;
       activityAt = String(c.updated_at || c.created_at || '');

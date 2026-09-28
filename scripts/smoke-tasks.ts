@@ -213,8 +213,10 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
     check('5A.6 · room width + Tasks default tab + INTENT as one full-width band (the emptied two-column grid died with the next-move card — experience-spec seat cleanup)',
       er2.includes('max-w-[1000px]') && er2.includes("useState<'work'") &&
       er2.includes('md:grid-cols-2 gap-x-8') && !er2.includes('lg:grid-cols-[minmax(0,1fr)_280px]'));
-    check('5A.7 · Home today-strip from the existing schedule read (todayLine wired host→one-home since the Aug 6 extraction)',
-      hv2.includes('b!.schedule![0].time') && readFileSync('components/one/one-home.tsx', 'utf8').includes('todayLine &&'));
+    // ⟲ RE-POINTED W20: the lens header's today-strip retired with OneHomeHeader; the calm greeting's
+    // `next` (the day frame's first event) is the one today line.
+    check('5A.7 · the today line has ONE seat — the calm greeting (the old lens header and its strip are retired)',
+      !hv2.includes('OneHomeHeader') && !readFileSync('components/one/one-home.tsx', 'utf8').includes('todayLine') && hv2.includes('dayFrame.today.events[0].title'));
   }
 
   // ══ 5B — the Preparation Pass over tasks. ══

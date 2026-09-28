@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { correctStatedZone } from '@/lib/core/zoned-time';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { CAPABILITY_MAP } from './capability-map';
 import { buildItemContext, type ItemContext } from './item-context';
@@ -273,6 +274,17 @@ export async function groundInviteFromText(
     // Normalize to full ISO strings (so the client <input type=datetime-local> and the sender agree).
     if (startISO) startISO = new Date(startISO).toISOString();
     if (endISO) endISO = new Date(endISO).toISOString();
+    // TIME TRUTH (W20.B — lib/core/zoned-time.ts): "9.30 am CET" on an October date is the sender's
+    // REGIONAL time (Paris is on CEST then), never a fixed +1. Code re-resolves the model's instant
+    // through the zone's IANA region for that date; the end moves with the start.
+    if (startISO) {
+      const fixed = correctStatedZone(startISO, sourceText, timezone);
+      if (fixed && fixed !== startISO) {
+        const shift = Date.parse(fixed) - Date.parse(startISO);
+        startISO = fixed;
+        if (endISO) endISO = new Date(Date.parse(endISO) + shift).toISOString();
+      }
+    }
 
     // Attendees: intersect the model's picks with the KNOWN emails (hard guard against invention).
     const known = new Set(knownEmails.map((e) => e.toLowerCase()));
@@ -309,6 +321,10 @@ export async function groundInviteFromText(
       if (!statedSlot(sourceText, s, timezone)) continue;   // ← the evidence check
       let e = typeof a?.endISO === 'string' && !isNaN(new Date(a.endISO).getTime()) ? new Date(a.endISO).toISOString() : '';
       if (!e || new Date(e) <= new Date(s)) e = plus30(s);
+      // The same zone floor as the main slot (after the evidence check, which reads the words as said).
+      const zfix = correctStatedZone(s, sourceText, timezone);
+      if (zfix && zfix !== s) { e = new Date(Date.parse(e) + Date.parse(zfix) - Date.parse(s)).toISOString(); s = zfix; }
+      if (seen.has(s)) continue;
       seen.add(s);
       alternatives.push({ startISO: s, endISO: e, note: typeof a?.note === 'string' ? a.note.trim().slice(0, 60) : undefined });
     }

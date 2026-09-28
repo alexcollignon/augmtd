@@ -310,3 +310,18 @@ export function isOpenDuplicate(cand: DupRow, row: DupRow, near: (a: string, b: 
   }
   return false;
 }
+
+// ── THE ATTENDANCE FLOOR (W20 · ONE FACT, ONE HOME). A mutual meeting is a CALENDAR fact, never a
+// debt: "Attend the scheduled call — Oct 12" is no obligation either side owes the other — the event
+// (or the invite the item prepares) is its one home. The extractor is told so; this is the zero-AI
+// floor at the write, so a model that still emits one never lands a row. Conservative: only a title
+// that IS attendance (an attendance verb leading, a meeting noun in it, nothing chained after "and");
+// "Schedule a call", "Prepare for the meeting", "Join the call and present the deck" all survive. ──
+const ATTEND_LEAD = /^(?:please\s+)?(?:attend|join|be\s+(?:present\s+)?(?:at|on|in|for)|participate\s+in|take\s+part\s+in|show\s+up\s+(?:at|to|for)|dial\s+in(?:to)?|hop\s+on|jump\s+on|sit\s+in\s+on|assister\s+a|participer\s+a|rejoindre|participar\s+(?:em|n[ao]s?|en)|comparecer|asistir\s+a|teilnehmen|an\s+\S+\s+teilnehmen)\b/;
+const MEETING_NOUN = /\b(?:call|calls|meeting|meetings|session|sync|catch[-\s]?up|demo|webinar|workshop|interview|stand[-\s]?up|check[-\s]?in|conference|kick[-\s]?off|zoom|teams|appel|reunion|reuniao|chamada|videochamada|besprechung|termin|llamada)\b/;
+export function isAttendanceObligation(description: string | null | undefined): boolean {
+  const t = fold(String(description ?? '')).trim();
+  if (!t || !ATTEND_LEAD.test(t) || !MEETING_NOUN.test(t)) return false;
+  // A chained deed ("…and present the deck", "…& send the notes") is real work riding the meeting.
+  return !/\s(?:and|&|\+|et|e|und|y)\s+\p{L}/u.test(t.replace(/\s[—–-]\s.*$/, ''));
+}
