@@ -35,6 +35,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { deletePlans, readPlan, upsertPlan } from '@/lib/store/item-plans';
 import type { Evidence } from './match';
+import { heldMeetingSettles } from '@/lib/work/obligation-anchor'; // W20.C · the held-meeting rule
 
 export const LOOKS_DONE_KIND = 'looks_done' as const;
 
@@ -65,32 +66,48 @@ export type LooksDoneRecord = {
 export const looksDoneSigOf = (evidence: ReadonlyArray<{ type: string; id: string }>): string =>
   evidence.map((e) => `${e.type[0]}${e.id}`).sort().join(',');
 
+/** W20.C · what the gate knows of the obligation's clock: its ONE anchor (lib/work/obligation-anchor
+ *  `obligationAnchorOf`) and the future meeting date its ask names (`statedMeetingDateOf`). */
+export type LooksDoneOpts = { meetingShaped?: boolean; anchorISO?: string | null; meetingDate?: string | null };
+
+/** The piece a scope is judged over — an Evidence, or the machine's read-time held booking shaped
+ *  as one (lib/work/machine.ts — the SAME gate, no side door). */
+export type ScopedPiece = Pick<Evidence, 'type' | 'at' | 'by'> & { key?: Evidence['key']; deed?: Evidence['deed'] | string | null; status?: Evidence['status'] };
+
+/**
+ * THE ONE RELEVANCE GATE for "looks done" — pure. WHY this piece may raise the state (its scope), or
+ * null. W16: same conversation (the matcher's `object` key), or a HELD meeting with the counterparty
+ * (`person` key) for a MEETING-SHAPED obligation. W20.C: a held meeting counts only when it started
+ * at/after the obligation's anchor and — when the ask names a future meeting date — on/after that
+ * date (`heldMeetingSettles`): a Sep 21 meeting never settles an ask to meet on Oct 12.
+ */
+export function looksDoneScopeOf(e: ScopedPiece, opts: LooksDoneOpts = {}): LooksDoneScope | null {
+  const sameConversation = e.key === 'object';
+  const meetingHeld = (e.type === 'calendar' || e.type === 'transcript' || e.deed === 'meeting_held') && e.status === 'held';
+  if (meetingHeld) {
+    if (!heldMeetingSettles(e.at, opts.anchorISO ?? null, opts.meetingDate ?? null)) return null;
+    if (sameConversation) return 'same_conversation';
+    return e.key === 'person' && opts.meetingShaped === true ? 'held_meeting' : null;
+  }
+  const byUserSide = e.by === 'user' || e.by === 'teammate';
+  const delivery = byUserSide && (e.deed ? DELIVERY_DEEDS.has(String(e.deed)) : e.type === 'email');
+  return delivery && sameConversation ? 'same_conversation' : null;
+}
+
 /**
  * PURE — does the evidence make an open, user-owed item LOOK done although the judge did not close
- * it? Only for `unclear` / `promised`; only the USER'S SIDE (user · teammate); and (W16) only
- * evidence ON THE SAME CONVERSATION (the matcher's `object` key — the work's own thread / event /
- * file / house ref) — or a HELD meeting with the counterparty (`person` key) when the obligation is
- * MEETING-SHAPED (`opts.meetingShaped`). Mail with the same counterparty on another thread, and
- * entity membership, never qualify. Returns the newest qualifying piece (with its scope), or null.
+ * it? Only for `unclear` / `promised`; only the USER'S SIDE (user · teammate); and only evidence that
+ * passes THE ONE RELEVANCE GATE (`looksDoneScopeOf`). Mail with the same counterparty on another
+ * thread, and entity membership, never qualify. Returns the newest qualifying piece (with its scope),
+ * or null.
  */
 export function looksDoneEvidenceOf(
   evidence: readonly Evidence[], verdict: string, fulfiller: 'user' | 'counterparty',
-  opts: { meetingShaped?: boolean } = {},
+  opts: LooksDoneOpts = {},
 ): LooksDoneEvidence | null {
   if (fulfiller !== 'user') return null;
   if (verdict !== 'unclear' && verdict !== 'promised') return null;
-  const scopeOf = (e: Evidence): LooksDoneScope | null => {
-    const sameConversation = e.key === 'object';
-    const meetingHeld = (e.type === 'calendar' || e.type === 'transcript' || e.deed === 'meeting_held') && e.status === 'held';
-    if (meetingHeld) {
-      if (sameConversation) return 'same_conversation';
-      return e.key === 'person' && opts.meetingShaped === true ? 'held_meeting' : null;
-    }
-    const byUserSide = e.by === 'user' || e.by === 'teammate';
-    const delivery = byUserSide && (e.deed ? DELIVERY_DEEDS.has(e.deed) : e.type === 'email');
-    return delivery && sameConversation ? 'same_conversation' : null;
-  };
-  const ok = evidence.map((e) => ({ e, scope: scopeOf(e) }))
+  const ok = evidence.map((e) => ({ e, scope: looksDoneScopeOf(e, opts) }))
     .filter((x): x is { e: Evidence; scope: LooksDoneScope } => x.scope !== null)
     .sort((a, b) => b.e.at.localeCompare(a.e.at) || a.e.id.localeCompare(b.e.id));
   const top = ok[0];
@@ -136,8 +153,9 @@ export async function noteLooksDone(
   work: { kind: 'commitment' | 'inbox'; id: string; fulfiller: 'user' | 'counterparty' },
   evidence: readonly Evidence[], verdict: string,
   /** W16 · the obligation is meeting-shaped (the judge said `schedule`, or its words ask for a
-   *  meeting) — only then may a held meeting with the counterparty on another event raise the state. */
-  opts: { meetingShaped?: boolean } = {},
+   *  meeting) — only then may a held meeting with the counterparty on another event raise the state.
+   *  W20.C · its anchor + named meeting date bound which held meeting may. */
+  opts: LooksDoneOpts = {},
 ): Promise<void> {
   try {
     const key = `${work.kind}:${work.id}`;
@@ -171,8 +189,11 @@ export async function refuseLooksDone(client: SupabaseClient, userId: string, ki
     if (st.state !== 'looks_done' || !st.heldEventId) {
       if (!prev?.sig) return { error: 'nothing to refuse' };
     } else {
+      // W20.C · the refusal records the evidence AS IT IS: the held booking's own start and the scope
+      // the one gate gave it (a booking matched by the counterparty is `held_meeting` — never a
+      // fabricated same_conversation for an event on no conversation).
       const now = new Date().toISOString();
-      const base: LooksDoneRecord = prev ?? { sig: '', evidence: { type: 'calendar', id: st.heldEventId, at: now, by: 'user', name: null, title: '', deed: 'meeting_held', scope: 'same_conversation' }, verdict: 'held_booking', at: now };
+      const base: LooksDoneRecord = prev ?? { sig: '', evidence: { type: 'calendar', id: st.heldEventId, at: st.heldAt ?? now, by: 'user', name: null, title: st.heldTitle ?? '', deed: 'meeting_held', scope: st.heldScope ?? 'held_meeting' }, verdict: 'held_booking', at: now };
       const rb = await upsertPlan(client, userId, LOOKS_DONE_KIND, key, { ...base, refusedBookings: [...new Set([...(base.refusedBookings ?? []), st.heldEventId])], refusedAt: now } as never);
       return { error: rb.error?.message ?? null };
     }

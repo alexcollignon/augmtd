@@ -175,12 +175,15 @@ async function main() {
   }
   {
     const route = src('app/api/items/steer/route.ts');
-    const iAsk = route.indexOf('claim = await writeAskTurn('), iConv = route.indexOf('await converse(supabase, user.id, scope, text)'), iLive = route.indexOf('await questionStillLive(');
+    const iAsk = route.indexOf('claim = await writeAskTurn('), iConv = route.indexOf('await converse(supabase, user.id, scope, text')  /* ⟲ RE-POINTED W20: the door hands the core its progress callback when it streams */, iLive = route.indexOf('await questionStillLive(');
     ok('A6 the door writes (claims) the question BEFORE the reasoning and re-checks it is live AFTER', iAsk > 0 && iConv > iAsk && iLive > iConv);
     ok('A6 the answer is written only under the claim', /const claimed = claim === 'claimed'/.test(route)
       && /else if \(claimed && chatRoomKey && answerKey\) \{[\s\S]{0,400}writeAnswerTurn\(/.test(route));
     ok('A6 a decision pick and a preview never ride the chat lane', /const answerKey = !preview && !body\.decision\?\.option \? validAnswerKey\(body\.answerKey\) : null;/.test(route));
-    ok('A6 the card turn is written only by the claiming request (no double card on retry)', /\(turn\.collection \|\| turn\.event \|\| turn\.change\) && \(!answerKey \|\| claimed\)/.test(route));
+    // ⟲ RE-POINTED W20 (A CLAIM RENDERS IN EVERY CHAT): every card kind is the ONE table's (`cardTurnOf`),
+    // written under the same claim — the outcome is proven in tests/unit/chat-cards.test.ts (a duplicate
+    // delivery writes no second card), run by scripts/smoke-chat-cards.ts A1.
+    ok('A6 the card turn is written only by the claiming request (no double card on retry)', /const card = cardTurnOf\(turn\);\s*\n\s*if \(card && \(!answerKey \|\| claimed\)\)/.test(route));
     const rail = src('components/home/item-rail.tsx');
     const send = rail.slice(rail.indexOf('const send = async (raw: string'), rail.indexOf('// 📎 — the ingest funnel'));
     ok('A6 the rail posts the per-question key and writes neither half itself',

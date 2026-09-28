@@ -17,10 +17,15 @@
 // Once the event has PASSED (and it came after the obligation arose), the item is no longer
 // scheduled: the meeting was held, so it LOOKS DONE (W11.2 — confirm Done / Not yet).
 //
-// CLIENT-SAFE BY CONSTRUCTION (zero imports): the word's one home is here, the machine's STATE_WORDS
-// reads it, and client printers (the room header, the Home row) may compose it without dragging the
-// server graph (the client-safe module law).
+// CLIENT-SAFE BY CONSTRUCTION (one import — the pure, zero-import obligation-anchor leaf): the word's
+// one home is here, the machine's STATE_WORDS reads it, and client printers (the room header, the Home
+// row) may compose it without dragging the server graph (the client-safe module law).
+//
+// W20.C · THE HELD MEETING IS BOUNDED BY THE ONE ANCHOR: "after the obligation arose" is the CURRENT
+// ask's moment (lib/work/obligation-anchor), and a meeting before the date the ask names never holds
+// it ("You met on Sep 21" on an ask to meet Oct 12 — owner walk Sep 28).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
+import { heldMeetingSettles } from './obligation-anchor';
 
 /** THE WORD (a spec change lives here — lib/work/machine.ts STATE_WORDS.scheduled reads it). */
 export const SCHEDULED_WORD = 'scheduled';
@@ -91,7 +96,12 @@ export type BookingFacts = {
   names: string[];
   text: string;
   verdictWork: string | null;
+  /** W20.C · THE ONE ANCHOR — the moment the CURRENT ask arose (lib/work/obligation-anchor
+   *  `obligationAnchorOf`), never a caller's own field order. */
   afterISO: string | null;
+  /** W20.C · the FUTURE meeting date the ask names (`statedMeetingDateOf`), or absent/null. A held
+   *  meeting before it is not this obligation's deed. */
+  meetingDate?: string | null;
 };
 
 export type BookedEvent = { id: string; start: string; end: string | null; title: string; tz: string | null; allDay: boolean };
@@ -172,7 +182,8 @@ export function counterpartyInEvent(ev: CalendarRowLike, facts: Pick<BookingFact
 
 /**
  * THE MATCHER — pure. The soonest UPCOMING booking (not yet ended, inside the horizon) and the most
- * recent HELD one (ended inside the held window, after the obligation arose). Only for a
+ * recent HELD one (ended inside the held window, started at/after THE ONE ANCHOR and not before the
+ * meeting date the ask names — W20.C `heldMeetingSettles`). Only for a
  * meeting-shaped obligation with a counterparty key.
  */
 export function bookedEventFor(
@@ -185,7 +196,6 @@ export function bookedEventFor(
   if (!Number.isFinite(now)) return none;
   const horizon = now + SCHEDULED_HORIZON_DAYS * 86_400_000;
   const heldFloor = now - HELD_WINDOW_DAYS * 86_400_000;
-  const after = facts.afterISO ? Date.parse(facts.afterISO) : NaN;
   let upcoming: BookedEvent | null = null;
   let held: BookedEvent | null = null;
   for (const ev of events) {
@@ -198,7 +208,7 @@ export function bookedEventFor(
     const shaped: BookedEvent = { id: String(ev.id), start: String(ev.start_time), end: ev.end_time ?? null, title: String(ev.title ?? ''), tz: ev.timezone ?? null, allDay: !!ev.is_all_day };
     if (end >= now) {
       if (s <= horizon && (!upcoming || s < Date.parse(upcoming.start))) upcoming = shaped;
-    } else if (end >= heldFloor && (!Number.isFinite(after) || s >= after)) {
+    } else if (end >= heldFloor && heldMeetingSettles(String(ev.start_time), facts.afterISO, facts.meetingDate ?? null)) {
       if (!held || s > Date.parse(held.start)) held = shaped;
     }
   }

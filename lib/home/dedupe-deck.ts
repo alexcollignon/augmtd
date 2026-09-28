@@ -41,7 +41,8 @@ type CommitmentRow = {
 // is therefore structural: a YOU_OWE commitment tied to a live actionable row's thread/source IS
 // that row's obligation — one thread, one surface; the reply row covers the thread's asks (the
 // checklist idiom holds its parts). AWAITING commitments keep a text floor (a follow-up you're
-// owed is its own work even on a shared thread). No structural tie → near-identical wording only.
+// owed is its own work even on a shared thread) — EXCEPT one extracted from the row's own message,
+// which folds unconditionally (W20). No structural tie → near-identical wording only.
 const AWAITING_STRUCTURAL_TEXT_FLOOR = 0.45;
 const PURE_TEXT_FLOOR = 0.65;
 
@@ -51,10 +52,16 @@ export function isDupOfVisible(c: CommitmentRow, visible: VisibleObligation[]): 
   const awaiting = c.direction === 'awaiting';
   for (const v of visible) {
     if (!v.title) continue;
+    const sameMessage = !!c.source_id && c.source_id === v.sourceId;
     const structural =
-      (!!c.source_id && (c.source_id === v.sourceId || c.source_id === v.meetingId)) ||
+      sameMessage || (!!c.source_id && c.source_id === v.meetingId) ||
       (!!c.thread_id && c.thread_id === v.threadId);
     if (structural && !awaiting) return true;
+    // ONE FACT, ONE HOME (W20): an awaiting commitment extracted from the VERY MESSAGE an open row
+    // stands on is that row's fact re-worded ("Attend the scheduled call — Oct 12" beside "Confirm
+    // implementation call — Oct 12") — it folds unconditionally. The text floor below stays for a
+    // follow-up owed on a SHARED THREAD from another message, which can be its own work.
+    if (sameMessage && awaiting) return true;
     if (structural && awaiting && isNearDuplicate(desc, v.title, AWAITING_STRUCTURAL_TEXT_FLOOR)) return true;
     if (!structural && isNearDuplicate(desc, v.title, PURE_TEXT_FLOOR)) return true;
   }

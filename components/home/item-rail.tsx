@@ -28,7 +28,13 @@ import type { ThreadCard, ThreadItem } from '@/components/thread';
 // W16 · THE ITEM PAGE IS A FEW KIT WIDGETS — the ONE composition every item door renders through.
 import { composeItemPage, itemPageItems, type ItemArtifactKind, type ItemArtifactsMounted } from '@/components/thread/item-page';
 // W17 · NO WAITING — the ONE placeholder for a widget this open is still making.
-import { PreparingSlot } from '@/components/thread/preparing-slot';
+import { PreparingSlot, PreparingShape } from '@/components/thread/preparing-slot';
+import { THREAD_CARD_W } from '@/components/thread/kit-width';
+// W20.B · A CLAIM RENDERS IN EVERY CHAT — the ONE card table/hydrator, the ONE renderer and the ONE
+// stream reader the Home chat uses.
+import { chatCardsOfComponent, chatCardsOfPayload, hasChatCards, widgetOfProgress, type ChatCards } from '@/lib/present/turn-card';
+import { chatCardNodes } from '@/components/home/chat-cards';
+import { isConverseStream, readConverseStream } from '@/components/home/ask-stream-read';
 import { useCosSeat } from '@/hooks/use-cos-seat';
 import { moveTargetId, mergedArtifactKey, stageOfArtifactKey } from '@/lib/room/presentation';
 // THE DECISION'S ONE HOST (W3-C, Sep 22) — the kit's `decision` card with the steer door behind
@@ -60,15 +66,10 @@ import { WorkflowDraftCard, type WorkflowDraft } from '@/components/workflows/wo
 import InputCard from '@/components/home/input-card';
 import ApprovalCard from '@/components/home/approval-card';
 // THE PRESENTED OBJECT IS THE SAME CARD EVERYWHERE (W4-C, Sep 22 — docs/component-map.md §6): the
-// room mounts the SAME two hosts the Home chat and the coworker DM mount. A room that reads the
-// user's own objects shows them; it does not describe them in prose a second time.
-import CollectionCard, { type CollectionPointer } from '@/components/home/collection-card';
-import EventCard, { type EventPointer } from '@/components/home/event-card';
-import { isCollectionKind, isCollectionSpec, type CollectionSpec } from '@/lib/present/collection';
-import { isEventSpec, type EventProposal, type EventSpec } from '@/lib/present/event';
-// THE CONFIRM CARD (stabilization W0.3b): the same ONE host the Home chat mounts.
-import ChangeCard, { type ChangePointer } from '@/components/home/change-card';
-import { isChangeSpec, type ChangeSpec } from '@/lib/present/change';
+// room mounts the SAME hosts the Home chat and the coworker DM mount — through the ONE chat-card
+// renderer (components/home/chat-cards.tsx, W20.B). The event host is also the source widget here.
+import EventCard from '@/components/home/event-card';
+import type { EventProposal } from '@/lib/present/event';
 import { useLiveRefresh } from '@/components/workflows/use-live-refresh';
 import { announceDeed, DEED_EVENT } from '@/lib/room/deed-echo';
 // HISTORY LEAVES THE STREAM — the record's seat is the ONE drawer, at every door.
@@ -173,19 +174,13 @@ type Turn =
       /** THE APPROVAL ASK (production arc step 2): a run parked at its approval step — Approve
        *  resumes it (the guarded send fires through the normal path), Hold back ends it. */
       approval?: { runId: string; name: string; instruction?: string; preview?: string; decided?: 'approved' | 'rejected' };
-      /** THE COLLECTION CARD IN A ROOM (W4-C, Sep 22): a set of the user's own objects the room's
-       *  converse door just read. A LIVE turn carries the served `spec`; a REHYDRATED one carries
-       *  the POINTER only and the host re-reads through `GET /api/collections` — the rows are
-       *  exactly what a frozen copy would lie about. */
-      collection?: { collectionId: string; spec?: CollectionSpec; pointer?: CollectionPointer };
-      /** THE EVENT CARD IN A ROOM (W4-C): one meeting with the verbs ITS state permits. Same two
-       *  shapes, and the same reason, sharper: a stored verb ladder goes stale the moment the
-       *  organizer moves the meeting. */
-      event?: { eventId: string; spec?: EventSpec; pointer?: EventPointer };
-      /** THE CONFIRM CARD IN A ROOM (stabilization W0.3b): a prepared state change awaiting the
-       *  click. A LIVE turn carries the served `spec`; a REHYDRATED one the POINTER, re-read
-       *  through `GET /api/changes/[id]` — a change applied elsewhere never re-offers Apply. */
-      change?: { changeId: string; spec?: ChangeSpec; pointer?: ChangePointer } };
+      /** THE CHAT'S CARDS IN A ROOM (W4-C → W20.B — lib/present/turn-card.ts): every card the one
+       *  conversation core returns — invite · email draft · bulk deed · collection · event · change —
+       *  in the SAME shape the Home chat carries, painted by the SAME renderer
+       *  (components/home/chat-cards.tsx). A LIVE turn carries the served spec/payload; a REHYDRATED
+       *  one carries the POINTER and each card's host re-reads its truth (a frozen copy would offer a
+       *  door that stopped being true). */
+      cards?: ChatCards };
 
 // THE ROOM (P7c-c1 → one-room R1): the conversation is PER-DEAL, not per-item — navigating between
 // a deal's artifacts keeps the chat. The module store is now only the LIVE RENDER CACHE; the durable
@@ -319,38 +314,13 @@ function mapServerTurns(rows: ServerTurnRow[]): Turn[] {
       turn.approval = { runId: String(st.runId), name: String(st.name ?? 'this run'), instruction: st.instruction || undefined, preview: st.preview || undefined };
       turn.turnId = t.id;
     }
-    // THE COLLECTION CARD comes back as a POINTER and nothing else (W4-C): the stored component
-    // carries `{kind, params}` and the host re-derives the rows through the ONE re-read door. A
-    // set of live objects is exactly the thing a frozen copy would lie about.
-    if (turn.role === 'system' && t.component?.key === 'collection_card' && t.component.refId
-      && isCollectionKind(t.component.state?.kind)) {
-      turn.collection = {
-        collectionId: String(t.component.refId),
-        pointer: {
-          kind: t.component.state.kind as CollectionSpec['kind'],
-          ...(t.component.state.params && typeof t.component.state.params === 'object'
-            ? { params: t.component.state.params } : {}),
-        },
-      };
-    }
-    // …and THE EVENT CARD, for the sharper version of the same reason: the verbs a reloaded card
-    // offers are the ones the event permits NOW, never the ones it permitted when it was spoken.
-    if (turn.role === 'system' && t.component?.key === 'event_card'
-      && (typeof t.component.refId === 'string' || typeof t.component.state?.eventId === 'string')) {
-      const evId = String(t.component.refId ?? t.component.state?.eventId);
-      turn.event = {
-        eventId: evId,
-        pointer: {
-          eventId: evId,
-          ...(t.component.state?.proposal && typeof t.component.state.proposal === 'object'
-            ? { proposal: t.component.state.proposal } : {}),
-        },
-      };
-    }
-    // …and THE CONFIRM CARD, as a POINTER and nothing else: the change's id, re-read through its
-    // own door on every open, so a settled change never comes back offering Apply.
-    if (turn.role === 'system' && t.component?.key === 'change_card' && typeof t.component.refId === 'string') {
-      turn.change = { changeId: t.component.refId, pointer: { changeId: t.component.refId } };
+    // THE CHAT'S CARDS come back through THE ONE HYDRATOR (W20.B — lib/present/turn-card.ts, the Home
+    // chat's own): invite · email draft · bulk deed · collection · event · change, as pointers whose
+    // hosts re-read the truth on every open (a settled change never re-offers Apply, a moved meeting
+    // never offers a stale verb, a sent invite never offers Send).
+    if (turn.role === 'system' && t.component) {
+      const cards = chatCardsOfComponent(t.component as { key?: string; refId?: string; state?: Record<string, unknown> | null });
+      if (hasChatCards(cards)) turn.cards = cards;
     }
     if (turn.role === 'system' && t.component?.key === 'standing_spec' && t.component.state) {
       const st = t.component.state as unknown as { name?: string; deliverable?: string; cadenceLabel?: string; ownerName?: string; firstRun?: string | null; status?: string; workflowId?: string | null };
@@ -719,6 +689,9 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   // (History folds — the room reads ONE thing. The expand/collapse state now lives in the kit's
   //  timeline, which owns the `fold` divider; the room still decides WHAT is history.)
   const [busy, setBusy] = useState(false);
+  // THE WORK SHOWS (W20.B): the live label of what the core is doing right now (THE ONE STREAM's
+  // `progress` frame) — spoken by the in-flight line; null = the generic line.
+  const [stage, setStage] = useState<string | null>(null);
   // THE CTA'S DESTINATION IS A REAL ELEMENT (Sep 14): the card mounts inside the kit's timeline, so
   // the door needs one stable handle to scroll to. The id is derived from the artifact key (ONE
   // producer, used by the wrapper and by the door) and the brief mark is a one-shot ring — it says
@@ -902,16 +875,24 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     else setTurns((prev) => [...prev, { role: 'user', text: t, reqId }]);
     setBusy(true);
     try {
+      // THE WORK SHOWS (W20.B): the door answers over THE ONE STREAM — the core's per-tool labels
+      // ("Putting the invite together…") land in the in-flight line while it works; the `done` frame is
+      // exactly the JSON payload. A non-stream response (an error) still reads as JSON.
       const res = await fetch('/api/items/steer', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind, id, text: t, answerKey: reqId,
+        body: JSON.stringify({ kind, id, text: t, answerKey: reqId, stream: true,
           ...(reask?.turnId ? { reaskTurnId: reask.turnId, ...(reask.reqId ? { reaskKey: reask.reqId } : {}) } : {}) }),
       });
-      const d = await res.json().catch(() => ({}));
+      const d: Record<string, any> = isConverseStream(res) // eslint-disable-line @typescript-eslint/no-explicit-any
+        ? ((await readConverseStream(res, (ev) => {
+            if (ev.type === 'progress' && typeof ev.label === 'string' && !stale(gen)) setStage(ev.label);
+          })) ?? { error: "That didn't go through — try again in a moment." })
+        : await res.json().catch(() => ({}));
       // THE RESET WINS (Sep 15): a "New chat" between the ask and its answer means this answer
       // belongs to a conversation that no longer exists. Render nothing, keep nothing, sweep.
       if (stale(gen)) { dropStale(); return; }
-      if (!res.ok) {
+      // A stream that ended in an error frame (or dropped) is a failure too, whatever its status line said.
+      if (!res.ok || (d.error && !d.ok)) {
         // A FAILURE IS NOT HISTORY (owner walk, Sep 14 — a canned utterance must never strand as a
         // red bubble): the apology RENDERS, it is never written to the room's durable record, so a
         // reload shows the room as it stands rather than a permanent monument to one bad minute.
@@ -949,6 +930,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
         const artRef = d.artifact?.id && d.artifact?.threadId
           ? [{ label: `📄 ${String(d.artifact.title ?? 'Document').slice(0, 60)}`, href: `/home?chat=worker:${encodeURIComponent(String(d.artifact.threadId))}:${encodeURIComponent(String(d.delegated?.agentId ?? ''))}` }]
           : [];
+        const liveCards = chatCardsOfPayload(d);
         setTurns((prev) => [...prev, {
           role: 'system',
           // THE ANSWER READS AS THE HOME ANSWER (W19.B): the prose keeps its grounding tags and the
@@ -959,23 +941,16 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
           refs: [...artRef, ...(Array.isArray(d.refs) ? d.refs.map((r: { label?: string; href?: string | null; tag?: string }) => ({ label: String(r.label ?? ''), href: r.href ?? null, ...(typeof r.tag === 'string' && r.tag ? { tag: r.tag } : {}) })) : [])],
           files: Array.isArray(d.files) ? d.files : undefined,
           ...(d.workflowDraft ? { workflowDraft: d.workflowDraft as WorkflowDraft } : {}),
-          // THE PRESENTED OBJECT PAINTS AT ONCE (W4-C): the served spec rides the answer, so the
-          // live card needs no round-trip. The DURABLE copy is the component turn the steer door
-          // wrote server-side — the next open re-reads it as a pointer.
-          ...(d.collection && isCollectionSpec(d.collection.spec)
-            ? { collection: { collectionId: String(d.collection.id), spec: d.collection.spec as CollectionSpec } } : {}),
-          ...(d.event && isEventSpec(d.event.spec)
-            ? { event: { eventId: String(d.event.spec.id), spec: d.event.spec as EventSpec } } : {}),
-          // THE CONFIRM CARD paints at once from the served spec; the durable copy is the
-          // component turn the steer door wrote, re-read as a pointer on the next open.
-          ...(d.change && isChangeSpec(d.change.spec)
-            ? { change: { changeId: String(d.change.spec.id), spec: d.change.spec as ChangeSpec } } : {}),
+          // THE CARDS PAINT AT ONCE (W4-C → W20.B): every served card rides the answer through the ONE
+          // payload reader, so the live card needs no round-trip. The DURABLE copy is the component
+          // turn the steer door wrote server-side — the next open re-reads it as a pointer.
+          ...(hasChatCards(liveCards) ? { cards: liveCards } : {}),
         }]);
       }
     } catch {
       // Same law as the !ok branch above: render it, never record it.
       setTurns((prev) => [...prev, { role: 'system', text: "That didn't go through — try again in a moment." }]);
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setStage(null); }
   };
 
   // 📎 — the ingest funnel: the file lands in the per-item deliverable pool (ONE write, every reader
@@ -1532,7 +1507,8 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     // A TAGGED ref is an inline source chip inside the answer's own prose (the ONE answer renderer);
     // only untagged refs (a produced document's chip, a legacy row) keep the quiet link row here.
     const shownRefs = (t.refs ?? []).filter((r) => !r.tag && (inRoom || !r.href?.includes(`/item/${id}`)));
-    const has = !!(t.checklist?.length || t.workflowDraft || t.standingSpec || t.approval || t.collection || t.event || t.change || t.actions?.length || shownRefs.length || t.files?.length);
+    const cardNodes = chatCardNodes(t.cards, `turn-${t.turnId ?? t.dkey ?? 'live'}`, { onAsk: (text) => setComposerPrefill(text), onSuggestAnother: () => setComposerPrefill('How about ') });
+    const has = !!(t.checklist?.length || t.workflowDraft || t.standingSpec || t.approval || cardNodes.length || t.actions?.length || shownRefs.length || t.files?.length);
     if (!has) return null;
     return (
       <div className="min-w-0 space-y-1.5 text-[13px] text-neutral-800 leading-relaxed">
@@ -1541,41 +1517,12 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
         {t.checklist && t.checklist.length > 0 && askCard({ ...t, text: '' }, `ask-${t.turnId ?? t.dkey ?? 'x'}`)}
         {/* THE ONE CREATION CARD: a drafted workflow reviews inline; Confirm fires the one door. */}
         {t.workflowDraft && <div className="mt-1.5"><WorkflowDraftCard draft={t.workflowDraft} /></div>}
-        {/* THE COLLECTION — the SAME one card for every set of the user's own objects, on every
-            surface. A live turn hands over the served spec; a rehydrated one hands over the
-            pointer and the host re-reads. "Ask about it" speaks through THIS room's composer
-            (clicks are words — the utterance lands as the reader's own turn). */}
-        {t.collection && (
-          <div className="mt-1.5">
-            <CollectionCard
-              {...(t.collection.spec ? { spec: t.collection.spec } : {})}
-              {...(t.collection.pointer ? { pointer: t.collection.pointer } : {})}
-              onAsk={(text) => setComposerPrefill(text)}
-            />
-          </div>
-        )}
-        {/* THE EVENT — ONE card for one calendar event, with exactly the verbs its own state
-            permits. Every confirm goes through the ONE deeds door; nothing here has fired. */}
-        {t.event && (
-          <div className="mt-1.5">
-            <EventCard
-              {...(t.event.spec
-                ? { spec: t.event.spec, ...(t.event.pointer ? { pointer: t.event.pointer } : {}) }
-                : { pointer: t.event.pointer ?? { eventId: t.event.eventId } })}
-            />
-          </div>
-        )}
-        {/* THE CONFIRM CARD — ONE host for a prepared state change (a standing instruction, a
-            remembered fact, a run). Apply and Dismiss go through the change's own doors. */}
-        {t.change && (
-          <div className="mt-1.5">
-            <ChangeCard
-              {...(t.change.spec
-                ? { spec: t.change.spec, ...(t.change.pointer ? { pointer: t.change.pointer } : {}) }
-                : { pointer: t.change.pointer ?? { changeId: t.change.changeId } })}
-            />
-          </div>
-        )}
+        {/* THE CHAT'S CARDS — ONE RENDERER shared with the Home chat (components/home/chat-cards.tsx,
+            W20.B): the email draft, the invite, the bulk deed, the collection, the event and the
+            confirm card, each the SAME kit host every surface mounts; every deed is its own click
+            through its own door. "Ask about it" / "suggest another time" speak through THIS room's
+            composer (clicks are words). */}
+        {cardNodes.map((c) => <div key={c.id} className="mt-1.5">{c.node}</div>)}
         {/* THE SPEC CARD: the standing-task proposal — explicit fields, ONE Confirm. Saying prepared
             it; only this click creates anything. Confirmed → the card flips in place as the record. */}
         {t.standingSpec && (
@@ -1720,6 +1667,11 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
       ask: view.anchor?.ask ?? null, title: null, origin: view.anchor?.origin ?? null,
       source: sourceEvent ? 'event' : objectCard ? 'source' : null,
       slot: itemSettled ? null : slot ?? null,
+      // W20.B · THE SCHEDULE OFFER LEADS: on an email door a live invite beside a non-schedule verdict
+      // exists only as the counterparty's own stated meeting time (the verdict's hygiene strips any
+      // other — lib/work/apply-verdict), so when one is mounted the newest ask is scheduling: the
+      // invite is the ONE widget (the chase/reply stays one message away in the conversation).
+      lead: kind === 'email' && mounted.invite ? 'invite' : null,
     });
     const own = plan.artifact && !['ask', 'decision', 'gate', 'input_gate', 'booked_event'].includes(plan.artifact) ? byArtifact(plan.artifact) : null;
     return { plan, card: own };
@@ -1929,7 +1881,20 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   });
 
   // HEAVY WORK IN FLIGHT — the avatar carries the state; one quiet line, no spinner in the stream.
-  if (busy) items.push({ type: 'working_line', id: 'working', actorId: seatId, actorName: seatName, line: 'Working on it…' });
+  // THE WORK SHOWS (W20.B): the line speaks THE ONE STREAM's live label ("Putting the invite
+  // together…"); when that label names a card being made, the card's own shape RESERVES its seat at the
+  // stream's end (the W17 primitive, words already spoken by the line) and the answer's card lands there.
+  if (busy) {
+    items.push({ type: 'working_line', id: 'working', actorId: seatId, actorName: seatName, line: stage ?? 'Working on it…' });
+    const makingWidget = widgetOfProgress(stage);
+    if (makingWidget) {
+      items.push({
+        type: 'actor_bubble', id: 'working-slot', actorId: seatId, actorName: seatName,
+        ...(seatLabel ? { actorRoleLabel: seatLabel } : {}),
+        cards: [{ kind: 'custom', id: `working-slot-${makingWidget}`, node: <PreparingShape shape={makingWidget} className={`${THREAD_CARD_W} overflow-hidden rounded-xl border border-neutral-200/80 bg-white`} /> }],
+      });
+    }
+  }
 
   // THE ONE COMPOSER (the rail fold): the SAME WorkerMentionInput as the Home floor and the worker
   // surfaces — @ picks Coworkers/Tasks/Documents, attach feeds the room's INGEST FUNNEL, Enter

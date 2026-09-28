@@ -297,7 +297,9 @@
     "lib/room/brief.ts",
     "lib/context/intake-memory.ts",
     "lib/work/apply-verdict.ts",
-    "lib/room/grounding.ts"
+    "lib/room/grounding.ts",
+    "lib/home/dedupe-deck.ts",
+    "lib/commitments/extraction-truth.ts"
    ],
    "gates": [
     {
@@ -330,6 +332,16 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W19.A THE SUMMARY IS NOT A SECOND TRUTH: the stored entity synthesis is served through one floor (lib/entities/state serveEntityState) — a claim naming a CLOSED ledger row as owed/blocking is dropped (acronym-aware, settled-distinctive tokens), open work is never silenced; the write path runs the same floor + the time belt and stamps composedAt; the one grounding leads with the ledger (settled rows → live board → the world's record) and the synthesis follows, so a head-clip keeps the rows; a state older than its ledger is marked for its one sig-gated recompose; an inverse gate requires EVERY reader of the stored prose to floor it (floored-only, no declared escape); a floored row drops the settled claim from summary · blocking · stage · whoOwes · next move"
+    },
+    {
+     "suite": "smoke-timeline-truth",
+     "ids": [
+      "D1-D5",
+      "E1-E4"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W20.A (uncommitted, owner walk Sep 28) ONE FACT, ONE HOME ON THE TIMELINE: an awaiting commitment extracted from the SAME message as an open visible row folds into it unconditionally (lib/home/dedupe-deck isDupOfVisible — the one fold the Home brief and the Timeline spine share); one from another message on the thread keeps the text floor. A mutual meeting is a calendar fact, never a debt: the extractor prompt excludes \"attend the call\" and the write door drops such rows zero-AI (lib/commitments/extraction-truth isAttendanceObligation), counted. The historical rows are listed by scripts/repair-w20-duplicates.ts (dry-run; --apply owner-gated)"
     }
    ],
    "version_key": null,
@@ -364,7 +376,8 @@
     "lib/inbox/reactivate-on-reply.ts",
     "lib/commitments/deliverable-ask.ts",
     "lib/evidence/relevance.ts",
-    "lib/inbox/top-message.ts"
+    "lib/inbox/top-message.ts",
+    "lib/work/obligation-anchor.ts"
    ],
    "gates": [
     {
@@ -420,11 +433,23 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W19.A A REPLY IS NOT A DELIVERY + EVIDENCE IS ABOUT ITS OBJECT: the REAL reply resolver over an in-memory double with a stubbed judge — a promising reply keeps a deliverable item open and records a you-owe commitment through writeCommitments (stated date, verified quote, idempotent); a delivering reply closes; an answer-only item closes on the reply with no judgment; a read path never judges; ≤3 fresh judgments per call, the rest reported; a counterparty-owed commitment's person-keyed evidence excludes a message about a different matter (same conversation always stands); the dry-run repair's census filter; the ONE quoted-chain parser (lib/inbox/top-message) cuts the French Outlook header block, and relevance reads own words through it only"
+    },
+    {
+     "suite": "smoke-obligation-anchor",
+     "ids": [
+      "A1-A10",
+      "B1-B4",
+      "C1-C6",
+      "D1-D2"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W20.C (uncommitted, owner walk Sep 28) ONE ANCHOR + NO SIDE DOOR: \"after the obligation\" is the moment the CURRENT ask arose, read through lib/work/obligation-anchor obligationAnchorOf at every anchoring site (machine, nominator, settle door, sweep, judge, room grounding — inbox: the latest of the current message's received_at and last_activity_at, created_at only as the no-clock fallback; commitment: created_at); the machine's read-time held booking passes the same relevance gate as all looks-done evidence (lib/evidence/looks-done looksDoneScopeOf via gateBooked): a held meeting counts only with the counterparty, at/after the anchor and — when the ask names a future meeting date — on/after it. The REAL machine on the owner-walk shape (born Sep 16, re-pointed Sep 27, an Oct 12 ask, a Sep 21 meeting) does not look done; the Oct 12 meeting does. \"Keep open\" records the held booking's true scope (held_meeting) and start. Census: scripts/census-held-booking.ts (read-only)"
     }
    ],
    "version_key": "FULFILLMENT_LAW_VERSION",
    "status": "holding-uncommitted",
-   "fixed_by": "W3.1, W19.A",
+   "fixed_by": "W3.1, W19.A, W20.C",
    "broken_by": null,
    "collides_with": [
     {
@@ -434,9 +459,13 @@
     {
      "law": "fulfillment-law",
      "precedence": "evidence NOMINATES, the fulfillment judge DECIDES; unclear/failure changes nothing"
+    },
+    {
+     "law": "time-truth",
+     "precedence": "a held meeting before the date the ask names is never that ask's deed — when the stated date is ambiguous the looks-done rung stays down (the fulfillment judge still reads the meeting); a missed 'looks done' is vague, a false one is wrong"
     }
    ],
-   "note": "W19.A (owner walk Sep 28): the reply resolver closed a DELIVERABLE inbox ask (send the RIB) on a reply that only promised it, and nothing tracked the promise; a counterparty-owed commitment's verdict read an unrelated same-person mail. Fixed by W19.A (uncommitted): deliverable asks close only on a judged delivery (one judge — lib/commitments/fulfillment), a promise is recorded as a you-owe commitment, person-keyed evidence must share the work's matter. The historical closes are listed by scripts/repair-reply-closed-deliverables.ts (dry-run; --apply owner-gated)."
+   "note": "W19.A (owner walk Sep 28): the reply resolver closed a DELIVERABLE inbox ask (send the RIB) on a reply that only promised it, and nothing tracked the promise; a counterparty-owed commitment's verdict read an unrelated same-person mail. Fixed by W19.A (uncommitted): deliverable asks close only on a judged delivery (one judge — lib/commitments/fulfillment), a promise is recorded as a you-owe commitment, person-keyed evidence must share the work's matter. The historical closes are listed by scripts/repair-reply-closed-deliverables.ts (dry-run; --apply owner-gated). W20.C (owner walk Sep 28): 'You met on Sep 21 · Mark done' on an item about an Oct 12 call — the machine's held-booking rung anchored on the row's birth (created_at) and bypassed the looks-done relevance gate; the refusal stamped a fabricated same_conversation scope. Fixed by W20.C (uncommitted): one anchor helper, the held-meeting rule inside looksDoneScopeOf, a truthful refusal. Read-time only; scripts/census-held-booking.ts lists what the new rules take down (dry-run, read-only)."
   },
   {
    "id": "a-claim-renders",
@@ -469,7 +498,13 @@
     "lib/room/ask-lifecycle.ts",
     "lib/converse/index.ts",
     "components/thread/thread-cards.tsx",
-    "app/api/items/steer/route.ts"
+    "app/api/items/steer/route.ts",
+    "lib/present/turn-card.ts",
+    "components/home/chat-cards.tsx",
+    "app/api/home/ask/route.ts",
+    "components/home/item-rail.tsx",
+    "components/home/home-ask.tsx",
+    "lib/present/converse-stream.ts"
    ],
    "gates": [
     {
@@ -613,6 +648,19 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W19.2a AN EMPTY SET IS NOT A CARD + A CATCH-UP GETS A REAL ANSWER (owner walk Sep 28: a room catch-up was served \"Nothing recorded in the last 7 days.\" over an empty card saying it again): a zero-row collection renders nothing in the kit (every host) and is never emitted — the contract carries no empty line, the core's fast path serves a set only with rows (else falls through to the answer path), the loop attaches only a set with rows, the steer door never writes a zero-row card turn and stores the ANSWER's prose + tagged refs on a card turn (never the framing in its place); the router judges `synthesis` and synthesisPrecedence drops a named read for a catch-up/status/what-changed/multi-part question (never a deed, a hand-off or a literal listing), which a project room answers through the Home answer path pinned to the room. tests/unit/answer-shape runs the ONE core end to end with the model stubbed"
+    },
+    {
+     "suite": "smoke-chat-cards",
+     "ids": [
+      "A1-A2",
+      "B1-B6",
+      "C1-C4",
+      "D1-D3",
+      "E1-E5"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W20.B (uncommitted) A CLAIM RENDERS IN EVERY CHAT (owner walk Sep 28: \"can you send an invite for it?\" on an item page → the core prepared the invite and said \"Here's the invite…\" and no card rendered): both chat doors write + forward every card the core returns (invite · bulk deed · email draft · collection · event · change) through ONE table (lib/present/turn-card cardTurnOf/cardPayloadOf), exactly once under the W19.B claim; both chat surfaces hydrate and render them through ONE hydrator + ONE renderer (components/home/chat-cards.tsx); the inverse gate classifies every ConverseTurn field (card or known non-card surface) and round-trips each card kind server → client → rendered; an answer claiming a produced artifact with no card, no surface and no inline body is re-worded at the ONE answer door (claimFloorSay); the item door streams THE ONE STREAM and the rail's in-flight line speaks the live tool label and reserves the card's shape. tests/unit/chat-cards runs both doors over an in-memory DB with the core stubbed"
     }
    ],
    "version_key": null,
@@ -852,7 +900,10 @@
     "app/(main)/@modal/(.)item/[id]/loading.tsx",
     "lib/room/serve-truth.ts",
     "lib/room/room-update.ts",
-    "components/one/chat-address.ts"
+    "components/one/chat-address.ts",
+    "lib/work-items/model.ts",
+    "lib/work-items/gantt-date.ts",
+    "components/entities/gantt-chart.tsx"
    ],
    "gates": [
     {
@@ -955,6 +1006,17 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W19.2b (uncommitted, owner walk Sep 28) AN UPDATE IS A NEW MESSAGE, NEVER A REWRITE: a room's opening the reader has met is pinned for the session (lib/room/room-update — read marker ≥ composition) and every serve paints it word for word; when the room's FACTS move (the sig — the chat tail is no longer in it, so a chat turn never recomposes) the ONE composition also states the delta, posted once below as the seat's own chat turn (at most one pending: an unseen update is superseded in place; empty, restating, duplicate and version-only updates post nothing; the update passes the brief's nets incl. TIME TRUTH); New chat releases the pin (a fresh session gets a fresh opening) and Resume / Move-out / Delete move the updates with their chat. ASK FOR WHAT ONLY THE USER HAS (lib/room/cta-law USER_INPUT_RULE + userOnlyInputOf): an offer needing the user's bank details / credential / document / signature / decision — or a live ask's required input — asks for it, at composition, at the render (cached offers) and on the chips. THE DM DOOR HAS AN ADDRESS (components/one/chat-address): off /home the sidebar navigates to /home?chat=worker:<tid>:<agent> (or ?dm=<agent>, resolved by Home and rewritten) and to /home?chat=<key>; no cross-page chat intent relies on an event or a payload-less flag"
+    },
+    {
+     "suite": "smoke-timeline-truth",
+     "ids": [
+      "A1-A4",
+      "B1-B4",
+      "C1-C7"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W20.A (uncommitted, owner walk Sep 28) EVERY ROW HAS A REAL ADDRESS OR NONE: a commitment work item opens /item/<id>?kind=commitment through the one producer (refDoorHref) — the '/' placeholder is gone from lib/work-items; the timeline route and the Gantt serve/render through one floor (lib/work-items/gantt-date rowDoorOf), and a roomless row with no address is plain text, never a link or a button to nowhere. The Timeline lands on Everything and remembers the reader's explicit toggle (guarded storage, read pre-paint); the old Home header (OneHomeHeader + sync line + day ring) is retired on every lens, Activity kept behind one quiet glyph"
     }
    ],
    "version_key": null,
@@ -1139,7 +1201,12 @@
     "lib/room/brief.ts",
     "lib/core/relative-time.ts",
     "lib/briefing/compose.ts",
-    "lib/room/item-anchor.ts"
+    "lib/room/item-anchor.ts",
+    "lib/commitments/deed-date.ts",
+    "lib/work/obligation-anchor.ts",
+    "lib/core/zoned-time.ts",
+    "lib/home/prepare-action.ts",
+    "lib/prepare/schedule-offer.ts"
    ],
    "gates": [
     {
@@ -1244,18 +1311,48 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W19.A: the entity summary's overdue count is withheld without a composition anchor and dated with one"
+    },
+    {
+     "suite": "smoke-timeline-truth",
+     "ids": [
+      "F1-F5"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W20.A (uncommitted) THE DEED-SCOPED RE-DATE: a `promised` fulfillment verdict re-dates a commitment only to a date stated in a sentence of the message that names the deed (lib/commitments/deed-date deedScopedDate) — a meeting date elsewhere in the reply is no deadline for the thing owed"
+    },
+    {
+     "suite": "smoke-obligation-anchor",
+     "ids": [
+      "A2-A3",
+      "A6",
+      "A8-A9"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W20.C (uncommitted, owner walk Sep 28): a past meeting is never presented as fulfilling a future-dated call — the stated meeting date (statedMeetingDateOf: a date on/after the ask's day, not phrased as a 'by/before' bound) bounds the held meeting (heldMeetingSettles, zone-graced to UTC+14); a Sep 21 meeting never reads 'You met on Sep 21' on an ask to meet Oct 12"
+    },
+    {
+     "suite": "smoke-chat-cards",
+     "ids": [
+      "F1-F4",
+      "G1-G3"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W20.B (uncommitted) A STATED ZONE IS A PLACE + THE SCHEDULE OFFER (owner walk Sep 28: \"Oct 12, 9.30 am CET\" was stored 08:30Z; Paris is on CEST that day → 07:30Z; and the counterparty's stated call time got no invite because the item was judged chase): a named zone abbreviation (CET/CEST/WET/WEST/GMT/BST/EST/EDT/PT…) resolves through its IANA region ON THAT DATE (lib/core/zoned-time, DST-true across every edge) — the invite grounding's post-model floor (correctStatedZone) re-resolves the slot and its alternatives; a newest-inbound concrete future meeting time with nothing booked with the counterparty ±12h prepares an invite beside the verdict's work (lib/prepare/schedule-offer — deterministic, zero AI, idempotent, never over another invite or a booking, withdrawn when the thread moves), kept by the verdict's hygiene, and the item page leads with it as its ONE widget. tests/unit/zoned-time + tests/unit/schedule-offer"
     }
    ],
    "version_key": "JUDGE_VERSION",
    "status": "holding-uncommitted",
-   "note": "W3.4a closed the meeting-insights today-anchor; W3.3's F4 bounded anticipation; W5a closed the free-slot remainder: a proposed slot can no longer name the past (pickFreeSlots skips start <= now; proposeFreeSlots clamps a past window to tomorrow and refuses a closed one) and can no longer sit outside the item's stated window (the pass confines the calendar fallback to the ONE parser's window; the reader derives `outsideWindow`; the label claims 'inside what they stated' only from code-verified provenance). Gate: smoke-prepared-truth A1-A10 + unit tests tests/unit/prepared-truth.test.ts. Repair: scripts/sweep-invite-windows.ts (dry-run).",
+   "note": "W3.4a closed the meeting-insights today-anchor; W3.3's F4 bounded anticipation; W5a closed the free-slot remainder: a proposed slot can no longer name the past (pickFreeSlots skips start <= now; proposeFreeSlots clamps a past window to tomorrow and refuses a closed one) and can no longer sit outside the item's stated window (the pass confines the calendar fallback to the ONE parser's window; the reader derives `outsideWindow`; the label claims 'inside what they stated' only from code-verified provenance). Gate: smoke-prepared-truth A1-A10 + unit tests tests/unit/prepared-truth.test.ts. Repair: scripts/sweep-invite-windows.ts (dry-run). W20.C (owner walk Sep 28): a Sep 21 meeting was served as the deed of an ask to meet on Oct 12 — fixed by W20.C (uncommitted): the named meeting date bounds the held-meeting rung.",
    "collides_with": [
     {
      "law": "anchor-law",
      "precedence": "the user's stated weekday outranks the model's date; code's today outranks both when neither is stated"
     }
    ],
-   "fixed_by": "W5a (truth of prepared content)"
+   "fixed_by": "W5a (truth of prepared content), W20.C"
   },
   {
    "id": "ground-law",

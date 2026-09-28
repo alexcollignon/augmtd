@@ -5,8 +5,9 @@
 // TRACKED project; "Everything" = the same chart with the LOOSE band appended (every dated work item
 // not living in a tracked project — a projectless user's whole timeline). The old station-list
 // fallback broke the lens's own rule (same visual = same meaning); now the date axis IS the lens.
-// Smart default: land on whichever tab has content (the Projects-lens pattern). Clicking a project
-// lane opens the project room; a loose item opens its own deep-dive (href). Self-contained detail.
+// Default (W20, owner call): EVERYTHING — the whole date axis is the lens; the reader's explicit
+// toggle is remembered (MODE_KEY). Clicking a project lane opens the project room; a loose item opens
+// its own deep-dive (href). Self-contained detail.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -19,6 +20,16 @@ import { useLiveRefresh } from '@/hooks/use-live-refresh';
 import { mayReplaceInPlace, freezeRows, hasContent, type ArrivalReason } from '@/lib/room/no-mutation';
 
 type Data = { ganttGroups: GanttGroup[]; looseGroup: GanttGroup | null; todayStr: string };
+type Mode = 'gantt' | 'all';
+// The reader's explicit tab choice — a per-viewer convenience, so storage may be absent (private
+// window, blocked site data): every read/write is guarded and the page renders the default without it.
+const MODE_KEY = 'aug-timeline-mode';
+function readMode(): Mode | null {
+  try { const v = window.localStorage.getItem(MODE_KEY); return v === 'gantt' || v === 'all' ? v : null; } catch { return null; }
+}
+function writeMode(m: Mode) {
+  try { window.localStorage.setItem(MODE_KEY, m); } catch { /* storage blocked — the choice lives for this open only */ }
+}
 
 export default function TimelineGantt({ onDetailChange }: { onDetailChange?: (open: boolean) => void } = {}) {
   // SSR'd-route rule: initializer COLD; cache hydrates pre-paint. Key v3: the loose band joined
@@ -37,13 +48,12 @@ export default function TimelineGantt({ onDetailChange }: { onDetailChange?: (op
     const c = loadLS<Data>('aug-timeline-gantt-v3');
     if (!c) return;
     apply((prev) => prev ?? c);
-    // The smart default applies to the INSTANT paint too — a projectless user lands on
-    // Everything from the cache, not after the refetch.
-    if (!touchedRef.current && c.ganttGroups.length === 0 && c.looseGroup) setMode('all');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [mode, setMode] = useState<'gantt' | 'all'>('gantt');
-  const touchedRef = useRef(false); // the user's explicit toggle outranks the smart default
+  // Default EVERYTHING; the remembered toggle hydrates pre-paint (the initializer stays cold for SSR).
+  const [mode, setMode] = useState<Mode>('all');
+  useLayoutEffect(() => { const m = readMode(); if (m) setMode(m); }, []);
+  const choose = (m: Mode) => { setMode(m); writeMode(m); };
   const router = useRouter();
   const [err, setErr] = useState(false);
 
@@ -73,10 +83,6 @@ export default function TimelineGantt({ onDetailChange }: { onDetailChange?: (op
           todayStr: next.todayStr, // the clock is ambient, never a claim about a bar
         });
       }
-      // SMART DEFAULT (the Projects-lens pattern): land on the tab that HAS content — a
-      // projectless user opens straight onto Everything instead of an empty By-project. It is a
-      // choice about an EMPTY view, so it moves nothing painted; a held arrival never re-decides it.
-      if (paint && !touchedRef.current && next.ganttGroups.length === 0 && next.looseGroup) setMode('all');
     }).catch(() => { if (aliveRef.current && !paintedRef.current) setErr(true); });
   }, [apply]);
   useEffect(() => {
@@ -112,7 +118,7 @@ export default function TimelineGantt({ onDetailChange }: { onDetailChange?: (op
         </div>
         <div className="flex items-center gap-1 rounded-full border border-neutral-200/80 bg-white/80 p-1">
           {(['gantt', 'all'] as const).map((mo) => (
-            <button key={mo} onClick={() => { touchedRef.current = true; setMode(mo); }} className={`rounded-full px-3 py-1 text-[12px] font-medium transition-all duration-150 ${mode === mo ? 'bg-indigo-50 text-indigo-700' : 'text-neutral-400 hover:text-neutral-600'}`}>
+            <button key={mo} onClick={() => choose(mo)} className={`rounded-full px-3 py-1 text-[12px] font-medium transition-all duration-150 ${mode === mo ? 'bg-indigo-50 text-indigo-700' : 'text-neutral-400 hover:text-neutral-600'}`}>
               {mo === 'gantt' ? 'By project' : 'Everything'}
             </button>
           ))}

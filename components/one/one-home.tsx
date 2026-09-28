@@ -12,37 +12,11 @@
 // long groups fold behind the one expander · the card grammar (compact, verb speaks the judged
 // state).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-import { CalendarDaysIcon } from '@heroicons/react/24/outline';
 import type { DoItem } from '@/lib/home/agenda';
 
-// ── THE TOP CLUSTER — eyebrow · greeting · today line, with the live cluster (sync/ring/activity)
-// as a slot: the host owns those stateful widgets; this file owns where they sit. ──
-export function OneHomeHeader({ name, greeting, todayLine, right }: {
-  name: string | null;
-  greeting: string;
-  todayLine: { time: string; title: string; more: number } | null;
-  right: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-start gap-5 mb-9">
-      <div className="min-w-0 flex-1">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 mb-1.5">
-          {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-        </p>
-        <h1 className="text-[20px] font-semibold tracking-tight text-neutral-900 leading-tight">{greeting}{name ? `, ${name}` : ''}</h1>
-        {todayLine && (
-          <p className="mt-1.5 flex items-center gap-1.5 text-[12.5px] text-neutral-400">
-            <CalendarDaysIcon className="w-3.5 h-3.5 flex-shrink-0" />
-            <span className="tabular-nums">{todayLine.time}</span>
-            <span className="text-neutral-500 truncate max-w-[380px]">{todayLine.title}</span>
-            {todayLine.more > 0 && <span className="flex-shrink-0">· {todayLine.more} more</span>}
-          </p>
-        )}
-      </div>
-      <div className="flex-shrink-0 flex items-center gap-2 self-start mt-0.5">{right}</div>
-    </div>
-  );
-}
+// ── THE TOP CLUSTER IS RETIRED (W20, owner walk Sep 28): `OneHomeHeader` — the date eyebrow, the
+// greeting, the today line and the sync/ring/Activity slot — outlived the calm Home on the
+// non-dashboard lenses. Every lens now opens on its own content; Activity keeps the one quiet glyph. ──
 
 // ── THE DECK IS RETIRED (owner walk, Sep 8: "this is awful, looks bad and not aligned with the new
 // design at all"). `OneDeck` — the "What needs you N" header, the Tasks/By-project toggle, the

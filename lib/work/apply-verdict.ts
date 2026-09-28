@@ -256,7 +256,10 @@ export async function applyVerdictConsequences(
       if (verdict.work !== 'chase' && (sd0.nudge_draft as Record<string, unknown>)?.body) contradicting.push('nudge_draft');
       // The W1 verbs' artifacts obey the same law: a prepared invite/forward that no longer matches
       // the verdict strips (the judged pass regenerates the right kind).
-      if (verdict.work !== 'schedule' && sd0.prepared_invite) contradicting.push('prepared_invite');
+      // W20.B · a SCHEDULE OFFER (lib/prepare/schedule-offer — the counterparty's own stated meeting
+      // time) is not the verdict's lane: it stands beside it, and its own lane withdraws it.
+      if (verdict.work !== 'schedule' && sd0.prepared_invite
+        && (sd0.prepared_invite as { offer?: unknown }).offer !== 'stated_time') contradicting.push('prepared_invite');
       if (verdict.work !== 'forward' && sd0.prepared_forward) contradicting.push('prepared_forward');
       // THE ONE ENGINE STRIP — a hand-held artifact is FILED (version chain + one narration with the
       // user's words), never deleted; a failed filing keeps it where it is.

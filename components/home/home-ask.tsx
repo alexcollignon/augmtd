@@ -17,21 +17,23 @@ import { AnchoredPopover } from '@/components/ui/anchored-popover';
 import { EmailCard, type CoworkerEmailDraft } from '@/components/home/email-card';
 import type { StandaloneEmailDraft } from '@/lib/prepare/email-card';
 import { askStreamReducer, initialAskStream, type AskStreamEvent } from '@/components/home/ask-stream';
+import { isConverseStream, readConverseStream } from '@/components/home/ask-stream-read';
+import { chatCardNodes } from '@/components/home/chat-cards';
+import { chatCardsOfComponent, chatCardsOfPayload } from '@/lib/present/turn-card';
 import { WorkflowDraftCard, type WorkflowDraft } from '@/components/workflows/workflow-draft-card';
 import { ThreadArtifactsPanel } from '@/components/work/chat-artifact-panel';
 // THE ONE FRAME RENDERER (frames plan law 2) — the kit's `frame` card composes it; there is no
 // second iframe and no second sandbox anywhere in the repo (gate smoke-threads T38.2).
 import { FrameCard } from '@/components/frames/frame-card';
-import { InviteCard } from '@/components/home/invite-card';
-import BulkDeedCard from '@/components/home/bulk-deed-card';
-import CollectionCard, { type CollectionPointer } from '@/components/home/collection-card';
+// THE CHAT'S CARDS mount through ONE renderer (components/home/chat-cards.tsx, W20.B); only their types stay here.
+import type { CollectionPointer } from '@/components/home/collection-card';
 import { isCollectionKind, isCollectionSpec, type CollectionSpec } from '@/lib/present/collection';
 // THE EVENT CARD (component-map §6, Wave 2) — the SAME host on every surface, mounted exactly the
 // way the collection card is: a live turn paints from the served spec, a reloaded one re-reads.
-import EventCard, { type EventPointer } from '@/components/home/event-card';
+import type { EventPointer } from '@/components/home/event-card';
 import { isEventSpec, type EventProposal, type EventSpec } from '@/lib/present/event';
 // THE CONFIRM CARD (stabilization W0.3b): ONE host for a prepared state change, on every lane.
-import ChangeCard, { type ChangePointer } from '@/components/home/change-card';
+import type { ChangePointer } from '@/components/home/change-card';
 import { isChangeSpec, type ChangeSpec } from '@/lib/present/change';
 import type { BulkDeed as BulkDeedLike } from '@/lib/deeds/words';
 import type { PreparedInviteLike } from '@/lib/prepare/invite-card';
@@ -493,65 +495,11 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // THE ONE-NARRATOR LAW on the way back in: a turn a COWORKER spoke wears their face again
       // (the store's server-written author), so a reloaded Home exchange with Clara is still hers.
       ...(t.author?.name ? { author: String(t.author.name).split(' ')[0], ...(t.author.id ? { authorId: String(t.author.id) } : {}) } : {}),
-      // A CARD IS A TURN: the persisted invite component comes back as the same card it was —
-      // a deliverable that dies on reload is a deliverable the user cannot trust.
-      ...(t.component?.key === 'invite_card' && t.component.refId
-        ? { invites: [{ inviteId: t.component.refId, invite: (t.component.state?.invite ?? {}) as PreparedInviteLike }] }
-        : {}),
-      // …and so does a bulk deed. Only the REF survives here by design: the deed's committed state
-      // lives on its own row, so a reloaded card can never show "pending" on a deed already run.
-      ...(t.component?.key === 'bulk_deed_card' && t.component.refId
-        ? { bulkDeeds: [{ deedId: t.component.refId }] }
-        : {}),
-      // …and so does THE COLLECTION, as a POINTER and nothing else: the stored component carries
-      // `{kind, params}`, and the host re-derives the rows through the ONE re-read door. A set of
-      // live objects is exactly the thing a frozen copy would lie about.
-      ...(t.component?.key === 'collection_card' && t.component.refId
-        && isCollectionKind((t.component.state as { kind?: unknown } | undefined)?.kind)
-        ? { collections: [{
-            collectionId: t.component.refId,
-            pointer: {
-              kind: (t.component.state as { kind: CollectionSpec['kind'] }).kind,
-              ...(t.component.state?.params && typeof t.component.state.params === 'object'
-                ? { params: t.component.state.params as Record<string, string | number | boolean> }
-                : {}),
-            },
-          }] }
-        : {}),
-      // …and so does THE EVENT, as a POINTER and nothing else: the stored component carries the
-      // event's id and the turn's sanitized proposal, and the host re-reads the event itself. The
-      // verbs a reloaded card offers are the ones the event permits NOW — never the ones it
-      // permitted when the sentence was spoken.
-      ...(t.component?.key === 'event_card'
-        && (typeof t.component.refId === 'string'
-          || typeof (t.component.state as { eventId?: unknown } | undefined)?.eventId === 'string')
-        ? { events: [{
-            eventId: String(t.component.refId ?? (t.component.state as { eventId: string }).eventId),
-            pointer: {
-              eventId: String(t.component.refId ?? (t.component.state as { eventId: string }).eventId),
-              ...(t.component.state?.proposal && typeof t.component.state.proposal === 'object'
-                ? { proposal: t.component.state.proposal as EventProposal }
-                : {}),
-            },
-          }] }
-        : {}),
-      // …and so does THE EMAIL CARD. A matched item comes back as a POINTER (the card re-reads the
-      // item's own prepared reply — a reload never paints a draft the room has since moved on
-      // from); a standalone one carries its stored payload for the first paint, and its own door
-      // re-reads the row before it mails anything.
-      // …and so does THE CONFIRM CARD, as a POINTER and nothing else: the stored component carries
-      // the change's id, and the host re-reads its status through its own door — a change applied
-      // (or dismissed, or expired) elsewhere must never come back offering Apply.
-      ...(t.component?.key === 'change_card' && t.component.refId
-        ? { changes: [{ changeId: String(t.component.refId), pointer: { changeId: String(t.component.refId) } }] }
-        : {}),
-      ...(t.component?.key === 'email_draft_card' && t.component.refId
-        ? { emailDrafts: [{
-            emailId: t.component.refId,
-            ...(typeof t.component.state?.itemId === 'string' ? { itemId: t.component.state.itemId } : {}),
-            ...(t.component.state?.draft ? { draft: t.component.state.draft as StandaloneEmailDraft } : {}),
-          }] }
-        : {}),
+      // A CARD IS A TURN: every persisted chat card (invite · bulk deed · collection · event · change ·
+      // email draft) comes back through THE ONE HYDRATOR (lib/present/turn-card — W20.B, shared with
+      // the item rooms). Live state is re-read by each card's host: only pointers (and an invite's /
+      // standalone draft's first-paint payload) survive the store, never a frozen verdict.
+      ...chatCardsOfComponent(t.component),
       // …and so does every card an addressed COWORKER produced — as POINTERS at their own homes
       // (hydrateCardRefs below re-reads them). Nothing about a card's mutable state is copied
       // here: send the draft, revise the document or confirm the task in the DM, and this room
@@ -1482,30 +1430,17 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // THE STREAM NEVER RETYPES: the reducer's own verdict decides whether the seated turn
       // animates — it must be the thing the component reads, not a parallel re-derivation.
       let st = initialAskStream;
-      if (res.body && res.headers.get('content-type')?.includes('text/event-stream')) {
-        const reader = res.body.getReader();
-        const dec = new TextDecoder();
-        let buf = '';
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          const frames = buf.split('\n\n'); buf = frames.pop() ?? '';
-          for (const f of frames) {
-            const line = f.split('\n').find((l) => l.startsWith('data: '));
-            if (!line) continue;
-            try {
-              const ev = JSON.parse(line.slice(6)) as { type: string; label?: string; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string; type?: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string; type?: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike }; emailDraft?: { id: string; itemId?: string; draft?: StandaloneEmailDraft }; collection?: { id: string; spec: CollectionSpec }; event?: { id?: string; spec: EventSpec }; change?: { id: string; spec: ChangeSpec } };
-              // THE STREAM NEVER RETYPES (Sep 21): every decision about what the user sees is the
-              // PURE reducer's (components/home/ask-stream.ts) — this branch only moves its
-              // output into React state. The `done` frame's authority is unchanged.
-              st = askStreamReducer(st, ev as AskStreamEvent);
-              if (st.stage !== null) setStage(st.stage);
-              if (st.live !== liveTextRef.current) { liveTextRef.current = st.live; setLiveText(st.live); }
-              if (ev.type === 'done') d = ev;
-            } catch { /* partial frame */ }
-          }
-        }
+      if (isConverseStream(res)) {
+        // THE ONE STREAM, READ (components/home/ask-stream-read.ts — shared with the item rooms).
+        await readConverseStream(res, (ev) => {
+          // THE STREAM NEVER RETYPES (Sep 21): every decision about what the user sees is the
+          // PURE reducer's (components/home/ask-stream.ts) — this branch only moves its
+          // output into React state. The `done` frame's authority is unchanged.
+          st = askStreamReducer(st, ev as AskStreamEvent);
+          if (st.stage !== null) setStage(st.stage);
+          if (st.live !== liveTextRef.current) { liveTextRef.current = st.live; setLiveText(st.live); }
+          if (ev.type === 'done') d = ev as typeof d;
+        });
       } else {
         d = await res.json();
       }
@@ -1536,7 +1471,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // A token-streamed answer already revealed itself — the typewriter must not re-type it
       // (the reducer decides; `animate:false` means the user has already read these words, so a
       // final text that differs only slightly settles in place instead of clearing and retyping).
-      setTurns((prev) => { pendingAnimate.current = st.animate ? prev.length : -1; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...(d.invite ? { invites: [{ inviteId: d.invite.id, invite: d.invite.invite }] } : {}), ...(d.bulkDeed ? { bulkDeeds: [{ deedId: d.bulkDeed.id, deed: d.bulkDeed.deed }] } : {}), ...(d.emailDraft ? { emailDrafts: [{ emailId: d.emailDraft.id, ...(d.emailDraft.itemId ? { itemId: d.emailDraft.itemId } : {}), ...(d.emailDraft.draft ? { draft: d.emailDraft.draft } : {}) }] } : {}), ...(d.collection && isCollectionSpec(d.collection.spec) ? { collections: [{ collectionId: d.collection.id, spec: d.collection.spec }] } : {}), ...(d.event && isEventSpec(d.event.spec) ? { events: [{ eventId: d.event.id ?? d.event.spec.id, spec: d.event.spec }] } : {}), ...(d.change && isChangeSpec(d.change.spec) ? { changes: [{ changeId: d.change.spec.id, spec: d.change.spec }] } : {}), ...artCard }]; });
+      setTurns((prev) => { pendingAnimate.current = st.animate ? prev.length : -1; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...chatCardsOfPayload(d as Record<string, unknown>), ...artCard }]; });
       if (d.artifact) void openArtifact(d.artifact.threadId, d.artifact.id);
       if (d.answer && !sentRoomKey) persistTurn('system', d.answer, d.refs ?? []);
       if (d.focus && !scope && !temp) setScopeHint(d.focus);
@@ -1676,71 +1611,15 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         kind: 'custom', id: `${key}-email-${j}`,
         node: <EmailCard coworker={{ threadId: d.tid, agentId: d.agentId, draft: d.draft }} />,
       }));
-      // …and the CHIEF's own drafted reply, on that same one card: the item lane reads the matched
-      // item's prepared reply, the standalone lane carries its own payload and sends through its
-      // own commit door. One rendering, whichever lane produced it.
-      // A card with neither an item nor a payload is nothing to render — it is never mounted empty.
-      (t.emailDrafts ?? []).filter((ed) => ed.itemId || ed.draft).forEach((ed, j) => cards.push({
-        kind: 'custom', id: `${key}-mail-${j}`,
-        node: ed.itemId
-          ? <EmailCard item={{ id: ed.itemId }} />
-          : <EmailCard standalone={{ emailId: ed.emailId, draft: ed.draft as StandaloneEmailDraft }} />,
-      }));
       (t.workflowDrafts ?? []).forEach((wd, j) => cards.push({
         kind: 'custom', id: `${key}-wf-${j}`, node: <WorkflowDraftCard draft={wd} />,
       }));
-      // THE INVITE CARD — the SAME component the item rooms mount (one rendering per kind); its
-      // Send goes through the chat lane's commit door. The open row focuses the composer, where
-      // "how about Friday?" is just words.
-      (t.invites ?? []).forEach((iv, j) => cards.push({
-        kind: 'custom', id: `${key}-invite-${j}`,
-        node: <InviteCard chat={iv} onSuggestAnother={focusComposer} />,
-      }));
-      // THE BULK DEED — the same host the ledger's verb rows will mount (one rendering per kind);
-      // its one button is the one commit door.
-      (t.bulkDeeds ?? []).forEach((bd, j) => cards.push({
-        kind: 'custom', id: `${key}-bulk-${j}`,
-        node: <BulkDeedCard deedId={bd.deedId} deed={bd.deed} />,
-      }));
-      // THE COLLECTION — the same one card for every set of the user's own objects, on every
-      // surface. A live turn hands over the served spec; a rehydrated one hands over the pointer
-      // and the host re-reads. "Ask about it" speaks through the ONE composer (clicks are words).
-      (t.collections ?? []).forEach((col, j) => cards.push({
-        kind: 'custom', id: `${key}-coll-${j}`,
-        node: (
-          <CollectionCard
-            {...(col.spec ? { spec: col.spec } : {})}
-            {...(col.pointer ? { pointer: col.pointer } : {})}
-            onAsk={(text) => { setPrefill(text); focusComposer(); }}
-          />
-        ),
-      }));
-      // THE EVENT — ONE card for one calendar event, on every surface, with exactly the verbs its
-      // own state permits. A live turn hands over the served spec; a rehydrated one hands over the
-      // pointer and the host re-reads. Every confirm goes through the ONE deeds door.
-      (t.events ?? []).forEach((ev, j) => cards.push({
-        kind: 'custom', id: `${key}-event-${j}`,
-        node: (
-          <EventCard
-            {...(ev.spec
-              ? { spec: ev.spec, ...(ev.pointer ? { pointer: ev.pointer } : {}) }
-              : { pointer: ev.pointer ?? { eventId: ev.eventId } })}
-          />
-        ),
-      }));
-      // THE CONFIRM CARD — ONE host for a prepared state change, on every surface. A live turn
-      // hands over the served spec; a rehydrated one hands over the pointer and the host re-reads.
-      // Apply and Dismiss go through the change's own doors; nothing here has applied.
-      (t.changes ?? []).forEach((ch, j) => cards.push({
-        kind: 'custom', id: `${key}-change-${j}`,
-        node: (
-          <ChangeCard
-            {...(ch.spec
-              ? { spec: ch.spec, ...(ch.pointer ? { pointer: ch.pointer } : {}) }
-              : { pointer: ch.pointer ?? { changeId: ch.changeId } })}
-          />
-        ),
-      }));
+      // THE CHAT'S CARDS — ONE RENDERER for the Home thread and the item rooms (components/home/
+      // chat-cards.tsx, W20.B): the chief's email draft, the invite, the bulk deed, the collection,
+      // the event and the confirm card, each the SAME kit host every surface mounts. "Ask about it"
+      // and "suggest another time" speak through THIS composer (clicks are words).
+      chatCardNodes(t, key, { onAsk: (text) => { setPrefill(text); focusComposer(); }, onSuggestAnother: focusComposer })
+        .forEach((c) => cards.push({ kind: 'custom', id: c.id, node: c.node }));
       // THE SENSIBLE ASK — a tap SPEAKS its message through the composer (clicks are utterances);
       // the chips consume on tap (ephemeral scaffolding).
       if (t.options?.length) cards.push(optionChips(t, i, key));

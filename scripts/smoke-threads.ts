@@ -535,9 +535,11 @@ console.log('\nT4 · THE COWORKER DM — a MODE of the one surface, not a surfac
     const RICH: [string, RegExp][] = [
       ['the editable email card (the coworker draft the DM produces)', /node: <EmailCard coworker=/],
       ['the workflow draft card', /node: <WorkflowDraftCard/],
-      ['the prepared invite card', /node: <InviteCard/],
+      ['the prepared invite card (through the ONE chat-card renderer)', /chatCardNodes\(t, key,/],
     ];
-    const missing = RICH.filter(([, re]) => !dm || !re.test(dm)).map(([label]) => label);
+    // ⟲ RE-POINTED W20 (A CLAIM RENDERS IN EVERY CHAT): the chat's cards mount through ONE renderer shared by the Home chat and the item rooms (components/home/chat-cards.tsx) and persist/rehydrate through ONE table (lib/present/turn-card.ts) — same hosts, same pointers, one home.
+    const missing = RICH.filter(([, re]) => !dm || !re.test(dm)).map(([label]) => label)
+      .concat(/node: <InviteCard chat=\{iv\}/.test(read('components/home/chat-cards.tsx') || '') ? [] : ['the renderer mounts the invite host']);
     gate('T4.5 the coworker’s rich payloads are MOUNTED through the card slot, not rebuilt',
       missing.length === 0, missing.join('; '));
     // THE ONE THING THE RETIREMENT REMOVED, stated rather than hidden: the typed render registry
@@ -1435,16 +1437,17 @@ console.log('\nT8 · THE CALM HOME — one sentence, five whispers, one door');
   gate('T8.12a the LEGACY DECK is gone from the Home (no second deck, no ring twin, no calendar rail)',
     !!home && !/<OneDeck/.test(home) && !/<ThisWeekCard/.test(home)
     && !/doGroupMode|pinnedGroups|hoverGroup/.test(home)
-    // the ring keeps exactly ONE seat (the non-dashboard lens header) — never a twin behind the door
-    && (home.match(/<DayClearedRing/g) || []).length === 1
+    // ⟲ RE-POINTED W20: the ring's last seat (the non-dashboard lens header) is retired with the
+    // header itself — no ring, no sync line, no OneHomeHeader on ANY lens
+    && !/DayClearedRing|SyncStatus|OneHomeHeader/.test(home)
     // …and the component itself is retired at its own address, so nothing can mount it again
-    && (() => { const one = read('components/one/one-home.tsx'); return !!one && !/export function OneDeck/.test(one) && /export type FlatRow/.test(one); })()
+    && (() => { const one = read('components/one/one-home.tsx'); return !!one && !/export function OneDeck/.test(one) && !/export function OneHomeHeader/.test(one) && /export type FlatRow/.test(one); })()
     // RE-POINTED Sep 21: the handled count's ONE home is no longer beside the door — the receipt
     // came off the line by owner's call. It is now spoken in exactly one place, the held page's own
     // intro, and the Home says it NOWHERE. Same law (one home for one fact), one fewer seat.
     && !/handledQuietly=|handledToday=\{ringCleared\}/.test(home)
-    // (the two survivors are the day-progress RING's own title and label — its seat, not the door's)
-    && (home.match(/\$\{cleared\} handled today/g) || []).length === 2);
+    // ⟲ RE-POINTED W20: the two survivors (the RING's own title and label) left with the ring
+    && !/\$\{cleared\} handled today/.test(home));
   gate('T8.13 the whispers derive from the SERVED deck — one agenda, one order (no re-judging)',
     !!home && /for \(const e of agenda\.entries\) \{/.test(home)
     // (RE-POINTED Sep 18: the remainder also drops DAY-ANCHORED rows — they are SERVED and already
@@ -2560,15 +2563,19 @@ console.log('\nT17 · THE PROMPTED INVITE — one producer, one card, two stores
 
   // ── the card survives the tab, on BOTH surfaces
   gate('T17.8 DURABLE ON THE HOME THREAD — the answer’s card persists as the turn’s component, and the reload maps it back to the same card',
-    !!askRoute && /component: \{ key: 'invite_card', refId: turn\.invite\.id/.test(askRoute)
-    && !!homeAsk && /t\.component\?\.key === 'invite_card'/.test(homeAsk));
+    // ⟲ RE-POINTED W20 (A CLAIM RENDERS IN EVERY CHAT): the chat's cards mount through ONE renderer shared by the Home chat and the item rooms (components/home/chat-cards.tsx) and persist/rehydrate through ONE table (lib/present/turn-card.ts) — same hosts, same pointers, one home.
+    !!askRoute && /component: card\.component/.test(askRoute) && /const card = cardTurnOf\(turn\)/.test(askRoute)
+    && /key: CARD_COMPONENT_KEY\.invite, refId: iv\.id, state: \{ invite: iv\.invite \}/.test(read('lib/present/turn-card.ts') || '')
+    && /case CARD_COMPONENT_KEY\.invite:/.test(read('lib/present/turn-card.ts') || '')
+    && !!homeAsk && /\.\.\.chatCardsOfComponent\(t\.component\)/.test(homeAsk));
   gate('T17.9 DURABLE ON THE COWORKER DM — the prepared card persists on the message metadata, and the reload mounts it from there',
     !!dmRoute && /invite_cards: allInviteCards/.test(dmRoute)
     // RE-POINTED (W4-D, Sep 22): the DM reload rehydrates `invite_cards` off the message metadata
     // into its own ref list and mounts them through the same host — same law, the live seat.
     && !!dmTab && /invite_cards\?: Array</.test(dmTab)
     && /invite_cards\.map\(\(iv\) => \(\{ inviteId: iv\.id, invite: iv\.invite \}\)\)/.test(dmTab)
-    && /<InviteCard chat=/.test(dmTab));
+    // ⟲ RE-POINTED W20 (A CLAIM RENDERS IN EVERY CHAT): the chat's cards mount through ONE renderer shared by the Home chat and the item rooms (components/home/chat-cards.tsx) and persist/rehydrate through ONE table (lib/present/turn-card.ts) — same hosts, same pointers, one home.
+    && /chatCardNodes\(t, key,/.test(dmTab) && /<InviteCard chat=/.test(read('components/home/chat-cards.tsx') || ''));
   gate('T17.10 ONE RENDERING PER KIND — every producer mounts the SAME host component (no second invite renderer anywhere)',
     (() => {
       const defs = sourceFiles('components').filter((f) => /export function InviteCard\(/.test(read(f) || ''));
@@ -2577,7 +2584,8 @@ console.log('\nT17 · THE PROMPTED INVITE — one producer, one card, two stores
       // law is stated in its strongest form instead — ONE definer, and EVERY mount in the tree
       // points at it, so a second renderer cannot appear anywhere rather than at three named spots.
       return defs.length === 1 && defs[0] === 'components/home/invite-card.tsx'
-        && mounts.includes('components/home/home-ask.tsx')
+        // ⟲ RE-POINTED W20: the chat mount is the ONE chat-card renderer (Home chat + item rooms).
+        && mounts.includes('components/home/chat-cards.tsx')
         && mounts.includes('components/home/item-detail.tsx')
         && mounts.every((f) => f === 'components/home/invite-card.tsx'
           || /^components\/home\//.test(f) || /^components\/(thread|room)\//.test(f));
@@ -2860,10 +2868,12 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
         && callers.includes('lib/prepare/standalone-reply.ts');
     })());
   gate('T18.21d A CARD IS A TURN on this lane too — the draft persists as one component and rehydrates through the SAME host (an item-born one as a POINTER, a standalone one with its payload)',
-    !!read('app/api/home/ask/route.ts') && /key: 'email_draft_card', refId: turn\.emailDraft\.id/.test(read('app/api/home/ask/route.ts') || '')
-    && !!homeAsk && /t\.component\?\.key === 'email_draft_card'/.test(homeAsk)
-    && /\<EmailCard item=\{\{ id: ed\.itemId \}\} \/\>/.test(homeAsk)
-    && /\<EmailCard standalone=\{\{ emailId: ed\.emailId/.test(homeAsk));
+    // ⟲ RE-POINTED W20 (A CLAIM RENDERS IN EVERY CHAT): the chat's cards mount through ONE renderer shared by the Home chat and the item rooms (components/home/chat-cards.tsx) and persist/rehydrate through ONE table (lib/present/turn-card.ts) — same hosts, same pointers, one home.
+    !!read('app/api/home/ask/route.ts') && /component: card\.component/.test(read('app/api/home/ask/route.ts') || '')
+    && /key: CARD_COMPONENT_KEY\.emailDraft, refId: ed\.id/.test(read('lib/present/turn-card.ts') || '') && /case CARD_COMPONENT_KEY\.emailDraft:/.test(read('lib/present/turn-card.ts') || '')
+    && !!homeAsk && /\.\.\.chatCardsOfComponent\(t\.component\)/.test(homeAsk)
+    && /\<EmailCard item=\{\{ id: ed\.itemId \}\} \/\>/.test(read('components/home/chat-cards.tsx') || '')
+    && /\<EmailCard standalone=\{\{ emailId: ed\.emailId/.test(read('components/home/chat-cards.tsx') || ''));
   gate('T18.21e THE STORE IS THE TRUTH — a standalone draft lives on its own row (the chat_invite precedent) and its send door reads THAT row, never the request body',
     (() => {
       const store = read('lib/prepare/chat-email-store.ts') || '';
@@ -2950,16 +2960,18 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
     // chief lane now mounts the SAME EmailCard in three lanes (a coworker's draft, a matched item's
     // prepared reply, a standalone one) — which is the law being kept, not broken. What must stay
     // singular is the component, and T18.15/T18.21a hold that.
-    !!homeAsk && (homeAsk.match(/<EmailCard\b/g) ?? []).length === 3
-    && /<EmailCard coworker=/.test(homeAsk) && /<EmailCard item=/.test(homeAsk) && /<EmailCard standalone=/.test(homeAsk)
-    && (homeAsk.match(/<InviteCard\b/g) ?? []).length === 1
+    // ⟲ RE-POINTED W20 (A CLAIM RENDERS IN EVERY CHAT): the chat's cards mount through ONE renderer shared by the Home chat and the item rooms (components/home/chat-cards.tsx) and persist/rehydrate through ONE table (lib/present/turn-card.ts) — same hosts, same pointers, one home.
+    !!homeAsk && (homeAsk.match(/<EmailCard\b/g) ?? []).length === 1 && ((read('components/home/chat-cards.tsx') || '').match(/<EmailCard\b/g) ?? []).length === 2
+    && /<EmailCard coworker=/.test(homeAsk) && /<EmailCard item=/.test(read('components/home/chat-cards.tsx') || '') && /<EmailCard standalone=/.test(read('components/home/chat-cards.tsx') || '')
+    && (homeAsk.match(/<InviteCard\b/g) ?? []).length === 0 && ((read('components/home/chat-cards.tsx') || '').match(/<InviteCard\b/g) ?? []).length === 1
     && (homeAsk.match(/<WorkflowDraftCard\b/g) ?? []).length === 1
     // both lanes end in the SAME turn fields the one mount reads
     && /drafts: m\.metadata\.email_drafts\.map\(\(dr\) => \(\{ draft: dr, tid, agentId \}\)\)/.test(homeAsk)
     && /invites: m\.metadata\.invite_cards\.map\(\(iv\) => \(\{ inviteId: iv\.id, invite: iv\.invite \}\)\)/.test(homeAsk)
     && /next\.drafts = \[/.test(homeAsk) && /next\.invites = \[/.test(homeAsk)
     && /next\.workflowDrafts = \[/.test(homeAsk) && /next\.cards = \[/.test(homeAsk)
-    && /\(t\.drafts \?\? \[\]\)\.forEach/.test(homeAsk) && /\(t\.invites \?\? \[\]\)\.forEach/.test(homeAsk)
+    // ⟲ RE-POINTED W20: the invites of both lanes paint through the ONE chat-card renderer.
+    && /\(t\.drafts \?\? \[\]\)\.forEach/.test(homeAsk) && /chatCardNodes\(t, key,/.test(homeAsk) && /\(c\.invites \?\? \[\]\)\.forEach/.test(read('components/home/chat-cards.tsx') || '')
     && /\(t\.workflowDrafts \?\? \[\]\)\.forEach/.test(homeAsk) && /\(t\.cards \?\? \[\]\)\.forEach/.test(homeAsk));
   gate('T18.22e THE DM TWIN READS THE DOOR THAT SERVES METADATA — a card-bearing DM turn is never loaded through a door that strips its cards',
     !!homeAsk && !/\/messages`\)\.then\(\(r\) => \(r\.ok \? r\.json\(\) : null\)\),\n\s*getRoster\(\)/.test(homeAsk)
@@ -4168,7 +4180,8 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     (() => {
       const route = read('app/api/items/steer/route.ts') || '';
       const conv = read('lib/converse/index.ts') || '';
-      return /converse\(supabase, user\.id, scope, text\)/.test(route)
+      // ⟲ RE-POINTED W20 (SHOW THE WORK): the door hands the core its progress callback when it streams.
+      return /converse\(supabase, user\.id, scope, text[,)]/.test(route)
         && /await import\('@\/lib\/inbox\/draft-reply'\)/.test(conv)
         && /generateReplyDraft\(userId, sd, client, instr\)/.test(conv)
         // and it never assembles an attachment block of its own
@@ -5719,6 +5732,8 @@ console.log('\nT33 · THE ONE COLLECTION CARD — a set of the user’s own obje
   const host33 = read('components/home/collection-card.tsx') ?? '';
   const route33 = read('app/api/collections/route.ts') ?? '';
   const ask33 = read('components/home/home-ask.tsx') ?? '';
+  const tc33 = read('lib/present/turn-card.ts') ?? '';
+  const cc33 = read('components/home/chat-cards.tsx') ?? '';
   const harness33 = read('app/(main)/dev/thread-preview/preview-client.tsx') ?? '';
 
   // ── (a) THE KIND ──
@@ -5807,22 +5822,25 @@ console.log('\nT33 · THE ONE COLLECTION CARD — a set of the user’s own obje
 
   // ── (d) A PERSISTED CARD IS A POINTER ──
   gate('T33.11 A PERSISTED COLLECTION IS A POINTER — the stored component carries `{kind, params}` and the host RE-READS; no stored row snapshot is ever mounted',
-    /t\.component\?\.key === 'collection_card'/.test(ask33)
+    // ⟲ RE-POINTED W20 (A CLAIM RENDERS IN EVERY CHAT): the chat's hydrator/payload reader is the ONE table
+    // (lib/present/turn-card.ts) and its mount is the ONE renderer (components/home/chat-cards.tsx), shared
+    // by the Home chat and the item rooms — the same law read where it now lives.
+    /\.\.\.chatCardsOfComponent\(t\.component\)/.test(ask33)
     && (() => {
-      const i = ask33.indexOf("t.component?.key === 'collection_card'");
-      const seg = ask33.slice(i, i + 900);
+      const i = tc33.indexOf('case CARD_COMPONENT_KEY.collection:');
+      const seg = tc33.slice(i, i + 500);
       // the rehydrated turn gets a POINTER and nothing else — no `spec:` off the stored state
-      return /pointer: \{/.test(seg) && /kind: \(t\.component\.state as/.test(seg) && !/spec:/.test(seg);
+      return i > -1 && /pointer: \{/.test(seg) && /kind: st\.kind as/.test(seg) && !/spec:/.test(seg);
     })()
     && /fetch\(`\/api\/collections\?\$\{qs\.toString\(\)\}`\)/.test(host33)
     // the live turn paints from the SERVED spec (no round-trip for a fresh answer)
-    && /d\.collection && isCollectionSpec\(d\.collection\.spec\)/.test(ask33));
+    && /col\?\.id && isCollectionSpec\(col\.spec\)/.test(tc33) && /chatCardsOfPayload\(d as Record<string, unknown>\)/.test(ask33));
 
   // ── (e) THE GUARD, BOTH MOUNTS ──
   gate('T33.12 `isCollectionSpec` GUARDS BOTH MOUNTS — a malformed spec renders nothing, live or rehydrated',
     /isCollectionSpec\(seed\)/.test(host33)
     && /isCollectionSpec\(json\?\.spec\)/.test(host33)
-    && /isCollectionSpec\(d\.collection\.spec\)/.test(ask33)
+    && /isCollectionSpec\(col\.spec\)/.test(tc33)   // ⟲ W20: the ONE payload reader (lib/present/turn-card)
     // …and while it is still reading it shows NOTHING, never a skeleton of rows it has not read
     && /if \(!spec\) \{/.test(host33) && !/animate-pulse/.test(host33));
 
@@ -5836,7 +5854,9 @@ console.log('\nT33 · THE ONE COLLECTION CARD — a set of the user’s own obje
   gate('T33.14 "Ask about it" IS A WORD, NOT A DEED — it prefills the ONE composer, and without that seam the set is read-only',
     /if \(!onAsk\) return \[\];/.test(host33)
     && /onAsk\(`About "\$\{row\.title\}": `\)/.test(host33)
-    && /onAsk=\{\(text\) => \{ setPrefill\(text\); focusComposer\(\); \}\}/.test(ask33));
+    // ⟲ RE-POINTED W20: the ONE chat-card renderer carries the seam; home-ask hands it the composer.
+    && /onAsk: \(text\) => \{ setPrefill\(text\); focusComposer\(\); \}/.test(ask33)
+    && /\.\.\.\(opts\.onAsk \? \{ onAsk: opts\.onAsk \} : \{\}\)/.test(cc33));
 
   gate('T33.15 ONE VIEWER, ONE ADDRESS — a document opens in the library’s own lightbox, a recording at THE ONE note address, and no second previewer is drawn',
     /import \{ AttachmentLightbox, type LightboxFile \} from '@\/components\/ui\/attachment-lightbox'/.test(host33)
@@ -5865,9 +5885,12 @@ console.log('\nT33 · THE ONE COLLECTION CARD — a set of the user’s own obje
   const dm33 = read('app/api/work/threads/[id]/chat/route.ts') ?? '';
   gate('T33.18 THE DM MOUNTS THE ONE HOST THROUGH THE ONE RE-READ DOOR — live spec or stored pointer, no second card and no second fetch path',
     // the client half: exactly ONE CollectionCard mount and ONE /api/collections reader in the app
-    (ask33.match(/<CollectionCard\b/g) ?? []).length === 1
-    && !/\/api\/collections\?/.test(ask33)
-    && /import CollectionCard, \{ type CollectionPointer \} from '@\/components\/home\/collection-card'/.test(ask33)
+    // ⟲ RE-POINTED W20 (A CLAIM RENDERS IN EVERY CHAT): the chat's hydrator/payload reader is the ONE table
+    // (lib/present/turn-card.ts) and its mount is the ONE renderer (components/home/chat-cards.tsx), shared
+    // by the Home chat and the item rooms — the same law read where it now lives.
+    (ask33.match(/<CollectionCard\b/g) ?? []).length === 0 && (cc33.match(/<CollectionCard\b/g) ?? []).length === 1
+    && !/\/api\/collections\?/.test(ask33) && !/\/api\/collections\?/.test(cc33)
+    && /import CollectionCard from '@\/components\/home\/collection-card'/.test(cc33) && /chatCardNodes\(t, key,/.test(ask33)
     // the DM's LIVE frame paints from the served spec, guarded by the one validator
     && /event\.type === 'collection' && event\.collection\?\.id && isCollectionSpec\(event\.collection\.spec\)/.test(ask33)
     && /collections\.push\(\{ collectionId: event\.collection\.id, spec: event\.collection\.spec \}\)/.test(ask33)
@@ -5930,6 +5953,8 @@ console.log('\nT34 · THE EVENT CARD — one calendar event, and only the verbs 
   const contract34 = read('lib/present/event.ts') ?? '';
   const host34 = read('components/home/event-card.tsx') ?? '';
   const ask34 = read('components/home/home-ask.tsx') ?? '';
+  const tc34 = read('lib/present/turn-card.ts') ?? '';
+  const cc34 = read('components/home/chat-cards.tsx') ?? '';
   const coll34 = read('components/home/collection-card.tsx') ?? '';
   const harness34 = read('app/(main)/dev/thread-preview/preview-client.tsx') ?? '';
 
@@ -6031,11 +6056,14 @@ console.log('\nT34 · THE EVENT CARD — one calendar event, and only the verbs 
     // pointer object — a parent re-render no longer cancels and refetches the card.
     && /pointer\?\.eventId/.test(host34) && !/\[pointer, /.test(host34)
     // the chief room's rehydrate hands over a POINTER and never a stored spec
-    && /t\.component\?\.key === 'event_card'/.test(ask34)
+    // ⟲ RE-POINTED W20 (A CLAIM RENDERS IN EVERY CHAT): the chat's hydrator/payload reader is the ONE table
+    // (lib/present/turn-card.ts) and its mount is the ONE renderer (components/home/chat-cards.tsx), shared
+    // by the Home chat and the item rooms — the same law read where it now lives.
+    && /\.\.\.chatCardsOfComponent\(t\.component\)/.test(ask34)
     && (() => {
-      const i = ask34.indexOf("t.component?.key === 'event_card'");
-      const seg = ask34.slice(i, i + 900);
-      return /pointer: \{/.test(seg) && !/\bspec:/.test(seg);
+      const i = tc34.indexOf('case CARD_COMPONENT_KEY.event:');
+      const seg = tc34.slice(i, i + 450);
+      return i > -1 && /pointer: \{/.test(seg) && !/\bspec:/.test(seg);
     })()
     // …and so does the DM's
     && (() => {
@@ -6057,7 +6085,7 @@ console.log('\nT34 · THE EVENT CARD — one calendar event, and only the verbs 
     /isEventSpec\(seed\)/.test(host34)
     && /isEventSpec\(json\?\.spec\)/.test(host34)
     && /!isEventSpec\(json\?\.spec\)\) throw new Error\('deed'\)/.test(host34)
-    && /isEventSpec\(d\.event\.spec\)/.test(ask34)
+    && /isEventSpec\(ev\.spec\)/.test(tc34)   // ⟲ W20: the ONE payload reader (lib/present/turn-card)
     && /isEventSpec\(event\.event\?\.spec \?\? event\.card\?\.spec\)/.test(ask34)
     // still-reading shows NOTHING rather than a skeleton of facts it has not read
     && /if \(!spec\) \{/.test(host34) && !/animate-pulse/.test(host34));
@@ -6067,8 +6095,11 @@ console.log('\nT34 · THE EVENT CARD — one calendar event, and only the verbs 
     && (host34.match(/method: 'POST'/g) ?? []).length === 1
     && !/googleapis|graph\.microsoft|\/api\/invites\/|\/api\/calendar\//.test(host34)
     // …and the HOST is mounted once per surface, never a second card for the same object
-    && (ask34.match(/<EventCard\b/g) ?? []).length === 1
-    && /import EventCard, \{ type EventPointer \} from '@\/components\/home\/event-card'/.test(ask34));
+    // ⟲ RE-POINTED W20 (A CLAIM RENDERS IN EVERY CHAT): the chat's hydrator/payload reader is the ONE table
+    // (lib/present/turn-card.ts) and its mount is the ONE renderer (components/home/chat-cards.tsx), shared
+    // by the Home chat and the item rooms — the same law read where it now lives.
+    && (ask34.match(/<EventCard\b/g) ?? []).length === 0 && (cc34.match(/<EventCard\b/g) ?? []).length === 1
+    && /import EventCard from '@\/components\/home\/event-card'/.test(cc34));
 
   // ── (g) THE ROW OPENS IN PLACE, AND THE HARNESS HOLDS EVERY STATE ──
   gate('T34.13 THE CALENDAR ROW OPENS ITS EVENT IN PLACE — the row’s own door raises THE ONE event card under it, and the row still carries no RSVP verb of its own',
@@ -7068,18 +7099,18 @@ console.log('\nT40 · THE LIVE CARDS, WHERE THEY WERE MISSING');
       .every((t) => new RegExp(`'${t}'`).test(channel)));
 
   gate('T40.4 THE ROOMS MOUNT THE TWO HOSTS — the rail reads both component keys back as POINTERS and mounts the SAME CollectionCard / EventCard the Home chat mounts; the room door writes the turn',
-    /import CollectionCard, \{ type CollectionPointer \}/.test(rail)
-    && /import EventCard, \{ type EventPointer \}/.test(rail)
-    && /t\.component\?\.key === 'collection_card'/.test(rail)
-    && /t\.component\?\.key === 'event_card'/.test(rail)
-    && /<CollectionCard/.test(rail) && /<EventCard/.test(rail)
-    // the rehydrated turn hands over the POINTER, never a stored spec
-    && /turn\.collection = \{[\s\S]{0,200}?pointer: \{\s*\n?\s*kind:/.test(rail)
-    && !/turn\.collection = \{[\s\S]{0,200}?rows:/.test(rail)
+    // ⟲ RE-POINTED W20 (A CLAIM RENDERS IN EVERY CHAT): the chat's hydrator/payload reader is the ONE table
+    // (lib/present/turn-card.ts) and its mount is the ONE renderer (components/home/chat-cards.tsx), shared
+    // by the Home chat and the item rooms — the same law read where it now lives.
+    /chatCardsOfComponent\(t\.component/.test(rail) && /chatCardNodes\(t\.cards/.test(rail)
+    && /<CollectionCard/.test(read('components/home/chat-cards.tsx') ?? '') && /<EventCard/.test(read('components/home/chat-cards.tsx') ?? '')
+    // the rehydrated turn hands over the POINTER, never a stored spec (the ONE hydrator)
+    && /case CARD_COMPONENT_KEY\.collection:[\s\S]{0,200}?pointer: \{/.test(read('lib/present/turn-card.ts') ?? '')
+    && !/case CARD_COMPONENT_KEY\.collection:[\s\S]{0,300}?rows:/.test(read('lib/present/turn-card.ts') ?? '')
     // …and the room's converse door persists it through the ONE shared component builder
-    && /collectionTurnComponent, eventTurnComponent/.test(steer)
-    && /component: collectionTurnComponent\(turn\.collection\.id, turn\.collection\.spec\)/.test(steer)
-    && /component: eventTurnComponent\(turn\.event\.spec\)/.test(steer)
+    && /const card = cardTurnOf\(turn\)/.test(steer) && /component: card\.component/.test(steer)
+    && /component: collectionTurnComponent\(c\.id, c\.spec\)/.test(read('lib/present/turn-card.ts') ?? '')
+    && /component: eventTurnComponent\(e\.spec\)/.test(read('lib/present/turn-card.ts') ?? '')
     && /export function collectionTurnComponent\(/.test(pointer)
     && /export function eventTurnComponent\(/.test(pointer)
     // the stored shape is the one home-ask already reads (same key, same state fields)

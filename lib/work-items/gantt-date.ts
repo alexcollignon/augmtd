@@ -39,3 +39,10 @@ export function ganttMarkerOf(
   if (w.when.explicit) return { marker: 'due', date: w.when.explicit, arrival, overdue: w.when.explicit < todayStr };
   return { marker: 'undated', date: arrival, arrival, overdue: false };
 }
+
+// THE ADDRESS LAW (W20): a Gantt row carries a REAL per-item address or none at all — a missing or
+// placeholder href ('/', '', a non-path) is null, so the chart renders plain text, never a link that
+// goes nowhere. The ONE floor: the timeline route serves through it and the chart renders through it.
+export function rowDoorOf(href: string | null | undefined): string | null {
+  return href && href !== '/' && href.startsWith('/') ? href : null;
+}

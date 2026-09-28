@@ -194,12 +194,17 @@ console.log('\nC6 · THE HOME CONVERSE CORE — steer · remember · run prepare
     && /if \(scope\.kind === 'item' && !verdict\.open && !escalateToReach\) \{[\s\S]{0,400}executeRememberFact\(/.test(src));
   gate('C6.4 a change ends the loop like every other hand-off (the model never talks past its own card)',
     /\|\| turn\?\.change\) return \{ \.\.\.turn/.test(src));
+  // ⟲ RE-POINTED W20 (A CLAIM RENDERS IN EVERY CHAT): both doors now write + forward every card kind
+  // through ONE table (lib/present/turn-card.ts — `cardTurnOf` / `cardPayloadOf`); the change's POINTER
+  // is produced there by `changeTurnComponent`. Same law (served spec live, pointer persisted), one home.
+  const tc = read('lib/present/turn-card.ts');
   gate('C6.5 the turn carries `change` and the Home ask door serves + persists it as a POINTER',
     /change\?: \{ id: string; spec: ChangeSpec \} \| null;/.test(src)
-    && /\{ change: turn\.change \}/.test(read('app/api/home/ask/route.ts'))
-    && /component: changeTurnComponent\(turn\.change\.spec\)/.test(read('app/api/home/ask/route.ts')));
+    && /cardPayloadOf\(turn\)/.test(read('app/api/home/ask/route.ts')) && /component: card\.component/.test(read('app/api/home/ask/route.ts'))
+    && /component: changeTurnComponent\(ch\.spec\)/.test(tc) && /'change'/.test(tc));
   gate('C6.6 the room door (items/steer) persists the change_card turn and serves the spec',
-    /changeTurnComponent\(turn\.change\.spec\)/.test(read('app/api/items/steer/route.ts')) && /\{ change: turn\.change \}/.test(read('app/api/items/steer/route.ts')));
+    /cardTurnOf\(turn\)/.test(read('app/api/items/steer/route.ts')) && /component: card\.component/.test(read('app/api/items/steer/route.ts'))
+    && /\.\.\.cardPayloadOf\(turn\)/.test(read('app/api/items/steer/route.ts')));
 }
 
 // ── C7 · THE STORE ──────────────────────────────────────────────────────────────────────────────
@@ -257,15 +262,22 @@ console.log('\nC9 · THE PRESENTATION — one host, the kit’s approval kind, e
   // CHANGE rides the kit's existing `approval` kind — no kind named change, and no kind beyond the named 16.
   gate('C9.2 NO new card kind for a change — the contract has the named 16 kinds (15 + W16.2 confirm) and none named change',
     kinds.length === 16 && kinds.includes('confirm') && !kinds.includes('change'));
+  // ⟲ RE-POINTED W20 (A CLAIM RENDERS IN EVERY CHAT): the Home chat and the room rail mount the host
+  // through ONE chat-card renderer (components/home/chat-cards.tsx) — still exactly one draw per surface
+  // kind, now one file for both chats, plus the catalogue.
   const mounts = [...sourceFiles('components'), ...sourceFiles('app')].filter((f) => /<ChangeCard\b/.test(read(f)));
-  gate('C9.3 the host is mounted by the Home chat, the room rail and the catalogue — and nowhere draws a second one',
-    ['components/home/home-ask.tsx', 'components/home/item-rail.tsx', 'app/(main)/dev/thread-preview/preview-catalogue.tsx'].every((f) => mounts.includes(f)) && mounts.length === 3, mounts.join(', '));
+  gate('C9.3 the host is mounted by the ONE chat-card renderer (Home chat + room rail) and the catalogue — and nowhere draws a second one',
+    ['components/home/chat-cards.tsx', 'app/(main)/dev/thread-preview/preview-catalogue.tsx'].every((f) => mounts.includes(f)) && mounts.length === 2, mounts.join(', '));
   const ha = strip(read('components/home/home-ask.tsx'));
+  const tcs = read('lib/present/turn-card.ts');
   gate('C9.4 home-ask: live frame → card, pointer → re-read, on the chief lane AND the coworker lane',
-    /event\.type === 'change' && isChangeSpec\(event\.change\?\.spec\)/.test(ha) && /t\.component\?\.key === 'change_card'/.test(ha)
-    && /m\.metadata\?\.changes\?\.length/.test(ha) && /d\.change && isChangeSpec\(d\.change\.spec\)/.test(ha));
+    /event\.type === 'change' && isChangeSpec\(event\.change\?\.spec\)/.test(ha) && /chatCardsOfComponent\(t\.component\)/.test(ha)
+    && /m\.metadata\?\.changes\?\.length/.test(ha) && /chatCardsOfPayload\(d as Record<string, unknown>\)/.test(ha)
+    && /case CARD_COMPONENT_KEY\.change:/.test(tcs) && /isChangeSpec\(ch\.spec\)/.test(tcs));
   const rail = strip(read('components/home/item-rail.tsx'));
-  gate('C9.5 item-rail: the change_card turn rehydrates as a POINTER and the host mounts', /t\.component\?\.key === 'change_card'/.test(rail) && /<ChangeCard/.test(rail));
+  gate('C9.5 item-rail: the change_card turn rehydrates as a POINTER and the host mounts',
+    /chatCardsOfComponent\(t\.component/.test(rail) && /chatCardNodes\(t\.cards/.test(rail)
+    && /changes\?: Array<\{ changeId: string; spec\?: ChangeSpec; pointer\?: \{ changeId: string \} \}>/.test(tcs));
   const cat = read('app/(main)/dev/thread-preview/preview-catalogue.tsx');
   gate('C9.6 the catalogue mounts the host in the approval section (open + applied)', /THE CHANGE HOST/.test(cat) && /status: 'pending'/.test(cat) && /status: 'applied'/.test(cat));
 }

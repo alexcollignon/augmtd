@@ -75,6 +75,7 @@ import { proposeStandingTaskDefinition } from '@/lib/work/standing-spec';
 // EVERY THREAD, EVERY PRODUCER (threads plan, Sep 8): the invite card's producer is ONE tool
 // contract + ONE execution body, shared with the coworker DM. It prepares and never sends — and
 // the executor that DOES send is in no chat slice at all.
+import { CARD_PROGRESS, claimFloorSay } from '@/lib/present/turn-card';
 import { prepareCalendarInviteDefinition, executePrepareCalendarInvite, inviteCardLine } from '@/lib/tools/prepare-calendar-invite';
 import { prepareBulkDeedDefinition, executePrepareBulkDeed } from '@/lib/tools/prepare-bulk-deed';
 import { steerStandingTaskDefinition } from '@/lib/workflows/standing';
@@ -234,10 +235,9 @@ const TOOL_PROGRESS: Record<string, string> = {
   create_task_item: 'Creating the task…',
   send_prepared_reply: 'Checking the prepared reply…',
   prepare_forward: 'Preparing the forward…',
-  draft_reply: 'Writing the reply…',
-  prepare_calendar_invite: 'Putting the invite together…',
-  prepare_event_action: 'Pulling up that meeting…',
-  prepare_bulk_deed: 'Working out exactly what that would do…',
+  // THE WORK SHOWS (W20.B): the card-producing tools' words live in ONE client-safe table beside the
+  // widget each is making, so a room's in-flight line can reserve that card's own shape.
+  ...Object.fromEntries(Object.entries(CARD_PROGRESS).map(([k, v]) => [k, v.label])),
   propose_standing_task: 'Drafting the standing task…',
   steer_standing_task: 'Adjusting how that task runs…',
 };
@@ -1861,6 +1861,10 @@ export async function converse(
   // above). Refs empty → identical behaviour to the old `.replace(GROUNDING_TAG_RE, '')`.
   if (turn?.say) turn.say = enforceWeekdayDatePairs(stripGroundingNotation(turn.say, turn.refs), { userText: userWords });
   if (turn?.say) turn.say = sayInsteadOfSentinel(turn.say);
+  // A CLAIM RENDERS IN EVERY CHAT (W20.B — lib/present/turn-card.ts): an answer that says it produced
+  // an artifact ("Here's the invite…") while the turn carries no card, no surface and no inline body
+  // is never served as-is — both doors read their answer through here.
+  if (turn?.say) turn.say = claimFloorSay(turn);
   return turn;
 }
 

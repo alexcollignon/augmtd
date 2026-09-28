@@ -171,6 +171,17 @@ export async function prepareOneItem(
       const { preparedState, nonLiveKindsOf } = await import('@/lib/prepare/read');
       nonLive = nonLiveKindsOf(await preparedState(admin, userId, { kind: w.id.startsWith('commit:') ? 'commitment' : 'inbox_item', id: w.entityId }));
     } catch { /* the lanes' own guards stand */ }
+    // ── W20.B · THE SCHEDULE OFFER, BESIDE THE VERDICT'S WORK (lib/prepare/schedule-offer.ts): one
+    // verdict per item cannot carry a thread with two live moves — when the newest inbound states a
+    // concrete future meeting time and nothing with the counterparty is booked around it, the invite at
+    // THAT time is prepared next to whatever the verdict prepares (a `schedule` verdict's own lane
+    // already does this). Deterministic, zero AI, idempotent; never replaces the verdict's lane. ──
+    if (w.id.startsWith('inbox:') && verdict.work !== 'schedule' && verdict.work !== 'none') {
+      try {
+        const { prepareScheduleOffer } = await import('@/lib/prepare/schedule-offer');
+        await prepareScheduleOffer(admin, userId, w.entityId);
+      } catch { /* the offer is an addition — the verdict's lane runs regardless */ }
+    }
     // ── Q8b · THE PASTE PACK (attention-plan PART III): BEFORE the commit-door lanes, ask whether
     // this account/item HAS the door they end at. When it does not — an email-off workspace, or a
     // `reply` verdict on a commitment (the reply lane is mail-only by construction and its first

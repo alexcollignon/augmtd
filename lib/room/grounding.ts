@@ -24,6 +24,9 @@ import { getPersonEntities, type PersonEntity } from '@/lib/entities/people';
 import { normalizeEmail } from '@/lib/core/email';
 import { withdrawnReasonOf } from '@/lib/prepare/read';
 import { askIsMoot, verdictRequireLabels } from '@/lib/room/ask-mootness';
+import { obligationAnchorOf } from '@/lib/work/obligation-anchor'; // W20.C · THE ONE ANCHOR
+/** W20.C · the board's keys + the current message's clock — THE ONE ANCHOR reads `received_at`. */
+const BOARD_ANCHOR_KEYS = [...BOARD_KEYS, 'received_at'] as const;
 
 export type RoomScope =
   | { kind: 'entity'; entityId: string }
@@ -290,10 +293,10 @@ export async function assembleRoomGrounding(
       // THE HOT-PATH LAW (event-spine P0): body-free JSON paths, folded back into `source_data`
       // (the board reads sender, subject, thread, attachments and prepared work — never the body;
       // THE ONE READER hydrates an invite's words itself).
-      ? client.from('inbox_items').select(leanSelect('id, work_title, status, last_activity_at', { keys: BOARD_KEYS }))
+      ? client.from('inbox_items').select(leanSelect('id, work_title, status, last_activity_at, created_at', { keys: BOARD_ANCHOR_KEYS }))
           .in('id', inboxIds).eq('user_id', userId)
           .order('last_activity_at', { ascending: false, nullsFirst: false })
-          .then((r) => ({ data: foldLeanRows((r.data ?? []) as unknown as Array<Record<string, unknown>>, { keys: BOARD_KEYS }) }))
+          .then((r) => ({ data: foldLeanRows((r.data ?? []) as unknown as Array<Record<string, unknown>>, { keys: BOARD_ANCHOR_KEYS }) }))
       : Promise.resolve({ data: [] }),
     commitIds.length
       ? client.from('commitments').select('id, description, counterparty, due_date, status, direction, thread_id, source, source_id, created_at').in('id', commitIds).eq('user_id', userId).eq('status', 'open')
@@ -336,7 +339,7 @@ export async function assembleRoomGrounding(
           : new Map<string, string | null>();
         for (const c of commitRows) {
           const ev = matchEvidence(bounded, {
-            kind: 'commitment', id: String(c.id), afterISO: String(c.created_at ?? ''),
+            kind: 'commitment', id: String(c.id), afterISO: obligationAnchorOf('commitment', c),
             counterpartyEmail: addresses.get(String(c.id)) ?? null, threadId: (c.thread_id as string | null) ?? null,
             fulfiller: String(c.direction ?? '') === 'awaiting' ? 'counterparty' : 'user', description: String(c.description ?? ''),
           }, nowISO, SETTLE_MATCH);
@@ -346,7 +349,7 @@ export async function assembleRoomGrounding(
           const sd = (it.source_data ?? {}) as Record<string, unknown>;
           const from = typeof sd.from_address === 'string' && sd.from_address ? normalizeEmail(sd.from_address) : null;
           const ev = matchEvidence(bounded, {
-            kind: 'inbox', id: String(it.id), afterISO: String(it.last_activity_at ?? sd.received_at ?? ''),
+            kind: 'inbox', id: String(it.id), afterISO: obligationAnchorOf('inbox', it),
             counterpartyEmail: from, threadId: (sd.thread_id as string | null) ?? null, fulfiller: 'user',
             description: String(it.work_title ?? sd.subject ?? ''),
           }, nowISO, SETTLE_MATCH);

@@ -207,7 +207,9 @@ console.log('\nD · (d) a requires-ask for the draft itself / the item\'s own in
     // the title half is the inbound's OWN subject (source_data.subject), never the judge's work_title
     // ⟲ RE-POINTED (W15.2): the reads also carry `created_at` (the SCHEDULED matcher's obligation
     // clock only) — still never work_title, and the ask title is still the inbound's own subject.
-    && /select\('status, source_data, source, created_at'\)/.test(machine) && /itemTitle = sd\.subject \|\| null;/.test(machine)
+    // ⟲ RE-POINTED (W20.C): …and `last_activity_at` (THE ONE ANCHOR, lib/work/obligation-anchor — the
+    // obligation clock is the CURRENT ask's, not the row's birth) — still never work_title.
+    && /select\('status, source_data, source, created_at, last_activity_at'\)/.test(machine) && /itemTitle = sd\.subject \|\| null;/.test(machine)
     && /select\('id, status, source_data, last_activity_at, source, created_at'\)/.test(machine)
     && !/select\('[^']*work_title/.test(machine));
   const view = src('app/api/items/view/route.ts');

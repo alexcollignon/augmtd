@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { buildWorkItems, partitionByTime } from '@/lib/work-items/model';
-import { ganttMarkerOf } from '@/lib/work-items/gantt-date';
+import { ganttMarkerOf, rowDoorOf } from '@/lib/work-items/gantt-date';
 import { fetchAllRows } from '@/lib/utils/fetch-all';
 
 const MOM_DOT: Record<string, string> = { needs_you: 'bg-rose-500', gone_quiet: 'bg-amber-500', stalled: 'bg-amber-500', waiting: 'bg-blue-400', active: 'bg-emerald-500', unknown: 'bg-neutral-300' };
@@ -72,7 +72,7 @@ async function computePayload(supabase: any, userId: string) {
     // ── GANTT groups — the timeline as a PROJECT-clustered event chart (the Projects-page Gantt, on the
     // Home Timeline). Each active entity with dated members is a swimlane; its members are dated events. ──
     let ganttGroups: Array<{ id: string; name: string; statusDot: string; items: Array<{ title: string; who: string | null; state: string; marker: string; date: string; arrival: string; overdue: boolean; href: string | null }> }> = [];
-    let looseGroup: { id: string; name: string; statusDot: string; items: never[] } | null = null;
+    let looseGroup: { id: string; name: string; statusDot: string; roomless?: boolean; items: never[] } | null = null;
     try {
       const { data: wents } = await supabase.from('work_entities')
         .select('id, name, tracked, state').eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null).limit(400);
@@ -105,7 +105,7 @@ async function computePayload(supabase: any, userId: string) {
         const eid = rawToEntity.get(w.entityId);
         if (!eid || !entMeta.has(eid)) continue;
         const mk = ganttMarkerOf(w, todayStr);
-        (byEntity.get(eid) ?? byEntity.set(eid, [] as Array<Record<string, unknown>>).get(eid)!).push({ title: w.title, who: w.who, state: w.state, marker: mk.marker, date: mk.date, arrival: mk.arrival, overdue: mk.overdue, href: w.href ?? null, events: eventsByWid[w.id] ?? [] });
+        (byEntity.get(eid) ?? byEntity.set(eid, [] as Array<Record<string, unknown>>).get(eid)!).push({ title: w.title, who: w.who, state: w.state, marker: mk.marker, date: mk.date, arrival: mk.arrival, overdue: mk.overdue, href: rowDoorOf(w.href), events: eventsByWid[w.id] ?? [] });
       }
       ganttGroups = [...byEntity.entries()].map(([eid, its]) => ({ id: eid, name: entMeta.get(eid)!.name, statusDot: entMeta.get(eid)!.dot, items: its as never[] }))
         .sort((a, b) => (b.items as unknown[]).length - (a.items as unknown[]).length);
@@ -120,10 +120,10 @@ async function computePayload(supabase: any, userId: string) {
         const eid = rawToEntity.get(w.entityId);
         if (eid && entMeta.has(eid)) continue; // already in a lane
         const mk = ganttMarkerOf(w, todayStr);
-        looseItems.push({ title: w.title, who: w.who, state: w.state, marker: mk.marker, date: mk.date, arrival: mk.arrival, overdue: mk.overdue, href: w.href ?? null, events: eventsByWid[w.id] ?? [] });
+        looseItems.push({ title: w.title, who: w.who, state: w.state, marker: mk.marker, date: mk.date, arrival: mk.arrival, overdue: mk.overdue, href: rowDoorOf(w.href), events: eventsByWid[w.id] ?? [] });
       }
       if (looseItems.length) {
-        looseGroup = { id: 'loose', name: 'Not in a project', statusDot: 'bg-neutral-300', items: looseItems.slice(0, 60) as never[] };
+        looseGroup = { id: 'loose', name: 'Not in a project', statusDot: 'bg-neutral-300', roomless: true, items: looseItems.slice(0, 60) as never[] };
       }
     } catch { /* non-fatal — the flat station view still renders */ }
 

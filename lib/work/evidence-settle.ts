@@ -33,6 +33,7 @@ import { evidenceSource } from '@/lib/evidence/sources';
 import { actorLabel } from '@/lib/evidence/actor';
 import { judgeFulfillmentFromEvidence, applyFulfillmentVerdict, type FulfillmentCandidate, type FulfillmentVerdict } from '@/lib/commitments/fulfillment';
 import { noteLooksDone } from '@/lib/evidence/looks-done';
+import { obligationAnchorOf, statedMeetingDateOf } from '@/lib/work/obligation-anchor'; // W20.C · THE ONE ANCHOR
 
 /** `judged` = a verdict was obtained (from the store OR a fresh call); `cached` = it came from the
  *  store; `fresh` = a paid reasoned call ran. THE CAPS COUNT `fresh` ONLY (W7.1) — a cache hit is
@@ -135,10 +136,17 @@ export async function settleWorkByEvidence(
     // W16 · LOOKS DONE MUST BE MEANINGFUL: only same-conversation evidence (or a held meeting with the
     // counterparty for a MEETING-SHAPED obligation — the judge's `schedule` signal, or the work's own
     // words) may raise the state; other-thread mail with the same counterparty stays with the judge.
+    // W20.C · the held-meeting rule reads THE ONE ANCHOR (the work's afterISO) and the meeting date
+    // the ask names (the commitment's due date · the item's stated date) — the same gate the
+    // machine's read-time held booking passes (lib/evidence/looks-done.ts looksDoneScopeOf).
+    const statedDate = work.kind === 'commitment'
+      ? ((row as { due_date?: string | null }).due_date ?? null)
+      : ((((row as { source_data?: Record<string, unknown> | null }).source_data ?? {}).understanding as { deadline?: string | null } | null)?.deadline ?? null);
     if (verdict.verdict !== 'delivered') {
       const { meetingShaped } = await import('@/lib/work/scheduled');
       await noteLooksDone(client, userId, { kind: work.kind, id: work.id, fulfiller: work.fulfiller }, evidence, verdict.verdict,
-        { meetingShaped: schedulingSignal || meetingShaped(String(work.description ?? '')) });
+        { meetingShaped: schedulingSignal || meetingShaped(String(work.description ?? '')), anchorISO: work.afterISO,
+          meetingDate: statedMeetingDateOf(statedDate, work.afterISO, String(work.description ?? '')) });
     }
     const by = verdict.by ?? null;
     const reason = by ? evidenceReason(by.type, by.role) : 'evidence:email';
@@ -276,7 +284,7 @@ export async function settleCommitmentByEvidence(
     cp = r?.primary ?? null; keys = r?.keys;
   }
   const work: OpenWork = {
-    kind: 'commitment', id: c.id, afterISO: c.created_at, counterpartyEmail: cp, threadId: c.thread_id ?? null,
+    kind: 'commitment', id: c.id, afterISO: obligationAnchorOf('commitment', c), counterpartyEmail: cp, threadId: c.thread_id ?? null,
     fulfiller: String(c.direction) === 'awaiting' ? 'counterparty' : 'user', description: String(c.description ?? ''), keys,
   };
   const evidence = matchEvidence(ctx.pool, work, ctx.nowISO, SETTLE_MATCH);
@@ -294,7 +302,7 @@ export async function settleInboxItemByEvidence(
   const { from, keys } = inboxKeys({ id: it.id, source_data: sd }, ctx.registry);
   const ask = (sd.understanding as { ask?: string } | null)?.ask;
   const work: OpenWork = {
-    kind: 'inbox', id: it.id, afterISO: String(it.last_activity_at ?? it.created_at), counterpartyEmail: from,
+    kind: 'inbox', id: it.id, afterISO: obligationAnchorOf('inbox', it), counterpartyEmail: from,
     threadId: (sd.thread_id as string) ?? null, fulfiller: 'user', description: String(ask || it.work_title || sd.subject || ''), keys,
   };
   const evidence = matchEvidence(ctx.pool, work, ctx.nowISO, SETTLE_MATCH);
