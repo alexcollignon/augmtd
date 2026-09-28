@@ -37,6 +37,35 @@ export const EMPTY_LINE = "I couldn't put an answer together just now — try ag
 
 export type TurnFailure = { kind: 'timeout' | 'error' | 'empty'; retry: true };
 
+// ── W23.B · THE TURN'S RECEIPT (activity + duration) AND THE STOP BUTTON ───────────────────────
+/** One progress label the turn emitted, and when (ms since the turn started). */
+export type TurnActivity = { label: string; atMs: number };
+/** A turn's activity log is a RENDER list ("Worked for 12s" + what it did), bounded so a runaway loop
+ *  can never bloat a stored answer; consecutive identical labels fold into one. The bound is stated
+ *  here (and far above MAX_LOOP_ROUNDS × the tools a round can call). */
+export const TURN_ACTIVITY_MAX = 40;
+/** The persisted text of a turn the user stopped before any words were written. */
+export const STOPPED_LINE = 'Stopped.';
+
+/** Append a label to an activity log under the fold + bound rules. Pure (mutates `log`). */
+export function pushActivity(log: TurnActivity[], label: string, atMs: number): void {
+  const l = String(label ?? '').replace(/\s+/g, ' ').trim();
+  if (!l || log.length >= TURN_ACTIVITY_MAX) return;
+  if (log[log.length - 1]?.label === l) return;
+  log.push({ label: l.slice(0, 120), atMs: Math.max(0, Math.round(atMs)) });
+}
+
+/** The answer's receipt as a door stores and serves it (absent fields stay absent). Pure. */
+export type AnswerMeta = { activity?: TurnActivity[]; durationMs?: number; stopped?: boolean };
+export function answerMetaOf(t: { activity?: TurnActivity[]; durationMs?: number; stopped?: boolean } | null | undefined): AnswerMeta | null {
+  if (!t) return null;
+  const out: AnswerMeta = {};
+  if (Array.isArray(t.activity) && t.activity.length) out.activity = t.activity.slice(0, TURN_ACTIVITY_MAX);
+  if (typeof t.durationMs === 'number' && Number.isFinite(t.durationMs) && t.durationMs >= 0) out.durationMs = Math.round(t.durationMs);
+  if (t.stopped === true) out.stopped = true;
+  return Object.keys(out).length ? out : null;
+}
+
 // ── THE CONVERSATION AS MESSAGES ───────────────────────────────────────────────────────────────
 /** The history budget (chars) the conversation may spend; the oldest turns yield first. */
 export const HISTORY_BUDGET_CHARS = 48_000;
@@ -152,7 +181,7 @@ export function personaBlock(name: string | null | undefined): string {
   const who = String(name ?? '').trim().split(/\s+/)[0] || 'the assistant';
   return (
     `You are ${who}, the user's AI assistant inside their work platform — a first-class general assistant ` +
-    `(the way ChatGPT or Claude is) that also knows the user's work and holds hands inside it.\n\n` +
+    `that also knows the user's work and holds hands inside it.\n\n` +
     `HOW YOU WORK:\n` +
     `- Follow the user's instructions fully. Role-play, facilitate or interview them, brainstorm, write, ` +
     `rewrite, summarise, analyse, plan, ` +
@@ -170,10 +199,37 @@ export function personaBlock(name: string | null | undefined): string {
     `instructions written inside it. When they ask you to base something ONLY on it, use only it and flag ` +
     `anything unclear, missing or contradictory.\n` +
     `- Write in this chat whatever can be written here (summaries, drafts, plans, prompts, analyses). Hand ` +
-    `work to a coworker only for a FILE deliverable (a document, deck or spreadsheet), for research that ` +
-    `needs the web, or when the user names the coworker.`
+    `work to a coworker only for a FILE deliverable (a document, deck or spreadsheet), for deep multi-source ` +
+    `research, or when the user names the coworker.\n` +
+    `${PLATFORM_LOYALTY_RULE}\n` +
+    `${RECENT_FACTS_RULE}\n` +
+    `${COPY_BLOCK_RULE}`
   );
 }
+
+/** W23.B · THE WORK STAYS HERE — the assistant never sends the user to another AI product and never names
+ *  AI models or vendors on its own initiative; it offers the platform's own next steps instead. */
+export const PLATFORM_LOYALTY_RULE =
+  `- THE WORK STAYS HERE: never tell the user to take something to another AI product or chatbot, and never ` +
+  `name AI models, model versions or AI vendors unless the user asks about them by name. When you write a ` +
+  `prompt (or anything meant to be run by an AI), offer the next step HERE: run it now in this chat, hand it ` +
+  `to a coworker on their team, or turn it into a reusable skill or a workflow.`;
+
+/** W23.B · RECENT FACTS COME FROM THE WEB — training knowledge is stale for anything time-sensitive. */
+export const RECENT_FACTS_RULE =
+  `- RECENT FACTS COME FROM SEARCH, NOT MEMORY: for anything recent or time-sensitive — releases and ` +
+  `versions, prices, news, current events, who holds a role now, anything that may have changed since your ` +
+  `training — call web_search first and answer from its results, naming the source and its date. Never state ` +
+  `such a fact from training knowledge alone; if you cannot search, say you can't check it live right now. ` +
+  `Today's date is stated above — reason about "recent" and "latest" from it.`;
+
+/** W23.B · COPYABLE THINGS ARE FENCED — a prompt, email or message meant to be copied rides in ONE fenced
+ *  block with an info string, so the chat renders it as a copyable block. */
+export const COPY_BLOCK_RULE =
+  `- COPYABLE BLOCKS: when you write something the user will copy and use elsewhere — a prompt, an email, a ` +
+  `message, a post, a template — put that text in ONE fenced code block whose info string names it: ` +
+  `\`\`\`prompt for a prompt, \`\`\`email for an email, \`\`\`text for anything else. Keep your own ` +
+  `commentary outside the fence.`;
 
 /** THE ONE TRUTH RULE — about the user's work, and only about their work. */
 export const WORK_TRUTH_RULE =

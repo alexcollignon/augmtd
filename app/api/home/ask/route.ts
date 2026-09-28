@@ -5,7 +5,10 @@ import { createClient as createAdmin } from '@supabase/supabase-js';
 import { converse, type ConverseHistoryTurn, type ConverseAttachment } from '@/lib/converse';
 import { tagOf } from '@/lib/home/ask-refs';
 import { cardPayloadOf, cardTurnOf, normalizeTurnCards } from '@/lib/present/turn-card';
-import { converseStreamResponse } from '@/lib/present/converse-stream';
+import { converseStreamResponse, turnAbortFor } from '@/lib/present/converse-stream';
+// W23.B — the answer's receipt (activity + duration + stopped) and the chat's own title.
+import { recordAnswerMeta } from '@/lib/converse/answer-meta';
+import { answerMetaOf } from '@/lib/converse/conversation';
 // W21 — SKILLS IN CHAT (contract: lib/skills/chat-contract.ts): the ONE resolver, the offer, the store.
 import { resolveSkillsForTurn, sanitizeSkillPick } from '@/lib/skills/for-turn';
 import { evaluateSkillOffer } from '@/lib/skills/offer';
@@ -80,6 +83,17 @@ export async function POST(request: NextRequest) {
         });
         // W21: the answer's followed skills — ONE companion record keyed by the stored turn's id.
         await recordAnswerSkills(supabase, user.id, roomKey, turn.say, turn.skillsFollowed);
+        // W23.B: the answer's receipt (what it did, how long, stopped?) — the same companion idiom.
+        await recordAnswerMeta(supabase, user.id, roomKey, turn.say, turn);
+        // W23.B — A CHAT NAMES ITSELF after its FIRST answer: one cheap call in after() (the answer never
+        // waits), stored once, never over a rename. A stopped answer is not the conversation's topic yet.
+        const firstAnswer = !history.some((h) => h.role === 'assistant');
+        if (firstAnswer && !turn.stopped) {
+          after(async () => {
+            const { ensureHomeChatTitle } = await import('@/lib/converse/chat-title');
+            await ensureHomeChatTitle(supabase, user.id, roomKey, { question: q, answer: turn.say });
+          });
+        }
       } catch { /* durability is best-effort — the answer itself still returns */ }
     };
     // REVISION-IN-PLACE (DH7): assistant turns may carry their document card's ref — sanitized
@@ -179,9 +193,14 @@ export async function POST(request: NextRequest) {
       ...(skillOffer && !turn.skillsFollowed?.length && turn.say?.trim() && !turn.failure ? { skillOffer } : {}),
       // W22 — ROBUSTNESS: a turn that ran out of time or failed says so and offers the retry.
       ...(turn.failure ? { failure: turn.failure } : {}),
+      // W23.B — THE TURN'S RECEIPT: the progress labels it emitted (ms since start), how long it took,
+      // and whether the user stopped it.
+      ...(answerMetaOf(turn) ?? {}),
     });
     // W22 — the core's door options: where a background hand-off posts, and how it outlives the response.
-    const door = { postRoomKey: roomKey, defer: (work: () => Promise<void>) => after(work) };
+    // W23.B — THE STOP BUTTON: one abort per turn, fed by the request's own signal and the stream's cancel.
+    const turnAbort = turnAbortFor(request);
+    const door = { postRoomKey: roomKey, defer: (work: () => Promise<void>) => after(work), signal: turnAbort.signal };
     if (body.stream === true) {
       // THE ONE STREAM (W20.B — lib/present/converse-stream.ts, shared with the item door).
       return converseStreamResponse(async (send) => {
@@ -201,7 +220,9 @@ export async function POST(request: NextRequest) {
         // Persist BEFORE the done frame: the write must not depend on the client still listening.
         await persistAnswer(turn);
         return payloadOf(turn, focus, await offerPromise);
-      }, { label: 'home/ask' });
+        // W23.B: a cancelled stream stops the turn; after() holds the function open until the partial
+        // answer is persisted (nobody is listening any more).
+      }, { label: 'home/ask', abort: turnAbort, keepAlive: (p) => after(() => p.then(() => {})) });
     }
     const skills = await skillsPromise;
     const [turn, focus] = await Promise.all([converse(supabase, user.id, scope, q, { history, attachments, skills, ...door }), focusOf()]);

@@ -78,6 +78,11 @@ import type { RoomHistoryLine } from '@/components/room/filed-drawer';
 // opener's one producer, the orphan rule — and the ONE answer renderer the Home chat draws with.
 import { isAnswerTurn, isNarrationTurn, isPersistedOpener, openerInvite, OPENER_INVITE, orphanQuestion, ORPHAN_LINE, ORPHAN_RETRY } from '@/components/home/room-chat';
 import { Answer } from '@/components/home/ask-answer';
+// W23.A · THE CHAT SURFACE — the one scroll follows the stream, Stop, "Worked for Xs ›".
+import { activityOf, durationOf, recordStep, type ActivityStep } from '@/components/home/chat-surface';
+import { useFollowBottom, JumpToLatest } from '@/components/home/use-follow-bottom';
+import { WorkedFor } from '@/components/home/worked-for';
+import { STOPPED_LABEL } from '@/components/home/chat-flight';
 // SKILLS IN CHAT (W21): the send body's `skills`, the answer's receipt + offer (the Home chat's own).
 import { followedFor, skillsBody, skillTurnFields, skillsReceiptItem, skillOfferItem, type SkillPick, type SkillFollowed, type SkillOffer } from '@/components/skills/skill-menu-model';
 import { readFollowedByTurn } from '@/components/skills/followed-read';
@@ -153,7 +158,9 @@ export type TurnAction = { label: string } & (
 type Turn =
   /** W19.B · `reqId` = the per-question key the steer door wrote the question under (`ask:<reqId>`);
    *  `turnId` = its durable row. "Ask again" on an orphan re-keys THAT row through the same door. */
-  | { role: 'user'; text: string; reqId?: string; turnId?: string }
+  | { role: 'user'; text: string; reqId?: string; turnId?: string;
+      /** W23.A · the reader stopped the answer to this question (live only — never persisted). */
+      stopped?: true }
   | { role: 'system'; text: string; key?: string; actions?: TurnAction[]; refs?: Array<{ label: string; href: string | null; tag?: string }>; files?: Array<{ id: string; filename: string; source: string }>; author?: { name: string; role?: string | null };
       /** FIX 3 — a coworker's ASK renders as an inline checklist (input_checklist component): the
        *  concrete things they need from the principal. Rows wire to the 📎 ingest funnel. */
@@ -191,7 +198,12 @@ type Turn =
        *  the quiet offer to save the exchange as a skill. Live and reloaded through ONE reader. */
       skillsFollowed?: SkillFollowed[]; skillOffer?: SkillOffer;
       /** The durable row id — the key a reloaded answer's followed skills are served under. */
-      rowId?: string };
+      rowId?: string;
+      /** W23.A · "Worked for Xs ›" — the stream's progress steps (the core's `activity` when the done
+       *  payload or the stored row carries it, else this tab's own record) and the answer's duration. */
+      activity?: ActivityStep[]; durationMs?: number;
+      /** W23.A · a stopped answer (the stored row's own mark). */
+      stopped?: true };
 
 // THE ROOM (P7c-c1 → one-room R1): the conversation is PER-DEAL, not per-item — navigating between
 // a deal's artifacts keeps the chat. The module store is now only the LIVE RENDER CACHE; the durable
@@ -289,6 +301,14 @@ function mapServerTurns(rows: ServerTurnRow[]): Turn[] {
     if (turn.role === 'system' && t.key) turn.dkey = t.key;
     // THE RECEIPT SURVIVES THE RELOAD (W21) — the same reader the live answer goes through.
     if (turn.role === 'system') Object.assign(turn, skillTurnFields(t), t.id ? { rowId: t.id } : {});
+    // W23.A · the core's record of the work survives the reload when the row carries it (THE CONTRACT).
+    if (turn.role === 'system') {
+      const activity = activityOf((t as { activity?: unknown }).activity);
+      const durationMs = durationOf((t as { durationMs?: unknown }).durationMs);
+      if (activity) turn.activity = activity;
+      if (durationMs !== undefined) turn.durationMs = durationMs;
+      if ((t as { stopped?: unknown }).stopped === true) turn.stopped = true;
+    }
     // The reader's question carries its door key (`ask:<reqId>`) and its row id, so an orphan's
     // "Ask again" re-answers the SAME question row instead of writing it twice.
     if (turn.role === 'user') {
@@ -750,11 +770,14 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   // W22.B · the seat's label is the role's label — ONE source (lib/workers/roles.ts ROLE_LABELS).
   const seatLabel = seat ? SEAT_LABEL : undefined;
 
-  // The kit owns the scroller now — pin to the newest turn through it.
-  useEffect(() => {
-    const el = scrollRef.current?.querySelector<HTMLElement>('.overflow-y-auto');
-    el?.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-  }, [turns, busy]);
+  // FOLLOW THE STREAM (W23.A — components/home/use-follow-bottom.tsx): the kit's one scroller stays on
+  // the newest words while the reader is at the bottom and lets go when they scroll up (a "↓" above
+  // the composer brings them back). It used to smooth-scroll to the bottom on EVERY turn change,
+  // dragging a reader who had scrolled up to re-read back down.
+  const follow = useFollowBottom(scrollRef, true, roomKey);
+  // ── STOP (W23.A): the live steer's abort. The CONTRACT: the client aborts; the server treats the
+  // closed stream as a cancel.
+  const flightRef = useRef<(() => void) | null>(null);
 
   // (The hand-off affordance now arrives as one of the responder's OFFERS — the routing brain's
   // suggestion rides the grounding; no dedicated chip.)
@@ -899,22 +922,33 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     // written before W19) under a fresh key, so the record never holds the same question twice.
     const reqId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-    if (reask) setTurns((prev) => prev.map((x) => (x === reask ? { ...x, reqId } : x)));
+    if (reask) setTurns((prev) => prev.map((x) => (x === reask ? { ...x, reqId, stopped: undefined } : x)));
     else setTurns((prev) => [...prev, { role: 'user', text: t, reqId }]);
+    follow.pin(); // a send lands the reader on their own words
     setBusy(true);
+    // W23.A · STOP + "WORKED FOR": one controller the Stop button aborts; every progress label, timed.
+    const ctl = new AbortController();
+    let stopped = false;
+    flightRef.current = () => { stopped = true; ctl.abort(); };
+    const t0 = performance.now();
+    let steps: ActivityStep[] = [];
     try {
       // THE WORK SHOWS (W20.B): the door answers over THE ONE STREAM — the core's per-tool labels
       // ("Putting the invite together…") land in the in-flight line while it works; the `done` frame is
       // exactly the JSON payload. A non-stream response (an error) still reads as JSON.
       const res = await fetch('/api/items/steer', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
+        signal: ctl.signal,
         body: JSON.stringify({ kind, id, text: t, answerKey: reqId, stream: true,
           ...(reask?.turnId ? { reaskTurnId: reask.turnId, ...(reask.reqId ? { reaskKey: reask.reqId } : {}) } : {}),
           ...skillsBody(skills) }),
       });
       const d: Record<string, any> = isConverseStream(res) // eslint-disable-line @typescript-eslint/no-explicit-any
         ? ((await readConverseStream(res, (ev) => {
-            if (ev.type === 'progress' && typeof ev.label === 'string' && !stale(gen)) setStage(ev.label);
+            if (ev.type === 'progress' && typeof ev.label === 'string' && !stale(gen)) {
+              setStage(ev.label);
+              steps = recordStep(steps, ev.label, performance.now() - t0);
+            }
           })) ?? { error: "That didn't go through — try again in a moment." })
         : await res.json().catch(() => ({}));
       // THE RESET WINS (Sep 15): a "New chat" between the ask and its answer means this answer
@@ -960,8 +994,11 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
           ? [{ label: `📄 ${String(d.artifact.title ?? 'Document').slice(0, 60)}`, href: `/home?chat=worker:${encodeURIComponent(String(d.artifact.threadId))}:${encodeURIComponent(String(d.delegated?.agentId ?? ''))}` }]
           : [];
         const liveCards = chatCardsOfPayload(d);
+        const activity = activityOf(d.activity) ?? (steps.length ? steps : undefined);
+        const durationMs = durationOf(d.durationMs) ?? Math.round(performance.now() - t0);
         setTurns((prev) => [...prev, {
           role: 'system',
+          ...(activity ? { activity } : {}), durationMs,
           // THE ANSWER READS AS THE HOME ANSWER (W19.B): the prose keeps its grounding tags and the
           // refs keep theirs — the ONE answer renderer resolves each tag BY ID into an inline source
           // chip and strips the rest (components/home/ask-answer.tsx). The text is the door's own
@@ -978,9 +1015,15 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
         }]);
       }
     } catch {
+      // W23.A · the READER stopped it: no failure line — the question stands, marked stopped, and its
+      // one door ("Ask again") re-answers it through the same steer door.
+      if (stopped) {
+        if (!stale(gen)) setTurns((prev) => prev.map((x) => (x.role === 'user' && x.reqId === reqId ? { ...x, stopped: true as const } : x)));
+        return;
+      }
       // Same law as the !ok branch above: render it, never record it.
       setTurns((prev) => [...prev, { role: 'system', text: "That didn't go through — try again in a moment." }]);
-    } finally { setBusy(false); setStage(null); }
+    } finally { flightRef.current = null; setBusy(false); setStage(null); }
   };
 
   // 📎 — the ingest funnel: the file lands in the per-item deliverable pool (ONE write, every reader
@@ -1715,8 +1758,9 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     const extras = turnExtras(t);
     const answer = isAnswerTurn(t) && !!t.text;
     const cards: ThreadCard[] = [
-      ...(answer ? [{ kind: 'custom' as const, id: `${key}-answer`,
-        node: <Answer text={t.text} refs={t.refs ?? []} onOpen={(r) => { if (r.href) go(r.href); }} /> }] : []),
+      // W23.A · PROSE READS AT THE COLUMN'S WIDTH, and "Worked for Xs ›" rides above it.
+      ...(answer ? [{ kind: 'custom' as const, wide: true, id: `${key}-answer`,
+        node: <><WorkedFor activity={t.activity} durationMs={t.durationMs} /><Answer text={t.text} refs={t.refs ?? []} onOpen={(r) => { if (r.href) go(r.href); }} />{t.stopped ? <div className="mt-1 text-[12px] text-neutral-400">{STOPPED_LABEL}</div> : null}</> }] : []),
       ...(extras ? [{ kind: 'custom' as const, id: `${key}-extras`, node: extras }] : []),
     ];
     return {
@@ -1749,7 +1793,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   const pushOrphanLine = (exchange: Turn[]) => {
     const orphan = orphanQuestion(exchange, busy);
     if (!orphan || orphan.role !== 'user') return;
-    items.push({ type: 'event_line', id: 'orphan-question', text: ORPHAN_LINE,
+    items.push({ type: 'event_line', id: 'orphan-question', text: orphan.stopped ? STOPPED_LABEL : ORPHAN_LINE,
       refs: [{ label: ORPHAN_RETRY, onClick: () => { void send(orphan.text, orphan); } }] });
   };
 
@@ -1954,7 +1998,9 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   // still composes and serves them (their own dedupe law, T10.1, keeps standing) for consumers
   // that want them; what dies is the chip ROW in the room, and the composer is the only door.
   const composerBlock = (
-    <div className="flex w-full flex-col gap-2.5">
+    <div className="relative flex w-full flex-col gap-2.5">
+      {/* W23.A · FOLLOW THE STREAM — the "↓" stands above the composer once the reader scrolls up. */}
+      <JumpToLatest show={follow.showJump} onClick={follow.jumpToLatest} />
       <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
         <WorkerMentionInput
           frameless
@@ -1973,6 +2019,8 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
           prefill={composerPrefill}
           onPrefillConsumed={() => setComposerPrefill(null)}
           onAttach={(files) => { void (async () => { for (const f of files) await attach(f); })(); }}
+          // W23.A · STOP — while a question is in flight the send button is Stop (the steer aborts).
+          onStop={busy && flightRef.current ? () => flightRef.current?.() : undefined}
         />
       </div>
     </div>

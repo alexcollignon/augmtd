@@ -1634,7 +1634,7 @@ export function ThreadCardView({ card }: { card: ThreadCard }) {
 
     // THE CARD SLOT — a host's own rich component, mounted whole.
     case 'custom':
-      return <div className={CUSTOM_MAX_W}>{card.node}</div>;
+      return <div className={card.wide ? 'w-full min-w-0' : CUSTOM_MAX_W}>{card.node}</div>;
   }
 }
 

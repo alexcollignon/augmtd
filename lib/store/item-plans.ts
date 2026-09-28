@@ -146,7 +146,10 @@ export const ITEM_PLAN_REGISTRY = {
 
   // ── rooms ──
   room_scope: spec('record', 'room key', 'app/api/rooms/adopt/route.ts', obj({ at: str, entityId: str, entityName: str })),
-  room_title: spec('record', 'room key', 'app/api/rooms/title/route.ts'),
+  // A chat's title: the user's rename (app/api/rooms/title — an upsert, so a rename always wins) or the
+  // generated one (W23.B lib/converse/chat-title.ts — an INSERT, so it lands once and never over a rename).
+  room_title: spec('record', 'room key', 'app/api/rooms/title/route.ts + lib/converse/chat-title.ts',
+    obj({ title: str, auto: bool, at: str })),
   room_read:  spec('record', 'room key', 'lib/room/read-marker.ts', obj({ at: str, prevAt: str, stampedAt: str })),
   dm_present: spec('record', 'thread key', 'lib/present/dm-channel.ts'),
   cos_seat:   spec('record', 'seat key', 'lib/workers/cos-seat.ts'),
@@ -187,6 +190,11 @@ export const ITEM_PLAN_REGISTRY = {
   // A ROOM answer's followed skills (room turns have no metadata column; a component would break the chat boundary).
   turn_skills:  spec('record', '`<room key>|<room_turns id>`', 'lib/skills/followed-store.ts',
     obj({ roomKey: str, skills: opt(z.array(obj({ id: str, name: str }))) })),
+  // ── W23.B the answer's receipt ──
+  // A ROOM answer's activity log + duration + stopped mark (same companion idiom as turn_skills: room
+  // turns have no metadata column, and a component would break the chat boundary).
+  turn_meta:    spec('record', '`<room key>|<room_turns id>`', 'lib/converse/answer-meta.ts',
+    obj({ roomKey: str, activity: opt(z.array(obj({ label: str, atMs: num }))), durationMs: num, stopped: bool })),
 
   // ── platform ──
   status_alert: spec('token', 'problem-set key', 'app/api/cron/status-alerts/route.ts'),

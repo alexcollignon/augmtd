@@ -49,6 +49,7 @@ import { prefetchChatTurns } from '@/components/home/chat-turns-warm';
 import { deleteHomeChat } from '@/components/one/chat-actions';
 import { navActive, chatKeyFromSearch, CHAT_ADDRESS_EVENT } from '@/components/one/nav-active';
 import { chatHref, dmHref, dmThreadLsKey } from '@/components/one/chat-address';
+import { withConversationNames } from '@/components/one/conversation-title';
 
 type Conversation = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null; sub?: string };
 // `unread` — THE PROJECT RAISING ITS HAND (Sep 7): per project room key, the count of live turns
@@ -144,7 +145,8 @@ export default function OneSidebar({
     const refresh = () => {
       fetch('/api/rooms/recent').then((r) => (r.ok ? r.json() : null)).then((d) => {
         if (d && Array.isArray(d.pinned)) {
-          const next: Rooms = { pinned: d.pinned, conversations: Array.isArray(d.conversations) ? d.conversations : [], workflowsUnread: typeof d.workflowsUnread === 'number' ? d.workflowsUnread : 0, unread: (d.unread && typeof d.unread === 'object') ? d.unread as Record<string, number> : {} };
+          // W23.A · a chat's `title` (THE CONTRACT) is its name; the first-message fallback stands without one.
+          const next: Rooms = { pinned: d.pinned, conversations: Array.isArray(d.conversations) ? withConversationNames(d.conversations as Conversation[]) : [], workflowsUnread: typeof d.workflowsUnread === 'number' ? d.workflowsUnread : 0, unread: (d.unread && typeof d.unread === 'object') ? d.unread as Record<string, number> : {} };
           setRooms(next); saveLS(LS_KEY, next);
         }
       }).catch(() => {});

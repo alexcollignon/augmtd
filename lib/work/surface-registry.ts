@@ -244,10 +244,15 @@ export const CAPABILITY_MAP: Record<string, Capability> = {
     blurb: 'read a meeting / transcript we recorded',
     resultIs: 'data', presents: 'recordings',
   },
+  // W23.B — RECENT FACTS COME FROM SEARCH: the chief seat holds it too (the Home chat answered model-
+  // release and price questions from training knowledge). Same executor, same TOOL_FEATURE gate (null —
+  // Tavily is the disclosed, kept sub-processor); a read, so its result is DATA.
   web_search: {
     intent: 'search the web / fetch a public web page',
     tool: 'web_search', built: true, kind: 'atomic', irreversible: false, feature: null,
+    exposure: ['chief_of_staff', 'coworker', 'workflow'],
     blurb: 'search the web / fetch a public page',
+    resultIs: 'data',
   },
   deep_research: {
     intent: 'run multi-source deep research on a topic',

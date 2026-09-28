@@ -288,7 +288,23 @@ export type AICallBudget = {
   timeoutMs?: number
   /** Absolute epoch-ms deadline for the whole call, retries included. */
   deadline?: number
+  /** W23.B — THE STOP BUTTON: the caller's abort signal (the user closed the stream / pressed Stop).
+   *  An abort cancels the in-flight attempt (the SDK gets it) and surfaces as `AIAbortedError` —
+   *  never as a timeout, never retried. */
+  signal?: AbortSignal
 }
+
+/** W23.B — the caller aborted the call (the user stopped the turn). Distinct from a timeout: a stop is
+ *  the user's own deed, so a caller keeps what was written so far instead of serving a failure. */
+export class AIAbortedError extends Error {
+  constructor(message = 'the model call was stopped by the caller') {
+    super(message)
+    this.name = 'AIAbortedError'
+  }
+}
+
+export const isAIAborted = (e: unknown): e is AIAbortedError =>
+  e instanceof AIAbortedError || (e as { name?: string } | null)?.name === 'AIAbortedError'
 
 /** Milliseconds this attempt may take under the budget (Infinity = unbounded). Pure. */
 export function attemptBudgetMs(budget: AICallBudget | undefined, now = Date.now()): number {
@@ -303,27 +319,41 @@ export function retryFits(budget: AICallBudget | undefined, waitMs: number, now 
   return now + waitMs + 5000 < budget.deadline
 }
 
-/** Race a promise against the attempt budget; aborts the controller on timeout. */
+/** Race a promise against the attempt budget; aborts the controller on timeout — or on the caller's
+ *  own abort signal (W23.B), which surfaces as `AIAbortedError`. */
 export async function withAttemptBudget<T>(
   run: (signal: AbortSignal | undefined) => Promise<T>,
   budget: AICallBudget | undefined,
 ): Promise<T> {
   const ms = attemptBudgetMs(budget)
-  if (ms === Infinity) return run(undefined)
+  const ext = budget?.signal
+  if (ms === Infinity && !ext) return run(undefined)
   if (ms <= 0) throw new AITimeoutError()
+  if (ext?.aborted) throw new AIAbortedError()
   const ctl = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => { ctl.abort(); reject(new AITimeoutError()) }, ms)
+  let onAbort: (() => void) | undefined
+  const guard = new Promise<never>((_, reject) => {
+    if (ms !== Infinity) timer = setTimeout(() => { ctl.abort(); reject(new AITimeoutError()) }, ms)
+    if (ext) {
+      onAbort = () => { ctl.abort(); reject(new AIAbortedError()) }
+      ext.addEventListener('abort', onAbort, { once: true })
+    }
   })
   try {
-    return await Promise.race([run(ctl.signal), timeout])
+    return await Promise.race([run(ctl.signal), guard])
   } catch (e) {
+    // The caller's stop wins over every other reading of the failure.
+    if (ext?.aborted) throw new AIAbortedError()
     // An SDK abort surfaces as its own error type — it is still OUR timeout.
     if (ctl.signal.aborted) throw new AITimeoutError()
     throw e
   } finally {
     if (timer) clearTimeout(timer)
+    // The caller's link is KEPT past a successful `create()` on purpose: a streamed call returns its
+    // stream at once, and a later stop must still cancel that in-flight response (the SDK aborts the
+    // HTTP request on its signal). `once` + one signal per turn bounds it; the timeout does not outlive
+    // the attempt (a long stream is bounded by streamWithDeadline instead).
   }
 }
 
@@ -336,16 +366,25 @@ export async function* streamWithDeadline<T>(
   stream: AsyncIterable<T>, budget: AICallBudget & { idleMs?: number },
 ): AsyncGenerator<T> {
   const it = stream[Symbol.asyncIterator]()
+  const ext = budget.signal
   while (true) {
+    // W23.B — THE STOP BUTTON: a stopped turn reads no further chunk; closing the iterator cancels
+    // the provider's response (the SDK stream aborts its request on return()).
+    if (ext?.aborted) { void it.return?.(); throw new AIAbortedError() }
     const idle = budget.idleMs && budget.idleMs > 0 ? budget.idleMs : Infinity
     const ms = Math.min(idle, budget.deadline ? budget.deadline - Date.now() : Infinity)
     if (ms <= 0) { void it.return?.(); throw new AITimeoutError() }
     let timer: ReturnType<typeof setTimeout> | undefined
-    const next = ms === Infinity
-      ? it.next()
-      : Promise.race([it.next(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new AITimeoutError()), ms) })])
+    let onAbort: (() => void) | undefined
+    const guards: Array<Promise<never>> = []
+    if (ms !== Infinity) guards.push(new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new AITimeoutError()), ms) }))
+    if (ext) guards.push(new Promise<never>((_, reject) => { onAbort = () => reject(new AIAbortedError()); ext.addEventListener('abort', onAbort, { once: true }) }))
+    const next = guards.length ? Promise.race([it.next(), ...guards]) : it.next()
     let r: IteratorResult<T>
-    try { r = await next } catch (e) { if (isAITimeout(e)) void it.return?.(); throw e } finally { if (timer) clearTimeout(timer) }
+    try { r = await next } catch (e) { if (isAITimeout(e) || isAIAborted(e)) void it.return?.(); throw e } finally {
+      if (timer) clearTimeout(timer)
+      if (ext && onAbort) ext.removeEventListener('abort', onAbort)
+    }
     if (r.done) return
     yield r.value
   }
@@ -385,7 +424,7 @@ export async function aiCreate(
     try {
       return await once()
     } catch (err: any) {
-      if (isAITimeout(err)) throw err
+      if (isAITimeout(err) || isAIAborted(err)) throw err
       if (err?.status === 529 || err?.status === 500) {
         if (!retryFits(budget, 5000)) throw budget ? new AITimeoutError() : err
         await new Promise((r) => setTimeout(r, 5000))

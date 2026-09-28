@@ -21,7 +21,10 @@ import {
   type SteerKind,
 } from './answer-door';
 import { cardPayloadOf, cardTurnOf, normalizeTurnCards } from '@/lib/present/turn-card';
-import { converseStreamResponse } from '@/lib/present/converse-stream';
+import { converseStreamResponse, turnAbortFor } from '@/lib/present/converse-stream';
+// W23.B — the answer's receipt (activity + duration + stopped), the same companion idiom as W21's skills.
+import { recordAnswerMeta } from '@/lib/converse/answer-meta';
+import { answerMetaOf } from '@/lib/converse/conversation';
 // W21 — SKILLS IN CHAT (contract: lib/skills/chat-contract.ts): the item/project chat talks to the chief,
 // so the chief's assigned skills are on here too, through the ONE resolver.
 import { resolveSkillsForTurn, sanitizeSkillPick } from '@/lib/skills/for-turn';
@@ -117,9 +120,13 @@ export async function POST(request: NextRequest) {
       : evaluateSkillOffer(supabase, user.id, text).then((e) => e.offer).catch(() => null);
     // W22 — the core's door options: a background hand-off posts into THIS chat (the keyed chat room, or
     // the item's own room), and outlives the response through `after()`.
+    // W23.B — THE STOP BUTTON: one abort per turn, fed by the request's signal and the stream's cancel; a
+    // stopped turn is still the claimed question's answer (written once, marked stopped), never a failure.
+    const turnAbort = turnAbortFor(request);
     const door = {
       postRoomKey: chatRoomKey ?? steerRoomKey(kind, id),
       defer: (work: () => Promise<void>) => after(work),
+      signal: turnAbort.signal,
     };
     const answer = async (onProgress?: (label: string) => void, onToken?: (t: string) => void): Promise<Record<string, unknown>> => {
       const skills = await skillsPromise;
@@ -160,13 +167,19 @@ export async function POST(request: NextRequest) {
           // W21: the answer's followed skills — ONE companion record keyed by the stored turn's id.
           await recordAnswerSkills(supabase, user.id, steerRoomKey(kind, id),
             turn.say?.trim() ? answerTextOf(turn.say) : answerTextOf(fallback), turn.skillsFollowed);
+          // W23.B: the answer's receipt, keyed by the same stored turn.
+          await recordAnswerMeta(supabase, user.id, steerRoomKey(kind, id),
+            turn.say?.trim() ? answerTextOf(turn.say) : answerTextOf(fallback), turn);
         } catch { /* the card is an enhancement — the answer stands without it */ }
       } else if (claimed && chatRoomKey && answerKey) {
         // THE ANSWER IS SAVED — the Home door's shape, no handle (the exchange boundary). A failed write
         // leaves the question an orphan, which the room renders with its "Ask again" line.
         const ok = await writeAnswerTurn(supabase, user.id, chatRoomKey, turn);
         if (!ok) console.error('[items/steer] the answer could not be saved', chatRoomKey);
-        else await recordAnswerSkills(supabase, user.id, chatRoomKey, answerTextOf(turn.say), turn.skillsFollowed);
+        else {
+          await recordAnswerSkills(supabase, user.id, chatRoomKey, answerTextOf(turn.say), turn.skillsFollowed);
+          await recordAnswerMeta(supabase, user.id, chatRoomKey, answerTextOf(turn.say), turn);
+        }
       }
       const skillOffer = await offerPromise;
 
@@ -199,7 +212,9 @@ export async function POST(request: NextRequest) {
         // W21 — A CLAIM RENDERS: only skills loaded into this answer AND reported (floored in the core);
         // ONE offer, never beside an answer that followed a skill.
         ...(turn.skillsFollowed?.length ? { skillsFollowed: turn.skillsFollowed } : {}),
-        ...(skillOffer && !turn.skillsFollowed?.length && turn.say?.trim() ? { skillOffer } : {}),
+        ...(skillOffer && !turn.skillsFollowed?.length && turn.say?.trim() && !turn.stopped ? { skillOffer } : {}),
+        // W23.B — THE TURN'S RECEIPT: progress labels (ms since start), duration, stopped.
+        ...(answerMetaOf(turn) ?? {}),
       };
     };
 
@@ -207,7 +222,8 @@ export async function POST(request: NextRequest) {
     // per-tool labels ("Putting the invite together…") reach the room while it works.
     if (body.stream === true) {
       // ⟲ W22: the answer's tokens stream too (the ONE STREAM's `token` frames, as on the Home door).
-      return converseStreamResponse((send) => answer((label) => send({ type: 'progress', label }), (t) => send({ type: 'token', t })), { label: 'items/steer' });
+      return converseStreamResponse((send) => answer((label) => send({ type: 'progress', label }), (t) => send({ type: 'token', t })),
+        { label: 'items/steer', abort: turnAbort, keepAlive: (p) => after(() => p.then(() => {})) });
     }
     return NextResponse.json(await answer());
   } catch (e) {
