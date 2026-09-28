@@ -107,6 +107,9 @@ async function* anthropicStreamToOpenAI(
 ): AsyncIterable<any> {
   const id = `bedrock-${Date.now()}`
   let toolIndex = -1
+  // W22: carry Anthropic's stream usage through as OpenAI's final-chunk `usage`, so streamed
+  // Bedrock calls are metered from provider numbers instead of a character estimate.
+  let inputTokens: number | undefined
 
   for await (const event of stream) {
     switch (event.type) {
@@ -146,15 +149,24 @@ async function* anthropicStreamToOpenAI(
         break
       }
 
+      case 'message_start': {
+        inputTokens = event.message?.usage?.input_tokens
+        break
+      }
+
       case 'message_delta': {
         const stopReason = event.delta?.stop_reason
+        const outputTokens = event.usage?.output_tokens
         yield makeChunk(id, model, {
           finish_reason: mapStopReason(stopReason),
+          ...(inputTokens != null || outputTokens != null
+            ? { usage: { prompt_tokens: inputTokens ?? 0, completion_tokens: outputTokens ?? 0, total_tokens: (inputTokens ?? 0) + (outputTokens ?? 0) } }
+            : {}),
         })
         break
       }
 
-      // message_start, content_block_stop, message_stop, ping — ignored
+      // content_block_stop, message_stop, ping — ignored
     }
   }
 }
@@ -170,6 +182,7 @@ function makeChunk(id: string, model: string, overrides: any): any {
       delta: overrides.delta ?? {},
       finish_reason: overrides.finish_reason ?? null,
     }],
+    ...(overrides.usage ? { usage: overrides.usage } : {}),
   }
 }
 

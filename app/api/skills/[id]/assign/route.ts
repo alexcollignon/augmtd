@@ -5,7 +5,10 @@ type Params = { params: Promise<{ id: string }> };
 
 // POST /api/skills/[id]/assign — toggle one skill↔worker assignment.
 // Body: { agent_id: string, assigned: boolean }
-// Used by the Skills library cards to assign/unassign a worker in place.
+// Used by the Skills library cards to assign/unassign a worker in place — and (W21 SKILLS IN CHAT) by the
+// chat menu's "Always use for <actor>" / "Remove from <actor>": THE ONLY door that changes an assignment
+// (a per-message pick never does). `agent_id: 'chief'` resolves the chief-of-staff SEAT
+// (lib/workers/cos-seat.ts) — the chief is a custom_agents row, so its skills are ordinary agent_skills rows.
 export async function POST(request: NextRequest, { params }: Params) {
   const { id: skillId } = await params;
   try {
@@ -14,9 +17,15 @@ export async function POST(request: NextRequest, { params }: Params) {
     if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const agentId = String(body.agent_id ?? '');
+    let agentId = String(body.agent_id ?? '');
     const assigned = Boolean(body.assigned);
     if (!agentId) return NextResponse.json({ error: 'agent_id required' }, { status: 400 });
+    if (agentId === 'chief') {
+      const { resolveCosSeat } = await import('@/lib/workers/cos-seat');
+      const seat = await resolveCosSeat(supabase, user.id);
+      if (!seat) return NextResponse.json({ error: 'Worker not found' }, { status: 404 });
+      agentId = seat.agentId;
+    }
 
     // Verify both the skill and the worker belong to this user.
     const [{ data: skill }, { data: agent }] = await Promise.all([

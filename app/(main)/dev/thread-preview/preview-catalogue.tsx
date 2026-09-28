@@ -44,6 +44,10 @@ import CollectionCard from '@/components/home/collection-card';
 import EventCard from '@/components/home/event-card';
 import ChangeCard from '@/components/home/change-card';
 import { WorkerMentionInput } from '@/components/workers/worker-mention-input';
+// W21 · SKILLS IN CHAT — the menu page, the chips, the "uses" line, the receipt and the offer.
+import { SkillMenu, SkillChips } from '@/components/skills/skill-menu';
+import { SkillsUsesView } from '@/components/skills/skills-uses-line';
+import { chipsOf, orderMenu, skillOfferItem, skillsReceiptItem, type ChatMenuSkill } from '@/components/skills/skill-menu-model';
 import { AliveMark } from '@/components/home/alive-mark';
 import { OrbSeat, type OrbEntrance } from '@/components/home/orb-entrance';
 
@@ -1298,7 +1302,7 @@ const SECTIONS: Section[] = [
 
 const PIECE_TIMELINE: ThreadItem[] = [
   {
-    type: 'pinned', id: 'pc-pin', actorId: 'clara', actorName: 'Clara', actorRoleLabel: 'chief of staff',
+    type: 'pinned', id: 'pc-pin', actorId: 'clara', actorName: 'Clara', actorRoleLabel: 'Personal Assistant',
     text: 'Jordan and Mia accepted Wednesday’s kickoff — the slot still needs your confirmation so the invitation can go out.',
     actions: [
       { label: 'Confirm Wednesday 11:00 →', onClick: noop, tone: 'primary' },
@@ -1551,6 +1555,65 @@ function PiecesBlock() {
   );
 }
 
+// ── W21 · SKILLS IN CHAT ────────────────────────────────────────────────────────────────────────
+const SAMPLE_SKILLS: ChatMenuSkill[] = [
+  { id: 's-memo', name: 'Board memo format', whenToUse: 'When writing for the board', assigned: false },
+  { id: 's-plain', name: 'Plain English', whenToUse: 'Any client-facing text', assigned: true },
+  { id: 's-report', name: 'Client report format', whenToUse: 'When writing a client report', assigned: true },
+  { id: 's-research', name: 'Research method', whenToUse: 'When comparing vendors', assigned: false },
+];
+
+function SkillsBlock() {
+  const menu = orderMenu(SAMPLE_SKILLS);
+  const picked = { add: ['s-memo'], skip: ['s-plain'] };
+  const receipt = skillsReceiptItem('demo', [{ id: 's-plain', name: 'Plain English' }, { id: 's-report', name: 'Client report format' }]);
+  const offer = skillOfferItem('demo', { patternKey: 'demo', label: 'weekly client update' }, { save: noop, decline: noop });
+  const menuBox = (node: React.ReactNode) => (
+    <div className="w-[380px] rounded-xl border border-neutral-200 bg-white shadow-lg overflow-hidden">{node}</div>
+  );
+  return (
+    <section className="flex flex-col gap-4 border-t border-neutral-200/70 pt-6">
+      <div className="flex flex-col gap-0.5">
+        <h2 className="text-[13px] font-semibold text-neutral-900">skills in chat</h2>
+        <p className="text-[11.5px] text-neutral-400">
+          components/skills/* — the composer&rsquo;s @ menu Skills page (and what &ldquo;/&rdquo; opens), the chips that ride
+          the message, the actor&rsquo;s &ldquo;uses&rdquo; line, the answer&rsquo;s receipt and the one quiet offer
+        </p>
+      </div>
+      <div className="flex flex-col gap-5">
+        <SpecimenBlock label="menu · at rest (assigned first, checked — always on)" node={menuBox(
+          <SkillMenu actorName="Clara" skills={menu} pick={{}} activeIdx={0} onToggle={noop} onAssign={noop} onSaveAsSkill={noop} />,
+        )} />
+        <SpecimenBlock label="menu · one skipped for this message, one added for this message" node={menuBox(
+          <SkillMenu actorName="Clara" skills={menu} pick={picked} activeIdx={2} onToggle={noop} onAssign={noop} onBack={noop} />,
+        )} />
+        <SpecimenBlock label="menu · loading · empty library" node={
+          <div className="flex flex-wrap gap-4">
+            {menuBox(<SkillMenu actorName="Clara" skills={[]} pick={{}} activeIdx={0} loading onToggle={noop} onAssign={noop} />)}
+            {menuBox(<SkillMenu actorName="Clara" skills={[]} pick={{}} activeIdx={0} onToggle={noop} onAssign={noop} />)}
+          </div>
+        } />
+        <SpecimenBlock label="chips · an addition and a skip, riding the next message" node={
+          <div className="flex flex-wrap gap-1.5"><SkillChips chips={chipsOf(picked, SAMPLE_SKILLS)} onRemove={noop} /></div>
+        } />
+        <SpecimenBlock label="the “uses” line · two shown · +N with the rest on hover" node={
+          <div className="flex flex-col gap-2">
+            <SkillsUsesView skills={SAMPLE_SKILLS} />
+            <SkillsUsesView skills={SAMPLE_SKILLS.map((x) => ({ ...x, assigned: true }))} />
+          </div>
+        } />
+        <SpecimenBlock label="the receipt and the offer, under an answer" node={
+          <ThreadTimeline items={[
+            { type: 'actor_bubble', id: 'sk-a', actorId: 'cos', actorName: 'Clara', actorRoleLabel: 'Personal Assistant', text: 'Here is the weekly update for Acme, in the usual format.' },
+            ...(receipt ? [receipt] : []),
+            ...(offer ? [offer] : []),
+          ] as ThreadItem[]} />
+        } />
+      </div>
+    </section>
+  );
+}
+
 // ── the tab ─────────────────────────────────────────────────────────────────────────────────────
 
 export function ThreadCatalogue() {
@@ -1567,6 +1630,7 @@ export function ThreadCatalogue() {
         </div>
         {SECTIONS.map((s) => <SectionBlock key={s.section} s={s} />)}
         <PiecesBlock />
+        <SkillsBlock />
       </div>
     </div>
   );

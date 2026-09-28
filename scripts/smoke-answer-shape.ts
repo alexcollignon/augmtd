@@ -13,9 +13,9 @@
 //        rows, and the steer door never writes a zero-row card turn.
 //   S3 · THE CARD TURN KEEPS THE ANSWER'S WORDS: the steer door stores the answer's prose (and its
 //        tagged refs) on a card turn — never the card's framing in its place.
-//   S4 · A CATCH-UP GETS A REAL ANSWER (the router): the router judges `synthesis`; the precedence
-//        drops a named read for it and answers from the Home path pinned to the room; a literal
-//        listing still gets its collection.
+//   S4 · A CATCH-UP GETS A REAL ANSWER: ⟲ RE-POINTED W22 — the router is retired; a catch-up is never
+//        a command, so the ONE loop answers it from the scope's own page (an empty read is never the
+//        answer by itself); a literal listing still gets its collection on the command fast path.
 //   S5 · THE OUTCOME, END TO END over the ONE core with the model stubbed
 //        (tests/unit/answer-shape.test.ts, run from here).
 //   S6 · the catalogue shows the law (/dev/thread-preview).
@@ -28,7 +28,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { ThreadCardView } from '../components/thread';
 import { collectionHasRows } from '../lib/present/collection';
 import { recordingSpec, calendarSpec, documentSpec } from '../lib/present/build';
-import { parseVerdict, synthesisPrecedence } from '../lib/converse';
+import { matchRegistryCommand } from '../lib/converse/commands';
 import { answerRefsOf } from '../app/api/items/steer/answer-door';
 
 let pass = 0, fail = 0;
@@ -99,23 +99,28 @@ console.log('\nS3 · THE CARD TURN KEEPS THE ANSWER\'S WORDS');
   ok('S3.3 answerRefsOf keeps the tag and is null for no refs', refs?.[0]?.tag === 'E1' && answerRefsOf([]) === null);
 }
 
-console.log('\nS4 · A CATCH-UP GETS A REAL ANSWER — the router');
+console.log('\nS4 · A CATCH-UP GETS A REAL ANSWER — the one conversation');
 {
+  // ⟲ RE-POINTED W22 (THE HOME CHAT IS ONE ASSISTANT): the model router, its synthesis verdict and the
+  // answering lanes it chose between are retired. The law is unchanged and now holds by construction: a
+  // catch-up is never a command (the deterministic matcher returns null), so it reaches the ONE loop,
+  // which grounds on the scope's own page and is told an empty read is never the answer by itself.
   const core = src('lib/converse/index.ts');
-  ok('S4.1 the router is asked for the synthesis judgment, with the time-anchor clause (the incident\'s "last meeting")',
-    /"synthesis":true\|false\}/.test(core) && /a mention of "the last meeting" or "this week" is a time anchor/.test(core));
-  const stubbed = parseVerdict(JSON.stringify({ command: { tool: 'get_meeting_context', args: { since: '7d' } }, question: true, facts: [], delegate: null, open: false, synthesis: true }));
-  const routed = synthesisPrecedence(stubbed, 'Catch me up on this client. What has changed since the last meeting? Show me the current decisions and open questions');
-  ok('S4.2 a stubbed router naming the meeting read for a catch-up → question, no command', routed.question && routed.command === null && routed.synthesis);
-  const listing = synthesisPrecedence(parseVerdict(JSON.stringify({ command: { tool: 'get_meeting_context', args: {} }, question: true, synthesis: true })), 'list my recordings');
-  ok('S4.3 a literal listing ask keeps its read (the collection answers it)', listing.command?.tool === 'get_meeting_context' && !listing.synthesis);
-  ok('S4.4 the precedence is applied once, after the hand-off floor, and never over an answered offer',
-    core.includes('if (!answeringAnOffer) Object.assign(verdict, synthesisPrecedence(verdict, text));'));
-  ok('S4.5 a room synthesis question answers through the HOME answer path pinned to the room (one answer from both doors)',
-    /scope\.kind === 'entity' && verdict\.synthesis\) \{[\s\S]{0,300}answerHomeQuestion\(client, userId, text, opts\.history \?\? \[\], \{ focusEntityId: scope\.entityId \}\)/.test(core));
+  const CATCH = 'Catch me up on this client. What has changed since the last meeting? Show me the current decisions and open questions';
+  ok('S4.1 the router is retired — no model classification of the turn, no synthesis verdict',
+    !/async function classifyTurn/.test(core) && !/"synthesis":true\|false\}/.test(core) && !/getAIClient\(userId, 'classification'/.test(core));
+  ok('S4.2 a catch-up is never a command — it reaches the loop (for the item, the room and the Home scope alike)',
+    matchRegistryCommand(CATCH, { kind: 'entity', entityId: 'e' }) === null && matchRegistryCommand(CATCH, { kind: 'global' }) === null
+    && matchRegistryCommand(CATCH, { kind: 'item', itemKind: 'email', itemId: 'i' }) === null);
+  ok('S4.3 a literal listing ask keeps its read (the collection answers it)',
+    matchRegistryCommand('list my recordings', { kind: 'entity', entityId: 'e' })?.tool === 'get_meeting_context');
+  ok('S4.4 the room conversation grounds on the ROOM\'s own page (one object, one door)',
+    /assembleRoomGrounding\(client, userId,\s*\n?\s*scope\.kind === 'entity' \? \{ kind: 'entity', entityId: scope\.entityId \}/.test(core));
+  ok('S4.5 no second answering lane survives in the core (no records-only question pass)',
+    !/answerHomeQuestion\(/.test(core) && !/answerEntityQuestion\(/.test(core));
   const home = src('lib/home/ask.ts');
-  ok('S4.6 the Home path takes the pinned focus (by scope, never guessed from words)',
-    /opts: \{ focusEntityId\?: string \| null \} = \{\}/.test(home) && home.includes('buildBrainSnapshot(supabase, userId, question, { focusEntityId: opts.focusEntityId ?? null })'));
+  ok('S4.6 the Home world page still takes a pinned focus (by scope, never guessed from words)',
+    /opts: \{ focusEntityId\?: string \| null \} = \{\}/.test(home) && /export async function buildBrainSnapshot\(/.test(home));
   ok('S4.7 the loop\'s tool precedence: a catch-up answers from the context, and an EMPTY read is never the answer',
     /a read that comes back EMPTY is never the answer by itself/.test(core));
 }
@@ -128,7 +133,7 @@ console.log('\nS5 · THE OUTCOME, END TO END (the ONE core, model stubbed)');
     out = execSync('npx vitest run tests/unit/answer-shape.test.ts', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     good = /Tests\s+\d+ passed/.test(out) && !/failed/.test(out);
   } catch (e) { out = String((e as { stdout?: string }).stdout ?? e); }
-  ok('S5.1 room catch-up → Home answer path pinned to the room, no card · literal list → collection · zero-row → composed answer, no card · the loop never attaches an empty set',
+  ok('S5.1 room catch-up → the one loop over the room page, no card (⟲ W22) · literal list → collection · zero-row → composed answer, no card · the loop never attaches an empty set',
     good, out.split('\n').filter((l) => /×|FAIL|Tests/.test(l)).slice(0, 6).join(' | '));
 }
 

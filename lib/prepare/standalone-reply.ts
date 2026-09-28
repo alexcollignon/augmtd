@@ -89,3 +89,27 @@ export async function prepareStandaloneEmail(
   const id = await saveChatEmail(client, userId, { email: draft, roomKey: args.roomKey ?? null });
   return id ? { id, draft } : null;
 }
+
+/**
+ * prepareNewStandaloneEmail (W22) — a NEW email the chat was asked to write (not an answer to a
+ * message): the drafted words + the recipient the user actually typed → the SAME durable card.
+ * NEVER INVENT AN ADDRESS: `to` is only what the user wrote; the FROM is the pure ladder's default.
+ * It never drafts — the body comes from THE ONE DRAFTER (lib/tools/compose-new-email).
+ */
+export async function prepareNewStandaloneEmail(
+  client: SupabaseClient, userId: string,
+  args: { body: string; to: string[]; subject: string; roomKey?: string | null },
+): Promise<{ id: string; draft: StandaloneEmailDraft } | null> {
+  const from = resolveSendFrom(await loadSendMailboxes(client, userId), { addresses: [] });
+  const draft: StandaloneEmailDraft = {
+    to: args.to.filter((a) => a.includes('@')),
+    cc: [],
+    subject: args.subject,
+    body: String(args.body ?? ''),
+    from,
+    ...(from.viaCoworker ? { coworkerAddress: await coworkerAddressFor(client, userId) } : {}),
+    sentAt: null,
+  };
+  const id = await saveChatEmail(client, userId, { email: draft, roomKey: args.roomKey ?? null });
+  return id ? { id, draft } : null;
+}

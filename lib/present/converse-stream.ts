@@ -5,8 +5,11 @@
 // Aug 6; the item door answered in one silent JSON blob, so a room showed "Working on it…" for the
 // whole of a turn the Home chat narrates. One transport now, used by both doors: `progress` frames
 // while the core works, `token` frames when a door streams the answer, ONE `done` frame carrying the
-// door's authoritative payload, `error` on failure, `ping` keep-alives (a production hand-off can run
-// 60-90s with no events — an idle SSE gets buffered or closed by proxies). The client folds it with
+// door's authoritative payload, `error` on failure, `ping` keep-alives (a long tool round can run many
+// seconds with no events — an idle SSE gets buffered or closed by proxies). W22: a turn that runs out
+// of time is NOT an `error` frame — the core serves it as a `done` frame whose payload carries
+// `failure: { kind, retry: true }` and a visible line, so the surface can offer "Try again"; the
+// coworker hand-off no longer runs inside the stream at all (it answers at once and posts later). The client folds it with
 // components/home/ask-stream.ts (the pure reducer) through components/home/ask-stream-read.ts.
 //
 // Server-only in practice (Response/ReadableStream), zero IO of its own.

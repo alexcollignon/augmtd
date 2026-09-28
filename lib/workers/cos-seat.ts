@@ -18,14 +18,15 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { ROLE_AVATARS, ROLE_LABELS } from './roles';
+import { ROLE_AVATARS, ROLE_LABELS, SEAT_LABEL } from './roles';
 
 export type CosSeat = {
   agentId: string;
   name: string;
   workerRole: string;
-  /** The spoken seat label — constant regardless of who holds the seat. */
-  seatLabel: 'chief of staff';
+  /** The spoken seat label — constant regardless of who holds the seat, derived from ROLE_LABELS
+   *  (W22.B: "Personal Assistant"). */
+  seatLabel: string;
   avatar: string | null;
   roleLabel: string | null;
 };
@@ -38,7 +39,7 @@ function toSeat(w: WorkerRow): CosSeat {
     agentId: w.id,
     name: w.name || 'Your assistant',
     workerRole: role,
-    seatLabel: 'chief of staff',
+    seatLabel: SEAT_LABEL,
     avatar: ROLE_AVATARS[role] ?? null,
     roleLabel: ROLE_LABELS[role] ?? null,
   };

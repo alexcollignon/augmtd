@@ -77,7 +77,7 @@ const STATES: ItemPageState[] = ['awaiting_approval', 'awaiting_input', 'awaitin
 const LYING_BRIEF = "I've drafted a reply to their product feedback — you need to review my draft before it goes. Nothing else is open.";
 const PLAIN_BRIEF = 'Sam wants the signed order form before Friday. The rest of the thread is logistics.';
 
-const SEAT = { id: 'cos', name: 'Clara', roleLabel: 'chief of staff' };
+const SEAT = { id: 'cos', name: 'Clara', roleLabel: 'Personal Assistant' };
 // What the host mounts for each widget — a kit render, carrying the widget's data-attribute.
 const widgetNode = (w: ItemActionWidget): React.ReactNode => {
   const tag = (child: React.ReactNode) => React.createElement('div', { 'data-widget': w }, child);

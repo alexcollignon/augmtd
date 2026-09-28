@@ -135,7 +135,8 @@ console.log('\nE · THE WORK SHOWS — one stream, the live label, the reserved 
 {
   const { events } = splitSseFrames(sseFrame({ type: 'progress', label: CARD_PROGRESS.prepare_calendar_invite.label }) + sseFrame({ type: 'done', say: 'x' }));
   ok('E1 the wire round-trips (progress, then done)', (events as Array<{ type: string }>).map((e) => e.type).join(',') === 'progress,done');
-  ok('E2 both doors answer over THE ONE STREAM', /converseStreamResponse\(/.test(steer) && /converseStreamResponse\(/.test(home) && /onProgress: \(label\) => send\(\{ type: 'progress', label \}\)/.test(home) && /answer\(\(label\) => send\(\{ type: 'progress', label \}\)\)/.test(steer));
+  // ⟲ RE-POINTED W22: the item door streams the answer's TOKENS too (the Home door's `token` frames).
+  ok('E2 both doors answer over THE ONE STREAM', /converseStreamResponse\(/.test(steer) && /converseStreamResponse\(/.test(home) && /onProgress: \(label\) => send\(\{ type: 'progress', label \}\)/.test(home) && /answer\(\(label\) => send\(\{ type: 'progress', label \}\)(?:, \(t\) => send\(\{ type: 'token', t \}\))?\)/.test(steer));
   ok('E3 the rail asks for the stream and reads it through the ONE reader',
     /stream: true/.test(rail) && /readConverseStream\(res,/.test(rail) && /readConverseStream\(res,/.test(homeAsk));
   ok('E4 the in-flight line speaks the live label; a card being made reserves its own shape',

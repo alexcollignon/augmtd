@@ -262,6 +262,95 @@ export function getEndpointClient(endpoint: ModelEndpoint): OpenAI {
 
 // ─── AI completion helper ───────────────────────────────────────────────────────
 
+// ─── TIME BUDGETS (W22 — THE HOME CHAT IS ONE ASSISTANT) ─────────────────────────────────────
+// The workshop-day finding: nothing in this transport bounded a call. `aiCreate` retried a 429 three
+// times at up to 30 s each, the SDK's own default is ~10 minutes, and the Bedrock adapter took no
+// signal at all — so an interactive turn could ring for three minutes and die with the function.
+// An INTERACTIVE caller now passes a per-call ceiling and/or an absolute deadline; every attempt
+// races it (the SDK gets the abort signal where it understands one, and a race covers the adapter
+// that does not), and a retry is only waited out when it can still land inside the deadline. A call
+// that cannot throws `AITimeoutError` — the caller turns it into a visible failure, never a hang.
+// Callers that pass nothing keep the old behaviour exactly (background work has its own budgets).
+
+/** A model call that could not finish inside its caller's time budget. */
+export class AITimeoutError extends Error {
+  constructor(message = 'the model call exceeded its time budget') {
+    super(message)
+    this.name = 'AITimeoutError'
+  }
+}
+
+export const isAITimeout = (e: unknown): e is AITimeoutError =>
+  e instanceof AITimeoutError || (e as { name?: string } | null)?.name === 'AITimeoutError'
+
+export type AICallBudget = {
+  /** Ceiling for ONE attempt, in ms. */
+  timeoutMs?: number
+  /** Absolute epoch-ms deadline for the whole call, retries included. */
+  deadline?: number
+}
+
+/** Milliseconds this attempt may take under the budget (Infinity = unbounded). Pure. */
+export function attemptBudgetMs(budget: AICallBudget | undefined, now = Date.now()): number {
+  const per = budget?.timeoutMs && budget.timeoutMs > 0 ? budget.timeoutMs : Infinity
+  const left = budget?.deadline ? budget.deadline - now : Infinity
+  return Math.min(per, left)
+}
+
+/** Would waiting `waitMs` and retrying still leave a useful attempt inside the deadline? Pure. */
+export function retryFits(budget: AICallBudget | undefined, waitMs: number, now = Date.now()): boolean {
+  if (!budget?.deadline) return true
+  return now + waitMs + 5000 < budget.deadline
+}
+
+/** Race a promise against the attempt budget; aborts the controller on timeout. */
+export async function withAttemptBudget<T>(
+  run: (signal: AbortSignal | undefined) => Promise<T>,
+  budget: AICallBudget | undefined,
+): Promise<T> {
+  const ms = attemptBudgetMs(budget)
+  if (ms === Infinity) return run(undefined)
+  if (ms <= 0) throw new AITimeoutError()
+  const ctl = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => { ctl.abort(); reject(new AITimeoutError()) }, ms)
+  })
+  try {
+    return await Promise.race([run(ctl.signal), timeout])
+  } catch (e) {
+    // An SDK abort surfaces as its own error type — it is still OUR timeout.
+    if (ctl.signal.aborted) throw new AITimeoutError()
+    throw e
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/**
+ * A STREAM UNDER A DEADLINE: every chunk must arrive before the deadline (and within `idleMs` of the
+ * previous one), or the iteration throws `AITimeoutError`. A stalled provider can no longer hold an
+ * interactive turn open past its budget.
+ */
+export async function* streamWithDeadline<T>(
+  stream: AsyncIterable<T>, budget: AICallBudget & { idleMs?: number },
+): AsyncGenerator<T> {
+  const it = stream[Symbol.asyncIterator]()
+  while (true) {
+    const idle = budget.idleMs && budget.idleMs > 0 ? budget.idleMs : Infinity
+    const ms = Math.min(idle, budget.deadline ? budget.deadline - Date.now() : Infinity)
+    if (ms <= 0) { void it.return?.(); throw new AITimeoutError() }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const next = ms === Infinity
+      ? it.next()
+      : Promise.race([it.next(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new AITimeoutError()), ms) })])
+    let r: IteratorResult<T>
+    try { r = await next } catch (e) { if (isAITimeout(e)) void it.return?.(); throw e } finally { if (timer) clearTimeout(timer) }
+    if (r.done) return
+    yield r.value
+  }
+}
+
 /**
  * Wraps OpenAI chat completions with retry logic for rate limits and server errors.
  * Use this instead of calling client.chat.completions.create() directly.
@@ -271,7 +360,9 @@ export function getEndpointClient(endpoint: ModelEndpoint): OpenAI {
  */
 export async function aiCreate(
   client: OpenAI,
-  params: Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'stream'> & { stream?: false }
+  params: Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'stream'> & { stream?: false },
+  /** W22 — an interactive caller's time budget (see TIME BUDGETS above). Absent = unbounded. */
+  budget?: AICallBudget,
 ): Promise<OpenAI.Chat.ChatCompletion> {
   const MAX_429_RETRIES = 3
   let attempt = 0
@@ -286,18 +377,27 @@ export async function aiCreate(
     delete (params as { response_format?: unknown }).response_format
   }
 
+  const once = () => withAttemptBudget((signal) => (budget
+    ? (client.chat.completions.create as (p: unknown, o?: unknown) => Promise<unknown>)({ ...params, stream: false }, signal ? { signal } : undefined)
+    : client.chat.completions.create({ ...params, stream: false })) as Promise<OpenAI.Chat.ChatCompletion>, budget)
+
   while (true) {
     try {
-      return await client.chat.completions.create({ ...params, stream: false }) as OpenAI.Chat.ChatCompletion
+      return await once()
     } catch (err: any) {
+      if (isAITimeout(err)) throw err
       if (err?.status === 529 || err?.status === 500) {
+        if (!retryFits(budget, 5000)) throw budget ? new AITimeoutError() : err
         await new Promise((r) => setTimeout(r, 5000))
-        return await client.chat.completions.create({ ...params, stream: false }) as OpenAI.Chat.ChatCompletion
+        return await once()
       }
       if (err?.status === 429 && attempt < MAX_429_RETRIES) {
         attempt++
         const retryAfter = parseInt(err?.headers?.['retry-after'] ?? '0', 10)
         const waitMs = Math.min(retryAfter > 0 ? retryAfter * 1000 : 15000, 30000)
+        // BOUNDED BY THE DEADLINE: a throttled interactive turn fails visibly instead of sleeping
+        // past its own budget (the workshop's 20-40 concurrent users on one Bedrock quota).
+        if (!retryFits(budget, waitMs)) throw new AITimeoutError('rate limited, and a retry would exceed the time budget')
         console.warn(`[aiCreate] 429 rate limited — waiting ${waitMs / 1000}s (attempt ${attempt}/${MAX_429_RETRIES})`)
         await new Promise((r) => setTimeout(r, waitMs))
         continue

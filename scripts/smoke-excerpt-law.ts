@@ -34,8 +34,12 @@ ok('the delegation detail clips its transcript block honestly',
   conv.includes('clipForPrompt(transcript, 4000)') && !conv.includes('transcript.slice(0, 4000)'), '');
 ok('the delegation detail clips the attached material honestly',
   conv.includes('clipForPrompt(material, 18000)') && !conv.includes('material.slice(0, 18000)'), '');
-ok('the router clips the transcript honestly',
-  conv.includes('clipForPrompt(transcript, 1200)'), '');
+// ⟲ RE-POINTED W22: the router (and its 1200-char transcript) is retired; the conversation rides the one
+// loop as real messages, each turn clipped under the law and the overflow DECLARED (historyAsMessages).
+ok('the conversation reaches the loop as clipped, declared messages (the router is retired)',
+  !conv.includes('async function classifyTurn') && conv.includes('historyAsMessages(conversationTurns)')
+  && /clipForPrompt\(String\(t\.text\), per\)/.test(readFileSync('lib/converse/conversation.ts', 'utf8'))
+  && /omittedNote/.test(readFileSync('lib/converse/conversation.ts', 'utf8')), '');
 ok('both transcript builders carry the rule IN THE HEADER (a tail-clip can never strip it)',
   (conv.match(/latest last; \$\{EXCERPT_RULE\}/g) ?? []).length >= 2, '');
 
@@ -354,8 +358,10 @@ console.log('\nTHE TOOL-EXECUTOR SEAMS (W1.6b — a tool result stands alone, so
     !getEmails.includes(".slice(0, 300)") && getEmails.includes('clipWithRule('), '');
 
   const ask = readFileSync('lib/home/ask.ts', 'utf8');
-  ok('home/ask file-candidate line: a LABEL uses clipLabel (word boundary, no marker), not a raw .slice',
-    !ask.includes('c.snippet.slice(0, 90)') && ask.includes('clipLabel(c.snippet, 90)'), '');
+  // ⟲ RE-POINTED W22: the file-candidate line lived in the retired records-only answering pass; the one
+  // loop reaches files through find_file / search_knowledge_base. The floor stays: no raw snippet slice.
+  ok('home/ask file-candidate line: the retired answering pass took its raw-slice risk with it (no snippet slice)',
+    !ask.includes('c.snippet.slice(0, 90)') && !/export async function answerHomeQuestion/.test(ask), '');
 
   const webSearch = readFileSync('lib/tools/web-search.ts', 'utf8');
   ok('web_search: result content is clipForPrompt + a once-at-the-end EXCERPT_RULE, not a raw .slice',

@@ -1014,7 +1014,7 @@ export interface ActorBubbleItem {
   /** The grouping key — consecutive bubbles from the SAME actorId share one face+name header. */
   actorId: string;
   actorName: string;
-  /** "chief of staff" — the seat, quiet, beside the name. */
+  /** "Personal Assistant" — the seat's role label (lib/workers/roles.ts SEAT_LABEL), quiet, beside the name. */
   actorRoleLabel?: string;
   text?: string;
   ts?: string;

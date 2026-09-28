@@ -299,7 +299,7 @@ const EVENT_FAILED: ThreadCard = {
 const EVENT_ITEMS: ThreadItem[] = [
   { type: 'user_bubble', id: 'evu1', text: 'what’s the kickoff on Tuesday?' },
   {
-    type: 'actor_bubble', id: 'eva1', actorId: 'clara', actorName: 'Clara', actorRoleLabel: 'chief of staff', ts: '09:12',
+    type: 'actor_bubble', id: 'eva1', actorId: 'clara', actorName: 'Clara', actorRoleLabel: 'Personal Assistant', ts: '09:12',
     text: 'Tuesday at 14:00, an hour, in meeting room 2 — you haven’t answered it yet.',
     cards: [EVENT_INVITEE_NO_REPLY],
   },
@@ -450,7 +450,7 @@ const FORWARD_ERROR: ThreadCard = {
 
 const PROJECT_ITEMS: ThreadItem[] = [
   {
-    type: 'pinned', id: 'brief', actorId: 'clara', actorName: 'Clara', actorRoleLabel: 'chief of staff',
+    type: 'pinned', id: 'brief', actorId: 'clara', actorName: 'Clara', actorRoleLabel: 'Personal Assistant',
     text: 'Jordan and Mia accepted Wednesday’s kickoff — the slot still needs your confirmation so the invitation can go out. The pricing brief is approved and with Jordan; nothing else here is waiting on you.',
     actions: [
       { label: 'Confirm Wednesday 11:00 →', onClick: noop, tone: 'primary' },
@@ -501,7 +501,7 @@ const PROJECT_ITEMS: ThreadItem[] = [
   {
     // THE JUDGED DECISION (W3-C) — the question, its object on the SAME surface, the routes with
     // their consequences, and the one route the object makes recommendable.
-    type: 'actor_bubble', id: 'dec1', actorId: 'clara', actorName: 'Clara', actorRoleLabel: 'chief of staff', ts: '11:20',
+    type: 'actor_bubble', id: 'dec1', actorId: 'clara', actorName: 'Clara', actorRoleLabel: 'Personal Assistant', ts: '11:20',
     text: 'This one’s yours to call — here’s the shortlist and what each route costs.',
     cards: [DECISION_OPEN],
   },
@@ -603,7 +603,7 @@ const DM_ITEMS: ThreadItem[] = [
 
 const HOME_ITEMS: ThreadItem[] = [
   {
-    type: 'pinned', id: 'attention', actorId: 'clara', actorName: 'Clara', actorRoleLabel: 'chief of staff',
+    type: 'pinned', id: 'attention', actorId: 'clara', actorName: 'Clara', actorRoleLabel: 'Personal Assistant',
     node: <AttentionCard />,
     actions: [{ label: 'When you can · 6 →', onClick: noop, tone: 'link' }],
   },

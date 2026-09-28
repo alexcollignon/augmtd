@@ -1,7 +1,7 @@
 {
  "$schema_note": "THE LAWS REGISTRY (W1.4, Sep 22 2026). Machine-readable source of truth; docs/laws-registry.md is rendered from it; scripts/smoke-laws.ts is the meta-gate. Tier 1 = the 14 invariants of docs/stabilization-plan.md PART II (outcome or walk gate required); tier 2 = domain laws (a pure-function test required, named in `fn`); tier 3 = lessons (compact `lessons[]`, no gate obligation) and obsolete laws. Gate kinds: source (asserts source text) · pure (calls a pure function) · outcome (census on DB/probe data) · walk (browser journey). Gate cost: zero-ai · cached · live-ai. Status: holding · broken-live (a Sep 22 audit finding names it) · gateless · obsolete. A gate with status 'planned' must name its wave and does not count as live.",
  "version": 1,
- "generated": "2026-09-26",
+ "generated": "2026-09-28",
  "tiers": {
   "1": "invariant",
   "2": "domain",
@@ -30,7 +30,9 @@
     "lib/activity/log.ts",
     "lib/activity/restore.ts",
     "lib/tools/worker-tasks.ts",
-    "lib/work/agentos-bridge.ts"
+    "lib/work/agentos-bridge.ts",
+    "lib/skills/from-conversation.ts",
+    "lib/skills/offer.ts"
    ],
    "gates": [
     {
@@ -52,6 +54,27 @@
      "kind": "source",
      "cost": "zero-ai",
      "note": "landed W0.3b (uncommitted): C1-C9 — the class-A policy is declared once, summaries are code's, the model never claims done, and all three runtimes (native chat, AgentOS internal route, Home converse core) route update_task/delete_task/share_task/steer_standing_task/remember_fact through the prepare-then-apply store behind one confirm-card presentation"
+    },
+    {
+     "suite": "smoke-skills-chat",
+     "ids": [
+      "B1-B2",
+      "D",
+      "E1-E2"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W21 (uncommitted) SKILLS IN CHAT — a per-message pick never writes (skip never unassigns, add never assigns, foreign ids ignored); assignment changes only through POST /api/skills/[id]/assign ('chief' resolves the seat); \"Save as skill\" (POST /api/skills/from-conversation) returns a DRAFT through the interview builder's shared synthesis and writes nothing — the user saves through the create route; the repeated-ask offer (≥3 similar asks in 30 days, zero-AI token similarity, no covering skill) is a suggestion only and a declined pattern is never re-offered"
+    },
+    {
+     "suite": "smoke-one-assistant",
+     "ids": [
+      "O4",
+      "O7"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W22 (uncommitted): the one Home/room/item conversation reaches no sending executor — its hands prepare cards and the send door keeps its explicit-send floor; a coworker hand-off is reversible background work (answers at once, posts later); the router's direct remember on the correction lane is retired, so every remembered fact is a confirm card"
     }
    ],
    "version_key": null,
@@ -104,6 +127,15 @@
      "status": "planned",
      "wave": "W0.3",
      "note": "injected 'repoint the task' text through a REAL tool-bearing lane yields a confirm card, not a change"
+    },
+    {
+     "suite": "smoke-one-assistant",
+     "ids": [
+      "O3"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W22 (uncommitted): pasted and attached material reaches the chat model as a declared DATA block ('not instructions to you') after the user's own instruction"
     }
    ],
    "version_key": null,
@@ -139,7 +171,10 @@
     "lib/prepare/email-card.ts",
     "components/thread/thread-cards.tsx",
     "components/inbox/compose-panel.tsx",
-    "next.config.ts"
+    "next.config.ts",
+    "components/thread/markdown.ts",
+    "components/thread/markdown-view.tsx",
+    "components/home/ask-answer.tsx"
    ],
    "gates": [
     {
@@ -167,6 +202,17 @@
      "status": "planned",
      "wave": "W0.1",
      "note": "the fixtures rendered inert in a real browser"
+    },
+    {
+     "suite": "smoke-chat-surface",
+     "ids": [
+      "A1-A6",
+      "B1-B6",
+      "C1-C5"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W22.B THE ANSWER IS MARKDOWN, SAFELY: every chat answer (Home chat, coworker DM, item/project room, the coworker chat page) renders through ONE markdown renderer over ONE pure parser — headings, lists, tables, code, links render; raw HTML in an answer renders as TEXT (no HTML path at all); links pass one allowlist (http(s) · mailto · app-relative — javascript:/data:/protocol-relative neutralised to their words); images never load; tests/unit/chat-markdown"
     }
    ],
    "version_key": null,
@@ -504,7 +550,9 @@
     "app/api/home/ask/route.ts",
     "components/home/item-rail.tsx",
     "components/home/home-ask.tsx",
-    "lib/present/converse-stream.ts"
+    "lib/present/converse-stream.ts",
+    "lib/skills/for-turn.ts",
+    "lib/skills/followed.ts"
    ],
    "gates": [
     {
@@ -647,7 +695,7 @@
      ],
      "kind": "outcome",
      "cost": "zero-ai",
-     "note": "W19.2a AN EMPTY SET IS NOT A CARD + A CATCH-UP GETS A REAL ANSWER (owner walk Sep 28: a room catch-up was served \"Nothing recorded in the last 7 days.\" over an empty card saying it again): a zero-row collection renders nothing in the kit (every host) and is never emitted — the contract carries no empty line, the core's fast path serves a set only with rows (else falls through to the answer path), the loop attaches only a set with rows, the steer door never writes a zero-row card turn and stores the ANSWER's prose + tagged refs on a card turn (never the framing in its place); the router judges `synthesis` and synthesisPrecedence drops a named read for a catch-up/status/what-changed/multi-part question (never a deed, a hand-off or a literal listing), which a project room answers through the Home answer path pinned to the room. tests/unit/answer-shape runs the ONE core end to end with the model stubbed"
+     "note": "W19.2a AN EMPTY SET IS NOT A CARD + A CATCH-UP GETS A REAL ANSWER (owner walk Sep 28: a room catch-up was served \"Nothing recorded in the last 7 days.\" over an empty card saying it again): a zero-row collection renders nothing in the kit (every host) and is never emitted — the contract carries no empty line, the core's fast path serves a set only with rows (else falls through to the answer path), the loop attaches only a set with rows, the steer door never writes a zero-row card turn and stores the ANSWER's prose + tagged refs on a card turn (never the framing in its place); the router judges `synthesis` and synthesisPrecedence drops a named read for a catch-up/status/what-changed/multi-part question (never a deed, a hand-off or a literal listing), which a project room answers through the Home answer path pinned to the room. tests/unit/answer-shape runs the ONE core end to end with the model stubbed ⟲ RE-POINTED W22: the router's synthesis verdict and the Home answer path it chose are retired — a room catch-up is answered by the ONE loop from the room's own page (told an empty read is never the answer), a literal listing takes the deterministic command fast path"
     },
     {
      "suite": "smoke-chat-cards",
@@ -661,6 +709,17 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W20.B (uncommitted) A CLAIM RENDERS IN EVERY CHAT (owner walk Sep 28: \"can you send an invite for it?\" on an item page → the core prepared the invite and said \"Here's the invite…\" and no card rendered): both chat doors write + forward every card the core returns (invite · bulk deed · email draft · collection · event · change) through ONE table (lib/present/turn-card cardTurnOf/cardPayloadOf), exactly once under the W19.B claim; both chat surfaces hydrate and render them through ONE hydrator + ONE renderer (components/home/chat-cards.tsx); the inverse gate classifies every ConverseTurn field (card or known non-card surface) and round-trips each card kind server → client → rendered; an answer claiming a produced artifact with no card, no surface and no inline body is re-worded at the ONE answer door (claimFloorSay); the item door streams THE ONE STREAM and the rail's in-flight line speaks the live tool label and reserves the card's shape. tests/unit/chat-cards runs both doors over an in-memory DB with the core stubbed"
+    },
+    {
+     "suite": "smoke-skills-chat",
+     "ids": [
+      "A1",
+      "C1-C4",
+      "F1-F4"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W21 (uncommitted) SKILLS IN CHAT — A CLAIM RENDERS for skills: every chat answer (Home ask, item/project steer, coworker DM) resolves its skills through ONE resolver (lib/skills/for-turn.ts: the addressed actor's assigned skills — the chief is the cos seat's custom_agents row — plus this message's adds, minus its skips) and mounts them through ONE renderer (lib/work/worker-skills-context.ts renderSkillsBlock, clipped under the excerpt law, voiced as the user's own instructions); an answer's `skillsFollowed` is the model's [[skills_applied:…]] report FLOORED to the skills actually loaded into that prompt (lib/skills/followed.ts) — never a skill that was not loaded; the marker never reaches a surface (stream filter + answer-door strip); room answers record it in one companion row (a component would break the chat boundary). tests/unit/skills-chat drives both chief doors over an in-memory DB with the core stubbed"
     }
    ],
    "version_key": null,
@@ -781,7 +840,8 @@
     "lib/work/judgment-sweep.ts",
     "app/api/cron/draft-sweep/route.ts",
     "app/api/cron/commitments-sweep/route.ts",
-    "lib/deeds/held-words-bulk.ts"
+    "lib/deeds/held-words-bulk.ts",
+    "components/home/paste-material.ts"
    ],
    "gates": [
     {
@@ -864,6 +924,15 @@
      "kind": "source",
      "cost": "zero-ai",
      "note": "W9.5 THE CLOCKS SAY WHAT THEY DO: every cron route is scheduled or documents why not (knowledge-sync: unscheduled — the indexer's unchanged-file skip never fires); header cadences parse-match vercel.json; fetch-emails pages + least-recently-synced + bounded concurrency + wall clock + leftBehind/unfinished; activeUserIds counts only live connections; label-sweep's per-user read excludes final rows and reports itemsLeftBehind; retention's scheduled run is an honest dry-run (wouldDelete, the switch named); the reply-reconcile throttle is a DB claim, not a per-instance Map"
+    },
+    {
+     "suite": "smoke-chat-surface",
+     "ids": [
+      "F1-F5"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W22.B A LONG PASTE IS MATERIAL: a paste over 2,000 characters becomes a chip sent WHOLE as material (the `pasted` field + the attachments bridge); a paste over the 20,000-character limit is refused at the composer with its size and the limit stated — nothing is cut quietly"
     }
    ],
    "version_key": null,
@@ -903,7 +972,9 @@
     "components/one/chat-address.ts",
     "lib/work-items/model.ts",
     "lib/work-items/gantt-date.ts",
-    "components/entities/gantt-chart.tsx"
+    "components/entities/gantt-chart.tsx",
+    "components/thread/markdown-view.tsx",
+    "components/home/chat-flight.ts"
    ],
    "gates": [
     {
@@ -1017,6 +1088,16 @@
      "kind": "pure",
      "cost": "zero-ai",
      "note": "W20.A (uncommitted, owner walk Sep 28) EVERY ROW HAS A REAL ADDRESS OR NONE: a commitment work item opens /item/<id>?kind=commitment through the one producer (refDoorHref) — the '/' placeholder is gone from lib/work-items; the timeline route and the Gantt serve/render through one floor (lib/work-items/gantt-date rowDoorOf), and a roomless row with no address is plain text, never a link or a button to nowhere. The Timeline lands on Everything and remembers the reader's explicit toggle (guarded storage, read pre-paint); the old Home header (OneHomeHeader + sync line + day ring) is retired on every lens, Activity kept behind one quiet glyph"
+    },
+    {
+     "suite": "smoke-chat-surface",
+     "ids": [
+      "D1-D4",
+      "E1-E5"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W22.B THE STREAM NEVER REMOUNTS + NEVER A SILENT RING: every prefix of a streamed answer leaves its painted blocks identical (blocks keyed by position; only the last grows); the in-flight tokens and the seated answer share one renderer; the stage speaks in the one working line, 'still working' past 20 s, a 120 s client abort, and a stream without its done frame is a failure line with Retry — never a fake answer"
     }
    ],
    "version_key": null,
@@ -1158,6 +1239,16 @@
       "S1"
      ],
      "note": "W11.3: the marker is prompt-side only — no component imports it, the surface producers clip for display, a rendered card never shows it"
+    },
+    {
+     "suite": "smoke-one-assistant",
+     "ids": [
+      "O3.2",
+      "O3.4"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W22 (uncommitted): both chat doors cut long input with clipForPrompt (the raw 20k/8k slices are gone); the conversation's history beyond its budget is declared on the context page"
     }
    ],
    "version_key": null,
@@ -1843,7 +1934,7 @@
    ],
    "tier": 2,
    "domain": "rooms",
-   "statement": "Narration is the chief-of-staff voice with author absent; a coworker's face and name appear only on their own first-person speech; user, coworker and event lines derive structurally.",
+   "statement": "Narration is the seat's voice (the Personal Assistant — W22.B label, derived from ROLE_LABELS) with author absent; a coworker's face and name appear only on their own first-person speech; user, coworker and event lines derive structurally.",
    "homes": [
     "lib/room/turns.ts",
     "components/home/item-rail.tsx",
@@ -3725,6 +3816,82 @@
    "status": "holding",
    "broken_by": null,
    "collides_with": []
+  },
+  {
+   "id": "the-chat-answers-the-instruction",
+   "name": "THE CHAT ANSWERS THE INSTRUCTION",
+   "aliases": [
+    "THE HOME CHAT IS ONE ASSISTANT",
+    "ONE LOOP, NO LANES",
+    "GROUNDING GOVERNS CLAIMS, NOT CAPABILITY",
+    "THE HAND-OFF IS BACKGROUND WORK",
+    "A TURN NEVER HANGS"
+   ],
+   "tier": 2,
+   "domain": "chat",
+   "statement": "Every chat door (Home, project room, item rail) answers a non-command message as ONE tool-using conversation that follows the user's instruction — role-play, one-question-at-a-time interviews, writing, summaries of pasted material, prompts — on an empty account too, with no length or format cap; every claim about the user's OWN work (mail, tasks, meetings, people, dates) comes from the context page or a tool result, never invented. Pasted/attached material rides as declared DATA; a coworker hand-off answers at once and posts later; a turn runs under a time budget and ends in a visible, retryable failure rather than a hang; every model call logs usage; only exact registry commands take the deterministic fast path.",
+   "homes": [
+    "lib/converse/index.ts",
+    "lib/converse/conversation.ts",
+    "lib/converse/commands.ts",
+    "lib/home/ask.ts",
+    "app/api/home/ask/route.ts",
+    "app/api/items/steer/route.ts",
+    "lib/ai/factory.ts",
+    "lib/tools/compose-new-email.ts",
+    "lib/prepare/standalone-reply.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-one-assistant",
+     "ids": [
+      "O1-O10"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W22 (uncommitted) THE HOME CHAT IS ONE ASSISTANT (the Sep 28 workshop account: 'You are my AI redesign partner… Ask your first question now.' was answered 'I don't have anything on that yet — your deck is clear'): the model router and the records-only question lane (JSON, 1-3 plain sentences, 450 tokens, parse failure → refusal) are retired; the loop is the only model path for a non-command message; the stubbed model receives the persona + the one truth rule + the real history as messages and no records-only/length/format rule; pasted and attached material arrives as a declared DATA block (clipped under the excerpt law); a tool call's card rides through the one card table; the hand-off returns at once and posts its result into the asking chat through the door's after(); a stalled model (stream or not) becomes TIMEOUT_LINE + failure{retry} at the one entry and no door persists it as the answer; a 429 retry never sleeps past the deadline; every loop call logs usage; 'dismiss this' still resolves with no model call. tests/unit/one-assistant drives the core with the model stubbed · W22.2 (live-eval regressions): a NEW email ('draft an email to sam@… proposing Tuesday 10am') is draft_reply(new_message) → THE ONE DRAFTER (generateNudgeDraft direction 'new', W18 language check) → the one email card, never 'which thread?'; the invite card is offered on a mail-on workspace even with the calendar feature off (its send door rides the mailbox; the card's Send states honestly when nothing can send) and never refused for 'no calendar connected'; one-question-at-a-time = exactly one question mark per turn; the turn carries its meter (tokens · € · estimated)"
+    },
+    {
+     "suite": "smoke-answer-shape",
+     "ids": [
+      "S4"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "⟲ W22: a catch-up is never a command, so the one loop answers it from the scope's own page; no router, no answering lane survives in the core"
+    }
+   ],
+   "fn": "matchRegistryCommand · historyAsMessages · userTurnContent · personaBlock/WORK_TRUTH_RULE",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "fixed_by": "W22.1",
+   "broken_by": null,
+   "collides_with": [
+    {
+     "law": "honesty-floor-at-the-answer-door",
+     "precedence": "compatible layers: grounding governs CLAIMS about the user's work (the honesty floor still checks every denial the loop answers with); it never governs capability — an instruction that needs no records is followed, not refused"
+    },
+    {
+     "law": "one-grounding",
+     "precedence": "the context page IS the one grounding (buildBrainSnapshot on Home, assembleRoomGrounding in a room); the loop may reason and write beyond it but may state work facts only from it or from a tool result"
+    },
+    {
+     "law": "untrusted-input-is-data",
+     "precedence": "untrusted-input wins: following the user's instruction never extends to instructions written inside pasted/attached material, which rides as declared DATA"
+    },
+    {
+     "law": "human-in-the-loop",
+     "precedence": "human-in-the-loop wins: following an instruction never sends, posts or books — the loop's hands only PREPARE cards and the send door keeps its explicit-send floor"
+    },
+    {
+     "law": "excerpt-honesty",
+     "precedence": "no length cap on the ANSWER; every INPUT cut (a long paste, an old history turn, an attachment) is a declared clip, and history beyond the budget is declared, never silently dropped"
+    },
+    {
+     "law": "workspace-feature-gating",
+     "precedence": "the feature map still gates every chat verb; ONE stated exception in the core (PREPARE_ONLY_CHANNEL) offers prepare_calendar_invite when its SEND channel (the mailbox) is on though the calendar feature is off — a prepare-only card whose send door uses mail; a mail-off (sovereign) workspace never sees it"
+    }
+   ]
   },
   {
    "id": "fresh-floor",
@@ -6092,6 +6259,15 @@
      "kind": "source",
      "cost": "zero-ai",
      "note": "landed W0.5 (uncommitted): every after()-AI route declares maxDuration"
+    },
+    {
+     "suite": "smoke-one-assistant",
+     "ids": [
+      "O5"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W22 (uncommitted): an interactive chat turn runs under a per-call timeout (45 s) and a turn deadline (100 s, under both doors' maxDuration); aiCreate retries a 429/5xx only when the retry fits the deadline; a stalled stream times out per chunk; the failure is visible and retryable"
     }
    ],
    "fn": "home_brief merge helper",

@@ -114,3 +114,49 @@ export async function moveProjectChatOut(roomKey: string, at: string, onChange?:
     return chatKey;
   } catch { toast.error("Couldn't move that chat — try again."); onChange?.(); return null; }
 }
+
+// ── SKILLS IN CHAT (W21) — the chat's three skill verbs, on the same terms as the verbs above ──────
+/** Every Skills surface (the composer menu, the header's "uses" line) re-reads on this echo. */
+export const SKILLS_CHANGED_EVENT = 'aug:skills-changed';
+export const skillsChanged = () => {
+  try { window.dispatchEvent(new CustomEvent(SKILLS_CHANGED_EVENT)); } catch { /* SSR */ }
+};
+
+/** THE ONE IN-CHAT ASSIGNMENT CHANGE — "Always use for <Name>" / "Remove from <Name>" on a Skills
+ *  menu row. Speaks its consequence with an Undo that flips it back through the same door. */
+export async function setSkillAssignment(
+  skill: { id: string; name: string }, agent: { id: string; name: string }, assigned: boolean,
+): Promise<boolean> {
+  const first = agent.name.split(' ')[0] || agent.name;
+  const flip = async (to: boolean) => {
+    const r = await post(`/api/skills/${encodeURIComponent(skill.id)}/assign`, { agent_id: agent.id, assigned: to });
+    if (!r.ok) throw new Error();
+    skillsChanged();
+  };
+  try {
+    await flip(assigned);
+    toast(assigned ? `${first} now always uses ${skill.name}` : `${skill.name} removed from ${first}`, {
+      action: {
+        label: 'Undo',
+        onClick: () => { void flip(!assigned).catch(() => toast.error("Couldn't undo that — change it in Settings → Team.")); },
+      },
+    });
+    return true;
+  } catch { toast.error("That didn't go through — try again."); return false; }
+}
+
+/** SAVE AS SKILL — the server drafts a skill from the conversation; NOTHING is saved here (the editor
+ *  opens prefilled, and only its own Save writes). Resolves the draft, or null (and says so). */
+export async function draftSkillFromConversation(roomKey: string): Promise<{ name: string; whenToUse: string; instructions: string } | null> {
+  try {
+    const res = await post('/api/skills/from-conversation', { roomKey });
+    const d = (await res.json().catch(() => ({}))) as { draft?: { name?: string; whenToUse?: string; instructions?: string } };
+    if (!res.ok || !d.draft) throw new Error();
+    return { name: String(d.draft.name ?? ''), whenToUse: String(d.draft.whenToUse ?? ''), instructions: String(d.draft.instructions ?? '') };
+  } catch { toast.error("Couldn't draft a skill from this conversation — try again."); return null; }
+}
+
+/** "Not now" on a skill offer — the pattern is not offered again. Quiet: no toast on success. */
+export async function declineSkillOffer(patternKey: string): Promise<boolean> {
+  try { const r = await post('/api/skills/offer-decline', { patternKey }); return r.ok; } catch { return false; }
+}

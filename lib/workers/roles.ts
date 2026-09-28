@@ -9,17 +9,24 @@ export const ROLE_AVATARS: Record<string, string> = {
   research_analyst:   '/workers/max.png',
 };
 
-// Clara PROMOTED (owner, Sep 7): the assistant label → CHIEF OF STAFF, platform-wide. The threads
-// arc seated her as the CoS; the label now says it everywhere. Role KEY stays `personal_assistant`
-// (Slack app mapping, email local-parts, AgentOS routing and the seat resolver hang off keys — the
-// Luca lesson: the label and the persona move, the key is identity).
+// ⟲ W22.B (owner, Sep 28): the seat's label is PERSONAL ASSISTANT, platform-wide (it read "Chief of
+// Staff" from Sep 7). Every coworker role is Title Case here, and every surface reads it from HERE —
+// the Home chat's and the room's seat label included (SEAT_LABEL below), so a rename is one line.
+// Role KEY stays `personal_assistant` (Slack app mapping, email local-parts, AgentOS routing and the
+// seat resolver hang off keys — the Luca lesson: the label and the persona move, the key is identity).
 export const ROLE_LABELS: Record<string, string> = {
-  personal_assistant: 'Chief of Staff',
+  personal_assistant: 'Personal Assistant',
   content_manager:    'Content Strategist',
   branding_expert:    'LinkedIn Expert',
   linkedin_drafter:   'LinkedIn Expert', // legacy role key
   research_analyst:   'Research Analyst',
 };
+
+/** The role KEY that holds the seat by default (lib/workers/cos-seat.ts resolves the holder). */
+export const SEAT_ROLE_KEY = 'personal_assistant';
+/** THE SEAT'S SPOKEN LABEL — constant regardless of who holds the seat, and DERIVED from the one
+ *  label map (never a private string at a surface). */
+export const SEAT_LABEL: string = ROLE_LABELS[SEAT_ROLE_KEY];
 
 // ── THE SPECIALTY VOCABULARY (W4.1 — one source, keyed by ROLE KEY, never by a coworker's name) ──
 // The DM first contact is CHROME, not speech (docs/threads-plan.md "SPEECH IS COMPOSED, NEVER
