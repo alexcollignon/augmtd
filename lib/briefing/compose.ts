@@ -15,6 +15,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
+import { ABSOLUTE_DATES_RULE, absolutizeTimeWords, serveTimeWords } from '@/lib/core/relative-time';
 
 export type BriefingRef = {
   id: string;                       // "A1" / "W2" / "P1" / "G1" — the model's handle
@@ -63,7 +64,7 @@ export type BriefingInputs = {
 
 // Bump whenever the PROMPT changes — folded into the daySig so a prompt edit recomposes existing briefs
 // (the cached-AI-output lesson: inputs changing must not be the only invalidator).
-export const BRIEFING_PROMPT_VERSION = 8; // 8: P6d — grammar-safe refs law + displayWho ref handles
+export const BRIEFING_PROMPT_VERSION = 9; // 9: W18.D TIME TRUTH — ABSOLUTE_DATES_RULE rides the prompt (the briefing is served last-good across days); 8: P6d — grammar-safe refs law + displayWho ref handles
 
 const sigOf = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0; return String(h); };
 
@@ -90,6 +91,29 @@ export const displayWho = (who: string | null, entityName: string | null): strin
   if (w && !channelish(w)) return w;
   return entityName ?? (w || null);
 };
+
+/**
+ * W18.D · TIME TRUTH AT SERVE — the briefing is served LAST-GOOD (the recompose runs in after() when
+ * the daySig moves), so yesterday's composition paints on today's first load. Every segment passes the
+ * zero-AI floor against the composition's own `composedAt`: an exact relative word is rewritten to its
+ * date; a vague one withholds its segment. The lead and the action are the briefing's spine — either
+ * withheld → the whole briefing is not served (null: the surface shows none until the recompose lands).
+ * Pure.
+ */
+export function serveBriefingTime(b: Briefing | null | undefined, opts: { tz?: string | null; now?: Date }): Briefing | null {
+  if (!b) return null;
+  const seg = (x: BriefingSegment | null | undefined): BriefingSegment | null | 'withheld' => {
+    if (!x) return null;
+    const v = serveTimeWords(x.text, { composedAt: b.composedAt ?? null, tz: opts.tz, now: opts.now });
+    return v.withheld ? 'withheld' : v.text === x.text ? x : { ...x, text: v.text };
+  };
+  const lead = seg(b.lead);
+  const action = seg(b.action);
+  if (lead === 'withheld' || action === 'withheld' || !lead || !action) return null;
+  const watchlist = seg(b.watchlist);
+  const pulse = seg(b.pulse);
+  return { ...b, lead, action, watchlist: watchlist === 'withheld' ? null : watchlist, pulse: pulse === 'withheld' ? null : pulse };
+}
 
 export async function composeBriefing(
   supabase: SupabaseClient, userId: string, inp: BriefingInputs,
@@ -176,7 +200,9 @@ export async function composeBriefing(
     `- Voice: you are the chief of staff SPEAKING TO ${inp.firstName}. Their work is SECOND person — "fourteen items need YOU", ` +
     `"YOUR VAT number", "once YOU submit". Use "I" ONLY for your own recommendations ("I'd start with…"). NEVER write as if you are them.\n` +
     `- Calm and specific; zero exclamation marks, zero cheerleading.\n` +
-    `- Say LESS than you know: if you aren't sure something deserves a sentence, leave it to the counts.`;
+    `- Say LESS than you know: if you aren't sure something deserves a sentence, leave it to the counts.\n` +
+    // W18.D · TIME TRUTH — this brief is served last-good until the next compose lands (ONE copy).
+    `- ${ABSOLUTE_DATES_RULE}`;
 
   const res = await aiCall<{ lead?: string; action?: string; watchlist?: string | null; pulse?: string | null; sentenced?: string[] }>({
     userId, supabase, shape: { output: 'json', reasoning: 'deep' }, prompt, maxTokens: 900, temperature: 0.15, source: 'brain_synthesis',
@@ -186,7 +212,10 @@ export async function composeBriefing(
 
   // Law 5 backstop: strip any ref the model invented (not in our candidate set).
   const known = new Set(refs.map((r) => r.id));
-  const clean = (t: string) => t.replace(/\{([AWPG]\d+)\}/g, (m, id) => (known.has(id) ? m : '')).replace(/\s{2,}/g, ' ').trim();
+  // W18.D · the compose-time belt: an exact relative word is stored as its date (the user's day —
+  // `todayStr` is the caller's local day, so the anchor is that day at noon UTC).
+  const clean = (t: string) => absolutizeTimeWords(t.replace(/\{([AWPG]\d+)\}/g, (m, id) => (known.has(id) ? m : '')).replace(/\s{2,}/g, ' ').trim(),
+    { now: new Date(`${inp.todayStr}T12:00:00Z`), tz: 'UTC' }).text;
   const sentenced = new Set((j.sentenced ?? []).filter((id) => known.has(id)));
   const tail = actions.map((_, i) => `A${i + 1}`).filter((id) => !sentenced.has(id))
     .map((id) => refs.find((r) => r.id === id)!.itemId);

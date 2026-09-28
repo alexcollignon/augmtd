@@ -22,6 +22,8 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import React from 'react';
 import type { ItemActionWidget } from './item-page';
+// W18.A · ONE WIDTH — the kit's one card token.
+import { THREAD_CARD_W } from './kit-width';
 
 /** One pulse cycle, in ms — urgent (< 1s), stated once so the gate can hold it. */
 export const PREPARING_CYCLE_MS = 800;
@@ -157,7 +159,7 @@ export function PreparingSlot({ widget, who }: { widget: ItemActionWidget; who?:
       role="status"
       aria-live="polite"
       aria-busy="true"
-      className="w-full max-w-[560px] overflow-hidden rounded-xl border border-neutral-200/80 bg-white"
+      className={`${THREAD_CARD_W} overflow-hidden rounded-xl border border-neutral-200/80 bg-white`}
     >
       <p className="border-b border-neutral-100 px-4 py-2.5 text-[12.5px] text-neutral-500">{line}</p>
       <PreparingShape shape={widget} />

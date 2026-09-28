@@ -263,14 +263,17 @@ console.log('\nK · the source card\'s "Thread →" opens the thread in the draw
 {
   const rail = src('components/home/item-rail.tsx');
   const detail = src('components/home/item-detail.tsx');
-  gate('K1 the rail takes the host\'s thread door (onOpenThread) and its source card uses it — never a `?kind=email` page hop',
-    /onOpenThread\?: \(itemId: string\) => void;/.test(rail)
-    && /onOpenThread=\{\(\) => \(onOpenThread \? onOpenThread\(objectItemId\) : go\(`\/item\/\$\{objectItemId\}`\)\)\}/.test(rail)
-    && !/onOpenThread=\{\(\) => go\(`\/item\/\$\{objectItemId\}\?kind=email`\)\}/.test(rail));
-  gate('K2 BOTH item doors with a mail source (email · commitment) hand the rail the drawer opener — the SAME door the reply card\'s "Thread →" uses',
-    /<ItemRail kind="email"[^\n]*\n(?:[^\n]*\n){0,3}\s*onOpenThread=\{\(\) => openDrawerAt\('thread'\)\}/.test(detail)
-    && /<ItemRail kind="commitment"[^\n]*\n(?:[^\n]*\n){0,2}\s*onOpenThread=\{\(\) => openDrawerAt\('thread'\)\}/.test(detail)
-    && /node: <EmailCard[\s\S]{0,1400}?onOpenThread=\{\(\) => openDrawerAt\('thread'\)\}/.test(detail));
+  // ⟲ RE-POINTED W18 (K1 · K2): "Open thread" unfolds the conversation IN the source card on every
+  // host (W18.A) — the rail takes no thread door from its host, no item door hands it a drawer opener,
+  // and the reply card on the item page carries no second door (null). Never a page hop, never a drawer.
+  gate('K1 the rail takes NO host thread door — its source cards open the conversation in place (never a `?kind=email` page hop, never a drawer)',
+    !/onOpenThread/.test(rail)
+    && /<EmailSourceMount source=\{sourceEmail\} threadItemId=\{objectItemId\} \/>/.test(rail)
+    && /<SourceObjectMount itemId=\{objectItemId\} \/>/.test(rail)
+    && !/go\(`\/item\/\$\{objectItemId\}/.test(rail));
+  gate('K2 no item door hands a card the drawer opener as its thread door; the reply card on its own item page has none (null)',
+    !/onOpenThread=\{\(\) => openDrawerAt\('thread'\)\}/.test(detail)
+    && /node: <EmailCard[\s\S]{0,1600}?onOpenThread=\{null\}/.test(detail));
   gate('K3 the drawer the door opens HAS the thread section on both doors (email: the conversation; commitment: its Source)',
     (detail.match(/tabs: commonRoomTabs\('(email|commitment)'/g) ?? []).length >= 2
     && /threadLabel: 'Source',/.test(detail)

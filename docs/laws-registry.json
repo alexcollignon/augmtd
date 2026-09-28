@@ -1,7 +1,7 @@
 {
  "$schema_note": "THE LAWS REGISTRY (W1.4, Sep 22 2026). Machine-readable source of truth; docs/laws-registry.md is rendered from it; scripts/smoke-laws.ts is the meta-gate. Tier 1 = the 14 invariants of docs/stabilization-plan.md PART II (outcome or walk gate required); tier 2 = domain laws (a pure-function test required, named in `fn`); tier 3 = lessons (compact `lessons[]`, no gate obligation) and obsolete laws. Gate kinds: source (asserts source text) · pure (calls a pure function) · outcome (census on DB/probe data) · walk (browser journey). Gate cost: zero-ai · cached · live-ai. Status: holding · broken-live (a Sep 22 audit finding names it) · gateless · obsolete. A gate with status 'planned' must name its wave and does not count as live.",
  "version": 1,
- "generated": "2026-09-24",
+ "generated": "2026-09-26",
  "tiers": {
   "1": "invariant",
   "2": "domain",
@@ -1053,7 +1053,10 @@
     "lib/workflows/execute-step.ts",
     "lib/home/attention.ts",
     "lib/room/self-voice.ts",
-    "lib/room/brief.ts"
+    "lib/room/brief.ts",
+    "lib/core/relative-time.ts",
+    "lib/briefing/compose.ts",
+    "lib/room/item-anchor.ts"
    ],
    "gates": [
     {
@@ -1130,6 +1133,15 @@
      "kind": "pure",
      "cost": "zero-ai",
      "note": "landed W12.1 (uncommitted): every relative day claim in a room brief is code-verified against the page's dated events (the user's zone) — attributed false → absolute date, else dropped"
+    },
+    {
+     "suite": "smoke-time-words",
+     "ids": [
+      "A1-D7"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "landed W18.D (uncommitted): cached prose served on a later day is TRUE or WITHHELD — the one read of a stored room brief (readRoomResponse) and the Home briefing/brief line pass the zero-AI serve floor (lib/core/relative-time serveTimeWords: exact relative words EN·PT·DE·FR rewritten to dates against the composition's own timestamp in the user's zone; vague ones or an unknown anchor withhold before the paint); the composers carry ABSOLUTE_DATES_RULE + the compose-time belt (absolutizeTimeWords); fixtures × 40 later days, fake-store reads, source checks of every serve path"
     }
    ],
    "version_key": "JUDGE_VERSION",
@@ -8018,6 +8030,60 @@
    "note": "W17 (Sep 24, owner report): on a transcription-consent email the decision widget arrived seconds after the page — its routes came from GET /api/items/judge, chained after the view read settled, and the judge loads the item's neighbourhood before its cache. The reply card waited on two POST /draft calls in series (the door, then the card). Fixed by W17 (uncommitted)."
   },
   {
+   "id": "the-one-email-card",
+   "name": "THE ONE EMAIL CARD — ONE WIDTH, A MAIL HEADER, THE THREAD OPENS IN PLACE",
+   "aliases": [
+    "ONE WIDTH",
+    "THREAD_CARD_W",
+    "OPEN THREAD EXPANDS IN PLACE",
+    "THE ONE DONE / DISMISS PAIR"
+   ],
+   "tier": 2,
+   "domain": "surfaces · kit",
+   "statement": "Every thread card (source, reply, decision, confirm, invite, collection, event, preparing, custom) wears ONE width token (components/thread/kit-width.ts THREAD_CARD_W, 640px — the reply card's measure) and the timeline's content column fills its track, so every card on a thread page stands at the same width; no kit card declares its own width literal. An EMAIL source card reads like a mail client's message: sender name + address (muted), date at the right, a compact \"to\" line, the subject, the newest message in its own words with older ones folded above it, in the reply card's own shell — every header row only when the host serves its fact. \"Open thread\" (and \"+N earlier\") EXPAND THE WHOLE CONVERSATION INSIDE THE CARD on every host (item page, one-at-a-time card, project room, commitment sources, forwards) — never a navigation, never a drawer: the conversation is read through the one thread door (lib/inbox/thread-door.ts loadThreadRaw), rendered as plain text through ownWords (an HTML-looking body converted by lib/core/text.ts plainBody — raw HTML never renders), older messages folded to a line, scrolled to and marking the message the item came from; \"Collapse\" folds it back. An email source ignores a host's onOpen; the reply card's navigation reads \"Open item\" and is absent on its own item page. The item-level Done / Dismiss pair is ONE kit piece (components/thread/deed-pair.tsx): check / cross icons, neutral at rest, a faint emerald / rose on hover and focus, colour-only motion off under reduced motion — the item header, the one-at-a-time card and the row kit all render it.",
+   "homes": [
+    "components/thread/kit-width.ts",
+    "components/thread/source-object-card.tsx",
+    "components/thread/source-text.ts",
+    "components/thread/thread-timeline.tsx",
+    "components/thread/thread-cards.tsx",
+    "components/thread/deed-pair.tsx",
+    "components/room/source-object.tsx",
+    "components/triage/triage-deck.tsx",
+    "components/home/item-rail.tsx",
+    "components/home/item-detail.tsx",
+    "components/home/email-card.tsx",
+    "components/work/work-row.tsx"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-email-card",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "W1-W5"
+     ],
+     "note": "W18.A: one width token on every kit card and no stray card-width literal; the content column fills; the header renders address / to / date only when served; rendered expansion lifts the max height, marks the item's message, folds older ones and never renders raw HTML; no host passes a source mount a door (no navigation, no drawer); the conversation is read through the thread door; the Done / Dismiss pair renders its icons and tints on every host"
+    }
+   ],
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W18.A",
+   "collides_with": [
+    {
+     "law": "the-item-page-is-a-few-widgets",
+     "precedence": "the widget table still chooses the page's widgets; this law only fixes their width and the source widget's door (in place, never a navigation)"
+    },
+    {
+     "law": "render-safety",
+     "precedence": "render safety WINS: the open conversation is plain text only (ownWords over plainBody); the card never gains an HTML path"
+    }
+   ],
+   "fn": "THREAD_CARD_W · SourceObjectCard (thread.startOpen / onExpand / highlightId) · ownWords · recipientsLine · threadMessagesOf · EmailSourceMount (threadItemId) · SourceObjectMount · DeedButton · DEED_TONE · DEED_ICON",
+   "note": "W18.A (Sep 25 owner walk): the source email was narrower than the reply card under it; the source card did not read like an email; \"Open thread\" hopped to the thread's newest item on the one-at-a-time card (for an Aug 10 commitment in a 99-message thread, an unrelated-looking item) and opened a drawer on the item page; Done / Dismiss rendered three ways. Fixed by W18.A (uncommitted)."
+  },
+  {
    "id": "scheduled-is-not-overdue",
    "name": "SCHEDULED IS NOT OVERDUE",
    "aliases": [
@@ -8164,6 +8230,259 @@
      "precedence": "the settled and empty floors live in THE ONE READER's live predicate — the machine, the deck chip, the room and the card agree"
     }
    ]
+  },
+  {
+   "id": "draft-speaks-thread-language",
+   "name": "A DRAFT SPEAKS THE THREAD'S LANGUAGE",
+   "aliases": [
+    "EXEMPLARS IN THE TARGET LANGUAGE ONLY",
+    "SHAPE NOT WORDS",
+    "THE LANGUAGE POST-CHECK"
+   ],
+   "tier": 2,
+   "domain": "judge · prepare · deck",
+   "statement": "Every machine draft (reply · nudge · compose · redraft/steer) is written in the language of the thread it answers. Voice exemplars are the user's own words only (top message, no quoted history), deduped by normalised body, and shown only when their detected language IS the target — none match, none shown. Exemplars teach shape and warmth; the greeting and sign-off are written as target-language equivalents, never copied. The output is checked with zero AI (whole-body language + foreign salutation lines): a miss gets ONE revise pass with a hard language instruction; still wrong, it is not served (the callers' honest not-prepared state). THE ONE READER withdraws a STORED machine draft that fails the same check against its thread's language (`wrongLanguage` rides `falseClaim`; the existing re-prepare paths re-draft only those — no DRAFT_LAW_VERSION bump). No surface claims a language it has not verified.",
+   "homes": [
+    "lib/context/draft-language.ts",
+    "lib/context/voice-context.ts",
+    "lib/inbox/draft-reply.ts",
+    "app/api/compose/draft/route.ts",
+    "lib/converse/index.ts",
+    "components/home/email-card.tsx",
+    "lib/prepare/read.ts",
+    "components/thread/types.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-draft-language",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "A1-A5",
+      "B1-B6",
+      "C1-C6",
+      "D1",
+      "G1-G8"
+     ],
+     "note": "W18.B: exemplar selection, the output check, the revise-then-refuse loop over a stubbed generator"
+    },
+    {
+     "suite": "smoke-draft-language",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "A6-A8"
+     ],
+     "note": "W18.B: buildVoiceBlock over a fake client — the owner's case (one Portuguese mail ×3, English thread) shows no example"
+    },
+    {
+     "suite": "smoke-draft-language",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "D2-D4",
+      "E1-E8",
+      "F1-F2",
+      "G9-G10"
+     ],
+     "note": "W18.B: every drafter model call sits inside draftInLanguage; the footer claims no unverified language"
+    }
+   ],
+   "fn": "selectExemplars · draftLanguageMiss · draftLanguageVerified · draftInLanguage (lib/context/draft-language.ts) · stampTruth / inboxTruthFacts (lib/prepare/read.ts)",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W18.B",
+   "collides_with": [
+    {
+     "law": "a-claim-renders",
+     "precedence": "a draft refused by the language check is not served, so nothing claims it; the email card's language hint is absent unless a verified flag reaches it"
+    },
+    {
+     "law": "no-empty-ready",
+     "precedence": "a refused draft arrives as no words — the card's honest empty state, never \"reply ready\""
+    },
+    {
+     "law": "the-users-hand-wins",
+     "precedence": "the check judges machine words only; the user's own edit is never re-checked or replaced"
+    }
+   ],
+   "note": "Sep 25 (owner walk): an English thread got a reply opening \"Olá …!\" and signing \"Obrigado! / Os melhores cumprimentos\"; the direction variant came out entirely Portuguese. Stored drafts: THE ONE READER withdraws the wrong-language ones (inbox replies; commitment nudges carry no thread language in the reader's facts — floor off, fail-safe)."
+  },
+  {
+   "id": "plain-body-is-plain",
+   "name": "THE PLAIN BODY IS PLAIN",
+   "aliases": [
+    "ONE HTML-TO-TEXT CONVERTER",
+    "A DOCUMENT IS NEVER A LOGO",
+    "htmlToText"
+   ],
+   "tier": 2,
+   "domain": "mail sync",
+   "statement": "A stored or served plain body never carries markup: the sync parsers (Gmail + Outlook) convert a text part that is really HTML (or an empty text part beside an HTML one) through the ONE converter (lib/core/text.ts htmlToText); the read seams (the thread route, the thread tail, the drafters) convert rows stored before the fix, with no data write. An attachment part is skipped as decoration only when it is an IMAGE embedded by Content-ID, inline disposition or image001-style naming; a document is kept whatever its embedding.",
+   "homes": [
+    "lib/core/text.ts",
+    "lib/google/gmail.ts",
+    "lib/microsoft/outlook.ts",
+    "lib/email-sync/attachment-policy.ts",
+    "lib/triage/words.ts",
+    "app/api/inbox/[id]/thread/route.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-email-bodies",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "H1-H5",
+      "P1-P5",
+      "R1-R2",
+      "T1-T4"
+     ],
+     "note": "W18.B: the converter on fixtures incl. a text/plain part carrying the HTML document; Gmail keeps a cid PDF and skips a cid logo; Outlook converts and keeps an inline PDF"
+    },
+    {
+     "suite": "smoke-email-bodies",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "R3-R4",
+      "T5",
+      "S1-S4"
+     ],
+     "note": "W18.B: the thread route + drafters read through plainBody; the private strippers delegate"
+    }
+   ],
+   "fn": "looksLikeHtml · htmlToText · plainBody (lib/core/text.ts) · skipEmbeddedPart (lib/email-sync/attachment-policy.ts)",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W18.B",
+   "collides_with": [
+    {
+     "law": "render-safety",
+     "precedence": "html_body is untouched and still renders only in the sandboxed frame; this law governs the TEXT body, which is never markup"
+    },
+    {
+     "law": "excerpt-honesty",
+     "precedence": "conversion happens before any clip — a clip measures text, never markup"
+    }
+   ],
+   "note": "Sep 25 (owner walk): an invoice card showed \"<html><head><meta…\" and its PDF was never stored. Census (scripts/repair-html-bodies.ts, dry run): 150 emails + 150 inbox_items stored markup; dropped documents were never recorded — re-fetch needed (no door yet)."
+  },
+  {
+   "id": "relay-is-a-notice",
+   "name": "A RELAY IS A NOTICE",
+   "tier": 2,
+   "domain": "understanding",
+   "aliases": [
+    "SIGNALS OUTRANK CONTENT FOR A RELAY",
+    "THE DIGEST IS NOT THE ASKER",
+    "askerOf"
+   ],
+   "statement": "An AUTOMATED sender that relays or summarises the user's OWN mail (a digest, an assistant's recap, an \"N items processed\" report) is a notice, never an ask by that sender: the ONE understanding pass floors it (relevance awareness, ownership none, no ask, no deadline, kind notification, relay:true + the cited items) when the reasoned relay judgment says so or its words cite ≥3 distinct parties of the user's own recent mail; the notice law demotes it everywhere, so its asks stay on their own threads (one home). A genuine automated ask to the user (a system's own approval, the dunning/security class) keeps its seat, a person's mail is never floored, and no row ever leads with a relay sender's name as the asker.",
+   "homes": [
+    "lib/inbox/relay-digest.ts",
+    "lib/ai/email-processor.ts",
+    "lib/inbox/item-understanding.ts",
+    "lib/inbox/notice-demotion.ts",
+    "lib/inbox/refresh-understanding.ts",
+    "app/api/home/brief/route.ts"
+   ],
+   "fn": "isRelayDigest · citedOwnMail · floorRelayUnderstanding · askerOf · applyRelayFloor · floorStandingRelay (lib/inbox/relay-digest.ts)",
+   "gates": [
+    {
+     "suite": "smoke-relay-and-conversation",
+     "ids": [
+      "R1-R5"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W18.C: a digest of the user's own mail floors and demotes; its relayOf names the existing home; a system's own ask and the security class keep their seat; a person's mail is never floored; askerOf never names a relay"
+    },
+    {
+     "suite": "smoke-relay-and-conversation",
+     "ids": [
+      "R5-R6"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W18.C: both brief seats lead with askerOf; computeUnderstanding floors with the ingest's signals on both doors"
+    }
+   ],
+   "collides_with": [
+    {
+     "law": "one-fact-one-home",
+     "precedence": "the relay's asks live on the threads it cites — the relay is never a second home"
+    },
+    {
+     "law": "untrusted-input-is-data",
+     "precedence": "the relay's words are data; the floor only removes claims, it never acts on them"
+    }
+   ],
+   "status": "holding-uncommitted",
+   "fixed_by": "W18.C",
+   "broken_by": null,
+   "version_key": null,
+   "note": "Sep 25 (owner walk): an automated inbox assistant's overnight report seated as \"<sender> — Approve the €22 … invoice — overdue\" (understanding action/you_owe/customer despite isNotification + isAutomatedSender); the invoice was already its own item. Dry run (scripts/sweep-relay-digests.ts): 1 of 137 seated items on the owner account would be floored; --apply is owner-gated."
+  },
+  {
+   "id": "the-conversation-answers",
+   "name": "THE CONVERSATION ANSWERS",
+   "tier": 2,
+   "domain": "evidence",
+   "aliases": [
+    "THE CONVERSATION WINDOW",
+    "THE CONFIRMATION CLAUSE",
+    "matchEventsReport"
+   ],
+   "statement": "On the settle path, a later message by ANY party on the work's own conversation is nominated against open work the user owes, and each evidence type carries, beside the newest owing-side pieces, the earliest same-conversation messages after the work arose and the other side's answer to a nominated delivery (≤ EVIDENCE_MAX_PER_TYPE, the remainder counted and reported); the fulfillment judge is told who wrote each piece and only a judged delivery closes; the other side's message never raises looks-done by itself; and the direction floor's none (the debt stays on the desk) never masks a live looks-done record.",
+   "homes": [
+    "lib/evidence/match.ts",
+    "lib/work/evidence-nominator.ts",
+    "lib/work/evidence-sweep.ts",
+    "lib/work/evidence-settle.ts",
+    "lib/commitments/fulfillment.ts",
+    "lib/work/machine.ts",
+    "lib/work/direction-floor-word.ts"
+   ],
+   "fn": "matchEventsReport · matchOne (lib/evidence/match.ts) · deriveState (lib/work/machine.ts) · isDirectionFloorNone",
+   "gates": [
+    {
+     "suite": "smoke-relay-and-conversation",
+     "ids": [
+      "C1-C4",
+      "C6"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W18.C: the quick reply + the counterparty confirmation are nominated past a colleague's later mail; other-thread mail is not; bounded + counted; a stubbed unclear never closes; the floor's none never masks looks-done"
+    },
+    {
+     "suite": "smoke-relay-and-conversation",
+     "ids": [
+      "C5"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W18.C: the judge labels the other side and carries the confirmation clause"
+    }
+   ],
+   "collides_with": [
+    {
+     "law": "evidence-settles",
+     "precedence": "evidence nominates, fulfillment decides — the window only widens what the judge reads"
+    },
+    {
+     "law": "no-silent-caps",
+     "precedence": "the per-type bounds stand; what they leave out is counted and logged by the sweep"
+    }
+   ],
+   "status": "holding-uncommitted",
+   "fixed_by": "W18.C",
+   "broken_by": null,
+   "version_key": "FULFILLMENT_LAW_VERSION",
+   "note": "Sep 25 (owner walk): \"Fix the incomplete survey question\" (Aug 10) stayed overdue in a 99-message conversation — the user's reply 14 minutes later and the counterparty's \"it's done\" 7 minutes after were crowded out of the three newest slots by a colleague's September mail; the record that did form (Sep 25, the colleague's Sep 3 message) was masked by the direction floor's none. Dry run (scripts/census-conversation-window.ts): 12 commitments + 1 inbox item gain same-conversation evidence on the owner account."
   }
  ],
  "lessons": [

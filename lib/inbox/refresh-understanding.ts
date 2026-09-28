@@ -252,7 +252,7 @@ export async function refreshUnderstandingForArrival(params: {
       received_at: message.received_at ?? null,
       user_addresses: addrs ?? [],
       recipient_email: (addrs ?? [])[0] ?? null,
-    } as never, client);
+    } as never, client, { signals: (sd.signals as { isAutomatedSender?: boolean; isNotification?: boolean } | null) ?? null });
     // TRUE FACTS OR NO FACTS: a failed pass leaves the PRIOR understanding and the PRIOR stamp in
     // place — so the serve floor still knows the claim is behind, and degrades rather than lies.
     if (!fresh) return 'failed';

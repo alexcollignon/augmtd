@@ -418,7 +418,7 @@ void (async () => {
     const pageEmail = await emailSourceOf(db, U, E_SRC);
     const pageQuote = (await sourceQuoteOf(db, U, C_EMAIL))?.line ?? null;
     const pageFacts = pageEmail ? { id: pageEmail.id, threadId: pageEmail.threadId, subject: pageEmail.subject, from: pageEmail.from, receivedAt: pageEmail.receivedAt, excerpt: pageEmail.excerpt, quote: pageQuote } : null;
-    const pageHtml = pageFacts ? render(React.createElement(EmailSourceMount, { source: pageFacts, onOpen: noop })) : '';
+    const pageHtml = pageFacts ? render(React.createElement(EmailSourceMount, { source: pageFacts, threadItemId: I_THREAD })) /* ⟲ RE-POINTED W18: the door is the in-place thread (threadItemId), never an onOpen navigation */ : '';
     const cardHtml = between(deck([row(C_EMAIL, 'commitment', null, 'Fix the incomplete survey question')]));
     gate('E1 the server context carries the commitment\'s OWN source message (by its id), never the thread\'s newest',
       cEmail?.email?.id === E_SRC && cEmail.email.receivedAt === '2026-08-10T09:00:00Z' && cEmail.inboxItemId === I_THREAD, JSON.stringify(cEmail));
@@ -445,7 +445,7 @@ void (async () => {
       !!meetPageHtml && meetCard.includes(meetPageHtml) && /Workshop prep with Acme/.test(meetCard) && cMeet?.meeting?.addressId === EV && cMeet.email === null, text(meetCard).slice(0, 240));
 
     // ── E7 · AN EMAIL ITEM → the page's object card over the SAME thread door ──
-    const mailPageHtml = render(React.createElement(SourceObjectMount, { itemId: I_MAIL, onOpenThread: noop }));
+    const mailPageHtml = render(React.createElement(SourceObjectMount, { itemId: I_MAIL })) /* ⟲ RE-POINTED W18: the door expands in place; no host handler */;
     const mailCard = between(deck([row(I_MAIL, 'reply', 'Could you send the final quarterly numbers?')]));
     gate('E7 an email item: the card mounts the item page\'s object card over the same door (+N earlier, subject, the door) — the page\'s own',
       objectIdForDoor({ kind: 'item', itemKind: 'inbox', id: I_MAIL }, { sourceItemId: null }) === I_MAIL

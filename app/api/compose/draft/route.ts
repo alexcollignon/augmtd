@@ -9,6 +9,7 @@ import { generateReplyDraft } from '@/lib/inbox/draft-reply';
 import { loadPlanStepSummaries, type ItemPlanKind } from '@/lib/home/item-plan';
 import { firstEmailIn, looksLikeEmail } from '@/lib/core/email';
 import { stagedFilesOf } from '@/lib/prepare/email-card';
+import { plainBody } from '@/lib/core/text';
 
 export const maxDuration = 30;
 
@@ -255,7 +256,7 @@ export async function POST(request: NextRequest) {
       context = [
         subj ? `Subject: ${subj}` : '',
         from ? `From: ${from}` : '',
-        typeof sd.body === 'string' ? `Message:\n${(sd.body as string).slice(0, 2500)}` : '',
+        typeof sd.body === 'string' ? `Message:\n${plainBody(sd.body as string).slice(0, 2500)}` : '',
       ].filter(Boolean).join('\n\n');
       task = intent?.trim()
         ? intent.trim()
@@ -285,11 +286,15 @@ export async function POST(request: NextRequest) {
     } catch (e) {
       console.error('[compose/draft] reply drafting failed:', e);
     } else if (!skipDraft) try {
-      const voiceBlock = await buildVoiceBlock(user.id, voiceRecipient, supabase, mailbox).catch(() => '');
+      // W18.B · A DRAFT SPEAKS THE THREAD'S LANGUAGE: the target is resolved first — the voice block
+      // shows only exemplars in it, and the output is checked against it (draftInLanguage).
+      const target = detectLanguage(context);
+      const voiceBlock = await buildVoiceBlock(user.id, voiceRecipient, supabase, mailbox, { language: target }).catch(() => '');
+      const { draftInLanguage, exemplarRule } = await import('@/lib/context/draft-language');
       const { mailboxIdentityRule } = await import('@/lib/inbox/draft-reply');
       const identityRule = mailboxIdentityRule(mailbox);
       const { client: ai, model } = await getAIClient(user.id, 'conversation', supabase);
-      const generate = async (objection: string | null): Promise<string> => {
+      const generateOnce = async (objection: string | null, languageFix: string | null): Promise<string> => {
         const res = await aiCreate(ai, {
           model, max_tokens: 600, temperature: 0.6,
           messages: [{ role: 'user', content:
@@ -302,15 +307,18 @@ export async function POST(request: NextRequest) {
             (objection ? `REVIEWER'S OBJECTION to your previous draft — fix this: ${objection}\n\n` : '') +
             // Language mirrors the correspondent, not the user's default. A concrete detected language wins
             // over the voice examples (which may be in another language); fall back to "match the context".
-            (detectLanguage(context)
-              ? `IMPORTANT — LANGUAGE: The context above is in ${detectLanguage(context)}. Write the ENTIRE ` +
-                `message in ${detectLanguage(context)}, and ONLY in ${detectLanguage(context)}. The voice ` +
-                `examples are for STYLE only — ignore their language.`
+            (target
+              ? `IMPORTANT — LANGUAGE: The context above is in ${target}. Write the ENTIRE ` +
+                `message in ${target}, and ONLY in ${target} — the greeting and sign-off included. ${exemplarRule(target)}`
               : `IMPORTANT — LANGUAGE: Write in the SAME language as the context above — detect it and match ` +
-                `it; if there's no clear language, use English. The voice examples are for STYLE only.`) }],
+                `it; if there's no clear language, use English. ${exemplarRule(null)}`) +
+            (languageFix ? `\n\n${languageFix}` : '') }],
         });
         return res.choices?.[0]?.message?.content?.trim() || '';
       };
+      // The language check wraps every generation the truth vet asks for (first + its one retry).
+      const generate = async (objection: string | null): Promise<string> =>
+        (await draftInLanguage((languageFix) => generateOnce(objection, languageFix), target)).body;
       const vetted = await draftThroughVet(generate, vetFacts);
       body = vetted.body;
       if (vetted.failed) withheld = withheldLine(vetted.failed);

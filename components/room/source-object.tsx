@@ -17,14 +17,17 @@
 // replaces it can never be taller, so a host's actions below are never shoved down on arrival.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ThreadCardView } from '@/components/thread';
+// W18.A · THE ONE EMAIL CARD — the header's "to" line and the open conversation, composed HERE from
+// what the one reader already served (pure helpers; the kit prints).
+import { recipientsLine, threadMessagesOf, type RawThreadMessage } from '@/components/thread/source-text';
 // W15.1 · THE ONE THREAD COMPONENT's loading frame — the card's own max height, no layout shift.
 import { SourceObjectSkeleton } from '@/components/thread/source-object-card';
 import type { ThreadCard } from '@/components/thread/types';
 import EventCard from '@/components/home/event-card';
 import { AttachmentLightbox, type LightboxFile } from '@/components/ui/attachment-lightbox';
-import { loadThreadDoor, peekThreadDoor, type ThreadDoorData } from '@/lib/inbox/thread-door';
+import { loadThreadDoor, loadThreadRaw, peekThreadDoor, type ThreadDoorData, type ThreadRawPayload } from '@/lib/inbox/thread-door';
 import type { InviteCardFacts } from '@/lib/present/invite-object';
 
 // ── INVITES ARE EVENTS (W7.4) ────────────────────────────────────────────────────────────────────
@@ -105,22 +108,81 @@ export type EmailSourceFacts = { id: string; threadId: string | null; subject: s
   /** W15.4 · why this item exists, in the source's own words ("You wrote: “…”") — lib/commitments/source.ts sourceQuoteOf. */
   quote?: string | null };
 
+/** W18.A · what an email source card may carry beyond its facts — each only when served. */
+export type EmailSourceExtras = {
+  quote?: string | null;
+  /** The sender's address (muted beside the name) — from the conversation the host already read. */
+  fromAddress?: string | null;
+  /** The composed recipients line (source-text.ts recipientsLine). */
+  to?: string | null;
+  /** THE ONE DOOR: the conversation, unfolded in place (never a navigation). */
+  thread?: SourceThreadFacts | null;
+};
+type SourceThreadFacts = NonNullable<Extract<ThreadCard, { kind: 'source' }>['thread']>;
+
 /** The pure producer: served facts → the kit's `source` card (the message's own words). The door's
- *  words are the kit's (OPEN_THREAD_LABEL) — a host passes the handler, never a label. `quote` is
- *  the kit's optional highlighted line (W15.4 supplies the user's own promise). */
-export function emailSourceCard(m: EmailSourceFacts, onOpen?: () => void, quote?: string | null): ThreadCard {
+ *  words are the kit's (OPEN_THREAD_LABEL) and its act is the kit's (the in-place expansion) — a host
+ *  passes the conversation, never a label and never a navigation. `quote` is the kit's optional
+ *  highlighted line (W15.4 supplies the user's own promise). */
+export function emailSourceCard(m: EmailSourceFacts, x: EmailSourceExtras = {}): ThreadCard {
   return {
     kind: 'source', id: `source-email-${m.id}`, source: 'email',
     who: m.from, when: whenLabel(m.receivedAt),
     ...(m.subject ? { title: m.subject } : {}),
     ...(m.excerpt ? { excerpt: m.excerpt } : {}),
-    ...(quote ? { quote } : {}),
-    ...(onOpen ? { onOpen } : {}),
+    ...(x.quote ? { quote: x.quote } : {}),
+    ...(x.fromAddress ? { fromAddress: x.fromAddress } : {}),
+    ...(x.to ? { to: x.to } : {}),
+    ...(x.thread ? { thread: x.thread } : {}),
   };
 }
 
-export function EmailSourceMount({ source, onOpen, quote }: { source: EmailSourceFacts; onOpen?: () => void; quote?: string | null }) {
-  return <ThreadCardView card={emailSourceCard(source, onOpen, quote ?? source.quote ?? null)} />;
+// ── W18.A · THE CONVERSATION, READ THROUGH THE ONE DOOR ──────────────────────────────────────────
+// The open card needs the WHOLE conversation: the door's raw payload (lib/inbox/thread-door.ts
+// loadThreadRaw — one read per item, cached, in-flight shared with the narrowed door data). `eager`
+// = read now (the item's own thread mount, whose door data rides the same flight); otherwise the read
+// starts only when the reader opens the thread — or at once when this session already holds it.
+function useConversation(threadItemId: string | null | undefined, eager: boolean) {
+  const [raw, setRaw] = useState<ThreadRawPayload | null>(null);
+  useEffect(() => {
+    setRaw(null);
+    if (!threadItemId) return;
+    let live = true;
+    if (eager || peekThreadDoor(threadItemId)) void loadThreadRaw(threadItemId).then((d) => { if (live) setRaw(d); });
+    return () => { live = false; };
+  }, [threadItemId, eager]);
+  const onExpand = useCallback(() => {
+    if (!threadItemId || raw) return;
+    void loadThreadRaw(threadItemId).then((d) => setRaw(d ?? { messages: [] }));
+  }, [threadItemId, raw]);
+  const rawMessages: RawThreadMessage[] = Array.isArray(raw?.messages) ? (raw!.messages as RawThreadMessage[]) : [];
+  const messages = useMemo(() => (raw ? threadMessagesOf(rawMessages, whenLabel) : null), [raw]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { rawMessages, messages, onExpand };
+}
+
+/** The served recipients of one raw message, as the header's "to" line. */
+function toLineOf(m: RawThreadMessage | undefined): string | null {
+  const r = m as (RawThreadMessage & { to_addresses?: string[] | null; cc_addresses?: string[] | null }) | undefined;
+  return r ? recipientsLine(r.to_addresses ?? null, r.cc_addresses ?? null) : null;
+}
+
+export function EmailSourceMount({ source, quote, threadItemId }: {
+  source: EmailSourceFacts;
+  quote?: string | null;
+  /** W18.A · the inbox item that holds the source message's THREAD — the key of the one thread door.
+   *  Present → "Open thread" unfolds the conversation in place, scrolled to THIS message. */
+  threadItemId?: string | null;
+}) {
+  const conv = useConversation(threadItemId, false);
+  // The source message's own header facts, once the conversation has been read (never guessed).
+  const own = conv.rawMessages.find((m) => m.id === source.id);
+  const fromAddress = own?.from?.trim() || null;
+  const card = emailSourceCard(source, {
+    quote: quote ?? source.quote ?? null,
+    fromAddress, to: toLineOf(own),
+    thread: threadItemId ? { messages: conv.messages, highlightId: source.id, onExpand: conv.onExpand } : null,
+  });
+  return <ThreadCardView key={source.id} card={card} />;
 }
 
 // ── THE THREAD'S OWN MOUNT (W15.1 · ONE THREAD COMPONENT) ────────────────────────────────────────
@@ -129,17 +191,19 @@ export function EmailSourceMount({ source, onOpen, quote }: { source: EmailSourc
 // count), a fixed max height, and ONE door label. While the door is being read the mount stands a
 // skeleton of exactly the card's max height (THE IN-FLIGHT RULE, amended W15.1: a stable frame
 // beats a card that arrives and shoves the host's actions down).
-export function SourceObjectMount({ itemId, onOpenThread, quote }: {
+export function SourceObjectMount({ itemId, quote, highlightId }: {
   /** The inbox item whose thread IS the object under the ask. */
   itemId: string;
-  /** The one door — the host's own (a room focuses; the deep-dive raises its drawer). */
-  onOpenThread?: () => void;
   /** The kit's optional highlighted line, above the message. */
   quote?: string | null;
+  /** W18.A · the message the item came from, marked in the open conversation (default: the newest). */
+  highlightId?: string | null;
 }) {
   const [data, setData] = useState<ThreadDoorData | null>(() => peekThreadDoor(itemId));
   // THE ONE VIEWER: one index into the WHOLE context, so ‹ › are honest (T25.9b).
   const [openAt, setOpenAt] = useState<number | null>(null);
+  // W18.A · THE ONE DOOR IS THE CONVERSATION, IN PLACE — the same flight as the door data above.
+  const conv = useConversation(itemId, true);
 
   useEffect(() => {
     let live = true;
@@ -159,21 +223,27 @@ export function SourceObjectMount({ itemId, onOpenThread, quote }: {
 
   if (!data) return <SourceObjectSkeleton />;
   const who = data.fromName?.trim() || data.fromAddress?.trim() || null;
+  const toLine = toLineOf(conv.rawMessages[conv.rawMessages.length - 1]);
   const invite = data.invite;
   const isInvite = !!(invite && (invite.spec || invite.card));
 
   const mail = (
     <>
-      <ThreadCardView card={{
+      <ThreadCardView key={itemId} card={{
         kind: 'source', id: `source-${itemId}`, source: 'email',
         who, when: whenLabel(data.receivedAt),
+        // W18.A · THE EMAIL HEADER — the sender's address and the newest message's recipients, as the
+        // door served them (absent → no row).
+        ...(data.fromAddress ? { fromAddress: data.fromAddress } : {}),
+        ...(toLine ? { to: toLine } : {}),
         ...(data.subject ? { title: data.subject } : {}),
         messages: data.tail.map((m) => ({ id: m.id, author: m.author, body: m.body, when: whenLabel(m.at) })),
         // "+N earlier" — the conversation beyond the served tail, counted by the door (never guessed).
         ...(data.count > data.tail.length ? { earlierCount: data.count - data.tail.length } : {}),
         ...(quote ? { quote } : {}),
         files: files.map((f, i) => ({ name: f.name, size: f.size ?? null, onOpen: () => setOpenAt(i) })),
-        ...(onOpenThread ? { onOpen: onOpenThread } : {}),
+        // W18.A · THE ONE DOOR: "Open thread" / "+N earlier" unfold the whole conversation here.
+        thread: { messages: conv.messages, highlightId: highlightId ?? null, onExpand: conv.onExpand },
       }} />
       {openAt !== null && files.length > 0 && (
         <AttachmentLightbox files={files} index={openAt} onIndex={setOpenAt} onClose={() => setOpenAt(null)} />

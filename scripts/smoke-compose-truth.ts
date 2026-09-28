@@ -202,13 +202,15 @@ console.log('\nC · regenerate ONCE with the failure named, else serve the hones
     gate('E8 prose with no relative claim is returned byte-identical', r8.text === 'Sam asked on Aug 28; the reply is due Friday.' && !r8.rewritten.length && !r8.dropped.length);
     const br = src('lib/room/brief.ts');
     gate('E9 the brief composer runs the net on the served prose (after the name net, before the empty-text refusal + the store)',
-      /const text = await verifyRelativeTime\(client, userId, g, present, named\);/.test(br)
+      // ⟲ W18.D: the verified prose then passes the compose-time belt (absolutizeTimeWords) before `text`.
+      /const verified = await verifyRelativeTime\(client, userId, g, present, named\);/.test(br)
       && br.indexOf('await verifyRelativeTime(client, userId, g, present, named)') < br.indexOf("if (!text) { await refuseForSig(client, userId, roomKey, sig); return null; }")
       && br.indexOf('await verifyRelativeTime(client, userId, g, present, named)') > br.indexOf('const named = nameOncePerSentence('));
     gate('E10 the page\'s dated events: each board item\'s own date (a commitment\'s SOURCE message, else creation; an inbox receipt) with its person, in the user\'s zone',
       /select\('id, created_at, source, source_id'\)/.test(br) && /from\('emails'\)\.select\('id, received_at'\)/.test(br)
       && /select\('id, received_at:source_data->>received_at'\)/.test(br) && /userTimezone\(client, userId\)/.test(br) && /localNow\(tz\)\.dateStr/.test(br));
-    gate('E11 the prompt is unchanged → ROOM_BRIEF_VERSION stays 19 (THE RULE: bump only on prompt text)', ROOM_BRIEF_VERSION === 19);
+    // ⟲ W18.D changed the prompt (ABSOLUTE_DATES_RULE) and bumped to 20 — the W12.1 net itself bumped nothing.
+    gate('E11 the W12.1 net did not bump the version; only a prompt change does (W18.D → 20)', ROOM_BRIEF_VERSION === 20);
     gate('E12 the chase vocabulary itself is unchanged (the owner\'s words are caught by the W11.1 net)', !!chaseWordsIn(OWNER_DRAFT));
   }
 

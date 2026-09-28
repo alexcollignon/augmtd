@@ -19,6 +19,7 @@ import { clipForDisplay } from '@/lib/utils/clip-for-prompt';
 import { topMessageOf } from '@/lib/inbox/top-message';
 // THE ONE ENTITY DECODER (W5b) — a snippet-fed tail must never show `&#39;` as text.
 import { decodeEntities } from '@/lib/core/text';
+import { looksLikeHtml, htmlToText } from '@/lib/core/text'; // W18.B — the plain body is plain
 
 // ── THE VERBS (Q9v2 · owner's own mapping) ──────────────────────────────────────────────────────
 // The v1 set (→ done · ← later · ↑ now · ↓ never) asked the reader to hold four directions and two
@@ -139,7 +140,10 @@ export function threadTail(messages: ThreadDoorMessage[] | null | undefined): Tr
     .map((m, i) => {
       // DECODED BEFORE THE QUOTE STRIP (W5b): an escaped `&gt;` quote line is still a quote line, and
       // a snippet fallback arrives HTML-escaped from the provider.
-      const raw = (typeof m.body === 'string' && m.body.trim()) ? topMessageOf(decodeEntities(m.body)) : decodeEntities(m.snippet ?? '');
+      // W18.B: a body that is really HTML (a mailer's text/plain part carrying the markup) reads as
+      // text — htmlToText decodes entities itself.
+      const plain = (b: string) => (looksLikeHtml(b) ? htmlToText(b) : decodeEntities(b));
+      const raw = (typeof m.body === 'string' && m.body.trim()) ? topMessageOf(plain(m.body)) : plain(m.snippet ?? '');
       const body = clipForDisplay(String(raw ?? '').replace(/\n{3,}/g, '\n\n').trim(), TRIAGE_MESSAGE_CHARS);
       return {
         id: String(m.id ?? `m${i}`),

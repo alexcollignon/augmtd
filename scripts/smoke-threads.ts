@@ -4012,8 +4012,12 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     && /Could not open this one\./.test(box));
 
   // ── (d) THE CARD OWNS THE DOOR; THE HEADER STOPPED WEARING A BARE WORD ──
-  gate('T25.8 the item room passes the card its "Thread →", and the door lands ON the Thread section',
-    !!detail && /onOpenThread=\{\(\) => openDrawerAt\('thread'\)\}/.test(detail)
+  // ⟲ RE-POINTED W18: "Open thread" unfolds the conversation IN the source card (W18.A · one
+  // behaviour, every host) — the item room hands the reply card NO thread door (`onOpenThread={null}`)
+  // and no card door raises the drawer any more; the drawer machinery itself (its re-fireable signal,
+  // the pane landing on a named section) is unchanged and still asserted.
+  gate('T25.8 the item room hands the reply card no thread door (the source card unfolds it), and the drawer still lands ON a named section',
+    !!detail && /onOpenThread=\{null\}/.test(detail) && !/onOpenThread=\{\(\) => openDrawerAt\('thread'\)\}/.test(detail)
     && /const openDrawerAt = \(tab: string\) => setDrawerReq\(\(r\) => \(\{ tab, v: \(r\?\.v \?\? 0\) \+ 1 \}\)\);/.test(detail)
     && /drawerSignal: drawerReq,/.test(detail)
     // the frame honours it, re-fireably (a second click is never dead) — the pane itself lands on
@@ -4871,15 +4875,17 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     && /tabs\.push\(\{ id: 'record', label: `History · \$\{hist\.length\}`/.test(detail));
 
   // 4 · THE CARD'S OWN DOOR
-  gate('T29.7 "Thread →" IS STRUCTURAL — the item lane always has a door, host-supplied or its own address',
-    !!card && /const openThread = onOpenThread \?\? \(item \? \(\) => router\.push\(`\/item\/\$\{item\.id\}\?kind=email`\) : undefined\);/.test(card)
+  // ⟲ RE-POINTED W18: the item page passes `null` (no door — the source card above unfolds the
+  // conversation in place); every other item-lane mount still gets the host's door or its own address.
+  gate('T29.7 the reply card\'s door IS STRUCTURAL — host-supplied or its own address, except where the host says none (null)',
+    !!card && /const openThread = onOpenThread === null \? undefined : \(onOpenThread \?\? \(item \? \(\) => router\.push\(`\/item\/\$\{item\.id\}\?kind=email`\) : undefined\)\);/.test(card)
     // ⟲ RE-POINTED (W15.1): the handler only — the kit owns the one label ("Open thread").
     && /\.\.\.\(openThread \? \{ onOpenThread: openThread \} : \{\}\)/.test(card)
     // the unfillable state points at the thread through the same derivation
     && /\{openThread && \(/.test(card)
     // and both room mounts still hand it the door they own
     && !!room && /<EmailCard item=\{\{ id: boardRowItemId\(r\) \}\} onOpenThread=/.test(room)
-    && !!detail && /onOpenThread=\{\(\) => openDrawerAt\('thread'\)\}/.test(detail));
+    && !!detail && /onOpenThread=\{null\}/.test(detail));
 
   // …AND IT IS ALWAYS IN VIEW (owner walk, Sep 14: "where is the option to open email thread?" +
   // "these are not scrollable sideways"). Four reasoned directions overflow a 560px card; seated
@@ -5521,7 +5527,10 @@ console.log('\nT32 · THE ONE OBJECT CARD — the ask and the thing asked about,
     && !/\bfetch\(/.test(card32) && !/useRouter|supabase/i.test(card32));
 
   gate('T32.3 NO LYING DOORS ON THE OBJECT — the door and each chip render only with a handler',
-    !!card32 && /card\.onOpen && \(/.test(card32) && /f\.onOpen\s*\n?\s*\?/.test(card32)
+    // ⟲ RE-POINTED W18: the door is `door` — an email source's is the in-place expansion (only with a
+    // served conversation), any other source's is the host's handler; no handler → no door.
+    !!card32 && /const door: \(\(\) => void\) \| null = isEmail \? \(thread \? toggle : null\) : \(card\.onOpen \?\? null\);/.test(card32)
+    && /const doorButton = door \? \(/.test(card32) && /f\.onOpen\s*\n?\s*\?/.test(card32)
     // TRUTH BEFORE PRESENTATION: nothing to show is no card, never an empty labelled frame
     // ⟲ RE-POINTED (W15.1): the excerpt is tested AFTER the own-words floor (`excerpt`, computed
     // from card.excerpt) — an excerpt that is nothing but a quoted tail is nothing to show.
@@ -5550,7 +5559,7 @@ console.log('\nT32 · THE ONE OBJECT CARD — the ask and the thing asked about,
 
   gate('T32.6 THE HOST OWNS THE READ AND THE VIEWER (the kit owns neither) — one door read, THE ONE lightbox, no second previewer',
     !!mount32 && /from '@\/lib\/inbox\/thread-door'/.test(mount32)
-    && /<ThreadCardView card=\{\{\s*\n?\s*kind: 'source'/.test(mount32)
+    && /<ThreadCardView (?:key=\{itemId\} )?card=\{\{\s*\n?\s*kind: 'source'/.test(mount32) /* ⟲ RE-POINTED W18: keyed by item (the open state resets per item) */
     && /<AttachmentLightbox files=\{files\}/.test(mount32)
     // the in-flight rule: what is served paints at once (the deck's warm is this mount's first paint)
     && /peekThreadDoor\(itemId\)/.test(mount32));

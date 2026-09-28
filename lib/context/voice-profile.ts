@@ -6,16 +6,14 @@
 // build-user-context (drafter + coworkers) and render-memory (the Memory card) prefer over the
 // stats. Also written by the interview (kind='voice'). One home, used everywhere.
 
+import { htmlToText } from '@/lib/core/text';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
 
-function stripHtml(html: string): string {
-  return html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li)>/gi, '\n')
-    .replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
-    .replace(/\n{3,}/g, '\n\n').trim();
-}
+// W18.B: the one converter (lib/core/text.ts) — was a private tag-stripper.
+const stripHtml = (html: string): string => htmlToText(html);
 
 async function readProfileData(userId: string, client: DBClient): Promise<Record<string, unknown>> {
   const { data } = await client.from('context_profiles')

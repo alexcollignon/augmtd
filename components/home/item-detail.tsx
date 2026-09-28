@@ -67,6 +67,8 @@ import { decisionSpecOf, type DecisionObject } from '@/lib/room/decision-object'
 // W15.2 · EVERY ITEM CAN BE CLOSED — the header's Done · Dismiss (each through its kind's own door) and
 // SCHEDULED's word. Both modules are client-safe (zero imports).
 import { ITEM_DEED_WORDS, resolveRequestOf, type ItemDeed } from '@/lib/work/item-actions';
+// W18.A · THE ONE DONE / DISMISS PAIR — every host renders the kit's pair.
+import { DeedButton } from '@/components/thread/deed-pair';
 import { scheduledWordOf } from '@/lib/work/scheduled';
 import dynamic from 'next/dynamic';
 
@@ -645,18 +647,15 @@ function ResolveGroup({ resolve }: { resolve: RoomResolve }) {
     setBusy(deed);
     try { await (deed === 'done' ? resolve.onDone() : resolve.onDismiss()); } finally { setBusy(null); }
   };
-  const quiet = 'border border-neutral-200 bg-white text-neutral-600 hover:border-neutral-300 hover:text-neutral-800';
-  const lead = 'border border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700';
+  // W18.A · THE ONE DONE / DISMISS PAIR (components/thread/deed-pair.tsx): the check / cross icon,
+  // neutral at rest, a faint emerald / rose on hover and focus — the same pair the one-at-a-time card
+  // and the row kit wear. W16's looks-done emphasis rests Done on its tint.
   return (
     <div role="group" aria-label="Close this item" className="flex-shrink-0 flex items-center gap-1.5" data-resolve-group>
-      <button data-deed="done" onClick={() => void fire('done')} disabled={!!busy} title="Mark this done — undo lives in Activity"
-        className={`aug-focus inline-flex items-center rounded-lg h-8 px-3 text-[12px] font-medium transition-colors disabled:opacity-60 ${resolve.emphasis === 'done' ? lead : quiet}`}>
-        {busy === 'done' ? 'Marking…' : ITEM_DEED_WORDS.done}
-      </button>
-      <button data-deed="dismiss" onClick={() => void fire('dismiss')} disabled={!!busy} title="Dismiss — undo lives in Activity"
-        className={`aug-focus inline-flex items-center rounded-lg h-8 px-3 text-[12px] font-medium transition-colors disabled:opacity-60 ${quiet}`}>
-        {busy === 'dismiss' ? 'Dismissing…' : ITEM_DEED_WORDS.dismiss}
-      </button>
+      <DeedButton deed="done" onClick={() => void fire('done')} disabled={!!busy} title="Mark this done — undo lives in Activity"
+        emphasis={resolve.emphasis === 'done'} label={busy === 'done' ? 'Marking…' : ITEM_DEED_WORDS.done} />
+      <DeedButton deed="dismiss" onClick={() => void fire('dismiss')} disabled={!!busy} title="Dismiss — undo lives in Activity"
+        label={busy === 'dismiss' ? 'Dismissing…' : ITEM_DEED_WORDS.dismiss} />
     </div>
   );
 }
@@ -1914,10 +1913,10 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
         sourceFiles={thread?.attachments ?? null}
         // W17 · the prepared words paint WITH the card (the view already carried them) — no skeleton.
         preparedBody={draft}
-        // THE DOOR LIVES ON THE COMPONENT (owner walk, Sep 9): the card carries "Thread →", and it
-        // raises the item's ONE context drawer on its Thread section — the header stopped wearing
-        // a bare unexplained word for the same job.
-        onOpenThread={() => openDrawerAt('thread')}
+        // W18.A · ONE DOOR TO THE CONVERSATION — the source card right above this one ("Open thread"
+        // unfolds it in place). The reply card carries no second door on its own item's page (null =
+        // no door; a default would hop to this very page).
+        onOpenThread={null}
         // The card prints its own receipt; the room leaves a beat later (never before the word
         // lands, and never by yanking the card out from under it).
         onSent={() => { setTimeout(() => router.back(), 900); }}
@@ -2051,9 +2050,8 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     // that later morphs into the room. Structure must not flip on data arrival.
     <DeepDiveShell embedded={embedded} room={room} rail={(
       <ItemRail kind="email" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }}
-        // W8.4 · ONE CARD, ONE DOOR: the source card's "Thread →" raises THIS drawer's thread section —
-        // the same door the reply card's "Thread →" opens (never a separate item page).
-        onOpenThread={() => openDrawerAt('thread')}
+        // W18.A · NO THREAD DOOR HERE — the source card's "Open thread" unfolds the conversation IN the
+        // card (the one thread door); the drawer's Thread section stays the drawer's own content.
         // W17 · the reply THIS open is drafting reserves the action seat (the preparing slot → the card).
         slot={!sent && !itemDismissed && objectKind === 'email_thread' ? replySlot : null}
         decision={decisionPayload ? {
@@ -2950,8 +2948,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
 
   return (
     <DeepDiveShell embedded={embedded} room={room} rail={<ItemRail kind="commitment" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} artifacts={commitArtifacts}
-      // W8.4 · ONE CARD, ONE DOOR: the source card opens THIS drawer's Source section (the thread's seat).
-      onOpenThread={() => openDrawerAt('thread')}
+      // W18.A · the source card's "Open thread" unfolds the conversation in the card — no drawer door.
       // ONE OBJECT, ONE DOOR: the source object is the commitment's OWN (served by the door) — the
       // rail never derives it from the move (lib/room/door.ts objectIdForDoor).
       sourceItemId={view?.sourceItemId ?? null}

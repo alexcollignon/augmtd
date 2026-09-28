@@ -35,6 +35,8 @@ import { openAgeDays } from '@/lib/commitments/expiry';
 //    lines (a TEAMMATE's email, a DEED FACT from any other registered source) and the teammate clause
 //    appear ONLY when such a candidate is in the set — and such a set has a new sig by construction
 //    (its ids were never in a law-5 set), so no cached verdict is ever served for a prompt it did not see.
+// W18 (THE CONVERSATION ANSWERS) likewise does NOT bump: the OTHER SIDE's same-conversation message and
+//    the confirmation clause render ONLY when such a candidate is in the set, and every such set is new.
 export const FULFILLMENT_LAW_VERSION = 5;
 
 export type FulfillmentVerdict = {
@@ -166,7 +168,10 @@ export async function judgeFulfillmentFromEvidence(
     // W11.2: a teammate may be a WORKING-CIRCLE collaborator at a partner firm — "on the user's side",
     // never claimed as "same organisation" (a served claim that is false for a circle member).
     ? `a TEAMMATE of the user (${clipForPrompt(c.actor.name || 'a collaborator', 60)} — on the user's side, not the user)`
-    : who;
+    // W18 · THE CONVERSATION ANSWERS: the other side's message on the same conversation, labelled as theirs.
+    : fulfillerIsUser && (c.actor?.role === 'counterparty' || c.actor?.role === 'unknown')
+      ? `the OTHER SIDE (${clipForPrompt(c.actor.name || 'the counterparty', 60)} — the party the obligation is owed TO, not the one who owes it), on the same conversation`
+      : who;
   emails.forEach((c, i) => {
     const label = `E${i + 1}`; labels.set(label, c);
     evidenceLines.push(
@@ -190,6 +195,11 @@ export async function judgeFulfillmentFromEvidence(
       `[${label}] DEED FACT (${clipForPrompt(c.sourceLabel || c.type, 40)}): ${actorWords} — ${deedWords}${c.status ? ` (${c.status})` : ''}, "${clipForPrompt(c.title || 'untitled', 80)}", on ${c.at.slice(0, 16).replace('T', ' ')}.` +
       (c.body ? ` Its own words:\n"""${c.body}"""` : ' (no words recorded — judge it as a dated fact only)'));
   });
+  // W18 · THE CONFIRMATION CLAUSE — only when such a candidate is in the set (a new set, a new sig:
+  // no cached verdict is ever served for a prompt it did not see — the W8.1 precedent, no version bump).
+  const confirmationClause = fulfillerIsUser && candidates.some((c) => c.actor?.role === 'counterparty' || c.actor?.role === 'unknown')
+    ? `THE CONFIRMATION CLAUSE: a message from the OTHER SIDE is never itself the delivery — but when its own words state that the thing owed is now done, received or working (e.g. "it's fixed now, thanks" right after the owing side's reply), the owing side DID deliver: name the owing side's piece just before it in "by" (or the confirmation itself when no such piece is shown). A question, a new request or a complaint that it is still broken is NOT delivery. `
+    : '';
   const teammateClause = candidates.some((c) => c.actor?.role === 'teammate')
     ? `THE TEAMMATE CLAUSE: the user and their TEAMMATES are one side — a teammate handing over the thing owed IS delivery of the user's obligation, judged by the same law from the teammate's own words (a teammate's promise or status update is not delivery). Name that piece in "by". `
     : '';
@@ -219,6 +229,7 @@ export async function judgeFulfillmentFromEvidence(
         `to do it later ("I'll send it by Sunday"), a thank-you, a status update, or a question is NOT delivery — ` +
         `that is "promised" (name the new deadline as YYYY-MM-DD ONLY if an email states one) or "unclear". ` +
         teammateClause +
+        confirmationClause +
         `When you cannot tell, say "unclear" — wrongly closing live work costs trust; leaving it open costs nothing.\n` +
         `JSON only: {"verdict":"delivered|promised|unclear","by":"the label of the piece that delivered (E1/C1/T1…) or null","new_due":"YYYY-MM-DD or null","reason":"<one sentence>"}`,
     });

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { announceDeed } from '@/lib/room/deed-echo';
 import { ThreadCardView, type ThreadCard } from '@/components/thread';
+// W18.A · ONE WIDTH — the reply card's own frames wear the kit's one card token.
+import { THREAD_CARD_W } from '@/components/thread/kit-width';
 import { AttendeeChips } from '@/components/home/people-chips';
 import KbFilePicker from '@/components/inbox/kb-file-picker';
 // THE ONE VIEWER (T25.4) — the item drawer, the shared thread renderer and the project room all
@@ -103,8 +105,10 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
    *  focused stage), so the exception has no cases left and a host that forgets the prop simply
    *  loses the door. A host may still OVERRIDE where the door lands — it knows its own drawer —
    *  but on the ITEM lane the card falls back to its item's own address, so the door renders at
-   *  EVERY mount of a card that has a thread at all. The coworker lane has no thread to open. */
-  onOpenThread?: () => void;
+   *  EVERY mount of a card that has a thread at all. The coworker lane has no thread to open.
+   *  W18.A · `null` = NO door: the item page, where the source card right above this one unfolds
+   *  the conversation in place (a default would hop to the very page it sits on). */
+  onOpenThread?: (() => void) | null;
   onSent?: () => void;
   /** W17 · NO WAITING (item lane only) — the prepared words the host ALREADY holds (the item view
    *  serves THE ONE READER's live reply draft). The card paints them at once instead of a skeleton;
@@ -116,7 +120,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
   // THE DOOR ALWAYS RENDERS ON THE ITEM LANE — the host's handler when it has one (it knows where
   // its own thread reads), the item's own address when it doesn't. A card that is answering a real
   // mail thread can never be mounted without a way back to it.
-  const openThread = onOpenThread ?? (item ? () => router.push(`/item/${item.id}?kind=email`) : undefined);
+  const openThread = onOpenThread === null ? undefined : (onOpenThread ?? (item ? () => router.push(`/item/${item.id}?kind=email`) : undefined));
   const features = useFeatures();
   // THE TIER LAW: the mailbox reply lane exists only where the workspace has email. The COWORKER
   // lane (Resend, `compose_email`'s own channel) is feature-null and works everywhere — a sovereign
@@ -653,7 +657,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
   // components/room/room-skeleton.tsx — muted neutrals, one pulse, no spinner, no claim.)
   if (loading) {
     return (
-      <div className="w-full max-w-[560px] rounded-xl border border-neutral-200/80 bg-white overflow-hidden" aria-busy="true" aria-label="Preparing the reply">
+      <div className={`${THREAD_CARD_W} rounded-xl border border-neutral-200/80 bg-white overflow-hidden`} aria-busy="true" aria-label="Preparing the reply">
         <div className="animate-pulse">
           {/* the direction tabs */}
           <div className="flex items-center gap-2 border-b border-neutral-100 px-3.5 py-2.5">
@@ -686,7 +690,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
   // that still works — never an empty editor with a paperclip on it.
   if (unfilled && !dirty) {
     return (
-      <div className="w-full max-w-[560px] rounded-xl border border-neutral-200/80 bg-white px-4 py-3">
+      <div className={`${THREAD_CARD_W} rounded-xl border border-neutral-200/80 bg-white px-4 py-3`}>
         <p className="text-[13px] text-neutral-600">I couldn&apos;t load this draft just now.</p>
         {openThread && (
           <button onClick={openThread} className="mt-1.5 text-[12px] font-medium text-indigo-600 hover:text-indigo-700 transition-colors">
@@ -834,7 +838,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
       // THE USER'S HAND: their saved words, marked when the thread moved under them — never replaced.
       : handNote === 'stale' ? 'the thread moved since you edited this — your words are kept; try a tab for a fresh version'
       : handNote === 'edited' ? 'your saved edit — the team never overwrites it'
-      : live ? "click anywhere to edit · mirrors the thread's language"
+      : live ? 'click anywhere to edit' // W18.B: no language claim — nothing verified reaches this card
       : undefined,
     error: err ?? undefined,
     receipt: sent ? 'sent' : sending ? 'sending…'

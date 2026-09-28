@@ -24,6 +24,7 @@ import { askIsMoot, isEngineAskKey, verdictRequireLabels } from '@/lib/room/ask-
 import { fetchAllRows } from '@/lib/utils/fetch-all';
 import { LOOKS_DONE_WORD as LOOKS_DONE_WORD_LITERAL } from '@/lib/evidence/looks-done-word'; // W11.2
 import { looksDoneLine as looksDoneLineOf } from '@/lib/evidence/looks-done';
+import { isDirectionFloorNone } from '@/lib/work/direction-floor-word'; // W18
 import {
   SCHEDULED_WORD, addressesIn, bookedEventFor, meetingShaped, nameKeyOf, scheduledWhenOf, SCHEDULED_HORIZON_DAYS, HELD_WINDOW_DAYS,
   type BookedEvent, type BookingFacts, type CalendarRowLike,
@@ -173,7 +174,7 @@ export const NEEDS_SHAPING_WORD = 'needs shaping';
  *  scattered across surfaces (the same property `STATE_WORDS` holds for the lifecycle). */
 export const SEAT_WORDS: Record<'needs_shaping', string> = { needs_shaping: NEEDS_SHAPING_WORD };
 
-type Verdict = { work?: string; resolution?: string; revisit?: { after?: string }; options?: unknown[] } | null;
+type Verdict = { work?: string; reason?: string; resolution?: string; revisit?: { after?: string }; options?: unknown[] } | null;
 
 export type DeriveInputs = {
   /** Item is open (pending/active). Closed → settled before anything else. */
@@ -208,8 +209,11 @@ export function deriveState(input: DeriveInputs): WorkMachineState {
   const nowISO = input.nowISO ?? new Date().toISOString();
   // W11.2 LOOKS DONE outranks the ladder: the evidence says the work may already be finished, so
   // asking, preparing or offering a Send would be work on a debt that may not exist. A judged-none
-  // item is settled whatever the record says.
-  if (input.looksDone && v?.work !== 'none') return { state: 'looks_done', verdictWork: v?.work ?? null, primary: 'none' };
+  // item is settled whatever the record says — EXCEPT the direction floor's none (W18, owner walk
+  // Sep 25): that none only refuses a CHASE on a debt the user owes; the debt stays open on the desk
+  // (lib/work/judge.ts directionFloor), so it served "overdue" while its own record said "looks done"
+  // (a colleague delivered on the same conversation). Refusing the chase never hides the evidence.
+  if (input.looksDone && (v?.work !== 'none' || isDirectionFloorNone(v))) return { state: 'looks_done', verdictWork: v?.work ?? null, primary: 'none' };
   // W15.2 · THE BOOKED MEETING WAS HELD — the event the work was scheduled for has passed (after the
   // obligation arose): the work LOOKS done (confirm Done / Not yet), never "due" again. A "Not yet"
   // for exactly this event (its sig) keeps it down.

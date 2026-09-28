@@ -23,9 +23,24 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import { topMessageOf } from '@/lib/inbox/top-message';
+// W18.A · A MISLABELLED HTML BODY NEVER RENDERS AS MARKUP — the one HTML → text converter (pure,
+// client-safe): a "plain" body that is really an HTML document reads as its text, never `<html><head>…`.
+import { plainBody, htmlToText, decodeEntities } from '@/lib/core/text';
 
-/** THE ONE DOOR LABEL — every source/thread card's door to the conversation reads exactly this. */
+/** THE ONE DOOR LABEL — every source/thread card's door to the conversation reads exactly this.
+ *  W18.A · it EXPANDS the conversation inside the card; it never navigates. */
 export const OPEN_THREAD_LABEL = 'Open thread';
+
+/** W18.A · the same door, once the conversation is open in the card. */
+export const COLLAPSE_THREAD_LABEL = 'Collapse';
+
+/** W18.A · the reply card's door (a NAVIGATION to the item, where the conversation opens in place) —
+ *  a different act, so a different word: "Open thread" is only ever the in-place expansion. */
+export const OPEN_ITEM_LABEL = 'Open item';
+
+/** W18.A · the open conversation's own scroll height (px) — the card lifts SOURCE_CARD_MAX_PX while
+ *  expanded; the conversation scrolls inside this, so a 99-message thread never runs the page long. */
+export const EXPANDED_THREAD_MAX_PX = 520;
 
 /** The card never grows past this (px); its loading skeleton stands at exactly this height, so a
  *  host's actions below it are never pushed off screen by a long message. */
@@ -108,9 +123,10 @@ export function stripReplyHistory(text: string): string {
   return t;
 }
 
-/** THE MESSAGE'S OWN WORDS, as a card prints them. */
+/** THE MESSAGE'S OWN WORDS, as a card prints them. A body that is really HTML (a mailer that put the
+ *  markup in the text part) is converted to text FIRST (W18.A, through lib/core/text.ts plainBody). */
 export function ownWords(body: string | null | undefined): string {
-  const raw = String(body ?? '');
+  const raw = plainBody(String(body ?? ''));
   if (!raw.trim()) return '';
   return collapseBlankRuns(stripSignature(collapseBlankRuns(stripReplyHistory(raw))));
 }
@@ -118,6 +134,61 @@ export function ownWords(body: string | null | undefined): string {
 /** The first line of a message's own words — an older message's one-line row. */
 export function firstLine(body: string | null | undefined): string {
   const own = ownWords(body);
-  const line = own.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
-  return line;
+  const lines = own.split('\n').map((l) => l.trim()).filter(Boolean);
+  // W18 walk: a folded row read "Olá Zoé," on every message — the salutation says nothing. The
+  // first line that is not a bare salutation leads; a message that is only a salutation keeps it.
+  return lines.find((l) => !isSalutation(l)) ?? lines[0] ?? '';
+}
+
+/** A bare opening salutation line ("Hi Sam,", "Olá Zoé, bom dia,", "Dear team,") — short, ends in
+ *  a comma, no sentence inside. Language-agnostic by shape, not by a word list. */
+function isSalutation(line: string): boolean {
+  return line.length <= 40 && /[,;:]$/.test(line) && !/[.!?]\s/.test(line);
+}
+
+// ── W18.A · THE EMAIL HEADER'S "TO" LINE ─────────────────────────────────────────────────────────
+/** The compact recipients line a mail client prints under the sender — served addresses only
+ *  ("to sam@acme.test, zoe@acme.test +2"). Nothing served → null (the row is absent). */
+export function recipientsLine(to: ReadonlyArray<string> | null | undefined, cc?: ReadonlyArray<string> | null): string | null {
+  const clean = (xs: ReadonlyArray<string> | null | undefined) =>
+    (Array.isArray(xs) ? xs : []).map((x) => decodeEntities(String(x ?? '')).trim()).filter(Boolean);
+  const all = [...clean(to), ...clean(cc)];
+  if (!all.length) return null;
+  const shown = all.slice(0, 2);
+  const more = all.length - shown.length;
+  return `to ${shown.join(', ')}${more > 0 ? ` +${more}` : ''}`;
+}
+
+// ── W18.A · THE WHOLE CONVERSATION, AS THE CARD UNFOLDS IT ───────────────────────────────────────
+/** One message of the conversation, as the open card prints it. `when` is a rendered label. */
+export type SourceThreadMessage = { id: string; author: string; address?: string | null; when?: string | null; body: string };
+
+/** The raw door message (GET /api/inbox/<id>/thread `messages[]`), narrowed to what the card reads. */
+export type RawThreadMessage = {
+  id?: string | null; from?: string | null; fromName?: string | null; receivedAt?: string | null;
+  body?: string | null; html_body?: string | null; snippet?: string | null; isFromUser?: boolean | null;
+};
+
+/** PURE: the door's raw messages (oldest→newest, as served) → the open card's messages. The body is
+ *  PLAIN TEXT by construction: the text part (HTML-looking text converted by `ownWords` at render),
+ *  else the HTML part converted to text, else the served snippet — the markup itself never passes. */
+export function threadMessagesOf(raw: unknown, when: (iso: string | null) => string | null): SourceThreadMessage[] {
+  const rows = Array.isArray(raw) ? (raw as RawThreadMessage[]) : [];
+  return rows
+    .filter((m) => m && typeof m === 'object')
+    .map((m, i) => {
+      const text = typeof m.body === 'string' && m.body.trim() ? decodeEntities(m.body)
+        : typeof m.html_body === 'string' && m.html_body.trim() ? htmlToText(m.html_body)
+          : decodeEntities(m.snippet ?? '');
+      const name = decodeEntities(m.fromName ?? '').trim();
+      const address = String(m.from ?? '').trim() || null;
+      return {
+        id: String(m.id ?? `m${i}`),
+        author: m.isFromUser ? 'You' : (name || address || 'Them'),
+        address: !m.isFromUser && address && address !== name ? address : null,
+        when: when(m.receivedAt ?? null),
+        body: plainBody(text),
+      };
+    })
+    .filter((m) => !!m.body.trim());
 }

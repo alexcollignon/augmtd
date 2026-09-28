@@ -13,6 +13,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { isLiveArtifact, type PreparedArtifact } from '@/lib/prepare/read';
 import { leanSelect, foldLean, ANCHOR_KEYS } from '@/lib/home/lean-source';
+import { stripDeixis } from '@/lib/inbox/deixis';
 
 export type AnchorLinkKind = 'inbox_item' | 'commitment' | 'meeting';
 export type ItemAnchor = { who: string | null; ask: string | null; prepared: string | null };
@@ -69,6 +70,10 @@ export function anchorOf(linkKind: AnchorLinkKind, row: AnyRow, prepared: Prepar
   }
   // W5c · A CLAIM RENDERS: only a LIVE draft is "prepared" in the anchor (the loose brief's sig and
   // its composer read this) — a hidden false-claim draft must never let the brief say it is ready.
+  // W18.D · TIME TRUTH: the ask is a STORED ingest snapshot the door's fallback sentence and the
+  // composer both read ("… by tomorrow" frozen at ingest). THE SERVE GUARD (lib/inbox/deixis — the
+  // deixis law's one stripper, zero AI) removes a decaying day-word before either speaks it.
+  if (anchor.ask) anchor.ask = stripDeixis(anchor.ask) || null;
   const replyArt = prepared.find((a) => isLiveArtifact(a) && (a.kind === 'reply_draft' || a.kind === 'nudge_draft'));
   if (replyArt) anchor.prepared = replyArt.by ?? 'draft';
   return anchor;
