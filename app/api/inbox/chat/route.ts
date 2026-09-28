@@ -1,3 +1,4 @@
+import { htmlToText } from '@/lib/core/text';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getAIClient } from '@/lib/ai/factory';
@@ -11,21 +12,8 @@ import { buildVoiceBlock, buildMeetingFollowupContext } from '@/lib/context/voic
 import { checkRateLimit } from '@/lib/utils/rate-limit';
 
 /** Strip HTML tags from a draft body so the AI sees clean text, not markup. */
-function stripHtmlForAI(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<\/div>/gi, '\n')
-    .replace(/<\/li>/gi, '\n')
-    .replace(/<li[^>]*>/gi, '- ')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
+// W18.B: the one converter (lib/core/text.ts) — was a private tag-stripper.
+const stripHtmlForAI = (html: string): string => htmlToText(html);
 
 const SYSTEM_PROMPT = `You are an intelligent assistant for a professional email tool called AUGMTD.
 You help users search and understand their emails, answer questions using their indexed documents, and help with scheduling.

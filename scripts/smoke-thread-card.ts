@@ -62,11 +62,16 @@ console.log('\nC1 · ONE LABEL');
   ok('an email source door reads the one label whatever the host passes',
     sourceDoorLabel({ source: 'email', openLabel: 'Thread →' }) === OPEN_THREAD_LABEL
     && sourceDoorLabel({ source: 'email' }) === OPEN_THREAD_LABEL);
-  const out = html({ kind: 'source', id: 'a', source: 'email', who: 'Sam', excerpt: 'Hi there', onOpen: () => {}, openLabel: 'Later in this conversation →' });
+  // ⟲ RE-POINTED W18: an email source's door is the in-place expansion — it renders with a served
+  // conversation (`thread`), never from a host's `onOpen` (which an email card ignores).
+  const out = html({ kind: 'source', id: 'a', source: 'email', who: 'Sam', excerpt: 'Hi there', onOpen: () => {}, openLabel: 'Later in this conversation →', thread: { messages: null } });
   ok('a rendered email card shows "Open thread" and never the host\'s words', out.includes(`>${OPEN_THREAD_LABEL}<`) && !/Later in this conversation/.test(out));
   const cards = stripComments(read('components/thread/thread-cards.tsx'));
-  ok('the email card\'s thread door reads OPEN_THREAD_LABEL (no per-host label field)',
-    /\{OPEN_THREAD_LABEL\}/.test(cards) && !/card\.threadLabel/.test(cards) && !/threadLabel\?: string/.test(read('components/thread/types.ts')));
+  // ⟲ RE-POINTED W18: "Open thread" is ONLY the source card's in-place expansion; the reply card's door
+  // is a navigation to the item, so it reads the item's word (OPEN_ITEM_LABEL). Still no per-host label.
+  ok('the reply card\'s door reads OPEN_ITEM_LABEL and the source card owns "Open thread" (no per-host label field)',
+    /\{OPEN_ITEM_LABEL\}/.test(cards) && !/\{OPEN_THREAD_LABEL\}/.test(cards) && !/card\.threadLabel/.test(cards) && !/threadLabel\?: string/.test(read('components/thread/types.ts'))
+    && /OPEN_THREAD_LABEL\) : sourceDoorLabel\(card\)/.test(read('components/thread/source-object-card.tsx')));
   ok('no host passes a label to the thread mounts (the mounts take none)',
     !/openLabel/.test(stripComments(read('components/room/source-object.tsx')).replace(/openLabel: 'Open meeting →'/, '')));
 }
@@ -90,7 +95,8 @@ console.log('\nC2 · OWN WORDS (EN / PT / DE / FR)');
   q('mobile footer', 'Yes, go ahead.\n\nSent from my iPhone', 'Yes, go ahead.');
   q('blank-line runs collapse', 'First.\n\n\n\n\nSecond.', 'First.\n\nSecond.');
   ok('a cut that would leave nothing keeps the text', ownWords('On Thu, Sep 18, 2026 at 10:02 AM Sam <sam@acme.test> wrote:\n> only quoted').includes('only quoted'));
-  ok('an older row is its first own line', firstLine('\n\nHi Sam,\nthe rest\n\nOn Mon, Sep 1, 2026 Sam wrote:\n> x') === 'Hi Sam,');
+  // ⟲ RE-POINTED W18: a bare salutation says nothing on a folded row — the first line of substance leads.
+  ok('an older row is its first own line of substance', firstLine('\n\nHi Sam,\nthe rest\n\nOn Mon, Sep 1, 2026 Sam wrote:\n> x') === 'the rest');
   const rendered = html({ kind: 'source', id: 'a', source: 'email', messages: [{ id: '1', author: 'Sam', body: 'Works for me.\n\n\n\nBest,\nSam\n\nOn Thu, Sep 18, 2026 at 10:02 AM Sam <sam@acme.test> wrote:\n> Can we meet?' }] });
   ok('the rendered card prints the newest message\'s own words only', rendered.includes('Works for me.') && !rendered.includes('wrote:') && !rendered.includes('Can we meet') && !rendered.includes('Best,'));
 }
@@ -99,12 +105,13 @@ console.log('\nC2 · OWN WORDS (EN / PT / DE / FR)');
 console.log('\nC3 · FIXED MAX HEIGHT + SKELETON');
 {
   const long = Array.from({ length: 40 }, (_, i) => `Line ${i} of a long message body.`).join('\n');
-  const card = html({ kind: 'source', id: 'a', source: 'email', who: 'Sam', title: 'Long', messages: [{ id: '1', author: 'Sam', body: long }], onOpen: () => {} });
+  const card = html({ kind: 'source', id: 'a', source: 'email', who: 'Sam', title: 'Long', messages: [{ id: '1', author: 'Sam', body: long }], thread: { messages: null } }); /* ⟲ W18: the door rides `thread` */
   const skel = renderToStaticMarkup(React.createElement(SourceObjectSkeleton));
   ok(`the card never grows past ${SOURCE_CARD_MAX_PX}px (max-height, body clipped)`, card.includes(`max-height:${SOURCE_CARD_MAX_PX}px`) && /overflow-hidden/.test(card));
   ok('the skeleton stands at exactly the card\'s max height', skel.includes(`height:${SOURCE_CARD_MAX_PX}px`) && skel.includes('data-source-skeleton'));
   ok('the head + door sit outside the clipped body (never pushed out)',
-    card.indexOf(OPEN_THREAD_LABEL) < card.indexOf('Line 0') && /flex-shrink-0 items-baseline/.test(card));
+    // ⟲ RE-POINTED W18: the email head is the mail-client header block (data-source-head, flex-shrink-0).
+    card.indexOf(OPEN_THREAD_LABEL) < card.indexOf('Line 0') && /data-source-head=""[^>]*flex-shrink-0/.test(card));
   const kit = read('components/thread/source-object-card.tsx');
   ok('the fade is measured (scrollHeight > clientHeight), never guessed', /el\.scrollHeight > el\.clientHeight/.test(kit) && /data-source-fade/.test(kit));
   const mount = stripComments(read('components/room/source-object.tsx'));
@@ -117,9 +124,10 @@ console.log('\nC4 · EVERY HOST MOUNTS THE ONE COMPONENT');
 {
   const mount = stripComments(read('components/room/source-object.tsx'));
   ok('the room mounts render through the kit card (ThreadCardView kind:source → SourceObjectCard)',
-    /<ThreadCardView card=\{emailSourceCard\(source, onOpen, quote(?: \?\? source\.quote \?\? null)?\)\} \/>/.test(mount) /* ⟲ W15.4: the quote may ride the facts */
+    // ⟲ RE-POINTED W18: the producer takes the extras (quote · address · to · the in-place thread), never an onOpen.
+    /const card = emailSourceCard\(source, \{/.test(mount) && /<ThreadCardView key=\{source\.id\} card=\{card\} \/>/.test(mount)
     && /<ThreadCardView card=\{meetingSourceCard\(meeting, onOpen\)\} \/>/.test(mount)
-    && /<ThreadCardView card=\{\{\s*kind: 'source'/.test(mount)
+    && /<ThreadCardView (?:key=\{itemId\} )?card=\{\{\s*kind: 'source'/.test(mount) /* ⟲ W18: keyed per item */
     && /return <SourceObjectCard card=\{card\} \/>;/.test(read('components/thread/thread-cards.tsx')));
   const hosts: Array<[string, RegExp]> = [
     ['components/home/item-rail.tsx', /import \{[^}]*\bSourceObjectMount\b[^}]*\bEmailSourceMount\b[^}]*\} from '@\/components\/room\/source-object'/],
@@ -153,12 +161,12 @@ console.log('\nC4 · EVERY HOST MOUNTS THE ONE COMPONENT');
 console.log('\nC5 · THE QUOTE SLOT, THE FOLD, THE COUNT');
 {
   const withDoor = html({
-    kind: 'source', id: 'a', source: 'email', who: 'Sam', earlierCount: 4, quote: 'You wrote: "I will send it Friday"', onOpen: () => {},
+    kind: 'source', id: 'a', source: 'email', who: 'Sam', earlierCount: 4, quote: 'You wrote: "I will send it Friday"', thread: { messages: null }, /* ⟲ W18 */
     messages: [{ id: '1', author: 'You', when: 'Sep 1', body: 'First line here\nsecond line' }, { id: '2', author: 'Sam', when: 'Sep 3', body: 'Newest words.' }],
   });
   ok('the quote renders, above the message', withDoor.includes('data-source-quote') && withDoor.indexOf('data-source-quote') < withDoor.indexOf('Newest words.'));
   ok('an older message folds to ONE line (author · date · first line)', withDoor.includes('data-source-older') && withDoor.includes('First line here') && !withDoor.includes('second line'));
-  ok('"+N earlier" is a door with a handler', /<button[^>]*data-source-earlier[^>]*>\+4 earlier<\/button>/.test(withDoor));
+  ok('"+N earlier" is a door with a conversation to open (⟲ W18: in place)', /<button[^>]*data-source-earlier[^>]*>\+4 earlier<\/button>/.test(withDoor));
   const noDoor = html({ kind: 'source', id: 'a', source: 'email', earlierCount: 2, messages: [{ id: '2', author: 'Sam', body: 'Newest words.' }] });
   ok('…and a plain count without one (no lying door)', /<span[^>]*data-source-earlier[^>]*>\+2 earlier<\/span>/.test(noDoor) && !/<button/.test(noDoor));
   const noQuote = html({ kind: 'source', id: 'a', source: 'email', excerpt: 'Hi' });

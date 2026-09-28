@@ -8,33 +8,25 @@
 //
 // v1 retrieval is recipient + recency (cheap, no embeddings). Slice 2 upgrades to semantic.
 
+import { selectExemplars, exemplarRule } from '@/lib/context/draft-language';
+import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
-
-function stripHtml(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|li)>/gi, '\n')
-    .replace(/<li[^>]*>/gi, '- ')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
 
 const MAX_SAMPLE_CHARS = 700;
 const MAX_SAMPLES = 3;
 
+// W18.B · THE CANDIDATE POOL — dedupe (the same mail sent three times is ONE example) and the
+// language filter (only exemplars in the target language) both shrink the pool, so it is read wider
+// than the samples shown — bounded, never a scan.
+const CANDIDATE_POOL = 20;
+
 type SentRow = { subject: string | null; body: string | null; html_body: string | null };
 
-function bodyOf(e: SentRow): string {
-  const text = (e.body && e.body.trim()) ? e.body : stripHtml(e.html_body || '');
-  const t = text.trim();
-  return t.length > MAX_SAMPLE_CHARS ? t.slice(0, MAX_SAMPLE_CHARS) + '…' : t;
-}
+/** Voice-block options — the LANGUAGE the draft is written in (the thread's). Exemplars in any
+ *  other language are never shown; absent → dedupe only. */
+export type VoiceOptions = { language?: string | null };
 
 // ── THE MAILBOX SCOPE (stabilization W11.1 · connection-scoped voice + signature) ─────────────────
 // Found live (owner walk, Sep 23): a draft on a client thread signed with the user's OTHER identity —
@@ -63,7 +55,10 @@ export async function buildVoiceBlock(
   client: DBClient,
   /** W11.1 — the mailbox the draft is written FROM (the thread's connection). Absent → unscoped. */
   scope?: VoiceScope | null,
+  /** W18.B — the language the draft is written in: exemplars are filtered to it. */
+  opts?: VoiceOptions | null,
 ): Promise<string> {
+  const language = opts?.language || null;
   const rcpt = recipientEmail?.toLowerCase().trim() || null;
   const scoped = voiceScopeFilter(scope);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -77,7 +72,7 @@ export async function buildVoiceBlock(
           .select('subject, body, html_body, received_at')
           .eq('user_id', userId).eq('is_from_user', true)
           .contains('to_addresses', [rcpt]))
-          .order('received_at', { ascending: false }).limit(MAX_SAMPLES)
+          .order('received_at', { ascending: false }).limit(CANDIDATE_POOL)
       : Promise.resolve({ data: [] as SentRow[] }),
     // Relationship signal — who this is + how much they matter, so the draft's care level
     // and rapport fit the recipient (per-recipient voice, like Superhuman).
@@ -88,15 +83,19 @@ export async function buildVoiceBlock(
       : Promise.resolve({ data: null }),
   ]);
 
-  let exemplars: SentRow[] = (recipientRes?.data as SentRow[]) ?? [];
-  // Not enough recipient-specific samples → fall back to the user's most recent sent emails.
-  // W11.1: scoped → the fallback stays INSIDE the mailbox (never another identity's mail).
-  if (exemplars.length < 2) {
+  // Recipient-specific samples first; too few (after dedupe + the language filter) → the user's most
+  // recent sent mail fills in. W11.1: scoped → the fallback stays INSIDE the mailbox (never another
+  // identity's mail). W18.B: the fallback MERGES behind the recipient's rows (dedupe keeps one of
+  // each), instead of replacing them.
+  const recipientRows: SentRow[] = (recipientRes?.data as SentRow[]) ?? [];
+  let samples = selectExemplars(recipientRows, { language, max: MAX_SAMPLES });
+  if (samples.length < 2) {
     const { data } = await inMailbox(client.from('emails')
       .select('subject, body, html_body, received_at')
       .eq('user_id', userId).eq('is_from_user', true))
-      .order('received_at', { ascending: false }).limit(MAX_SAMPLES);
-    if ((data?.length ?? 0) > exemplars.length) exemplars = (data as SentRow[]) ?? exemplars;
+      .order('received_at', { ascending: false }).limit(CANDIDATE_POOL);
+    const recent = (data as SentRow[] | null) ?? [];
+    if (recent.length) samples = selectExemplars([...recipientRows, ...recent], { language, max: MAX_SAMPLES });
   }
 
   const parts: string[] = [];
@@ -111,11 +110,13 @@ export async function buildVoiceBlock(
     if (bits.length) parts.push(`[ABOUT THIS RECIPIENT]\n${bits.join('; ')}.`);
   }
 
-  const samples = exemplars.map(bodyOf).filter(Boolean).slice(0, MAX_SAMPLES);
   if (samples.length) {
+    // W18.B: the exemplars teach SHAPE and WARMTH — never their words. The greeting and sign-off are
+    // written in the draft's own language (their translated equivalents), never copied.
     parts.push(
-      `[HOW YOU ACTUALLY WRITE — real emails this user sent. Match this voice: greeting style, sentence length, directness, warmth, and sign-off. Mirror the STYLE only — never reuse the content.]\n` +
-      samples.map((s, i) => `--- Example ${i + 1} ---\n${s}`).join('\n\n'),
+      `[HOW YOU ACTUALLY WRITE — real emails this user sent. Match this voice: sentence length, directness, warmth, and the SHAPE of the greeting and sign-off. Mirror the STYLE only — never reuse the content. ${exemplarRule(language)}]\n` +
+      samples.map((s, i) => `--- Example ${i + 1} ---\n${clipForPrompt(s, MAX_SAMPLE_CHARS)}`).join('\n\n') +
+      (samples.some((s) => s.trim().length > MAX_SAMPLE_CHARS) ? `\n${EXCERPT_RULE}` : ''),
     );
   }
 

@@ -1,4 +1,6 @@
 import { Client } from '@microsoft/microsoft-graph-client';
+import { looksLikeHtml, htmlToText, plainBody } from '@/lib/core/text';
+import { skipEmbeddedPart } from '@/lib/email-sync/attachment-policy';
 import { refreshAccessToken } from './oauth';
 import { sanitizeAddressList, sanitizeFilename, sanitizeHeaderValue, sanitizeMimeType } from '@/lib/utils/email-headers';
 
@@ -154,19 +156,11 @@ export function parseOutlookMessage(message: OutlookMessage) {
   // Preserve the original HTML body for rendering; also produce a plain-text version for AI
   const htmlBody = message.body.contentType === 'html' ? message.body.content : null;
   let bodyText = message.body.content;
-  if (message.body.contentType === 'html') {
-    // Convert to plain text preserving line breaks for AI processing
-    bodyText = bodyText
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<\/p>/gi, '\n\n')
-      .replace(/<\/div>/gi, '\n')
-      .replace(/<[^>]*>/g, '')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
+  // W18.B · THE PLAIN BODY IS PLAIN — the one converter (lib/core/text.ts), which also drops the
+  // <head>/<style> blocks the old private stripper let through as text; a `text` body that is really
+  // markup is converted too.
+  if (message.body.contentType === 'html' || looksLikeHtml(bodyText)) {
+    bodyText = htmlToText(bodyText);
   }
 
   // Extract recipient addresses
@@ -285,9 +279,10 @@ export async function fetchOutlookAttachments(
     .api(`/me/messages/${outlookMessageId}/attachments`)
     .select('id,name,contentType,size,isInline')
     .get();
-  // Filter out inline embedded images (signature logos, CID embeds)
+  // Filter out inline embedded IMAGES (signature logos, CID embeds). W18.B: only images — a document
+  // flagged inline (some mailers flag every part) is still the mail's document and is kept.
   return ((response.value || []) as Array<OutlookAttachmentMeta & { isInline?: boolean }>)
-    .filter(a => !a.isInline);
+    .filter(a => !skipEmbeddedPart({ mimeType: a.contentType, filename: a.name, inline: !!a.isInline }));
 }
 
 export async function fetchOutlookAttachmentContent(
@@ -583,8 +578,8 @@ export async function getOutlookMessageDetail(
     .get();
   const htmlBody = m.body?.contentType === 'html' ? m.body.content : null;
   const bodyText = htmlBody
-    ? htmlBody.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n\n').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').trim()
-    : m.body?.content ?? m.bodyPreview ?? '';
+    ? htmlToText(htmlBody)
+    : plainBody(m.body?.content ?? m.bodyPreview ?? '');
   return {
     id: m.id,
     subject: m.subject || '(no subject)',

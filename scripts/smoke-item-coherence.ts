@@ -188,16 +188,17 @@ console.log('\nE · a commitment\'s source card reads commitments.source_id');
   const rail = src('components/home/item-rail.tsx');
   gate('E4 the rail: a commitment door mounts its OWN source message; the thread object card (newest tail) never stands for it',
     /const commitmentDoor = kind === 'commitment';/.test(rail)
-    && /\(commitmentDoor && sourceEmail\) \? \(\s*<EmailSourceMount source=\{sourceEmail\}/.test(rail)
+    && /\(commitmentDoor && sourceEmail\) \? \(\s*(?:\/\/[^\n]*\n\s*)*<EmailSourceMount source=\{sourceEmail\}/.test(rail) /* ⟲ W18: a comment may precede the mount */
     && /\(objectItemId && !objectAlreadyMounted && !commitmentDoor\)/.test(rail));
   const so2 = src('components/room/source-object.tsx');
   // ⟲ RE-POINTED (W15.1 · ONE THREAD COMPONENT): the door's words are the kit's ONE label ("Open
   // thread", OPEN_THREAD_LABEL — a host passes the handler, never words), and the drawer's source
   // message is the kit card too (CommitmentSourceMessage mounts EmailSourceMount). The law is
   // unchanged: the source card's one door opens the thread; the drawer carries the thread after it.
-  gate('E5 "Open thread" is the card\'s one door (the thread drawer), and the drawer carries the thread after the source',
+  gate('E5 "Open thread" is the card\'s one door (the conversation, in place), and the drawer carries the thread after the source',
     /export const OPEN_THREAD_LABEL = 'Open thread';/.test(src('components/thread/source-text.ts'))
-    && /\.\.\.\(onOpen \? \{ onOpen \} : \{\}\),/.test(so2) && !/LATER_IN_CONVERSATION_LABEL/.test(so2)
+    // ⟲ RE-POINTED W18: the one door is the conversation unfolded IN the card (`thread`), never an onOpen.
+    && /\.\.\.\(x\.thread \? \{ thread: x\.thread \} : \{\}\),/.test(so2) && !/onOpen \? \{ onOpen \}/.test(so2.slice(so2.indexOf('export function emailSourceCard'))) && !/LATER_IN_CONVERSATION_LABEL/.test(so2)
     && /sourceEmail=\{src\?\.kind === 'email' && src\.emailId \?/.test(src('components/home/item-detail.tsx'))
     && /<CommitmentSourceMessage src=\{src\} \/>[\s\S]{0,300}<SourceObjectMount itemId=\{laterItemId\} \/>/.test(src('components/home/item-detail.tsx'))
     && /function CommitmentSourceMessage[\s\S]{0,1400}<EmailSourceMount source=\{\{/.test(src('components/home/item-detail.tsx')));
@@ -230,7 +231,7 @@ console.log('\nG · voice + signature are scoped to the mailbox the thread lives
     /const \{ data \} = await inMailbox\(client\.from\('emails'\)/.test(vc) && /\? inMailbox\(client\.from\('emails'\)/.test(vc));
   const dr = src('lib/inbox/draft-reply.ts');
   gate('G3 both drafters resolve the thread\'s mailbox and pass it to the voice block',
-    /buildVoiceBlock\(userId, from, client, mailbox\)/.test(dr) && /buildVoiceBlock\(userId, recipientEmail, client, mailbox\)/.test(dr)
+    /buildVoiceBlock\(userId, from, client, mailbox(?:, \{ language: \w+ \})?\)/.test(dr) && /buildVoiceBlock\(userId, recipientEmail, client, mailbox(?:, \{ language: \w+ \})?\)/.test(dr)
     && /const mailbox = await threadMailboxOf\(client, userId, String\(sourceData\.thread_id/.test(dr));
   gate('G4 the prompt names the mailbox and forbids another identity\'s signature; silent when unresolved',
     /FROM the mailbox alex@ourco\.example/.test(mailboxIdentityRule({ connectionId: 'c', address: 'alex@ourco.example' }))
@@ -239,7 +240,7 @@ console.log('\nG · voice + signature are scoped to the mailbox the thread lives
   const p = src('lib/prepare/pass.ts');
   gate('G5 every nudge lane hands the drafter its thread (commitment · inbox · doc-send)',
     /threadId: commitThreadId \}/.test(p) && /threadId: nudgeThread \}/.test(p) && /threadId: cAddr\.row\?\.thread_id \?\? null \}/.test(p)
-    && /buildVoiceBlock\(user\.id, voiceRecipient, supabase, mailbox\)/.test(src('app/api/compose/draft/route.ts')));
+    && /buildVoiceBlock\(user\.id, voiceRecipient, supabase, mailbox(?:, \{ language: \w+ \})?\)/ /* ⟲ W18.B: + the exemplars' language */.test(src('app/api/compose/draft/route.ts')));
 }
 
 // ═══ H · THE MAILBOX SIGNS — only the wrong-identity stored drafts re-draft ═══

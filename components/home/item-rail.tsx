@@ -390,7 +390,7 @@ function Chip({ icon, label, onClick }: { icon?: React.ReactNode; label: string;
   );
 }
 
-export function ItemRail({ kind, id, view, pending = false, onDraft, decision: decisionIn, artifacts: artifactsIn, onOpenHref, onStage, onHistory, sourceItemId, sourceMeeting, sourceEmail, onOpenThread, gate, sourceEvent, slot }: {
+export function ItemRail({ kind, id, view, pending = false, onDraft, decision: decisionIn, artifacts: artifactsIn, onOpenHref, onStage, onHistory, sourceItemId, sourceMeeting, sourceEmail, gate, sourceEvent, slot }: {
   kind: RailKind; id: string; view: RailView;
   /** THE STRUCTURAL FRAME (UX arc): true while the view is still loading — the rail mounts its
    *  shell (header, turns, composer) immediately and shows a quiet shimmer instead of anchor
@@ -461,11 +461,9 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
    *  door the thread object card never mounts; this card takes the seat, and its one door opens the
    *  thread ("Later in this conversation →"). Absent while loading → nothing (the in-flight rule). */
   sourceEmail?: EmailSourceFacts | null;
-  /** W8.4 · ONE CARD, ONE DOOR — the object card's "Thread →" opens the thread WHERE THE HOST READS
-   *  IT: the deep-dive raises its ONE drawer on the thread section (the same door the reply card's
-   *  "Thread →" uses). Absent (the project room) → the room's own in-room focus (onOpenHref), never a
-   *  separate page hop. */
-  onOpenThread?: (itemId: string) => void;
+  // W18.A · NO HOST THREAD DOOR. The object card's "Open thread" unfolds the conversation IN the card on
+  // every host (read through the one thread door) — it no longer raises a drawer or hops a page, so
+  // the rail takes no thread door from its host.
   /** W16 · A PARKED RUN'S GATE owns this item (a handoff: the approval card, or an input station) —
    *  mounted as the page's ONE action widget in the thread. Not prepared work, so the settled gate
    *  (a handoff is judged none) never drops it; its own card settles in place when answered. */
@@ -1396,14 +1394,13 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   // serves the NEWEST tail) never stands for a commitment — the message the promise came from does.
   const commitmentDoor = kind === 'commitment';
   const objectCard = (commitmentDoor && sourceEmail) ? (
-    <EmailSourceMount source={sourceEmail}
-      // The one door: the host's drawer (the deep-dive's Source section, which carries the rest of
-      // the conversation) — else the thread's own item. No door, no label (no lying doors).
-      onOpen={onOpenThread ? () => onOpenThread(objectItemId ?? '') : objectItemId ? () => go(`/item/${objectItemId}`) : undefined} />
+    // W18.A · THE ONE DOOR — "Open thread" unfolds the conversation IN the card, read through the
+    // thread's own item (the one thread door), scrolled to the message the promise came from.
+    // No thread item → no door (no lying doors); never a drawer, never a page hop.
+    <EmailSourceMount source={sourceEmail} threadItemId={objectItemId} />
   ) : (objectItemId && !objectAlreadyMounted && !commitmentDoor) ? (
-    <SourceObjectMount itemId={objectItemId}
-      // W8.4 · ONE CARD, ONE DOOR: the host's drawer (the deep-dive) — else the room's own focus.
-      onOpenThread={() => (onOpenThread ? onOpenThread(objectItemId) : go(`/item/${objectItemId}`))} />
+    // W18.A · the same door on every host — the conversation opens in place.
+    <SourceObjectMount itemId={objectItemId} />
   ) : (!objectItemId && door.kind === 'item' && sourceMeeting) ? (
     // THE ONE NOTE ADDRESS: /meetings/<calendarEventId ?? transcriptId> — served as `addressId`.
     <MeetingSourceMount meeting={sourceMeeting} onOpen={() => go(`/meetings/${sourceMeeting.addressId}`)} />

@@ -11,6 +11,8 @@
 // instead of owning private copies.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
+// W18.A · THE ONE DONE / DISMISS PAIR — the row's ✓ / ✕ are the kit's icons and tints.
+import { DEED_ICON, DEED_TEXT_TONE, DEED_MOTION } from '@/components/thread/deed-pair';
 import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 // W12.3 · THE HOVER PREFETCH IS AUTO. Next 15.5's legacy (non-segment-cache) router defaults
@@ -51,7 +53,7 @@ function RowAction({ label, onClick, disabled, hoverTone, iconFirst = false, chi
   const glyph = <span className="text-[13px] leading-none flex items-center">{children}</span>;
   return (
     <button onClick={onClick} disabled={disabled}
-      className={`flex items-center gap-1 text-neutral-400 ${hoverTone} transition-colors disabled:opacity-50`}>
+      className={`flex items-center gap-1 text-neutral-400 ${hoverTone} ${DEED_MOTION} disabled:opacity-50`}>
       {iconFirst ? <>{glyph}{word}</> : <>{word}{glyph}</>}
     </button>
   );
@@ -360,6 +362,9 @@ export function useRowActions(item: DoItem, cbs: RowActionCallbacks = {}) {
 // than by row class. `ctaFor` is total (a string for every DoItem) — the caller renders it beside
 // this cluster, never inside a conditional.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
+const DoneGlyph = DEED_ICON.done;
+const DismissGlyph = DEED_ICON.dismiss;
+
 export function RowControls({ item, busy, done, drop, readonly = false, onAttached }: {
   item: DoItem; busy: boolean;
   done: (e?: React.MouseEvent) => void; drop: (e?: React.MouseEvent) => void;
@@ -371,8 +376,10 @@ export function RowControls({ item, busy, done, drop, readonly = false, onAttach
   const isCommit = item.source === 'commitment';
   return (
     <>
-      {!isDeal && <RowAction label="Done" hoverTone="hover:text-emerald-600" disabled={busy} onClick={done}>✓</RowAction>}
-      <RowAction label="Dismiss" hoverTone="hover:text-rose-600" disabled={busy} onClick={drop}>✕</RowAction>
+      {/* W18.A · THE ONE DONE / DISMISS PAIR (components/thread/deed-pair.tsx) — the kit's check /
+          cross and its faint emerald / rose, in the row's glyph-only form. */}
+      {!isDeal && <RowAction label="Done" hoverTone={DEED_TEXT_TONE.done} disabled={busy} onClick={done}><DoneGlyph aria-hidden className="h-3.5 w-3.5" strokeWidth={2} /></RowAction>}
+      <RowAction label="Dismiss" hoverTone={DEED_TEXT_TONE.dismiss} disabled={busy} onClick={drop}><DismissGlyph aria-hidden className="h-3.5 w-3.5" strokeWidth={2} /></RowAction>
       {!isDeal && item.entityId && (
         <RowProjectPicker itemKind={isCommit ? 'commitment' : 'inbox_item'} itemId={item.entityId} onAttached={onAttached} />
       )}

@@ -1741,7 +1741,7 @@ async function redraftItemDraft(
     return body;
   }
   if (linkKindOf(scope) === 'commitment') {
-    const { data: c } = await client.from('commitments').select('id, description, counterparty').eq('id', scope.itemId).eq('user_id', userId).maybeSingle();
+    const { data: c } = await client.from('commitments').select('id, description, counterparty, thread_id').eq('id', scope.itemId).eq('user_id', userId).maybeSingle();
     if (!c) return null;
     const { generateNudgeDraft } = await import('@/lib/inbox/draft-reply');
     const instr = `THE USER'S STEERING NOTE (fold this in — it overrides anything conflicting): ${text}` + facts;
@@ -1750,7 +1750,9 @@ async function redraftItemDraft(
     const { resolveCommitmentAddressee, recipientsLabel, addresseeStamp } = await import('@/lib/prepare/addressee');
     const addr = await resolveCommitmentAddressee(client, userId, String(c.id));
     const greet = recipientsLabel(addr.recipients);
-    const body = await generateNudgeDraft(userId, { counterparty: greet, description: String(c.description), ageDays: 0, instructions: instr }, client);
+    // W18.B: the thread rides along — its mailbox scopes the voice and its newest inbound is the
+    // language the redraft is written in (and checked against).
+    const body = await generateNudgeDraft(userId, { counterparty: greet, description: String(c.description), ageDays: 0, instructions: instr, threadId: (c.thread_id as string | null) ?? null }, client);
     if (!body) return null;
     if (!persist) return body; // ← THE PREVIEW RETURNS HERE: nothing below runs.
     // J3 — the evaluator reviews reworks like ambient work; the pool append IS the version

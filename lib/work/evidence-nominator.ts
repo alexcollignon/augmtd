@@ -35,7 +35,7 @@ import {
   addressesOf, sameAddress, chunked, attendeeAddressByName, registryAddress, registryPerson, personAddresses, personByAddress,
   resolveCommitmentIdentities, loadWorkEntities, mergeKeys, emptyKeys, type WorkKeys, type CommitmentIdentityRow,
 } from '@/lib/evidence/identity';
-import { matchEvents, touches, EVIDENCE_PER_TYPE, SETTLE_MATCH, type Evidence, type MatchOptions } from '@/lib/evidence/match';
+import { matchEvents, matchEventsReport, touches, EVIDENCE_PER_TYPE, SETTLE_MATCH, type Evidence, type MatchOptions } from '@/lib/evidence/match';
 import {
   loadEvidenceEvents, mergePoolEmails, evidenceSource, EVIDENCE_SOURCES, POOL_MAX_PER_SOURCE, SCOPE_CHUNK, POOL_SCOPED_MAX,
   type PoolEmail, type EvidenceLoadStats,
@@ -114,6 +114,12 @@ export function scopeOf(work: Array<Pick<OpenWork, 'counterpartyEmail' | 'thread
  */
 export function matchEvidence(pool: Pick<EvidencePool, 'events'>, work: OpenWork, nowISO: string, opts: MatchOptions = {}): Evidence[] {
   return matchEvents(pool.events ?? [], { afterISO: work.afterISO, fulfiller: work.fulfiller, keys: keysOfWork(work) }, nowISO, opts);
+}
+
+/** THE MATCH with its remainder (W18 — NO SILENT CAPS): the nominated evidence AND how many matched
+ *  pieces the per-type bounds left out. The sweep sums and reports the remainder. Pure. */
+export function matchEvidenceReport(pool: Pick<EvidencePool, 'events'>, work: OpenWork, nowISO: string, opts: MatchOptions = {}): { evidence: Evidence[]; leftBehind: number } {
+  return matchEventsReport(pool.events ?? [], { afterISO: work.afterISO, fulfiller: work.fulfiller, keys: keysOfWork(work) }, nowISO, opts);
 }
 
 /** A stable identity for a set of evidence — the judge's cache sig: a NEW piece re-judges, the same

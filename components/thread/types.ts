@@ -362,9 +362,33 @@ export interface SourceCard extends CardBase {
   files?: Array<{ name: string; size?: number | null; onOpen?: () => void }>;
   /** The one door. W15.1 · ONE LABEL: an EMAIL source's door always reads OPEN_THREAD_LABEL
    *  ("Open thread") whatever is passed; a meeting / document source may name its own
-   *  ("Open meeting →" · "Review →"). A door with no handler does not render. */
+   *  ("Open meeting →" · "Review →"). A door with no handler does not render.
+   *  W18.A · an EMAIL source's door never navigates: it is the in-place expansion (`thread`), so
+   *  `onOpen` is IGNORED for `source: 'email'` — only a meeting / document source navigates. */
   openLabel?: string;
   onOpen?: () => void;
+  /** W18.A · THE EMAIL HEADER — the sender's address, printed muted beside the name. Served only;
+   *  absent (or equal to the name) → no address. */
+  fromAddress?: string | null;
+  /** W18.A · the compact recipients line ("to sam@acme.test +2"), composed by the host from served
+   *  addresses (source-text.ts recipientsLine). Absent → no "to" row. */
+  to?: string | null;
+  /** W18.A · OPEN THREAD EXPANDS IN PLACE. Present → the card's "Open thread" (and "+N earlier")
+   *  unfold the WHOLE conversation inside the card. `messages` is the conversation the host read
+   *  through its one reader (lib/inbox/thread-door.ts), oldest→newest — null while not read yet;
+   *  `onExpand` asks the host to start that read; `highlightId` is the message the item came from
+   *  (scrolled to and marked). Absent → an email card has no door (never a navigation). */
+  thread?: SourceThread;
+}
+
+/** W18.A · the conversation an email source card unfolds in place (see `SourceCard.thread`). */
+export interface SourceThread {
+  messages: Array<{ id: string; author: string; address?: string | null; when?: string | null; body: string }> | null;
+  highlightId?: string | null;
+  onExpand?: () => void;
+  /** Stand open on first paint (the catalogue's and the gate's expanded specimen; a host that opens
+   *  straight into the conversation). Default: collapsed — the card is a glance. */
+  startOpen?: boolean;
 }
 
 /**
@@ -517,7 +541,7 @@ export interface EmailCard extends CardBase {
   onAttachFile?: () => void;
   onAttachFromKb?: () => void;
   attachNode?: ReactNode;
-  /** "click anywhere to edit · mirrors the thread's language" — vocabulary, never speech. */
+  /** "click anywhere to edit" — vocabulary, never speech (W18.B: never a claim the card has not verified). */
   bodyHint?: string;
   /**
    * THE HELD-BACK LINE (W12.3) — when the host's door served NO words on purpose (a generated draft

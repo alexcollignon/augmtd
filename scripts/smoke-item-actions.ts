@@ -143,9 +143,13 @@ async function main() {
       .every((s) => resolveEmphasisOf(s as string | null) === 'none'));
   {
     const group = detailCode.slice(detailCode.indexOf('function ResolveGroup'), detailCode.indexOf('function ItemRoomFrame('));
+    // ⟲ RE-POINTED W18: the pair is the kit's ONE Done / Dismiss pair (components/thread/deed-pair.tsx) —
+    // emphasis is a prop only Done honours (the kit's own gate, smoke-email-card, proves Dismiss can't wear it).
     gate('IB3 only Done can wear the lead style, and only on emphasis; Dismiss is always quiet',
-      /resolve\.emphasis === 'done' \? lead : quiet/.test(group) && (group.match(/\? lead :/g) ?? []).length === 1
-      && /data-deed="dismiss"[\s\S]{0,400}\$\{quiet\}/.test(group));
+      /<DeedButton deed="done"[\s\S]{0,200}emphasis=\{resolve\.emphasis === 'done'\}/.test(group)
+      && (group.match(/emphasis=/g) ?? []).length === 1
+      && /<DeedButton deed="dismiss"(?:(?!emphasis)[\s\S]){0,200}\/>/.test(group)
+      && /emphasis && deed === 'done'/.test(src('components/thread/deed-pair.tsx')));
   }
 
   // ═══ IC · ONE CTA ROW — NO DUPLICATE DEED CONTROLS ═══

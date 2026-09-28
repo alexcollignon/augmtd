@@ -31,6 +31,7 @@ import { readOutcomeFacts, outcomeHistoryFact, outcomeSigPart, type Counterparty
 import { readSiblingNomination, siblingSettledFact } from '@/lib/inbox/conversation-identity';
 import { readProofOfLifeAsk, proofOfLifeFact, proofOfLifeSigPart } from '@/lib/work/proof-of-life';
 import { sigOf } from '@/lib/core/sig';
+import { DIRECTION_FLOOR_REASON } from '@/lib/work/direction-floor-word';
 import { readPlan, upsertPlan } from '@/lib/store/item-plans';
 import { normalizeEmail } from '@/lib/core/email';
 import { loadEvidencePool, loadOpenWork, scopeOf, matchEvidence, evidenceSig, evidenceNewToPrior, resolveCommitmentAddress, SETTLE_MATCH, type Evidence, type EvidencePool, type EvidenceScope } from '@/lib/work/evidence-nominator';
@@ -242,7 +243,7 @@ function fallbackVerdict(reason: string, resolution?: 'expired' | 'answered'): W
 //     move the user owes on a thread is their reply. (`none` would demote live work off the deck.)
 // Pure — exported for the gate (scripts/smoke-item-coherence.ts) and tests/unit.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-export const DIRECTION_FLOOR_REASON = 'you owe this — a nudge to them would invert the obligation';
+export { DIRECTION_FLOOR_REASON } from '@/lib/work/direction-floor-word'; // W18: one home, zero imports (the machine reads it)
 export function directionFloor(
   v: WorkVerdict,
   facts: { kind: 'inbox' | 'commitment'; direction?: string | null; ownership?: string | null },

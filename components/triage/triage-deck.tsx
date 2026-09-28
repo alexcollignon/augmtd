@@ -61,6 +61,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
+// W18.A · THE ONE DONE / DISMISS PAIR — the card's two big deeds are the kit's pair.
+import { DeedButton } from '@/components/thread/deed-pair';
 import type { DoItem } from '@/lib/home/agenda';
 // THE ROW KIT — the deck's OWN doors, not a second set. Every resolving verb in this file is one of
 // these; there is no fetch to a mutation endpoint anywhere below.
@@ -160,15 +162,12 @@ const verbOf = (verb: TriageVerb): (typeof TRIAGE_VERBS)[number] =>
 function PrimaryPill({ v, busy, onClick }: {
   v: (typeof TRIAGE_VERBS)[number]; busy: boolean; onClick: () => void;
 }) {
-  const leading = v.key === '←';
+  // W18.A · THE ONE DONE / DISMISS PAIR (components/thread/deed-pair.tsx) — the same check / cross,
+  // neutral at rest and faintly tinted on hover/focus, the item page header wears. The key hint
+  // (← / →) stays the deck's own quiet companion to the word.
   return (
-    <button type="button" disabled={busy} title={v.hint} aria-label={`${v.label} (${v.key})`}
-      onClick={onClick}
-      className="flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-xl border border-neutral-200 bg-white px-5 text-[14px] font-medium text-neutral-600 shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-colors hover:border-neutral-300 hover:text-neutral-900 disabled:opacity-50">
-      {leading && <span aria-hidden className="text-[13px] text-neutral-300">{v.key}</span>}
-      <span>{v.label}</span>
-      {!leading && <span aria-hidden className="text-[13px] text-neutral-300">{v.key}</span>}
-    </button>
+    <DeedButton deed={v.verb === 'done' ? 'done' : 'dismiss'} size="lg" disabled={busy} title={v.hint}
+      ariaLabel={`${v.label} (${v.key})`} onClick={onClick} label={v.label} keyHint={v.key} />
   );
 }
 
@@ -264,6 +263,8 @@ function TriageCard({ row }: { row: TriageRow }) {
 // the scroll region — the card's own height never changes when the read lands. Pure content: no
 // verb, no deed, no keyboard (the one door is navigation, never a deed).
 function TriageEvidence({ row }: { row: TriageRow }) {
+  // The router serves ONE door here: a meeting-born commitment's "Open meeting →" (a meeting is not a
+  // thread — its note lives at its own address). No thread door navigates (W18.A).
   const router = useRouter();
   const threaded = TRIAGE_THREADED.includes(row.item.source);
   const [tailRead, setTailRead] = useState<boolean>(() => !!peekThreadDoor(row.id));
@@ -298,15 +299,19 @@ function TriageEvidence({ row }: { row: TriageRow }) {
     <div className="flex flex-col gap-3 px-5">
       {/* W15.1 · ONE THREAD COMPONENT — every lane is the kit's one source card, mounted through the
           SAME mount the item page uses (components/room/source-object.tsx); no deck markup. */}
+      {/* W18.A · OPEN THREAD EXPANDS IN PLACE — the card's "Open thread" unfolds the whole
+          conversation INSIDE the card (read through the one thread door), never a page hop to the
+          thread's newest item (the Sep 25 walk: a commitment born on Aug 10 in a 99-message thread
+          landed on an unrelated-looking item). ⏎ Open stays the frame's door to the item itself. */}
       {threaded && hasTail ? (
-        <SourceObjectMount itemId={row.id} onOpenThread={() => router.push(row.item.href)} />
+        <SourceObjectMount itemId={row.id} />
       ) : row.excerpt ? (
         <SourceObjectCard card={{ kind: 'source', id: `triage-x-${row.id}`, source: 'email', excerpt: row.excerpt }} />
       ) : founded && ctx ? (
         ctx.email ? (
-          <EmailSourceMount source={ctx.email} quote={ctx.quote}
-            // THE ONE DOOR — the rest of the conversation lives on the thread's own item.
-            onOpen={ctx.inboxItemId ? () => router.push(`/item/${ctx.inboxItemId}?kind=email`) : undefined} />
+          // THE ONE DOOR — the rest of the conversation, read through the thread's own item and
+          // unfolded in place around the message the promise came from.
+          <EmailSourceMount source={ctx.email} quote={ctx.quote} threadItemId={ctx.inboxItemId} />
         ) : ctx.meeting ? (
           // THE ONE NOTE ADDRESS: /meetings/<calendarEventId ?? transcriptId> — served as `addressId`.
           <MeetingSourceMount meeting={ctx.meeting} onOpen={() => router.push(`/meetings/${ctx.meeting!.addressId}`)} />

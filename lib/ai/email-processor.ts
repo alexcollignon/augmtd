@@ -880,7 +880,7 @@ Respond ONLY with valid JSON matching the structure above.`;
     // language} directly and reliably. The Kimi-produced understanding from the main pass is used only
     // as a fallback if that call fails. Non-fatal; on total failure `understanding` stays null and the
     // consumers fall back to today's behavior.
-    let understanding = await computeUnderstanding(email, supabase).catch(() => null);
+    let understanding = await computeUnderstanding(email, supabase, { signals: result.signals ?? null }).catch(() => null);
     if (!understanding) understanding = coerceUnderstanding(result.understanding);
 
     // ── THE SERVED-WORDS LAW, write seam 3 of 3 (proactive-reach LAW 3) ─────────────────────────
@@ -947,7 +947,7 @@ Respond ONLY with valid JSON matching the structure above.`;
 // DEFAULT path (promoted from a recovery-only fallback): Kimi flakiness on the main planning pass can
 // never affect the understanding. AGNOSTIC — reasons over the addressing facts + body, never a
 // keyword/header rule.
-export async function computeUnderstanding(email: EmailData, supabase: SupabaseClient, opts: { useEntityContext?: boolean; facts?: string[] } = {}): Promise<ItemUnderstanding | null> {
+export async function computeUnderstanding(email: EmailData, supabase: SupabaseClient, opts: { useEntityContext?: boolean; facts?: string[]; signals?: { isAutomatedSender?: boolean | null; isNotification?: boolean | null } | null } = {}): Promise<ItemUnderstanding | null> {
   const useEntityContext = opts.useEntityContext !== false; // default ON
   const mine = (email.user_addresses && email.user_addresses.length
     ? email.user_addresses
@@ -1006,6 +1006,7 @@ export async function computeUnderstanding(email: EmailData, supabase: SupabaseC
     `- effort: rough effort for the USER to handle this — "quick" (a one-line reply / a single click, ~2 min), "medium" (a considered reply or a small task, ~15 min), "deep" (real work, 30+ min). null if genuinely unclear.\n` +
     `- kind: what this mail IS — one of: "receipt" (a purchase/payment/order confirmation), "newsletter" (editorial/digest/marketing content sent to a list), "notification" (an automated system/service alert — builds, logins, social notices, portal updates), "calendar" (an invite/acceptance/reschedule), "cold_outreach" (an unsolicited pitch from someone with NO existing relationship — check the relationship context above), "customer" (correspondence with a client/deal counterparty — someone the relationship context ties to the user's work), "team" (one of the user's OWN colleagues per the team roster above), "personal" (private life — family, friends, personal admin), "other". GROUND it in the roster + relationship context, not the sender address alone.\n` +
     `- confidence: 0–100, how confident you are in the role + relevance judgment.\n` +
+    `- relay: true ONLY when this message REPORTS ON OTHER MAIL the user already received or sent — a digest of their inbox, an assistant's recap of mail it processed ("N items came in overnight"), a forwarded summary of their messages. The asks it mentions belong to THOSE threads, not to this sender: then relevance is "awareness", ownership "none", ask null. false for a system asking the user to act on something in that system itself, and for any real person writing.\n` +
     `- ask: ONLY when relevance is "reply" or "action" — the ONE thing the user must DO, as a short ` +
     `IMPERATIVE phrase starting with a verb, <=8 words ("Confirm the proposed slot", "Pay the renewal ` +
     `invoice", "Send the pricing offer") — a to-do, NEVER a topic or a restated subject line. null otherwise.\n` +
@@ -1016,7 +1017,7 @@ export async function computeUnderstanding(email: EmailData, supabase: SupabaseC
     `the day after. THIS EMAIL WAS SENT ON ${refStr}: resolve every such word against THAT day and ` +
     `write the absolute date instead ("Confirm the lunch — Sep 10, 12:30"), or leave the day out ` +
     `entirely. Clock times stay; day-words become dates.\n` +
-    `Return ONLY JSON: {"role":"addressed|one_of_many|bystander","relevance":"reply|action|awareness","bulk":true|false,"kind":"receipt|newsletter|notification|calendar|cold_outreach|customer|team|personal|other","initiative":"<short label or null>","deadline":"<YYYY-MM-DD or null>","ownership":"you_owe|awaiting|none","effort":"quick|medium|deep|null","confidence":0-100,"ask":"<imperative phrase or null>","language":"<lowercase ISO code, the language of THIS email, e.g. en, pt>"}. Use ONLY the allowed values.`;
+    `Return ONLY JSON: {"role":"addressed|one_of_many|bystander","relevance":"reply|action|awareness","bulk":true|false,"relay":true|false,"kind":"receipt|newsletter|notification|calendar|cold_outreach|customer|team|personal|other","initiative":"<short label or null>","deadline":"<YYYY-MM-DD or null>","ownership":"you_owe|awaiting|none","effort":"quick|medium|deep|null","confidence":0-100,"ask":"<imperative phrase or null>","language":"<lowercase ISO code, the language of THIS email, e.g. en, pt>"}. Use ONLY the allowed values.`;
   const res = await aiCreate(ai, {
     model, response_format: { type: 'json_object' as const }, max_tokens: 500, temperature: 0,
     messages: [{ role: 'user', content }],
@@ -1033,5 +1034,15 @@ export async function computeUnderstanding(email: EmailData, supabase: SupabaseC
     const fixed = await resolveDeixisText(supabase, email.user_id!, u.ask, refISO).catch(() => u.ask!);
     if (fixed) u.ask = fixed.slice(0, 90);
   }
-  return u;
+  // ── W18 · A RELAY IS A NOTICE (lib/inbox/relay-digest.ts) — for an AUTOMATED sender the signals
+  // outrank the content: a digest / recap of the user's OWN mail (the reasoned `relay`, or its words
+  // citing the user's other recent mail) is floored to a notice — no ask, no owner, no deadline. A
+  // genuine automated ask to the user (a system's own approval, the dunning/security class) keeps its
+  // seat. Non-fatal: a failure keeps the model's understanding.
+  const { applyRelayFloor } = await import('@/lib/inbox/relay-digest');
+  return applyRelayFloor(supabase, email.user_id!, u, {
+    id: email.id ?? null, from_address: email.from_address, from_name: email.from_name, subject: email.subject,
+    body: email.body, received_at: email.received_at ?? null, thread_id: (email as { thread_id?: string | null }).thread_id ?? null,
+    user_name: email.user_name ?? null, user_addresses: mine,
+  }, opts.signals ?? null);
 }

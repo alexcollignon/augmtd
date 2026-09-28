@@ -21,6 +21,8 @@ import React, { useState } from 'react';
 import { cn } from '@/lib/cn';
 import type { AnswerableState, ConfirmWidgetCard } from './types';
 import { CONFIRM_WORDS } from '@/lib/evidence/looks-done-word';
+// W18.A · ONE WIDTH — the kit's one card token.
+import { THREAD_CARD_W } from './kit-width';
 
 export type ConfirmCardProps = Omit<ConfirmWidgetCard, 'kind' | 'id'>;
 
@@ -43,7 +45,7 @@ export function ConfirmCard({ line, state: driven, onDone, onKeep, settledLine, 
   };
   const settled = state === 'settled';
   return (
-    <div data-widget="confirm" className={cn('rounded-xl border border-neutral-200/80 bg-white w-full max-w-[480px] flex flex-col gap-2.5 p-3.5', settled && 'bg-neutral-50/60')}>
+    <div data-widget="confirm" className={cn('rounded-xl border border-neutral-200/80 bg-white flex flex-col gap-2.5 p-3.5', THREAD_CARD_W, settled && 'bg-neutral-50/60')}>
       <div className="text-[13px] leading-[1.5] text-neutral-800">{line || 'This looks done.'}</div>
       {settled ? (
         receipt ? <div className="text-[12.5px] text-neutral-500">{receipt}</div> : null

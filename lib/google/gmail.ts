@@ -1,6 +1,8 @@
 import { google } from 'googleapis';
 import { getOAuth2Client } from './oauth';
 import { sanitizeAddressList, sanitizeFilename, sanitizeHeaderValue, sanitizeMimeType } from '@/lib/utils/email-headers';
+import { looksLikeHtml, htmlToText } from '@/lib/core/text';
+import { skipEmbeddedPart } from '@/lib/email-sync/attachment-policy';
 
 export interface GmailAttachmentMeta {
   attachmentId: string;
@@ -184,17 +186,16 @@ export function parseGmailMessage(message: GmailMessage) {
     } else if (part.mimeType === 'text/html' && part.body?.data) {
       htmlBody = Buffer.from(part.body.data, 'base64').toString('utf-8');
     } else if (part.body?.attachmentId && part.filename) {
-      // Skip inline embedded images (signature logos, tracked pixels, etc.)
-      // These have a Content-ID header (CID reference) or Content-Disposition: inline
+      // Skip inline embedded IMAGES (signature logos, tracked pixels, etc.) — a Content-ID header (CID
+      // reference), Content-Disposition: inline, or image001.png naming. W18.B: ONLY images — some
+      // mailers give every part a Content-ID, and a document (the invoice PDF) was dropped with them.
       const partHeaders: Array<{ name: string; value: string }> = part.headers || [];
       const getPartHeader = (name: string) =>
         partHeaders.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value || '';
       const hasContentId = !!getPartHeader('Content-ID');
       const isInlineDisposition = getPartHeader('Content-Disposition').toLowerCase().startsWith('inline');
-      // Also catch sequential naming pattern even without headers (e.g. image001.png, image002.jpg)
-      const isSequentialImage = /^image\d{1,3}\.(png|jpg|jpeg|gif|webp)$/i.test(part.filename);
-      if (hasContentId || isInlineDisposition || isSequentialImage) {
-        return; // skip — zero content value
+      if (skipEmbeddedPart({ mimeType: part.mimeType, filename: part.filename, hasContentId, inline: isInlineDisposition })) {
+        return; // skip — an embedded image, zero content value
       }
       attachments.push({
         attachmentId: part.body.attachmentId,
@@ -212,6 +213,12 @@ export function parseGmailMessage(message: GmailMessage) {
   if (message.payload) {
     extractBody(message.payload);
   }
+
+  // W18.B · THE PLAIN BODY IS PLAIN: a mailer that puts the HTML document in its text/plain part (or
+  // sends only an HTML part) would otherwise store markup as `body`, and every surface that reads
+  // the body as text showed "<html><head><meta…". The HTML itself stays in `html_body`.
+  if (looksLikeHtml(body)) body = htmlToText(body);
+  else if (!body.trim() && htmlBody) body = htmlToText(htmlBody);
 
   // Extract email address from "Name <email@domain.com>" format
   const fromHeader = getHeader('From');
@@ -675,6 +682,9 @@ export async function getGmailMessageDetail(
     if (part.parts) part.parts.forEach(extractBody);
   };
   if (msg.payload) extractBody(msg.payload);
+  // W18.B — the same plain-body rule as parseGmailMessage.
+  if (looksLikeHtml(body)) body = htmlToText(body);
+  else if (!body.trim() && htmlBody) body = htmlToText(htmlBody);
 
   const fromRaw = getHeader('From');
   const nameMatch = fromRaw.match(/^"?([^"<]+)"?\s*</);

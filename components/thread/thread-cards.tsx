@@ -10,9 +10,11 @@ import { sanitizeDraftHtml } from '@/lib/utils/sanitize-html';
 import { AttachmentChip } from '@/components/ui/attachment-lightbox';
 // THE ONE OBJECT CARD — the source half of the grammar, in its own file (one component, one law).
 import { SourceObjectCard } from './source-object-card';
-// W15.1 · ONE LABEL — every door to a conversation reads the same two words.
-import { OPEN_THREAD_LABEL } from './source-text';
+// W15.1 · ONE LABEL — every door to a conversation reads the same two words. W18.A: "Open thread"
+// is the source card's in-place expansion; the reply card's navigation reads the item's word.
+import { OPEN_ITEM_LABEL } from './source-text';
 import { AskRows } from './ask-rows';
+import { THREAD_CARD_W } from './kit-width';
 import { ConfirmCard } from './confirm-card';
 // ONE EXPANDER IDIOM — the same "N more" fold every other list in the app uses (never a fork).
 import { ExpandableRows } from '@/components/home/expandable-rows';
@@ -39,10 +41,11 @@ import type {
  */
 
 const SHELL = 'rounded-xl border border-neutral-200/80 bg-white';
-const MAX_W = 'w-full max-w-[480px]';
-// Custom cards carry HOSTS' existing rich components (email drafts at 560px, wide markdown
-// tables) — clamping them to the built-ins' 480 shrank real content (the P2b port find).
-const CUSTOM_MAX_W = 'w-full max-w-[560px]';
+// W18.A · ONE WIDTH — every kit card reads the ONE token (./kit-width.ts). The built-ins' 480, the
+// custom seat's 560 and the set cards' 640 were three answers to one question; on one thread page
+// they drew three edges. MAX_W / CUSTOM_MAX_W remain as names only, both the one token.
+const MAX_W = THREAD_CARD_W;
+const CUSTOM_MAX_W = THREAD_CARD_W;
 
 // ── the icon tile ───────────────────────────────────────────────────────────────────────────────
 const ICON_PATHS: Record<ThreadCardIcon, React.ReactNode> = {
@@ -285,7 +288,7 @@ function RecipientChip({ address }: { address: string }) {
 /**
  * THE EMAIL CARD (docs/design/threads/EmailCard.dc.html) — the drafted message, in the thread.
  *
- *   the tab row      DIRECTION-VARIANTS (the reply-directions organ) + the "Open thread" door (OPEN_THREAD_LABEL)
+ *   the tab row      DIRECTION-VARIANTS (the reply-directions organ) + the "Open item" door (OPEN_ITEM_LABEL, W18.A)
  *   the draft        To/Cc chips · the subject, quiet at the right · the editable body
  *   the selector     grounded refinements + the open "…or tell me what to change" row
  *   the commit row   Send · the tone tweak · the receipt word — always the card's bottom edge
@@ -377,11 +380,14 @@ function EmailCardView({ card }: { card: EmailCard }) {
             })}
           </div>
           {/* PINNED, OUTSIDE THE SCROLL AREA — the door to the message being answered is always in
-              view, however many directions the organ reasoned. */}
+              view, however many directions the organ reasoned. W18.A · it is a NAVIGATION (to the
+              item, where the source card unfolds the conversation in place), so it wears the item's
+              word, OPEN_ITEM_LABEL — "Open thread" is only ever the in-place expansion. The item
+              page passes no door here (the source card above owns it). */}
           {card.onOpenThread && (
             <button type="button" onClick={card.onOpenThread}
               className="aug-focus ml-3 flex-shrink-0 rounded py-[9px] text-[12px] font-medium text-indigo-600 hover:text-indigo-700">
-              {OPEN_THREAD_LABEL}
+              {OPEN_ITEM_LABEL}
             </button>
           )}
         </div>
@@ -965,7 +971,7 @@ function CollectionRowView({ row }: { row: CollectionRow }) {
 /** A LIST NEEDS ITS LINE: a collection row carries a name, a chip, a meta line and up to two verbs —
  *  at the single-object width (480) the name lost its tail with a third of the column empty. A set
  *  takes the wider seat the mounted host cards use. */
-const COLLECTION_MAX_W = 'w-full max-w-[640px]';
+const COLLECTION_MAX_W = THREAD_CARD_W;
 
 function CollectionCardView({ card }: { card: CollectionCard }) {
   const fold = card.foldAfter ?? COLLECTION_INLINE_ROWS;
@@ -1017,7 +1023,7 @@ function CollectionCardView({ card }: { card: CollectionCard }) {
  */
 /** A single object's card at the SET's width — an event carries a who-line and a verb row, and at
  *  the 480 single-object width the attendees lost their tail (the collection card's own find). */
-const EVENT_MAX_W = 'w-full max-w-[640px]';
+const EVENT_MAX_W = THREAD_CARD_W;
 
 /** The durations the in-card picker offers. The event's OWN length is always among them. */
 const EVENT_DURATIONS = [15, 30, 45, 60, 90, 120];

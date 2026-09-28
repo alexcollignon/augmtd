@@ -56,7 +56,11 @@ async function schedulingSignalFor(client: SupabaseClient, userId: string, work:
 
 /** Hydrate the chosen candidates' own words through each source row's `hydrateBody` — bodies never
  *  ride the pool. The actor rides every candidate so the judge is told WHO acted. */
-async function toCandidates(client: SupabaseClient, userId: string, evidence: Evidence[]): Promise<FulfillmentCandidate[]> {
+/** W18 — is this actor the side that does NOT owe the work? (Only then is it labelled as the other side.) */
+const otherSide = (role: string | null | undefined, fulfiller: 'user' | 'counterparty'): boolean =>
+  fulfiller === 'user' ? role === 'counterparty' || role === 'unknown' : false;
+
+async function toCandidates(client: SupabaseClient, userId: string, evidence: Evidence[], fulfiller: 'user' | 'counterparty' = 'user'): Promise<FulfillmentCandidate[]> {
   const bodies = new Map<string, string>();
   const bySource = new Map<string, string[]>();
   for (const e of evidence) {
@@ -79,6 +83,9 @@ async function toCandidates(client: SupabaseClient, userId: string, evidence: Ev
       ...(e.deed ? { deed: e.deed } : {}),
       ...(e.source ? { sourceLabel: evidenceSource(e.source)?.label ?? e.source } : {}),
       ...(e.actor && e.actor.role !== 'user' && e.by === 'teammate' ? { actor: { role: e.actor.role, name: actorLabel(e.actor) } } : {}),
+      // W18 · THE CONVERSATION ANSWERS: the other side's message on the work's own conversation is
+      // labelled as theirs — the judge must never read "it's done, thanks" as the owing side's words.
+      ...(e.actor && e.by === 'counterparty' && !e.status && otherSide(e.actor.role, fulfiller) ? { actor: { role: e.actor.role === 'unknown' ? 'unknown' as const : 'counterparty' as const, name: actorLabel(e.actor) } } : {}),
     };
   });
 }
@@ -101,7 +108,7 @@ export async function settleWorkByEvidence(
 ): Promise<SettleOutcome> {
   if (!evidence.length) return NONE;
   try {
-    const candidates = await toCandidates(client, userId, evidence);
+    const candidates = await toCandidates(client, userId, evidence, work.fulfiller);
     const schedulingSignal = await schedulingSignalFor(client, userId, work);
     const row = work.kind === 'commitment'
       ? (await client.from('commitments').select('id, description, due_date, created_at, status, thread_id').eq('id', work.id).eq('user_id', userId).maybeSingle()).data

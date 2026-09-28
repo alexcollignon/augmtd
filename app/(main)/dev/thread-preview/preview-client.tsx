@@ -555,7 +555,11 @@ const DM_ITEMS: ThreadItem[] = [
         body: 'Thanks — taking this to the board on Thursday. Two things I need first: the early-graduation wording, and whether the platform fee is waived for the whole pilot…',
       }],
       files: [{ name: 'pilot-terms.pdf', size: 184_320, onOpen: noop }],
-      openLabel: 'Thread →', onOpen: noop,
+      // W18.A · the door is the conversation, unfolded in place (never a navigation).
+      thread: { messages: [
+        { id: 'm0', author: 'You', when: 'Sep 12', body: 'Sharing the pilot terms draft ahead of Thursday.' },
+        { id: 'm1', author: 'Jordan Wills', when: 'Sep 16', body: 'Thanks — taking this to the board on Thursday. Two things I need first: the early-graduation wording, and whether the platform fee is waived for the whole pilot…' },
+      ] },
     }],
   },
   {

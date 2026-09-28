@@ -97,6 +97,7 @@ function relationshipCue(relationship?: string | null, momentum?: string | null,
 // H4/J1 — the ownership-keyed notice law + the strong automated-sender read live in ONE module
 // (lib/inbox/notice-demotion.ts) shared with judgeWork. Local aliases keep call sites unchanged.
 import { isAutomatedSenderStrong as isAutomatedSender, isActionWorthyAutomated } from '@/lib/inbox/notice-demotion';
+import { askerOf } from '@/lib/inbox/relay-digest';
 // THE DECK FLOORS + THE SERVE-LABEL CHOKE — the two structures that replaced two site lists
 // (proactive-reach LAWS 3 · 5 · 6). The route composes lanes through the floors and serves through
 // the choke; `scripts/smoke-deck-truth.ts` asserts the world against the very same modules.
@@ -631,7 +632,7 @@ export async function GET() {
       // An action-notice: its own section, never a reply card, never a needs-you priority. We DON'T push
       // it into `priorities` (so it can't count as needs-you) or `mustRespondRaw`; we still feed
       // emailSeeds so per-person context stays complete, then skip the reply/priority wiring.
-      const who = fromName || (sd.from as string) || 'Notice';
+      const who = askerOf(sd, u) || 'Notice'; // W18: a relay's name never leads an ask it did not make
       const snippet = ((sd.body as string) || '').replace(/\s+/g, ' ').trim();
       // VERB-FIRST (P4): lead with the understanding's imperative ask ("Fix the failing payment"),
       // never the raw subject ("Serif AI Subscription") — the deck reads as to-dos, not mail headers.
@@ -724,7 +725,7 @@ export async function GET() {
       if (noticeDemoted) continue;
       mustRespondRaw.push({
         itemId: it.id,
-        from: (sd.from_name as string) || (sd.from as string) || 'Someone',
+        from: askerOf(sd, u) || 'Someone', // W18: never a relay's name
         fromEmail: fromEmail || '',
         subject: it.work_title || (sd.subject as string) || '(no subject)',
         snippet: ((sd.body as string) || '').replace(/\s+/g, ' ').trim().slice(0, 400),
@@ -2156,6 +2157,16 @@ export async function GET() {
     } catch { /* the brief already served */ }
   });
 
+  // W18.D · TIME TRUTH AT SERVE (tier-1 #14): the reasoned briefing and the brief line are served from
+  // the cache; their relative time words pass the zero-AI floor against their own composition time
+  // (lib/core/relative-time) BEFORE the paint — rewritten to dates, or withheld when vague.
+  const { serveBriefingTime } = await import('@/lib/briefing/compose');
+  const servedBriefing = serveBriefingTime(cachedBriefing, { tz: userTz, now });
+  {
+    const { serveTimeWords } = await import('@/lib/core/relative-time');
+    const bl = serveTimeWords(briefLine, { composedAt: cached?.generated_at ?? now.toISOString(), tz: userTz, now });
+    if (briefLine) briefLine = bl.withheld ? null : bl.text;
+  }
   // P0 perf watchdog: one line when the GET path itself (pre-after()) ran slow — names the phase.
   // IT SITS AT THE DOOR, NOT MID-ROUTE (perf walk, Sep 8): it used to stamp before the connections
   // read, the workspace features and workStatesFor, so the number it printed was never the number
@@ -2168,5 +2179,5 @@ export async function GET() {
   // upstream `stripDeixis` seams stay where they are (they feed the SERVER-side agenda and the
   // briefing composer's inputs, which never pass through here); this is the guarantee that no lane
   // — present or future — can serve a word that has stopped being true.
-  return NextResponse.json(guardDeckLabels({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => withAttention({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, preparedKind: preparedKindByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null, machine: machineOf(n.itemId) }, n.itemId)), mustRespond: attentionMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities.map((p) => ({ ...p, machine: p.itemId ? machineOf(p.itemId) : null })), commitments: commitments.map((c) => withAttention({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null, machine: machineOf(c.id) }, c.id)), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, projectByAtom, briefing: cachedBriefing, trackedProjects, mail, today: todayStr, attention: { budget: attention.budget, served: attention.served, heldBack: attention.heldBack, heldTotal: attention.heldTotal, heldWaiting: attention.heldWaiting, heldHandled: attention.heldHandled, fresh: attention.fresh, catchUp: attention.catchUp } }), { headers: clock.headers() });
+  return NextResponse.json(guardDeckLabels({ firstName, briefLine, tldr, followups, fyiDigest, forYourAwareness, actionNotices: actionNotices.map((n) => withAttention({ ...n, preparedBy: preparedByItem.get(n.itemId) ?? null, preparedKind: preparedKindByItem.get(n.itemId) ?? null, initiative: tagByAtom.get(n.itemId) ?? null, machine: machineOf(n.itemId) }, n.itemId)), mustRespond: attentionMustRespond, keepAnEyeOn: keepAnEyeOnOut, status, priorities: cappedPriorities.map((p) => ({ ...p, machine: p.itemId ? machineOf(p.itemId) : null })), commitments: commitments.map((c) => withAttention({ ...c, initiative: tagByAtom.get(c.id) ?? c.initiative ?? null, machine: machineOf(c.id) }, c.id)), waitingOn, schedule, handled, dayProgress, bundles, bundleNames, personCues, itemWeights, slippingDeals, bundleStates, deckEntityIds: deckEntityIdsOut, projectByAtom, briefing: servedBriefing, trackedProjects, mail, today: todayStr, attention: { budget: attention.budget, served: attention.served, heldBack: attention.heldBack, heldTotal: attention.heldTotal, heldWaiting: attention.heldWaiting, heldHandled: attention.heldHandled, fresh: attention.fresh, catchUp: attention.catchUp } }), { headers: clock.headers() });
 }

@@ -9,6 +9,8 @@ import { detectLanguage } from '@/lib/inbox/detect-language';
 import { coerceUnderstanding, languageName } from '@/lib/inbox/item-understanding';
 import { readItemAttachments, renderAttachedDocumentsBlock } from '@/lib/inbox/attachment-context';
 import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { draftInLanguage, exemplarRule } from '@/lib/context/draft-language';
+import { plainBody } from '@/lib/core/text';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
@@ -93,7 +95,8 @@ export async function generateReplyDraft(
   const from = String(sourceData.from || sourceData.from_address || '');
   const fromName = String(sourceData.from_name || '');
   const subject = String(sourceData.subject || '');
-  let body = String(sourceData.body || '');
+  // W18.B: a stored body that is really HTML (a mailer's text/plain part carrying markup) reads as text.
+  let body = plainBody(String(sourceData.body || ''));
   // THE GROUND LAW, content half (Aug 13, found live by the ground-walk fixture: a re-draft after
   // the counterparty moved a meeting still confirmed the OLD time): the stored sourceData holds the
   // thread's FOUNDING message forever — a reply must answer the thread's PRESENT. When a newer
@@ -107,7 +110,7 @@ export async function generateReplyDraft(
       const { data: last } = await client.from('emails').select('body, received_at')
         .eq('user_id', userId).eq('thread_id', tid).eq('is_from_user', false)
         .order('received_at', { ascending: false }).limit(1).maybeSingle();
-      const lastBody = String(last?.body ?? '').trim();
+      const lastBody = plainBody(String(last?.body ?? '')).trim();
       const storedAt = Date.parse(String(sourceData.received_at || '')) || 0;
       const lastAt = Date.parse(String(last?.received_at || '')) || 0;
       if (lastBody && lastAt > storedAt) {
@@ -130,8 +133,17 @@ ${clipForPrompt(body, 1200)}
   // W11.1 · THE MAILBOX this reply is written FROM — the thread's connection (read off the thread's
   // own synced mail), and only that mailbox's voice + signature.
   const mailbox = await threadMailboxOf(client, userId, String(sourceData.thread_id || '') || null);
+  // The LANGUAGE the reply is written in — mirror the CONCRETE text being replied to.
+  // Promise fix #6: the stored `understanding.language` can be STALE or wrong for the message at
+  // hand (a thread that switched language; a mis-judged pass → an English ask drafted in
+  // Portuguese). Precedence: detect on the ACTUAL body first (stopword detection on real prose is
+  // reliable; it returns null on short/ambiguous text rather than guessing) → the stored
+  // understanding fills that null (the A2 lesson — short text must never fall through to the
+  // user's PT-heavy voice). W18.B: resolved BEFORE the voice block, which shows only exemplars in
+  // this language, and the output is checked against it (draftInLanguage).
+  const detected = detectLanguage(`${subject}\n${body}`) || languageName(understanding?.language);
   const [voiceBlock, meetingFollowup, brainBlock, assistantSkills] = await Promise.all([
-    buildVoiceBlock(userId, from, client, mailbox).catch(() => ''),
+    buildVoiceBlock(userId, from, client, mailbox, { language: detected }).catch(() => ''),
     buildMeetingFollowupContext(userId, from, client).catch(() => ''),
     // Step 2: read the durable Person + Initiative brains — the draft reasons WITH the relationship (who
     // they are, who owes whom, how they write) + where the deal stands. Additive, non-fatal, no AI.
@@ -148,22 +160,16 @@ ${clipForPrompt(body, 1200)}
     if (prof?.full_name) userName = String(prof.full_name);
   } catch { /* keep default */ }
 
-  // The LANGUAGE the reply should be written in — mirror the CONCRETE text being replied to.
-  // Promise fix #6: the stored `understanding.language` can be STALE or wrong for the message at
-  // hand (a thread that switched language; a mis-judged pass → an English ask drafted in
-  // Portuguese). Precedence: detect on the ACTUAL body first (stopword detection on real prose is
-  // reliable; it returns null on short/ambiguous text rather than guessing) → the stored
-  // understanding fills that null (the A2 lesson — short text must never fall through to the
-  // user's PT-heavy voice). The voice block governs TONE only — never the language.
-  const detected = detectLanguage(`${subject}\n${body}`) || languageName(understanding?.language);
+  // The voice block governs TONE only — never the language, never the greeting or sign-off words.
+  // The guidance above (a direction, a steer) never changes the language either.
   const langRule = detected
     ? `IMPORTANT — LANGUAGE: The email you are replying to is written in ${detected}. Write your ENTIRE ` +
-      `reply in ${detected}, and ONLY in ${detected}. The example emails above are for STYLE only ` +
-      `(greeting shape, warmth, sign-off) — ignore their language; do NOT write in any language other ` +
+      `reply in ${detected}, and ONLY in ${detected} — the greeting and sign-off included. ${exemplarRule(detected)} ` +
+      `Any guidance above is about WHAT to say, never which language: do NOT write in any language other ` +
       `than ${detected}.`
     : `IMPORTANT — LANGUAGE: Write the reply in the SAME language as the "EMAIL TO REPLY TO" above — ` +
-      `detect that email's language and reply ONLY in that language. The example emails above are for ` +
-      `STYLE only; do NOT copy their language if it differs from the email you are replying to.`;
+      `detect that email's language and reply ONLY in that language, the greeting and sign-off included. ` +
+      `${exemplarRule(null)} Do NOT copy the examples' language if it differs from the email you are replying to.`;
 
   // The plan block — the concrete steps AUGMTD identified for handling this item. The reply should be
   // COHERENT with them (one story): reference an invite the plan sends; treat a "I'll send X" promise as
@@ -200,38 +206,45 @@ ${clipForPrompt(body, 1200)}
   })();
 
   const { client: ai, model } = await getAIClient(userId, 'conversation', client);
-  const res = await aiCreate(ai, {
-    model, max_tokens: 600, temperature: 0.6,
-    messages: [{ role: 'user', content:
-      `${voiceBlock ? voiceBlock + '\n\n' : ''}${meetingFollowup ? meetingFollowup + '\n\n' : ''}${brainBlock ? brainBlock + '\n\n' : ''}${assistantSkills ? assistantSkills + '\n\n' : ''}` +
-      `${registerFact ? registerFact + '\n' : ''}` +
-      `${planBlock}` +
-      `${instructions?.trim() ? `Follow this guidance for the reply: ${instructions.trim()}\n\n` : ''}` +
-      // Anchor the perspective hard — the model otherwise mirrors the sender and signs with THEIR name.
-      `You are ${userName}. Write ${userName}'s reply to the email below (which was sent TO ${userName} ` +
-      `by ${from}), in ${userName}'s voice. Address the sender, and sign as ${userName} — NEVER sign as ` +
-      `the sender or adopt their name. ` +
-      // The voice exemplars are HTML-stripped and may have LOST line breaks (a signature run
-      // together like "Name CompanyRole" is a formatting artifact, not the user's style) — always
-      // format the sign-off block on separate lines (name / role or company / phone / links).
-      `Format the signature block on separate lines; never reproduce run-together artifacts from the examples. ` +
-      `${mailboxIdentityRule(mailbox) ? `${mailboxIdentityRule(mailbox)} ` : ''}` +
-      // THE COMPLETION RULE (W5a): the reply may claim only deeds the facts above (staged
-      // attachments, the artifact truth) support.
-      `${COMPLETION_HONESTY_RULE} ` +
-      `Return ONLY the reply body — no subject line, no preamble, no ` +
-      `surrounding quotes. Keep it appropriately concise and ready to send.\n\n` +
-      `--- EMAIL TO REPLY TO ---\n` +
-      `From: ${from}\nSubject: ${subject}\n\n${clipForPrompt(body, 3000)}\n${earlierContext}\n` +
-      // The item's OWN documents, with their text — placed directly under the email they arrived
-      // with, so no reader can compose a claim about them without having read them.
-      `${attachBlock ? `\n${attachBlock}\n\n` : ''}` +
-      // EXCERPT-HONESTY: our own length clips declare themselves; the rule says they are ours.
-      `${EXCERPT_RULE}\n` +
-      // LANGUAGE RULE — LAST, so it wins over the voice examples above (recency + explicit target).
-      langRule }],
-  });
-  return res.choices?.[0]?.message?.content?.trim() || '';
+  // W18.B · A DRAFT SPEAKS THE THREAD'S LANGUAGE — the output is checked (zero AI); a wrong-language
+  // draft gets ONE revise pass with the hard instruction appended LAST, and a draft still wrong after
+  // it is not served ('' — every caller's honest not-prepared state).
+  const checked = await draftInLanguage(async (languageFix) => {
+    const res = await aiCreate(ai, {
+      model, max_tokens: 600, temperature: 0.6,
+      messages: [{ role: 'user', content:
+        `${voiceBlock ? voiceBlock + '\n\n' : ''}${meetingFollowup ? meetingFollowup + '\n\n' : ''}${brainBlock ? brainBlock + '\n\n' : ''}${assistantSkills ? assistantSkills + '\n\n' : ''}` +
+        `${registerFact ? registerFact + '\n' : ''}` +
+        `${planBlock}` +
+        `${instructions?.trim() ? `Follow this guidance for the reply: ${instructions.trim()}\n\n` : ''}` +
+        // Anchor the perspective hard — the model otherwise mirrors the sender and signs with THEIR name.
+        `You are ${userName}. Write ${userName}'s reply to the email below (which was sent TO ${userName} ` +
+        `by ${from}), in ${userName}'s voice. Address the sender, and sign as ${userName} — NEVER sign as ` +
+        `the sender or adopt their name. ` +
+        // The voice exemplars are HTML-stripped and may have LOST line breaks (a signature run
+        // together like "Name CompanyRole" is a formatting artifact, not the user's style) — always
+        // format the sign-off block on separate lines (name / role or company / phone / links).
+        `Format the signature block on separate lines; never reproduce run-together artifacts from the examples. ` +
+        `${mailboxIdentityRule(mailbox) ? `${mailboxIdentityRule(mailbox)} ` : ''}` +
+        // THE COMPLETION RULE (W5a): the reply may claim only deeds the facts above (staged
+        // attachments, the artifact truth) support.
+        `${COMPLETION_HONESTY_RULE} ` +
+        `Return ONLY the reply body — no subject line, no preamble, no ` +
+        `surrounding quotes. Keep it appropriately concise and ready to send.\n\n` +
+        `--- EMAIL TO REPLY TO ---\n` +
+        `From: ${from}\nSubject: ${subject}\n\n${clipForPrompt(body, 3000)}\n${earlierContext}\n` +
+        // The item's OWN documents, with their text — placed directly under the email they arrived
+        // with, so no reader can compose a claim about them without having read them.
+        `${attachBlock ? `\n${attachBlock}\n\n` : ''}` +
+        // EXCERPT-HONESTY: our own length clips declare themselves; the rule says they are ours.
+        `${EXCERPT_RULE}\n` +
+        // LANGUAGE RULE — LAST, so it wins over the voice examples above (recency + explicit target).
+        langRule +
+        (languageFix ? `\n\n${languageFix}` : '') }],
+    });
+    return res.choices?.[0]?.message?.content?.trim() || '';
+  }, detected);
+  return checked.body;
 }
 
 // Voice-grounded NUDGE draft — a polite follow-up from the user to a counterparty they are WAITING
@@ -255,8 +268,21 @@ export async function generateNudgeDraft(
 ): Promise<string> {
   const recipientEmail = (opts.counterparty || '').match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
   const mailbox = opts.threadId ? await threadMailboxOf(client, userId, opts.threadId) : null;
+  // THE LANGUAGE MIRROR (same precedence as the reply drafter): the counterparty's CONCRETE words.
+  // W18.B: a caller that names the thread but no mirror text (the redraft lane) gets the thread's
+  // newest inbound read here, so every nudge producer has the same target to check against.
+  let mirrorText = opts.mirrorText ?? null;
+  if (!mirrorText && opts.threadId) {
+    try {
+      const { data: last, error } = await client.from('emails').select('body, received_at')
+        .eq('user_id', userId).eq('thread_id', opts.threadId).eq('is_from_user', false)
+        .order('received_at', { ascending: false }).limit(1).maybeSingle();
+      if (!error) mirrorText = plainBody(String(last?.body ?? '')).trim() || null;
+    } catch { /* no mirror — the prompt infers */ }
+  }
+  const mirrorLang = mirrorText ? detectLanguage(plainBody(mirrorText)) : null;
   const [voiceBlock, brainBlock, assistantSkills] = await Promise.all([
-    buildVoiceBlock(userId, recipientEmail, client, mailbox).catch(() => ''),
+    buildVoiceBlock(userId, recipientEmail, client, mailbox, { language: mirrorLang }).catch(() => ''),
     // Step 2: the nudge reasons WITH the relationship — who they are, what's actually open with them, their
     // register — so a check-in lands right instead of generic. Additive, non-fatal, no AI.
     renderBrainContext(client, userId, { personEmail: recipientEmail, personName: recipientEmail ? null : opts.counterparty }).catch(() => ''),
@@ -269,34 +295,37 @@ export async function generateNudgeDraft(
   } catch { /* keep default */ }
 
   const who = opts.counterparty || 'the recipient';
-  const mirrorLang = opts.mirrorText ? detectLanguage(opts.mirrorText) : null;
   const aged = typeof opts.ageDays === 'number' && opts.ageDays > 0 ? ` It has been about ${opts.ageDays} day${opts.ageDays === 1 ? '' : 's'} without a response.` : '';
   const { client: ai, model } = await getAIClient(userId, 'conversation', client);
-  const res = await aiCreate(ai, {
-    model, max_tokens: 400, temperature: 0.6,
-    messages: [{ role: 'user', content:
-      `${voiceBlock ? voiceBlock + '\n\n' : ''}${brainBlock ? brainBlock + '\n\n' : ''}${assistantSkills ? assistantSkills + '\n\n' : ''}` +
-      (opts.direction === 'you'
-        ? `You are ${userName}. Write a brief, friendly message from ${userName} to ${who} about something ` +
-          `${userName} OWES THEM: "${opts.description}". ${userName} is the one on the hook here — write it as ` +
-          `an update/hand-over from ${userName}, never as a chase and never as a request for something from ` +
-          `${who}. Keep it warm and short. Address ${who} and sign as ${userName} — NEVER sign as the recipient. ` +
-          // THE COMPLETION RULE (W5a): an update about an open obligation speaks status, never a deed.
-          `${COMPLETION_HONESTY_RULE} `
-        : `You are ${userName}. Write a brief, friendly NUDGE from ${userName} to ${who}, following up on ` +
-          `something ${userName} is waiting on them for: "${opts.description}".${aged} Keep it warm, low-pressure, ` +
-          `and short — a gentle check-in, not a demand. Address ${who} and sign as ${userName} — NEVER sign as ` +
-          `the recipient. `) +
-      // THE LANGUAGE MIRROR (same precedence as the reply drafter): detect on the counterparty's
-      // CONCRETE words first; only when there is no text signal, infer — and never let the voice
-      // block's language leak in.
-      (mirrorLang
-        ? `IMPORTANT — LANGUAGE: ${who} writes in ${mirrorLang}. Write the ENTIRE nudge in ${mirrorLang}, and ONLY ${mirrorLang} — the style examples above are for tone, never language. `
-        : `Write it in the language the recipient communicates in (infer from the recipient and the ` +
-          `description above); if unclear, use English. The style examples above are for tone, never language. `) +
-      (opts.instructions ? `\n${opts.instructions}\n` : '') +
-      `${mailboxIdentityRule(mailbox) ? `${mailboxIdentityRule(mailbox)} ` : ''}` +
-      `Return ONLY the message body — no subject line, no preamble, no surrounding quotes.` }],
-  });
-  return res.choices?.[0]?.message?.content?.trim() || '';
+  const checked = await draftInLanguage(async (languageFix) => { // W18.B — the same output check
+    const res = await aiCreate(ai, {
+      model, max_tokens: 400, temperature: 0.6,
+      messages: [{ role: 'user', content:
+        `${voiceBlock ? voiceBlock + '\n\n' : ''}${brainBlock ? brainBlock + '\n\n' : ''}${assistantSkills ? assistantSkills + '\n\n' : ''}` +
+        (opts.direction === 'you'
+          ? `You are ${userName}. Write a brief, friendly message from ${userName} to ${who} about something ` +
+            `${userName} OWES THEM: "${opts.description}". ${userName} is the one on the hook here — write it as ` +
+            `an update/hand-over from ${userName}, never as a chase and never as a request for something from ` +
+            `${who}. Keep it warm and short. Address ${who} and sign as ${userName} — NEVER sign as the recipient. ` +
+            // THE COMPLETION RULE (W5a): an update about an open obligation speaks status, never a deed.
+            `${COMPLETION_HONESTY_RULE} `
+          : `You are ${userName}. Write a brief, friendly NUDGE from ${userName} to ${who}, following up on ` +
+            `something ${userName} is waiting on them for: "${opts.description}".${aged} Keep it warm, low-pressure, ` +
+            `and short — a gentle check-in, not a demand. Address ${who} and sign as ${userName} — NEVER sign as ` +
+            `the recipient. `) +
+        // THE LANGUAGE MIRROR (same precedence as the reply drafter): detect on the counterparty's
+        // CONCRETE words first; only when there is no text signal, infer — and never let the voice
+        // block's language leak in.
+        (mirrorLang
+          ? `IMPORTANT — LANGUAGE: ${who} writes in ${mirrorLang}. Write the ENTIRE nudge in ${mirrorLang}, and ONLY ${mirrorLang} — the greeting and sign-off included. ${exemplarRule(mirrorLang)} `
+          : `Write it in the language the recipient communicates in (infer from the recipient and the ` +
+            `description above); if unclear, use English. ${exemplarRule(null)} `) +
+        (opts.instructions ? `\n${opts.instructions}\n` : '') +
+        `${mailboxIdentityRule(mailbox) ? `${mailboxIdentityRule(mailbox)} ` : ''}` +
+        `Return ONLY the message body — no subject line, no preamble, no surrounding quotes.` +
+        (languageFix ? `\n\n${languageFix}` : '') }],
+    });
+    return res.choices?.[0]?.message?.content?.trim() || '';
+  }, mirrorLang);
+  return checked.body;
 }

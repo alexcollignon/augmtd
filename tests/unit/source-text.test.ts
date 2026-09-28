@@ -40,15 +40,16 @@ describe('ownWords', () => {
   it('keeps the text when a cut would leave nothing', () => {
     expect(ownWords('On Thu, Sep 18, 2026 at 10:02 AM Sam <sam@acme.test> wrote:\n> only quoted')).toContain('only quoted');
   });
-  it('firstLine is the first non-empty line of the own words', () => {
-    expect(firstLine('\n\nHi Sam,\nthe rest')).toBe('Hi Sam,');
+  it('firstLine is the first non-empty line of substance of the own words (⟲ RE-POINTED W18: a bare salutation is skipped)', () => {
+    expect(firstLine('\n\nHi Sam,\nthe rest')).toBe('the rest');
   });
 });
 
 describe('SourceObjectCard', () => {
   const html = (card: Record<string, unknown>) => renderToStaticMarkup(React.createElement(SourceObjectCard, { card: card as never }));
   it('an email door always reads the one label', () => {
-    const out = html({ kind: 'source', id: 'a', source: 'email', who: 'Sam', title: 'Hello', excerpt: 'Hi', onOpen: () => {}, openLabel: 'Thread →' });
+    // ⟲ RE-POINTED W18: an email door is the in-place expansion — it rides `thread`, never `onOpen`.
+    const out = html({ kind: 'source', id: 'a', source: 'email', who: 'Sam', title: 'Hello', excerpt: 'Hi', onOpen: () => {}, openLabel: 'Thread →', thread: { messages: null } });
     expect(out).toContain(`>${OPEN_THREAD_LABEL}<`);
     expect(out).not.toContain('Thread →');
   });
@@ -70,5 +71,15 @@ describe('SourceObjectCard', () => {
     const out = html({ kind: 'source', id: 'a', source: 'email', messages: [{ id: '1', author: 'Sam', body: `<img src=x onerror=alert(1)> hi ${EXCERPT_MARK}` }] });
     expect(out).not.toContain('<img');
     expect(out).not.toContain(EXCERPT_MARK);
+  });
+});
+
+describe('firstLine skips a bare salutation (W18 walk)', () => {
+  it('leads with the first line of substance', () => {
+    expect(firstLine('Olá Zoé, bom dia,\n\nJá está feito, obrigada.')).toBe('Já está feito, obrigada.');
+    expect(firstLine('Hi Sam,\nThe draft is attached.')).toBe('The draft is attached.');
+  });
+  it('keeps a message that is only a salutation', () => {
+    expect(firstLine('Hi Sam,')).toBe('Hi Sam,');
   });
 });

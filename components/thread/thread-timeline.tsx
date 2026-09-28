@@ -6,6 +6,13 @@ import { AvatarStatus } from './avatar-status';
 import { ThreadCards } from './thread-cards';
 import { traceLine } from '@/lib/work/trace';
 import type { ActorBubbleItem, EventLineItem, PinnedItem, ThreadAction, ThreadItem } from './types';
+import { THREAD_TEXT_W } from './kit-width';
+
+/** W18.A · THE CONTENT COLUMN FILLS ITS TRACK. It was a shrink-wrapping `flex min-w-0 flex-col`, so
+ *  every card inside resolved to its OWN content width (the source email visibly narrower than the
+ *  reply card under it). `flex-1` + `w-full` hand the column the whole track beside the face; each
+ *  card then stands at the kit's ONE width (./kit-width.ts THREAD_CARD_W). */
+const CONTENT_COLUMN = 'flex w-full min-w-0 flex-1 flex-col gap-2';
 
 /**
  * ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -84,12 +91,12 @@ function Pinned({ item }: { item: PinnedItem }) {
       <span className="w-7 flex-shrink-0">
         <AvatarStatus name={item.actorName} actorId={item.actorId} size={28} />
       </span>
-      <div className="flex min-w-0 flex-col gap-2">
+      <div className={CONTENT_COLUMN}>
         <div className="flex items-baseline gap-2">
           <span className="text-[13px] font-semibold text-neutral-900">{item.actorName}</span>
           {item.actorRoleLabel && <span className="text-[11px] text-neutral-400">{item.actorRoleLabel}</span>}
         </div>
-        {item.text && <div className="max-w-[560px] text-[13px] leading-[1.55] text-neutral-800">{item.text}</div>}
+        {item.text && <div className={cn(THREAD_TEXT_W, 'text-[13px] leading-[1.55] text-neutral-800')}>{item.text}</div>}
         {item.node}
         <ActionRow actions={item.actions} />
       </div>
@@ -134,7 +141,7 @@ function ActorBubble({ item, showHeader }: { item: ActorBubbleItem; showHeader: 
           <AvatarStatus name={item.actorName} actorId={item.actorId} size={28} status={item.status} hint={item.statusHint} />
         )}
       </span>
-      <div className="flex min-w-0 flex-col gap-2">
+      <div className={CONTENT_COLUMN}>
         {showHeader && (
           <div className="flex items-baseline gap-2">
             <span className="text-[13px] font-semibold text-neutral-900">{item.actorName}</span>
@@ -142,7 +149,7 @@ function ActorBubble({ item, showHeader }: { item: ActorBubbleItem; showHeader: 
             {item.ts && <span className="text-[11px] text-neutral-400">{item.ts}</span>}
           </div>
         )}
-        {item.text && <div className="max-w-[560px] text-[13px] leading-[1.55] text-neutral-800 whitespace-pre-wrap">{item.text}</div>}
+        {item.text && <div className={cn(THREAD_TEXT_W, 'text-[13px] leading-[1.55] text-neutral-800 whitespace-pre-wrap')}>{item.text}</div>}
         <ThreadCards cards={item.cards} />
       </div>
     </div>

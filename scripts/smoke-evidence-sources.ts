@@ -242,7 +242,9 @@ async function main() {
   ok('S6 a teammate close is stamped evidence:teammate and narrated with who did it (activity title + the drain line)',
     /role === 'teammate' \? 'evidence:teammate'/.test(settle) && /attribution\s*\?\s*`Resolved \(\$\{attribution\}\)/.test(settle) && /attribution \? `\$\{work\.description\} — \$\{attribution\}`/.test(settle));
   ok('S7 the forward doors + the sweep + the reverse door match with SETTLE_MATCH (every row, teammates)',
-    (settle.match(/SETTLE_MATCH\)/g) ?? []).length >= 2 && /matchEvidence\(pool, p\.work, nowISO, SETTLE_MATCH\)/.test(src('lib/work/evidence-sweep.ts'))
+    // ⟲ RE-POINTED W18: the sweep matches through matchEvidenceReport (the same SETTLE_MATCH, plus the
+    // count of matched pieces the per-type bounds left out — NO SILENT CAPS).
+    (settle.match(/SETTLE_MATCH\)/g) ?? []).length >= 2 && /matchEvidenceReport\(pool, p\.work, nowISO, SETTLE_MATCH\)/.test(src('lib/work/evidence-sweep.ts'))
     && /matchEvidence\(pool, work, nowISO, SETTLE_MATCH\)/.test(src('lib/work/evidence-nominator.ts')));
   ok('S8 no source list outside the registry (the nominator reaches rows only through evidenceSource / EVIDENCE_SOURCES)',
     !/from\('calendar_events'\)|from\('meeting_transcripts'\)|from\('action_commits'\)/.test(src('lib/work/evidence-nominator.ts')));

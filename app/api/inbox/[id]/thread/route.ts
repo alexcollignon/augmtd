@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { plainBody } from '@/lib/core/text';
 import { loadUserRules } from '@/lib/inbox/rules/load';
 import { classifyItem, type ItemType } from '@/lib/inbox/classify-item';
 import { getUnderstanding, type ItemRelevance } from '@/lib/inbox/item-understanding';
@@ -100,7 +101,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   // the `emails` columns so the shared <ThreadMessages/> component (used by both the inbox and the
   // Home item-detail) can consume these rows directly, including HTML bodies + To/CC recipients.
   const messages = rows.map((e) => {
-    const body: string | null = typeof e.body === 'string' ? e.body : null;
+    // W18.B · THE PLAIN BODY IS PLAIN at read time too: rows synced before the parse fix stored a
+    // mailer's HTML text/plain part verbatim — served as text here, no data write needed.
+    const body: string | null = typeof e.body === 'string' ? plainBody(e.body) : null;
     return {
       id: e.id as string,
       from: (e.from_address as string) ?? null,

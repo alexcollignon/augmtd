@@ -23,6 +23,11 @@ import { addresseeOfStamp, addresseeFromNudgeTitle, addresseeWithdrawn, loadUser
 import type { UserForms } from '@/lib/commitments/extraction-truth';
 import { isHandHeld, isPoolRowHandHeld, type HandKind } from '@/lib/prepare/hand';
 import { STAGING_LAW_VERSION } from '@/lib/prepare/staging-law';
+// W18.B · A DRAFT SPEAKS THE THREAD'S LANGUAGE — pure leaves (zero IO, client-safe).
+import { draftLanguageMiss } from '@/lib/context/draft-language';
+import { detectLanguage } from '@/lib/inbox/detect-language';
+import { plainBody } from '@/lib/core/text';
+import { languageName as languageNameOf } from '@/lib/inbox/item-understanding';
 
 export type PreparedKind = 'reply_draft' | 'nudge_draft' | 'deliverable' | 'invite' | 'forward' | 'paste_pack';
 
@@ -80,6 +85,11 @@ export type PreparedArtifact = {
    *  `falseClaim` (never live) so the pass re-prepares the send through TODAY's verifier — the
    *  platform heals its own legacy sends; no operator list. */
   stagingStale?: boolean;
+  /** W18.B · A DRAFT SPEAKS THE THREAD'S LANGUAGE: a machine draft whose words are positively in
+   *  another language than its thread (the whole body, or a greeting/sign-off line). Rides
+   *  `falseClaim` (never live) so the existing re-prepare trip re-drafts only these — no
+   *  DRAFT_LAW_VERSION corpus re-draft; this flag only words the reason. */
+  wrongLanguage?: boolean;
   /** TRUE ADDRESSEES (W7.3): who the words are FOR, stamped at production (a legacy nudge's title
    *  carries it). Served so a card can address its To from what the words were written for. */
   addressee?: Addressee | null;
@@ -149,6 +159,9 @@ export type ItemTruthFacts = {
   /** W13 · the file ids staged as this item's BASE (pool rows `role: 'base'`) — a draft riding one is
    *  sending the old file as the answer, and its words' completion claims are unsupported. */
   baseFileIds?: string[] | null;
+  /** W18.B · the language the item's thread is written in (detected on its own words; the stored
+   *  understanding fills a null). Absent/null = the language floor is off (fail-safe). */
+  language?: string | null;
 };
 
 /** W13 · the item's BASE file ids, read off its pool rows (the unstage writer's `role: 'base'`). Pure. */
@@ -193,6 +206,11 @@ export function stampTruth<T extends PreparedArtifact>(arts: T[], facts: ItemTru
     //     global voice). Withdrawn so only THESE re-draft (no DRAFT_LAW_VERSION corpus re-draft).
     if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft') && !a.hand && facts.mailbox
       && signsAsOtherIdentity(a.content, facts.mailbox)) { a.falseClaim = true; a.wrongIdentity = true; }
+    //   · W18.B · A DRAFT SPEAKS THE THREAD'S LANGUAGE — a stored machine draft written (wholly, or in
+    //     its greeting/sign-off) in another language than its thread is withdrawn; the re-prepare
+    //     trip re-drafts only these, through today's checked drafter. Positive evidence only.
+    if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft') && !a.hand && facts.language
+      && draftLanguageMiss(plainBody(a.content), facts.language)) { a.falseClaim = true; a.wrongLanguage = true; }
   }
   return arts;
 }
@@ -307,8 +325,12 @@ export function inboxTruthFacts(sd: unknown): ItemTruthFacts | null {
   const s = (sd ?? null) as { subject?: unknown; body?: unknown; received_at?: unknown; understanding?: unknown } | null;
   if (!s) return null;
   const text = [typeof s.subject === 'string' ? s.subject : '', typeof s.body === 'string' ? s.body.slice(0, 4000) : ''].filter(Boolean).join('\n');
-  const ownership = (s.understanding && typeof s.understanding === 'object') ? (s.understanding as { ownership?: unknown }).ownership : null;
-  return { text: text || null, anchorIso: typeof s.received_at === 'string' ? s.received_at : null, obligationOpen: ownership === 'you_owe' };
+  const u = (s.understanding && typeof s.understanding === 'object') ? (s.understanding as { ownership?: unknown; language?: unknown }) : null;
+  const ownership = u ? u.ownership : null;
+  // W18.B · the thread's language — the drafter's own precedence (detect on the words first; the
+  // stored understanding fills a null). The body is read as text (a stored HTML body converts).
+  const language = detectLanguage(plainBody(text)) || languageNameOf(typeof u?.language === 'string' ? u.language : null);
+  return { text: text || null, anchorIso: typeof s.received_at === 'string' ? s.received_at : null, obligationOpen: ownership === 'you_owe', language };
 }
 
 type PreparedFrom = { emailId?: string | null; receivedAt?: string | null } | null;
@@ -348,6 +370,7 @@ export function isLiveArtifact(a: PreparedArtifact): boolean {
 export function withdrawnReasonOf(a: PreparedArtifact): string | null {
   if (a.outsideWindow) return 'outside the window they stated';
   if (a.wrongIdentity) return 'it was signed as another of your mailboxes';
+  if (a.wrongLanguage) return 'it was written in a different language than the thread'; // W18.B
   if (a.baseAsAnswer) return 'it attached the current version as if it were the finished work';
   if (a.stagingStale) return 'its file was matched under an older rule — re-checking it';
   if (a.falseClaim) return 'its words claimed work that is not done';

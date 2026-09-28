@@ -81,6 +81,9 @@ export function isNoMoveNotice(args: {
 }): boolean {
   const { u, rawKind, fromEmail, fromName, subject, workState, campaignEcho, selfEcho, listMail } = args;
   if (campaignEcho === true) return true;
+  // W18 · A RELAY IS A NOTICE (lib/inbox/relay-digest.ts): an automated digest of the user's OWN mail
+  // asks nothing of them — its asks live on the threads it cites. Only the relay floor writes the flag.
+  if (u?.relay === true) return true;
   if (selfEcho === true || (selfEcho === undefined && isOwnCoworkerSender(fromEmail))) return true;
   const auto = isAutomatedSenderStrong(fromEmail, fromName, subject);
   const kind = (u?.mailKind ?? rawKind ?? '').toLowerCase();

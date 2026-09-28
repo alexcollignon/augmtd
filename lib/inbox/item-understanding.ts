@@ -85,6 +85,12 @@ export type ItemUnderstanding = {
   effort?: 'quick' | 'medium' | 'deep';
   /** Classification confidence 0–100 (how sure the model is about role/relevance). Absent = unknown. */
   confidence?: number;
+  /** W18 · A RELAY IS A NOTICE (lib/inbox/relay-digest.ts): true when an AUTOMATED sender relays or
+   *  summarises the user's OWN mail (a digest, an assistant's recap, "N items processed"). Written only
+   *  by the relay floor (which also floors relevance/ownership/ask); the notice law demotes it. */
+  relay?: boolean;
+  /** W18 — the user's own inbox items the relay's words cite (structural provenance, ≤ 8 ids). */
+  relayOf?: string[];
   /** Schema version, so a later change can be detected/backfilled. */
   _v?: number;
 };
@@ -146,6 +152,13 @@ export function coerceUnderstanding(raw: unknown): ItemUnderstanding | null {
   // confidence: 0–100 (accept number or numeric string).
   const confN = typeof r.confidence === 'number' ? r.confidence : (typeof r.confidence === 'string' && /^\d+$/.test(r.confidence) ? Number(r.confidence) : NaN);
   if (!Number.isNaN(confN) && confN >= 0 && confN <= 100) out.confidence = Math.round(confN);
+  // relay (W18): a real boolean or its string form; relayOf: uuid-shaped ids only.
+  if (r.relay === true || r.relay === 'true') out.relay = true;
+  else if (r.relay === false || r.relay === 'false') out.relay = false;
+  if (Array.isArray(r.relayOf)) {
+    const ids = (r.relayOf as unknown[]).filter((x): x is string => typeof x === 'string' && /^[0-9a-f-]{36}$/i.test(x)).slice(0, 8);
+    if (ids.length) out.relayOf = ids;
+  }
   return out;
 }
 

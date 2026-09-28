@@ -35,6 +35,7 @@ import {
 import { THREAD_CARD_KINDS } from '@/components/thread/types';
 // W17 · NO WAITING — the ONE placeholder for a widget still being made (shape per widget kind).
 import { PreparingSlot } from '@/components/thread/preparing-slot';
+import { DeedButton } from '@/components/thread/deed-pair';
 // THE HOSTS — the very components the room, the deep-dive and the Home band mount.
 import ApprovalCard from '@/components/home/approval-card';
 import InputCard from '@/components/home/input-card';
@@ -115,6 +116,15 @@ const FRAME_PREVIEW = (
     </div>
   </div>
 );
+
+/** W18.A · a conversation as the one thread door serves it (oldest→newest) — the open card's input. */
+const CAT_THREAD = [
+  { id: 'ct1', author: 'Jordan Vance', address: 'jordan@acme.test', when: 'Aug 28', body: 'Hi both — sharing the pilot outline we discussed. Ten seats to start, ops pair from week one.' },
+  { id: 'ct2', author: 'You', when: 'Aug 29', body: 'Thanks Jordan. The outline works for us; I will send the terms draft next week.\n\nOn Thu, Aug 28, 2026 at 10:02 AM Jordan <jordan@acme.test> wrote:\n> Hi both — sharing the pilot outline' },
+  { id: 'ct3', author: 'Jordan Vance', address: 'jordan@acme.test', when: 'Sep 10', body: 'Could you send the early-graduation wording before Thursday? The board wants it in the pack.\n\nBest regards,\nJordan' },
+  { id: 'ct4', author: 'Mia Ruiz', address: 'mia@acme.test', when: 'Sep 15', body: 'Thanks — taking this to the board on Thursday. Two things I need first: the early-graduation wording, and whether the platform fee is waived for the whole pilot.' },
+  { id: 'ct5', author: 'Mia Ruiz', address: 'mia@acme.test', when: 'Sep 16', body: 'Adding our ops lead — she owns the seat rollout on our side.' },
+];
 
 /** The message being forwarded / decided on — THE ONE OBJECT CARD, mounted whole. */
 const SOURCE_EMAIL_NODE = (
@@ -585,7 +595,7 @@ const SECTIONS: Section[] = [
           toneOptions: [{ id: 't1', label: 'Warmer' }, { id: 't2', label: 'More formal' }],
           onPickTone: noop,
           onSend: noop, sendLabel: 'Send reply', receipt: 'ready to send',
-          bodyHint: 'click anywhere to edit · mirrors the thread’s language',
+          bodyHint: 'click anywhere to edit',
         }} />,
       },
       {
@@ -789,16 +799,40 @@ const SECTIONS: Section[] = [
     owner: 'lib/inbox/thread-door.ts serves the tail; the kit clips nothing and reads no clock',
     specimens: [
       {
-        label: 'source · email (the thread tail + what came with it)',
+        // W18.A · THE ONE EMAIL CARD — a mail client's header (sender + address, date at the right,
+        // the "to" line, the subject), the newest message in its own words, older ones folded.
+        label: 'source · email, collapsed (the header · the tail · what came with it · "Open thread")',
         node: <ThreadCardView card={{
           kind: 'source', id: 'cat-so-1', source: 'email',
-          who: 'Jordan Vance', when: 'Sep 16', title: 'Re: pilot terms',
+          who: 'Jordan Vance', fromAddress: 'jordan@acme.test', to: 'to you, mia@acme.test +1', when: 'Sep 16', title: 'Re: pilot terms',
           messages: [
-            { id: 'sm1', author: 'Jordan Vance', body: 'Thanks — taking this to the board on Thursday. Two things I need first: the early-graduation wording, and whether the platform fee is waived for the whole pilot…' },
-            { id: 'sm2', author: 'Mia Ruiz', body: 'Adding our ops lead — she owns the seat rollout on our side.' },
+            { id: 'sm1', author: 'Jordan Vance', when: 'Sep 15', body: 'Thanks — taking this to the board on Thursday. Two things I need first: the early-graduation wording, and whether the platform fee is waived for the whole pilot…' },
+            { id: 'sm2', author: 'Mia Ruiz', when: 'Sep 16', body: 'Adding our ops lead — she owns the seat rollout on our side.' },
           ],
+          earlierCount: 3,
           files: [{ name: 'pilot-terms.pdf', size: 184_320, onOpen: noop }],
-          openLabel: 'Thread →', onOpen: noop,
+          thread: { messages: CAT_THREAD, highlightId: 'ct3' },
+        }} />,
+      },
+      {
+        // W18.A · OPEN THREAD EXPANDS IN PLACE — never a navigation. The whole conversation in the
+        // card (plain text, older folded to a line), scrolled to and marking the item's own message.
+        label: 'source · email, expanded (the whole conversation in place · the item\'s message marked · "Collapse")',
+        node: <ThreadCardView card={{
+          kind: 'source', id: 'cat-so-1x', source: 'email',
+          who: 'Jordan Vance', fromAddress: 'jordan@acme.test', to: 'to you, mia@acme.test +1', when: 'Sep 16', title: 'Re: pilot terms',
+          messages: [{ id: 'sm2x', author: 'Mia Ruiz', when: 'Sep 16', body: 'Adding our ops lead — she owns the seat rollout on our side.' }],
+          earlierCount: 4,
+          thread: { messages: CAT_THREAD, highlightId: 'ct3', startOpen: true },
+        }} />,
+      },
+      {
+        label: 'source · email, expanded while the conversation is still being read',
+        node: <ThreadCardView card={{
+          kind: 'source', id: 'cat-so-1y', source: 'email',
+          who: 'Jordan Vance', when: 'Sep 16', title: 'Re: pilot terms',
+          messages: [{ id: 'sm2y', author: 'Mia Ruiz', body: 'Adding our ops lead — she owns the seat rollout on our side.' }],
+          thread: { messages: null, startOpen: true },
         }} />,
       },
       {
@@ -820,7 +854,7 @@ const SECTIONS: Section[] = [
         }} />,
       },
       {
-        label: 'source · email, no door and a file that is a FACT (no handler)',
+        label: 'source · email, no door (no conversation served) and a file that is a FACT (no handler)',
         node: <ThreadCardView card={{
           kind: 'source', id: 'cat-so-4', source: 'email', who: 'Rowan Blake', when: 'Sep 18',
           title: 'Invoice 4192 — payment terms',
@@ -1355,6 +1389,31 @@ function PiecesBlock() {
           ))}
           <ThreadHeader title="Max" leadFace={{ id: 'max', name: 'Max', status: 'working' }}
             subtitle="Research & briefings · 2 workflows running" />
+        </div>
+      </section>
+
+      {/* W18.A · THE ONE DONE / DISMISS PAIR — every host (the item header, the one-at-a-time card,
+          the row kit) renders these; neutral at rest, a faint emerald / rose on hover and focus. */}
+      <section className="flex flex-col gap-4 border-t border-neutral-200/70 pt-6">
+        <div className="flex flex-col gap-0.5">
+          <h2 className="text-[13px] font-semibold text-neutral-900">the Done / Dismiss pair</h2>
+          <p className="text-[11.5px] text-neutral-400">components/thread/deed-pair.tsx · the item header (sm) · the one-at-a-time card (lg) · the looks-done emphasis · hover or tab to see the tint</p>
+        </div>
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-1.5">
+            <DeedButton deed="done" onClick={noop} />
+            <DeedButton deed="dismiss" onClick={noop} />
+            <span className="ml-2 font-mono text-[11px] text-neutral-400">header · at rest</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <DeedButton deed="done" onClick={noop} emphasis />
+            <DeedButton deed="dismiss" onClick={noop} />
+            <span className="ml-2 font-mono text-[11px] text-neutral-400">header · looks done (Done rests on its tint)</span>
+          </div>
+          <div className="flex max-w-[640px] items-stretch gap-2">
+            <DeedButton deed="dismiss" size="lg" onClick={noop} keyHint="←" />
+            <DeedButton deed="done" size="lg" onClick={noop} keyHint="→" />
+          </div>
         </div>
       </section>
 

@@ -41,7 +41,7 @@ import { fetchAllRows } from '@/lib/utils/fetch-all';
 import { readPlans } from '@/lib/store/item-plans';
 import { getPersonEntities } from '@/lib/entities/people';
 import {
-  loadEvidencePool, matchEvidence, resolveCommitmentKeys, inboxKeys, scopeOf, SETTLE_MATCH,
+  loadEvidencePool, matchEvidenceReport, resolveCommitmentKeys, inboxKeys, scopeOf, SETTLE_MATCH,
   type Evidence, type EvidencePool, type OpenWork,
 } from '@/lib/work/evidence-nominator';
 import { loadWorkEntities } from '@/lib/evidence/identity';
@@ -110,6 +110,8 @@ export type UserEvidencePlan = {
   /** nominated rows, in the priority order */
   queue: EvidenceQueueEntry[];
   pool: EvidencePool['stats'] | null;
+  /** W18 — matched evidence pieces the per-type bounds did not nominate (summed over the queue). */
+  evidenceLeftBehind?: number;
 };
 
 const INBOX_ACTIONABLE = 'work_state.in.(work_prepared,decision_required,action_required),rule_type.eq.needs_reply';
@@ -173,8 +175,9 @@ export async function planUserEvidence(admin: SupabaseClient, userId: string, no
   if (!since) return { ...base, queue: [], pool: null };
   const pool = await loadEvidencePool(admin, userId, since, scopeOf(pending.map((p) => p.work)), { registry, nowISO });
 
+  let evidenceLeftBehind = 0;
   const nominated = pending
-    .map((p) => ({ ...p, evidence: matchEvidence(pool, p.work, nowISO, SETTLE_MATCH) }))
+    .map((p) => { const r = matchEvidenceReport(pool, p.work, nowISO, SETTLE_MATCH); evidenceLeftBehind += r.leftBehind; return { ...p, evidence: r.evidence }; })
     .filter((p) => p.evidence.length > 0);
   const stored = new Map<string, string>();
   if (nominated.length) {
@@ -184,7 +187,7 @@ export async function planUserEvidence(admin: SupabaseClient, userId: string, no
   const queue = orderEvidenceQueue(nominated.map((n) => ({
     ...n, tier: evidenceTier(stored.get(`${n.kind}:${n.id}`) ?? null, fulfillmentSigOf(n.evidence)),
   })));
-  return { ...base, queue, pool: pool.stats ?? null };
+  return { ...base, queue, pool: pool.stats ?? null, evidenceLeftBehind };
 }
 
 // ── THE PASS ────────────────────────────────────────────────────────────────────────────────────
@@ -195,6 +198,8 @@ export type EvidenceSweepResult = {
   inbox: LaneTally;
   expiry: { judged: number; expired: number; leftBehind: number; deferred: number };
   pool: EvidencePool['stats'] | null;
+  /** W18 — matched evidence the per-type bounds did not nominate this pass (reported, never silent). */
+  evidenceLeftBehind: number;
   /** everything this pass did not reach (budget + caps, both lanes, + expiry) — counted, never silent */
   leftBehind: number;
   elapsedMs: number;
@@ -217,11 +222,13 @@ export async function runEvidenceSweep(admin: SupabaseClient, userId: string, op
   const out: EvidenceSweepResult = {
     commitments: tally(), inbox: tally(),
     expiry: { judged: 0, expired: 0, leftBehind: 0, deferred: 0 },
-    pool: null, leftBehind: 0, elapsedMs: 0,
+    pool: null, evidenceLeftBehind: 0, leftBehind: 0, elapsedMs: 0,
   };
 
   const plan = await planUserEvidence(admin, userId);
   out.commitments.open = plan.openCommitments; out.inbox.open = plan.openInbox; out.pool = plan.pool;
+  out.evidenceLeftBehind = plan.evidenceLeftBehind ?? 0;
+  if (out.evidenceLeftBehind) console.log(`[evidence-sweep] ${out.evidenceLeftBehind} matched evidence piece(s) beyond the per-type bounds were not nominated (${userId.slice(0, 8)})`);
   for (const e of plan.queue) out[e.kind === 'commitment' ? 'commitments' : 'inbox'].nominated++;
 
   // ── THE EVIDENCE LANE — the priority order, a bounded pool of workers, fresh-only caps. ──
