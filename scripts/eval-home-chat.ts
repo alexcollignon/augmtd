@@ -29,8 +29,14 @@
 //                                                          # host, the model stubbed at the transport
 //   npx tsx scripts/eval-home-chat.ts --pack workshop --user <uuid>   # DRY RUN for a real user (estimate at
 //                                                          # that user's tier rates; reads only)
-// Flags: --only <ids|groups>  --system augmtd|baseline|both  --max-eur <n> (default 2)
-//        --judge-model <model>  --no-judge  --client rls|admin (default rls)  --out <path>
+// Flags: --only <ids|groups>  --system augmtd|baseline|reference|all (default all; `both` = augmtd+baseline)
+//        --repeat <n> (default 1) — each scenario n times per system: mean ± sd, check pass-rate
+//        --max-eur <n> (default 2)  --no-judge  --client rls|admin (default rls)  --out <path>
+//        --judge-model <model> (default claude-opus-5-5) · --reference-model <model> (default claude-opus-5-5)
+//               — a claude-* id rides the anthropic provider through lib/ai/factory.ts getEndpointClient
+//        --merge <a.json,b.json> — fold saved runs in for systems this run does not execute (the
+//               report's .json sibling); the reference and baseline do not depend on product code
+//   (C) REFERENCE (W24) — a strong model (Opus) with "You are a helpful assistant." — the bar above.
 //        --pack core|workshop (default core) — scenario pack; --only selects within it. `workshop` =
 //               what a sovereign, no-mailbox pilot workspace tried + the workshop exercise set (w1–w7).
 //        --user <uuid> — OWNER-REQUESTED ONLY: run as that REAL user instead of the probe host. The
@@ -50,11 +56,13 @@ import { mkdirSync, writeFileSync } from 'fs';
 import path from 'path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { PACKS, selectScenarios } from './eval-home-chat.fixtures';
+import { readFileSync } from 'fs';
 import {
   type Scenario, type SystemAdapter, type JudgeAdapter, type ChatTurn, type TurnOutput, type TurnSignals, type SystemId,
-  type EstimateRates, DEFAULT_RATES, estimateCost, runEval, renderReport, buildJudgePrompt, parseJudge,
+  type EstimateRates, type EvalResult, DEFAULT_RATES, SYSTEM_IDS, estimateCost, runEval, renderReport, buildJudgePrompt, parseJudge,
+  mergeResults, parityVerdict, statsFor, recheckResult,
 } from './lib/eval/home-chat-harness';
-import { installMeter, metered, orphanCalls, meterAdapterClient, currentBucket, type MeterBucket, type StubFn } from './lib/eval/meter';
+import { installMeter, metered, orphanCalls, meterAdapterClient, currentBucket, EVAL_PRICING, type MeterBucket, type StubFn } from './lib/eval/meter';
 import { installNoPersistGuard } from './lib/eval/no-persist';
 import { runSelfCheck } from './lib/eval/self-check';
 
@@ -63,11 +71,21 @@ const argv = process.argv.slice(2);
 const flag = (n: string) => argv.includes(`--${n}`);
 const opt = (n: string): string | null => { const i = argv.indexOf(`--${n}`); return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : null; };
 const only = opt('only')?.split(',') ?? null;
-const systemArg = (opt('system') ?? 'both') as 'augmtd' | 'baseline' | 'both';
-if (!['augmtd', 'baseline', 'both'].includes(systemArg)) { console.error('--system must be augmtd|baseline|both'); process.exit(2); }
-const systemIds: SystemId[] = systemArg === 'both' ? ['augmtd', 'baseline'] : [systemArg];
+// W24 — `--system` takes one id, a comma list, `both` (augmtd+baseline, the W22 default) or `all`.
+const systemArg = opt('system') ?? 'all';
+const systemIds: SystemId[] = systemArg === 'all' ? [...SYSTEM_IDS] : systemArg === 'both' ? ['augmtd', 'baseline']
+  : systemArg.split(',').map((x) => x.trim()) as SystemId[];
+if (!systemIds.length || systemIds.some((id) => !SYSTEM_IDS.includes(id))) { console.error('--system must be augmtd|baseline|reference|all (or a comma list, or both)'); process.exit(2); }
 const maxEur = Number(opt('max-eur') ?? '2');
-const judgeModelOverride = opt('judge-model');
+const repeat = Math.max(1, Math.floor(Number(opt('repeat') ?? '1')));
+if (!Number.isFinite(repeat)) { console.error('--repeat must be a number'); process.exit(2); }
+/** W24 — the judge and the reference are a STRONG model, different from the systems under test, on
+ *  the anthropic provider through the factory's own endpoint door (getEndpointClient). */
+const DEFAULT_STRONG_MODEL = 'claude-opus-5-5';
+const judgeModel = opt('judge-model') ?? DEFAULT_STRONG_MODEL;
+const referenceModel = opt('reference-model') ?? DEFAULT_STRONG_MODEL;
+/** W24 — fold saved runs (their JSON) in for the systems this run does not execute. */
+const mergePaths = opt('merge')?.split(',').filter(Boolean) ?? [];
 const useJudge = !flag('no-judge');
 const packName = opt('pack') ?? 'core';
 if (!PACKS[packName]) { console.error(`--pack must be one of: ${Object.keys(PACKS).join(', ')}`); process.exit(2); }
@@ -106,17 +124,26 @@ async function ratesFor(admin: SupabaseClient | null, userId: string | null): Pr
   }
 }
 
+function strongRates(model: string): EstimateRates {
+  const p = EVAL_PRICING[model];
+  return p ? { ...DEFAULT_RATES, convoInPer1M: p.inputPer1M, convoOutPer1M: p.outputPer1M } : DEFAULT_RATES;
+}
+
 function printPlan(r: Rates): void {
-  const est = estimateCost(scenarios, systemIds, useJudge, r.rates);
-  console.log(`\nW22.C — Home chat vs plain model call · pack ${packName} · ${scenarios.length} scenario(s) · systems: ${systemIds.join(' + ')} · judge: ${useJudge ? (judgeModelOverride ?? "the run user's conversation model") : 'off'}${realUser ? ` · REAL USER ${realUser.slice(0, 8)} (no-persist)` : noPersist ? ' · no-persist' : ''}`);
+  const tierSys = systemIds.filter((id) => id !== 'reference');
+  const est = estimateCost(scenarios, tierSys, false, r.rates);
+  const refEst = systemIds.includes('reference') ? estimateCost(scenarios, ['baseline'], false, strongRates(referenceModel)).baselineEur : 0;
+  const judgeEst = useJudge ? estimateCost(scenarios, systemIds, true, strongRates(judgeModel)).judgeEur : 0;
+  const total = (est.augmtdEur + est.baselineEur + refEst + judgeEst) * repeat;
+  console.log(`\nW24 — Home chat vs plain model calls · pack ${packName} · ${scenarios.length} scenario(s) × repeat ${repeat} · systems: ${systemIds.join(' + ')} · judge: ${useJudge ? judgeModel : 'off'}${realUser ? ` · REAL USER ${realUser.slice(0, 8)} (no-persist)` : noPersist ? ' · no-persist' : ''}`);
   console.log('\n  id   turns  title');
   for (const s of scenarios) console.log(`  ${s.id.padEnd(4)} ${String(s.turns.length).padStart(5)}  ${s.title}`);
-  console.log(`\nESTIMATE (conservative, ${r.label}):`);
-  console.log(`  ${est.turns} system turns + ${est.judgeCalls} judge calls`);
-  if (systemIds.includes('augmtd')) console.log(`  AUGMTD   ≈ €${est.augmtdEur.toFixed(2)}  (grounding + classifier + agent loop per turn)`);
-  if (systemIds.includes('baseline')) console.log(`  baseline ≈ €${est.baselineEur.toFixed(2)}`);
-  if (useJudge) console.log(`  judge    ≈ €${est.judgeEur.toFixed(2)}`);
-  console.log(`  TOTAL    ≈ €${est.totalEur.toFixed(2)}   (hard stop: --max-eur ${maxEur})`);
+  console.log(`\nESTIMATE (conservative, ${r.label}; reference ${referenceModel} + judge ${judgeModel} at their rates), × ${repeat} repeat(s):`);
+  if (systemIds.includes('augmtd')) console.log(`  AUGMTD    ≈ €${(est.augmtdEur * repeat).toFixed(2)}  (grounding + agent loop per turn)`);
+  if (systemIds.includes('baseline')) console.log(`  baseline  ≈ €${(est.baselineEur * repeat).toFixed(2)}`);
+  if (systemIds.includes('reference')) console.log(`  reference ≈ €${(refEst * repeat).toFixed(2)}`);
+  if (useJudge) console.log(`  judge     ≈ €${(judgeEst * repeat).toFixed(2)}`);
+  console.log(`  TOTAL     ≈ €${total.toFixed(2)}   (hard stop: --max-eur ${maxEur})`);
 }
 
 // ── Supabase: admin (probe resolution, ground truth, factory config) + the RLS session shim ──────
@@ -162,6 +189,11 @@ async function probeGroundTruth(admin: SupabaseClient, userId: string): Promise<
     .order('start_time', { ascending: true }).limit(10);
   lines.push(cal.error ? `calendar events (−2d…+1d): unknown (${cal.error.message})`
     : `calendar events (−2d…+1d): ${cal.count ?? cal.data?.length ?? 0}${(cal.data ?? []).map((r) => `\n  - ${String(r.title ?? '(untitled)').slice(0, 90)} @ ${String(r.start_time).slice(0, 16)}`).join('')}`);
+  const kf = await admin.from('knowledge_files').select('id, filename', { count: 'exact' }).eq('user_id', userId).limit(10);
+  lines.push(kf.error ? `knowledge files: unknown (${kf.error.message})`
+    : `knowledge files on record (the assistant can read these): ${kf.count ?? kf.data?.length ?? 0}${(kf.data ?? []).map((r) => `\n  - ${String((r as { filename?: string }).filename ?? '(unnamed)').slice(0, 90)}`).join('')}`);
+  const prof = await admin.from('context_profiles').select('profile_type').eq('user_id', userId);
+  lines.push(prof.error ? `user profile: unknown (${prof.error.message})` : `user profile sections on record: ${(prof.data ?? []).map((r) => r.profile_type).join(', ') || 'none'}`);
   lines.push(`today: ${new Date(now).toISOString().slice(0, 10)}`);
   return lines.join('\n');
 }
@@ -180,8 +212,13 @@ async function realUserGroundTruth(admin: SupabaseClient, userId: string): Promi
     count('commitments open', admin.from('commitments').select('id', { count: 'exact', head: true }).eq('user_id', userId).eq('status', 'open')),
     count('calendar events (−2d…+1d)', admin.from('calendar_events').select('id', { count: 'exact', head: true }).eq('user_id', userId)
       .gte('start_time', new Date(now - 2 * 864e5).toISOString()).lte('start_time', new Date(now + 864e5).toISOString())),
+    // W24 — what else the assistant may legitimately know (COUNTS only, never content): files in the
+    // knowledge base, and whether a user profile (role/company the intake lane learned) is on record.
+    count('knowledge files on record (the assistant can read these)', admin.from('knowledge_files').select('id', { count: 'exact', head: true }).eq('user_id', userId)),
+    count('user profile sections on record (role/company etc.; the assistant may use them)', admin.from('context_profiles').select('user_id', { count: 'exact', head: true }).eq('user_id', userId)),
   ]);
-  lines.push(`today: ${new Date(now).toISOString().slice(0, 10)}`, 'nothing was attached to any turn in this run');
+  lines.push(`today: ${new Date(now).toISOString().slice(0, 10)}`, 'nothing was attached to any turn in this run',
+    'Contents are NOT shown here: a statement consistent with a non-zero count above (e.g. naming a file on record, or the user\'s role from their profile) is not an invention.');
   return lines.join('\n');
 }
 
@@ -193,7 +230,9 @@ async function price(bucket: MeterBucket, from = 0): Promise<Priced> {
   const out: Priced = { promptTokens: 0, completionTokens: 0, costEur: 0, calls: calls.length, unmetered: 0, models: [] };
   for (const c of calls) {
     out.promptTokens += c.promptTokens; out.completionTokens += c.completionTokens;
-    if (c.metered) out.costEur += estimateCostEur(c.model, c.promptTokens, c.completionTokens); else out.unmetered++;
+    const ev = EVAL_PRICING[c.model];
+    if (c.metered) out.costEur += ev ? (c.promptTokens * ev.inputPer1M + c.completionTokens * ev.outputPer1M) / 1e6 : estimateCostEur(c.model, c.promptTokens, c.completionTokens);
+    else out.unmetered++;
     if (!out.models.includes(c.model)) out.models.push(c.model);
   }
   return out;
@@ -281,23 +320,74 @@ async function baselineSystem(admin: SupabaseClient, userId: string): Promise<Sy
   };
 }
 
+/** W24 — a model the factory can reach BY NAME: a `claude-*` id rides the anthropic provider through
+ *  the factory's explicit-endpoint door (getEndpointClient — the same buildClient + param floor as
+ *  production traffic, platform credentials); anything else is taken to be the run user's own tier
+ *  model and rides getAIClient(user, 'conversation'). Never an SDK client built here. */
+async function strongClient(admin: SupabaseClient, userId: string, model: string): Promise<{ client: import('openai').default; model: string; route: string }> {
+  const { getEndpointClient, getAIClient } = await import('../lib/ai/factory');
+  if (/^claude-/.test(model)) {
+    const client = getEndpointClient({ provider: 'anthropic', model, baseURL: 'https://api.anthropic.com/v1' } as Parameters<typeof getEndpointClient>[0]);
+    return { client, model, route: 'anthropic (factory getEndpointClient)' };
+  }
+  const r = await getAIClient(userId, 'conversation', admin);
+  meterAdapterClient(r.client);
+  if (r.model !== model) throw new Error(`model ${model} is neither a claude-* id nor the run user's conversation model (${r.model})`);
+  return { client: r.client, model, route: `user tier ${r.tier}` };
+}
+
+async function referenceSystem(admin: SupabaseClient, userId: string): Promise<SystemAdapter> {
+  const { aiCreate } = await import('../lib/ai/factory');
+  const { client: ai, model, route } = await strongClient(admin, userId, referenceModel);
+  return {
+    id: 'reference', label: `Reference (strong model, "You are a helpful assistant.", ${route})`, model,
+    async turn(history: ChatTurn[], userText: string, scenario: Scenario): Promise<TurnOutput> {
+      const t0 = Date.now();
+      const { result, bucket } = await metered(() => aiCreate(ai, {
+        model, max_tokens: 4096,
+        messages: [
+          { role: 'system', content: 'You are a helpful assistant.' },
+          ...history.map((h) => ({ role: h.role, content: h.text })),
+          { role: 'user', content: userText },
+        ],
+      }));
+      const latencyMs = Date.now() - t0;
+      buckets.push({ label: `${scenario.id}/reference`, bucket, counted: bucket.calls.length });
+      const p = await price(bucket);
+      return {
+        text: String(result.choices?.[0]?.message?.content ?? ''), latencyMs, promptTokens: p.promptTokens, completionTokens: p.completionTokens,
+        costEur: p.costEur, calls: p.calls, unmeteredCalls: p.unmetered, models: p.models, signals: { cards: [], sideEffects: [] },
+      };
+    },
+  };
+}
+
+/** The judge: a strong model different from the systems, blind to system names. A reply with no
+ *  readable scores is retried ONCE with a JSON-only nudge, so no scenario goes unscored. */
 async function factoryJudge(admin: SupabaseClient, userId: string): Promise<JudgeAdapter> {
-  const { getAIClient, aiCreate } = await import('../lib/ai/factory');
-  const resolved = await getAIClient(userId, 'conversation', admin);
-  meterAdapterClient(resolved.client);
-  if (judgeModelOverride && realUser) console.log(`⚠ --judge-model ${judgeModelOverride} is sent through the REAL user's ${resolved.tier} client — it must be a model that tier's provider serves.`);
-  const model = judgeModelOverride ?? resolved.model;
+  const { aiCreate } = await import('../lib/ai/factory');
+  const { client, model } = await strongClient(admin, userId, judgeModel);
   return {
     model,
     async judge(input) {
       const { system, user } = buildJudgePrompt(input);
-      const { result, bucket } = await metered(() => aiCreate(resolved.client, {
-        model, max_tokens: 900, messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-      }));
-      buckets.push({ label: `${input.scenario.id}/judge`, bucket, counted: bucket.calls.length });
-      const p = await price(bucket);
-      const parsed = parseJudge(String(result.choices?.[0]?.message?.content ?? ''));
-      return { ...parsed, costEur: p.costEur, promptTokens: p.promptTokens, completionTokens: p.completionTokens };
+      let cost = 0, pIn = 0, pOut = 0;
+      let parsed: ReturnType<typeof parseJudge> = { scores: {}, notes: '', failures: [], error: 'not run' };
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const messages = [{ role: 'system' as const, content: system }, { role: 'user' as const, content: user },
+          ...(attempt ? [{ role: 'user' as const, content: 'Your previous reply could not be read as JSON. Reply again with ONLY the JSON object — no prose, no code fence.' }] : [])];
+        try {
+          const { result, bucket } = await metered(() => aiCreate(client, { model, max_tokens: 2000, messages }));
+          buckets.push({ label: `${input.scenario.id}/judge`, bucket, counted: bucket.calls.length });
+          const p = await price(bucket);
+          cost += p.costEur; pIn += p.promptTokens; pOut += p.completionTokens;
+          parsed = parseJudge(String(result.choices?.[0]?.message?.content ?? ''));
+        } catch (e) {
+          parsed = { scores: {}, notes: '', failures: [], error: `judge call failed: ${(e as Error).message}` };
+        }
+        if (!parsed.error) break;
+      }
+      return { ...parsed, costEur: cost, promptTokens: pIn, completionTokens: pOut };
     },
   };
 }
@@ -322,6 +412,22 @@ async function writeReport(body: string, name: string): Promise<string> {
 }
 
 async function main() {
+  // 0 · W24 --recheck <saved.json>: re-run the CURRENT deterministic checks over a saved run and re-render
+  // its report (zero AI, zero network). The judge's scores are kept as they were.
+  const recheck = opt('recheck');
+  if (recheck) {
+    const saved = recheckResult(JSON.parse(readFileSync(recheck, 'utf8')) as EvalResult, pack);
+    const out = recheck.replace(/\.json$/, '') + '-rechecked.md';
+    writeFileSync(out, renderReport(saved, { notes: [`Re-checked ${new Date().toISOString()} with the current fixtures' deterministic checks (judge scores unchanged). Pack: **${packName}**.`] }));
+    writeFileSync(out.replace(/\.md$/, '.json'), JSON.stringify(saved, (k, v) => (k === 'checks' && Array.isArray(v) && v.length && typeof v[0]?.run === 'function' ? undefined : v)));
+    for (const sr of saved.scenarios) {
+      const cells = saved.systems.map((sys) => { const st = statsFor(sr, sys.id); return `${sys.id} ${st?.mean != null ? st.mean.toFixed(2) : '–'}±${st?.sd != null ? st.sd.toFixed(2) : '–'} ${st ? `${st.checksPassed}/${st.checksTotal}` : ''}`; });
+      const pv = parityVerdict(sr);
+      console.log(`  ${sr.scenario.id.padEnd(3)} ${cells.join(' | ')}${pv ? ` | Δ ${pv.delta!.toFixed(2)} ${pv.ok ? '✓' : `✗ ${pv.why}`}` : ''}`);
+    }
+    console.log(`rechecked report → ${out}`);
+    return;
+  }
   // 1 · pure self-check: stubs through the harness, zero AI, zero network.
   if (flag('self-check') && !flag('wire')) {
     const { report, problems } = await runSelfCheck(scenarios);
@@ -372,10 +478,11 @@ async function main() {
   const systems: SystemAdapter[] = [];
   if (systemIds.includes('augmtd')) systems.push(await augmtdSystem(session.client, userId));
   if (systemIds.includes('baseline')) systems.push(await baselineSystem(admin!, userId));
+  if (systemIds.includes('reference')) systems.push(await referenceSystem(admin!, userId));
   const judge = useJudge ? await factoryJudge(admin!, userId) : null;
 
-  const result = await runEval({
-    scenarios, systems, judge, budgetEur: maxEur,
+  let result: EvalResult = await runEval({
+    scenarios, systems, judge, budgetEur: maxEur, repeat,
     groundTruth: () => (realUser ? realUserGroundTruth(admin!, userId) : probeGroundTruth(admin!, userId)),
     log: (l) => console.log(l),
   });
@@ -388,13 +495,27 @@ async function main() {
   const orphans = orphanCalls();
   const orphanCost = (await price({ calls: orphans })).costEur;
   result.totalCostEur += late + orphanCost;
+  const runCostEur = result.totalCostEur;
+  const ranSystems = [...systemIds];
+  // Saved runs folded in (their spend was counted when they ran — not added again).
+  const merged: string[] = [];
+  for (const mp of mergePaths) {
+    const other = JSON.parse(readFileSync(mp, 'utf8')) as EvalResult & { judgeModel?: string | null };
+    if (other.judgeModel !== result.judgeModel) console.log(`⚠ --merge ${mp}: judge ${other.judgeModel} ≠ this run's ${result.judgeModel} — scores are not comparable`);
+    const before = result.systems.length;
+    result = mergeResults(result, other);
+    merged.push(`${path.basename(mp)} (${result.systems.slice(before).map((s) => s.id).join(', ') || 'nothing new'}; judge ${other.judgeModel})`);
+  }
 
   // The models ACTUALLY called, per system (from the metered transport, not the config).
-  const modelsUsed = Object.fromEntries(systemIds.map((id) => [id, [...new Set(result.scenarios.flatMap((sr) => (sr.runs[id]?.outputs ?? []).flatMap((o) => o.models)))]]));
-  const blocked = result.scenarios.flatMap((sr) => Object.values(sr.runs).flatMap((r) => (r?.outputs ?? []).flatMap((o) => o.blockedWrites ?? [])));
+  const modelsUsed = Object.fromEntries(ranSystems.map((id) => [id, [...new Set(result.scenarios.flatMap((sr) => (sr.repeats[id] ?? []).flatMap((r) => r.outputs.flatMap((o) => o.models))))]]));
+  const blocked = result.scenarios.flatMap((sr) => ranSystems.flatMap((id) => (sr.repeats[id] ?? []).flatMap((r) => r.outputs.flatMap((o) => o.blockedWrites ?? []))));
   const notes = [
     ...(realUser ? [`**REAL USER ${userId.slice(0, 8)} — owner-requested, no-persist mode.** Service-role client, no session minted, no roomKey; every Supabase write refused (${blocked.length} refused: ${[...new Set(blocked)].join(', ') || 'none'}).`] : noPersist ? [`No-persist guard armed: ${blocked.length} write(s) refused.`] : []),
-    `Models actually called: ${systemIds.map((id) => `${id} → ${modelsUsed[id].join(' + ') || 'none metered'}`).join(' · ')}${result.judgeModel ? ` · judge → ${result.judgeModel}` : ''}.`,
+    `Models actually called: ${ranSystems.map((id) => `${id} → ${modelsUsed[id].join(' + ') || 'none metered'}`).join(' · ')}${result.judgeModel ? ` · judge → ${result.judgeModel}` : ''}.`,
+    ...(merged.length ? [`Merged from saved runs (same fixtures; spend counted when they ran): ${merged.join('; ')}.`] : []),
+    `This run's metered spend: €${runCostEur.toFixed(4)} (streamed calls with no reported usage are estimated at ~4 chars/token).`,
+    ...(realUser ? ['**Data boundary (real-user mode):** the baseline runs on the user\'s tier; the reference sees only the scripted fixture turns; the judge (anthropic provider) sees fixture text, the three systems\' answers and account COUNTS only — no records are read into any prompt by the harness. The AUGMTD answers themselves are generated on the user\'s tier from their account and are what the judge reads.'] : []),
     `Scenario pack: **${packName}**.`,
     `AUGMTD entry: \`converse(client, ${realUser ? 'realUserId' : 'probeUserId'}, { kind: 'global' }, q, { history, skills })\` — the call app/api/home/ask/route.ts makes (JSON path), in-process on the ${realUser ? 'REAL user' : 'probe host'}; converse client = **${session.mode}**${session.note ? ` (${session.note})` : ''}.`,
     'No roomKey → no room turn persisted; the route\'s after() user-context lane and skill offer are not run (answer path only).',
@@ -403,9 +524,16 @@ async function main() {
   ];
   const report = renderReport(result, { title: wire ? 'W22.C — wire self-check (real core, stubbed model)' : undefined, notes });
   const tag = `${packName === 'core' ? '' : `${packName}-`}${realUser ? `user-${realUser.slice(0, 8)}-` : ''}`;
-  const out = await writeReport(report, wire ? `w22-eval-wire-${tag}${stamp}.md` : `w22-eval-${tag}${stamp}.md`);
-  console.log(`\nreport → ${out}\nTOTAL metered cost: €${result.totalCostEur.toFixed(4)}${result.budgetHit ? ' (BUDGET HIT — some runs skipped)' : ''}`);
-  for (const id of systemIds) console.log(`models used · ${id}: ${modelsUsed[id].join(' + ') || 'none metered'}`);
+  const out = await writeReport(report, wire ? `w24-eval-wire-${tag}${stamp}.md` : `w24-eval-${tag}${stamp}.md`);
+  // W24 — the raw result beside the report, so a later run can --merge it (check functions do not serialise).
+  writeFileSync(out.replace(/\.md$/, '') + '.json', JSON.stringify(result, (k, v) => (k === 'checks' && Array.isArray(v) && v.length && typeof v[0]?.run === 'function' ? undefined : v)));
+  console.log(`\nreport → ${out}\nTHIS RUN metered cost: €${runCostEur.toFixed(4)}${result.budgetHit ? ' (BUDGET HIT — some runs skipped)' : ''}`);
+  for (const id of ranSystems) console.log(`models used · ${id}: ${modelsUsed[id].join(' + ') || 'none metered'}`);
+  for (const sr of result.scenarios) {
+    const cells = result.systems.map((sys) => { const st = statsFor(sr, sys.id); return `${sys.id} ${st?.mean != null ? st.mean.toFixed(2) : '–'}±${st?.sd != null ? st.sd.toFixed(2) : '–'} ${st ? `${st.checksPassed}/${st.checksTotal}` : ''}`; });
+    const pv = parityVerdict(sr);
+    console.log(`  ${sr.scenario.id.padEnd(3)} ${cells.join(' | ')}${pv ? ` | Δ ${pv.delta!.toFixed(2)} ${pv.ok ? '✓' : `✗ ${pv.why}`}` : ''}`);
+  }
   if (result.judgeModel) console.log(`models used · judge: ${result.judgeModel}`);
   if (noPersist) console.log(`no-persist: ${blocked.length} write(s) refused${blocked.length ? ` (${[...new Set(blocked)].join(', ')})` : ''}`);
   if (wire) {

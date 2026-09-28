@@ -10,7 +10,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import OpenAI from 'openai';
 
-export type MeterCall = { model: string; promptTokens: number; completionTokens: number; metered: boolean; ms: number };
+export type MeterCall = { model: string; promptTokens: number; completionTokens: number; metered: boolean; /** W24 — tokens estimated (~4 chars/token), not reported */ estimated?: boolean; ms: number };
 export type MeterBucket = { calls: MeterCall[]; /** no-persist guard: writes refused while this bucket was current */ blocked?: string[] };
 export type StubFn = (params: Record<string, unknown>) => { content: string; promptTokens?: number; completionTokens?: number };
 
@@ -33,12 +33,55 @@ export function installMeter(opts: { stub?: StubFn } = {}): void {
     const t0 = Date.now();
     if (stub) return stubbed(bucket, model, params);
     const res = await orig.call(this, params, o) as { usage?: { prompt_tokens?: number; completion_tokens?: number } } | null;
-    const usage = res && !params.stream ? res.usage : undefined;
+    // W24 — A STREAMED CALL IS METERED TOO (the Home chat's loop always streams: W22–W23 reports showed
+    // its calls as "unmetered, €0"). The stream is wrapped; usage comes from the final chunk (the loop
+    // asks for include_usage), else an ESTIMATE at ~4 chars/token from the request and the streamed text.
+    if (params.stream && res && typeof (res as unknown as AsyncIterable<unknown>)[Symbol.asyncIterator] === 'function') {
+      return meterStream(res as unknown as AsyncIterable<StreamChunk>, bucket, model, params, t0);
+    }
+    const usage = res ? res.usage : undefined;
     bucket.calls.push({
       model, promptTokens: usage?.prompt_tokens ?? 0, completionTokens: usage?.completion_tokens ?? 0,
       metered: !!usage, ms: Date.now() - t0,
     });
     return res;
+  };
+}
+
+type StreamChunk = { usage?: { prompt_tokens?: number; completion_tokens?: number } | null; choices?: Array<{ delta?: { content?: string | null; tool_calls?: unknown } }> };
+
+/** The request's approximate size in characters (messages + tools) — the estimate's input side. */
+function requestChars(params: Record<string, unknown>): number {
+  const msgs = (params.messages ?? []) as Array<{ content?: unknown; tool_calls?: unknown }>;
+  let n = 0;
+  for (const m of msgs) n += (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content ?? '').length) + (m.tool_calls ? JSON.stringify(m.tool_calls).length : 0);
+  if (params.tools) n += JSON.stringify(params.tools).length;
+  return n;
+}
+
+function meterStream(src: AsyncIterable<StreamChunk>, bucket: MeterBucket, model: string, params: Record<string, unknown>, t0: number): AsyncIterable<StreamChunk> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      let usage: StreamChunk['usage'] = null;
+      let outChars = 0;
+      try {
+        for await (const chunk of src) {
+          if (chunk?.usage) usage = chunk.usage;
+          const d = chunk?.choices?.[0]?.delta;
+          if (d?.content) outChars += d.content.length;
+          if (d?.tool_calls) outChars += JSON.stringify(d.tool_calls).length;
+          yield chunk;
+        }
+      } finally {
+        const reported = !!usage && ((usage.prompt_tokens ?? 0) + (usage.completion_tokens ?? 0)) > 0;
+        bucket.calls.push({
+          model,
+          promptTokens: reported ? usage!.prompt_tokens ?? 0 : Math.ceil(requestChars(params) / 4),
+          completionTokens: reported ? usage!.completion_tokens ?? 0 : Math.ceil(outChars / 4),
+          metered: true, estimated: !reported, ms: Date.now() - t0,
+        });
+      }
+    },
   };
 }
 
@@ -110,3 +153,10 @@ export async function metered<T>(fn: () => Promise<T>): Promise<{ result: T; buc
 
 /** Calls made outside any bucket (should stay empty; reported so nothing is silently unbilled). */
 export function orphanCalls(): MeterCall[] { return orphan.calls; }
+
+/** W24 — eval-only rates (€/1M) for models the product's pricing table does not carry because no
+ *  tier routes to them (the reference system and the judge). $4/$20 per 1M converted like the table. */
+export const EVAL_PRICING: Record<string, { inputPer1M: number; outputPer1M: number }> = {
+  'claude-opus-5-5': { inputPer1M: 3.7, outputPer1M: 18.4 },
+  'claude-opus-5': { inputPer1M: 4.6, outputPer1M: 23.0 },
+};
