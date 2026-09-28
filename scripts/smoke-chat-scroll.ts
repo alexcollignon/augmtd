@@ -10,7 +10,8 @@
  *       answer, marked stopped, with no failure line.
  *   D · "WORKED FOR Xs ›" — only when the answer had steps or took > 3 s.
  *   E · COPYABLE BLOCKS — a fenced prompt/email/text/draft/message block (and any code) renders with a
- *       label, Copy and Expand; placeholders are marked; no HTML path.
+ *       label, Copy and Expand; placeholders are marked; no HTML path. W23.1: a writing block renders
+ *       its own markdown (same safe renderer, subordinate headings); Copy stays the raw source.
  *   F · CHAT TITLES — a room's title is its name; the first-message fallback stands only without one.
  *   G · READING WIDTH — answers read at the column's width; cards keep the one card width.
  *
@@ -21,7 +22,7 @@ import { join } from 'path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Markdown } from '../components/thread/markdown-view';
-import { codeBlockKind, splitPlaceholders } from '../components/thread/markdown';
+import { codeBlockKind, parseMarkdown, splitPlaceholders } from '../components/thread/markdown';
 import {
   FOLLOW_THRESHOLD_PX, isNearBottom, nextFollowing, showJumpButton, workedForLine, recordStep, activityOf, WORKED_MIN_MS,
 } from '../components/home/chat-surface';
@@ -138,6 +139,19 @@ console.log('E · COPYABLE BLOCKS');
     ['prompt', 'email', 'text', 'draft', 'message'].every((k) => codeBlockKind(k).writing) && !codeBlockKind('ts').writing && codeBlockKind('ts').label === 'ts');
   ok('E6 placeholder splitting is plain-text runs only', JSON.stringify(splitPlaceholders('Hi [FIRST NAME], see [a note]'))
     === JSON.stringify([{ t: 'text', v: 'Hi ' }, { t: 'ph', v: '[FIRST NAME]' }, { t: 'text', v: ', see [a note]' }]));
+  const raw = '# EXECUTIVE SUMMARY\n\n## Market Size & Segmentation\n\n- Key market size for [YEAR]\n- **Bold** point\n\n<b>not html</b>';
+  const w = md('```prompt\n' + raw + '\n```');
+  const wb = w.slice(w.indexOf('data-writing-body'));
+  ok('E8 a writing block renders its OWN markdown (W23.1): headings + lists, no literal "# " at a line start, relative (subordinate) heading sizes',
+    /<h2[^>]*>EXECUTIVE SUMMARY<\/h2>/.test(wb) && /<h3[^>]*>Market Size &amp; Segmentation<\/h3>/.test(wb) && /<ul[^>]*><li/.test(wb)
+    && !/(^|>|\n)\s*#{1,6} /.test(wb) && !/text-\[16px\]/.test(wb), wb);
+  ok('E9 placeholders pill inside list items; raw HTML stays text',
+    /<li[^>]*>Key market size for <span data-placeholder="true"[^>]*>\[YEAR\]</.test(wb) && !/<b>not html/.test(wb) && /&lt;b&gt;not html/.test(wb));
+  const pb = parseMarkdown('```prompt\n' + raw + '\n```')[0] as { v?: string };
+  ok('E10 Copy takes the RAW fenced text byte-for-byte (markdown preserved)',
+    pb.v === raw && /navigator\.clipboard\.writeText\(value\)/.test(view) && /<CopyBlock lang=\{b\.lang\} value=\{b\.v\}/.test(view));
+  const cb = md('```md\n# raw\n- raw\n```');
+  ok('E11 a code block stays raw monospace (no rendering)', /<pre[^>]*><code># raw\n- raw<\/code><\/pre>/.test(cb) && !/<h\d/.test(cb));
   ok('E7 Expand is a dialog (Escape closes it), portaled out of the thread', /role="dialog" aria-modal="true"/.test(view) && /createPortal\(/.test(view) && /e\.key === 'Escape'/.test(view));
 }
 

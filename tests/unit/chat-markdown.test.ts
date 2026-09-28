@@ -1,6 +1,8 @@
 // W22.B — THE CHAT FEELS LIKE A REAL AI CHAT: the one markdown parser, the paste law, the in-flight words.
 import { describe, expect, it } from 'vitest';
 import React from 'react';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { parseMarkdown, parseInline, safeHref, markdownToPlain } from '@/components/thread/markdown';
 import { Markdown } from '@/components/thread/markdown-view';
@@ -127,5 +129,61 @@ describe('never a silent ring', () => {
   it('a half-written tag never flashes', () => {
     expect(trimPartialTag('the renewal [L')).toBe('the renewal ');
     expect(trimPartialTag('done [L1]')).toBe('done [L1]');
+  });
+});
+
+// W23.1 — a prose block (prompt · email · text · draft · message) renders its own markdown through the
+// same safe renderer; Copy takes the raw fenced text; code blocks stay raw.
+describe('a writing block renders its markdown, copies its source', () => {
+  const RAW = '# EXECUTIVE SUMMARY\n\nFor [CLIENT NAME], **three** points:\n\n## Market Size & Segmentation\n\n- Key market size for [YEAR]\n- *Growth* drivers\n\n| Segment | Share |\n|---|---|\n| [SEGMENT A] | 40% |\n\n<script>alert(1)</script>';
+  const out = html('Here you go:\n\n```prompt\n' + RAW + '\n```\n\nAnything else?');
+  const body = out.slice(out.indexOf('data-writing-body'), out.indexOf('Anything else?'));
+
+  it('headings and lists render — no literal "# " / "## " at a line start', () => {
+    expect(body).toMatch(/<h2[^>]*>EXECUTIVE SUMMARY<\/h2>/);
+    expect(body).toMatch(/<h3[^>]*>Market Size &amp; Segmentation<\/h3>/);
+    expect(body).toMatch(/<ul[^>]*><li[^>]*>Key market size for /);
+    expect(body).toMatch(/<strong[^>]*>three<\/strong>/);
+    expect(body).toMatch(/<em[^>]*>Growth<\/em>/);
+    expect(body).toMatch(/<table/);
+    expect(body).not.toMatch(/(^|>|\n)\s*#{1,6} /);
+    expect(body).not.toMatch(/(^|>|\n)- Key/);
+  });
+  it('headings inside the block are subordinate to the chat\'s own (relative sizes, not the chat scale)', () => {
+    expect(body).not.toMatch(/text-\[16px\]|text-\[15px\] font-semibold/);
+    expect(body).toMatch(/<h2 class="text-\[1\.04em\] font-semibold/);
+  });
+  it('placeholders pill inside list items, paragraphs and table cells', () => {
+    expect(body).toMatch(/<li[^>]*>Key market size for <span data-placeholder="true"[^>]*>\[YEAR\]<\/span>/);
+    expect(body).toMatch(/data-placeholder="true"[^>]*>\[CLIENT NAME\]</);
+    expect(body).toMatch(/<td[^>]*><span data-placeholder="true"[^>]*>\[SEGMENT A\]</);
+  });
+  it('raw HTML inside the block is text', () => {
+    expect(body).not.toMatch(/<script/i);
+    expect(body).toMatch(/&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  });
+  it('the Copy payload is the raw fenced content, byte for byte (markdown preserved)', () => {
+    const b = parseMarkdown('Intro\n\n```prompt\n' + RAW + '\n```\n');
+    const code = b.find((x) => x.t === 'code') as { v: string; lang: string };
+    expect(code.lang).toBe('prompt');
+    expect(code.v).toBe(RAW);
+    const view = readFileSync(join(process.cwd(), 'components/thread/markdown-view.tsx'), 'utf8');
+    expect(view).toMatch(/navigator\.clipboard\.writeText\(value\)/);
+    expect(view).toMatch(/<CopyBlock lang=\{b\.lang\} value=\{b\.v\}/);
+  });
+  it('a code block stays raw and monospace', () => {
+    const c = html('```md\n# not a heading\n- not a list\n```');
+    expect(c).toMatch(/<pre[^>]*><code># not a heading\n- not a list<\/code><\/pre>/);
+    expect(c).not.toMatch(/<h\d/);
+  });
+  it('a streaming, unclosed prose block renders progressively — earlier nodes keep their shape', () => {
+    const src = 'x\n\n```prompt\n# TITLE\n\n- one\n- two [NAME]';
+    const a = html(src.slice(0, src.indexOf('- two')));
+    const b2 = html(src);
+    expect(a).toMatch(/data-copy-block="writing"/);
+    expect(b2).toMatch(/<h2[^>]*>TITLE<\/h2>/);
+    // the prefix's heading renders identically in the longer stream
+    expect(b2).toContain(a.match(/<h2[^>]*>TITLE<\/h2>/)![0]);
+    expect(b2).toMatch(/data-placeholder="true"[^>]*>\[NAME\]</);
   });
 });

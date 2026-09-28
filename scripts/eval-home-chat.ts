@@ -27,20 +27,35 @@
 //   npx tsx scripts/eval-home-chat.ts --self-check         # zero AI, zero network: stubs through the harness
 //   npx tsx scripts/eval-home-chat.ts --self-check --wire  # zero AI: the REAL core in-process on the probe
 //                                                          # host, the model stubbed at the transport
+//   npx tsx scripts/eval-home-chat.ts --pack workshop --user <uuid>   # DRY RUN for a real user (estimate at
+//                                                          # that user's tier rates; reads only)
 // Flags: --only <ids|groups>  --system augmtd|baseline|both  --max-eur <n> (default 2)
 //        --judge-model <model>  --no-judge  --client rls|admin (default rls)  --out <path>
+//        --pack core|workshop (default core) — scenario pack; --only selects within it. `workshop` =
+//               what a sovereign, no-mailbox pilot workspace tried + the workshop exercise set (w1–w7).
+//        --user <uuid> — OWNER-REQUESTED ONLY: run as that REAL user instead of the probe host. The
+//               service-role (admin) client is used throughout — NO session or magic link is minted
+//               for a real user (--client rls is refused). No roomKey is passed, and the NO-PERSIST
+//               GUARD (scripts/lib/eval/no-persist.ts) refuses every Supabase write the core attempts,
+//               including via service-role clients it builds itself; refused writes are listed per
+//               turn in the report. Baseline AND judge use getAIClient(<that user>, 'conversation'),
+//               so all calls stay on that user's tier (bedrock_optimised → Bedrock EU); the models
+//               actually used are printed. Judge ground truth = that user's inbox/commitment/calendar
+//               COUNTS. A loud banner prints first.
+//        --no-persist — the same write guard on the probe host (implied by --user).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { config } from 'dotenv';
 config({ path: '.env.local' });
 import { mkdirSync, writeFileSync } from 'fs';
 import path from 'path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { SCENARIOS, selectScenarios } from './eval-home-chat.fixtures';
+import { PACKS, selectScenarios } from './eval-home-chat.fixtures';
 import {
   type Scenario, type SystemAdapter, type JudgeAdapter, type ChatTurn, type TurnOutput, type TurnSignals, type SystemId,
-  estimateCost, runEval, renderReport, buildJudgePrompt, parseJudge,
+  type EstimateRates, DEFAULT_RATES, estimateCost, runEval, renderReport, buildJudgePrompt, parseJudge,
 } from './lib/eval/home-chat-harness';
-import { installMeter, metered, orphanCalls, type MeterBucket, type StubFn } from './lib/eval/meter';
+import { installMeter, metered, orphanCalls, meterAdapterClient, currentBucket, type MeterBucket, type StubFn } from './lib/eval/meter';
+import { installNoPersistGuard } from './lib/eval/no-persist';
 import { runSelfCheck } from './lib/eval/self-check';
 
 // ── args ─────────────────────────────────────────────────────────────────────────────────────────
@@ -54,18 +69,49 @@ const systemIds: SystemId[] = systemArg === 'both' ? ['augmtd', 'baseline'] : [s
 const maxEur = Number(opt('max-eur') ?? '2');
 const judgeModelOverride = opt('judge-model');
 const useJudge = !flag('no-judge');
-const clientMode = (opt('client') ?? 'rls') as 'rls' | 'admin';
-const scenarios = selectScenarios(only);
+const packName = opt('pack') ?? 'core';
+if (!PACKS[packName]) { console.error(`--pack must be one of: ${Object.keys(PACKS).join(', ')}`); process.exit(2); }
+const pack = PACKS[packName];
+const realUser = opt('user');
+if (argv.includes('--user') && !realUser) { console.error('--user needs a user id'); process.exit(2); }
+if (realUser && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(realUser)) { console.error('--user must be a user uuid'); process.exit(2); }
+if (realUser && opt('client') === 'rls') { console.error('--user never mints a session for a real user: --client rls is refused (admin is implied)'); process.exit(2); }
+const clientMode = (realUser ? 'admin' : (opt('client') ?? 'rls')) as 'rls' | 'admin';
+const noPersist = !!realUser || flag('no-persist');
+const scenarios = selectScenarios(only, pack);
 const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 
-if (!scenarios.length) { console.error(`no scenario matches --only ${only?.join(',')} (have: ${SCENARIOS.map((s) => s.id).join(', ')})`); process.exit(2); }
+if (!scenarios.length) { console.error(`no scenario matches --only ${only?.join(',')} in pack ${packName} (have: ${pack.map((s) => s.id).join(', ')})`); process.exit(2); }
 
-function printPlan(): void {
-  const est = estimateCost(scenarios, systemIds, useJudge);
-  console.log(`\nW22.C — Home chat vs plain model call · ${scenarios.length} scenario(s) · systems: ${systemIds.join(' + ')} · judge: ${useJudge ? (judgeModelOverride ?? 'conversation model (claude-sonnet-5 on standard)') : 'off'}`);
+function realUserBanner(userId: string): void {
+  const line = '█'.repeat(78);
+  console.log(`\n${line}\n██  REAL USER ${userId.slice(0, 8)} — owner-requested, no-persist mode\n██  service-role client · no session minted · no roomKey · every Supabase write refused\n${line}`);
+}
+
+type Rates = { rates: EstimateRates; label: string };
+/** The estimate prices the run user's CONVERSATION model (every system call is billed at it — the
+ *  tier's cheaper volume models make this conservative). Resolving it is a read, never an AI call. */
+async function ratesFor(admin: SupabaseClient | null, userId: string | null): Promise<Rates> {
+  const fallback: Rates = { rates: DEFAULT_RATES, label: 'claude-sonnet-5 rates €1.85/€9.20 per 1M in/out' };
+  if (!admin || !userId) return fallback;
+  try {
+    const { getAIClient } = await import('../lib/ai/factory');
+    const { MODEL_PRICING } = await import('../lib/ai/pricing');
+    const r = await getAIClient(userId, 'conversation', admin);
+    const p = MODEL_PRICING[r.model];
+    if (!p) return { ...fallback, label: `${fallback.label} — tier ${r.tier} model ${r.model} has no pricing entry` };
+    return { rates: { ...DEFAULT_RATES, convoInPer1M: p.inputPer1M, convoOutPer1M: p.outputPer1M }, label: `tier ${r.tier} · ${r.model} rates €${p.inputPer1M}/€${p.outputPer1M} per 1M in/out` };
+  } catch (e) {
+    return { ...fallback, label: `${fallback.label} — could not resolve the user's tier: ${(e as Error).message}` };
+  }
+}
+
+function printPlan(r: Rates): void {
+  const est = estimateCost(scenarios, systemIds, useJudge, r.rates);
+  console.log(`\nW22.C — Home chat vs plain model call · pack ${packName} · ${scenarios.length} scenario(s) · systems: ${systemIds.join(' + ')} · judge: ${useJudge ? (judgeModelOverride ?? "the run user's conversation model") : 'off'}${realUser ? ` · REAL USER ${realUser.slice(0, 8)} (no-persist)` : noPersist ? ' · no-persist' : ''}`);
   console.log('\n  id   turns  title');
   for (const s of scenarios) console.log(`  ${s.id.padEnd(4)} ${String(s.turns.length).padStart(5)}  ${s.title}`);
-  console.log(`\nESTIMATE (conservative, claude-sonnet-5 rates €1.85/€9.20 per 1M in/out):`);
+  console.log(`\nESTIMATE (conservative, ${r.label}):`);
   console.log(`  ${est.turns} system turns + ${est.judgeCalls} judge calls`);
   if (systemIds.includes('augmtd')) console.log(`  AUGMTD   ≈ €${est.augmtdEur.toFixed(2)}  (grounding + classifier + agent loop per turn)`);
   if (systemIds.includes('baseline')) console.log(`  baseline ≈ €${est.baselineEur.toFixed(2)}`);
@@ -120,6 +166,25 @@ async function probeGroundTruth(admin: SupabaseClient, userId: string): Promise<
   return lines.join('\n');
 }
 
+/** A REAL user's ground truth: COUNTS only (explicit selects, head-only, errors surfaced) — enough for
+ *  the judge to know what the account holds without copying the user's content into the report. */
+async function realUserGroundTruth(admin: SupabaseClient, userId: string): Promise<string> {
+  const now = Date.now();
+  const count = async (label: string, q: PromiseLike<{ count: number | null; error: { message: string } | null }>) => {
+    const { count: n, error } = await q;
+    return error ? `${label}: unknown (${error.message})` : `${label}: ${n ?? 0}`;
+  };
+  const lines = await Promise.all([
+    count('inbox_items pending', admin.from('inbox_items').select('id', { count: 'exact', head: true }).eq('user_id', userId).eq('status', 'pending')),
+    count('inbox_items total', admin.from('inbox_items').select('id', { count: 'exact', head: true }).eq('user_id', userId)),
+    count('commitments open', admin.from('commitments').select('id', { count: 'exact', head: true }).eq('user_id', userId).eq('status', 'open')),
+    count('calendar events (−2d…+1d)', admin.from('calendar_events').select('id', { count: 'exact', head: true }).eq('user_id', userId)
+      .gte('start_time', new Date(now - 2 * 864e5).toISOString()).lte('start_time', new Date(now + 864e5).toISOString())),
+  ]);
+  lines.push(`today: ${new Date(now).toISOString().slice(0, 10)}`, 'nothing was attached to any turn in this run');
+  return lines.join('\n');
+}
+
 // ── metering → TurnOutput ────────────────────────────────────────────────────────────────────────
 type Priced = { promptTokens: number; completionTokens: number; costEur: number; calls: number; unmetered: number; models: string[] };
 async function price(bucket: MeterBucket, from = 0): Promise<Priced> {
@@ -164,7 +229,8 @@ async function augmtdSystem(client: SupabaseClient, userId: string): Promise<Sys
     resolveSkills = (c, u) => m.resolveSkillsForTurn(c, u, { kind: 'chief' }, undefined);
   } catch { /* the skills resolver is optional to the eval */ }
   const { getAIClient } = await import('../lib/ai/factory');
-  const { model } = await getAIClient(userId, 'conversation', client);
+  const { model, client: ai } = await getAIClient(userId, 'conversation', client);
+  meterAdapterClient(ai);
   return {
     id: 'augmtd', label: 'AUGMTD Home chat (converse, global scope)', model: `${model} + router/grounding`,
     async turn(history: ChatTurn[], userText: string, scenario: Scenario): Promise<TurnOutput> {
@@ -182,6 +248,7 @@ async function augmtdSystem(client: SupabaseClient, userId: string): Promise<Sys
       return {
         text: String(result?.say ?? ''), latencyMs, promptTokens: p.promptTokens, completionTokens: p.completionTokens,
         costEur: p.costEur, calls: p.calls, unmeteredCalls: p.unmetered, models: p.models, signals: signalsOf(result ?? {}),
+        ...(bucket.blocked?.length ? { blockedWrites: [...bucket.blocked] } : {}),
       };
     },
   };
@@ -190,6 +257,7 @@ async function augmtdSystem(client: SupabaseClient, userId: string): Promise<Sys
 async function baselineSystem(admin: SupabaseClient, userId: string): Promise<SystemAdapter> {
   const { getAIClient, aiCreate } = await import('../lib/ai/factory');
   const { client: ai, model } = await getAIClient(userId, 'conversation', admin);
+  meterAdapterClient(ai);
   return {
     id: 'baseline', label: 'Baseline (same model, "You are a helpful assistant.")', model,
     async turn(history: ChatTurn[], userText: string, scenario: Scenario): Promise<TurnOutput> {
@@ -216,6 +284,8 @@ async function baselineSystem(admin: SupabaseClient, userId: string): Promise<Sy
 async function factoryJudge(admin: SupabaseClient, userId: string): Promise<JudgeAdapter> {
   const { getAIClient, aiCreate } = await import('../lib/ai/factory');
   const resolved = await getAIClient(userId, 'conversation', admin);
+  meterAdapterClient(resolved.client);
+  if (judgeModelOverride && realUser) console.log(`⚠ --judge-model ${judgeModelOverride} is sent through the REAL user's ${resolved.tier} client — it must be a model that tier's provider serves.`);
   const model = judgeModelOverride ?? resolved.model;
   return {
     model,
@@ -255,36 +325,58 @@ async function main() {
   // 1 · pure self-check: stubs through the harness, zero AI, zero network.
   if (flag('self-check') && !flag('wire')) {
     const { report, problems } = await runSelfCheck(scenarios);
-    const out = await writeReport(report, `w22-eval-selfcheck-${stamp}.md`);
+    const out = await writeReport(report, `w22-eval-selfcheck-${packName === 'core' ? '' : `${packName}-`}${stamp}.md`);
     console.log(`self-check report → ${out}`);
     if (problems.length) { console.log(`✗ SELF-CHECK FAILED:\n  - ${problems.join('\n  - ')}`); process.exit(1); }
     console.log(`✓ self-check: ${scenarios.length} scenarios, good stub passes every deterministic check, refusing stub fails, judge prompt/parse round-trips, report complete.`);
     return;
   }
 
-  printPlan();
+  // The write guard goes in BEFORE any Supabase client exists (supabase-js reads global fetch per
+  // request, so clients the core builds later are covered too).
+  if (noPersist) {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    if (!url) throw new Error('NEXT_PUBLIC_SUPABASE_URL missing (.env.local) — the no-persist guard cannot arm');
+    installNoPersistGuard({ supabaseUrl: url, onBlock: (label) => { const b = currentBucket(); (b.blocked ??= []).push(label); } });
+  }
+  if (realUser) realUserBanner(realUser);
+
   const wire = flag('self-check') && flag('wire');
-  if (!wire && !flag('yes')) {
+  const live = wire || flag('yes');
+  // 2 · the meter goes in BEFORE the first factory client is built (see meter.ts).
+  if (live) installMeter(wire ? { stub: wireStub } : {});
+  const admin = realUser || live ? adminClient() : null;
+  if (realUser) {
+    const { data: prof, error } = await admin!.from('profiles').select('id').eq('id', realUser).maybeSingle();
+    if (error) throw new Error(`profiles lookup failed: ${error.message}`);
+    if (!prof) { console.error(`no profile for user ${realUser.slice(0, 8)} — refusing to run`); process.exit(2); }
+  }
+  printPlan(await ratesFor(admin, realUser));
+  if (!live) {
     console.log('\nDRY RUN — nothing spent. Re-run with --yes to spend (the orchestrator runs it).');
     return;
   }
 
-  // 2 · the meter goes in BEFORE the first factory client is built (see meter.ts).
-  installMeter(wire ? { stub: wireStub } : {});
-  const admin = adminClient();
-  const { resolveProbeUser, PROBE_EMAIL } = await import('./probe-user');
-  const userId = await resolveProbeUser(admin);
-  const session = clientMode === 'rls' ? await probeRlsClient(admin, PROBE_EMAIL) : { client: admin, mode: 'admin' as const, note: 'requested' };
-  console.log(`\nprobe host ${userId.slice(0, 8)} · converse client: ${session.mode}${session.note ? ` (${session.note})` : ''}${wire ? ' · MODEL STUBBED at the transport (zero AI)' : ''}`);
+  let userId: string;
+  let session: { client: SupabaseClient; mode: 'rls' | 'admin'; note?: string };
+  if (realUser) {
+    userId = realUser;
+    session = { client: admin!, mode: 'admin', note: 'REAL USER — service-role, no session minted, no-persist guard armed' };
+  } else {
+    const { resolveProbeUser, PROBE_EMAIL } = await import('./probe-user');
+    userId = await resolveProbeUser(admin!);
+    session = clientMode === 'rls' ? await probeRlsClient(admin!, PROBE_EMAIL) : { client: admin!, mode: 'admin' as const, note: 'requested' };
+  }
+  console.log(`\n${realUser ? `REAL USER ${userId.slice(0, 8)}` : `probe host ${userId.slice(0, 8)}`} · converse client: ${session.mode}${session.note ? ` (${session.note})` : ''}${noPersist ? ' · no-persist' : ''}${wire ? ' · MODEL STUBBED at the transport (zero AI)' : ''}`);
 
   const systems: SystemAdapter[] = [];
   if (systemIds.includes('augmtd')) systems.push(await augmtdSystem(session.client, userId));
-  if (systemIds.includes('baseline')) systems.push(await baselineSystem(admin, userId));
-  const judge = useJudge ? await factoryJudge(admin, userId) : null;
+  if (systemIds.includes('baseline')) systems.push(await baselineSystem(admin!, userId));
+  const judge = useJudge ? await factoryJudge(admin!, userId) : null;
 
   const result = await runEval({
     scenarios, systems, judge, budgetEur: maxEur,
-    groundTruth: () => probeGroundTruth(admin, userId),
+    groundTruth: () => (realUser ? realUserGroundTruth(admin!, userId) : probeGroundTruth(admin!, userId)),
     log: (l) => console.log(l),
   });
 
@@ -297,15 +389,25 @@ async function main() {
   const orphanCost = (await price({ calls: orphans })).costEur;
   result.totalCostEur += late + orphanCost;
 
+  // The models ACTUALLY called, per system (from the metered transport, not the config).
+  const modelsUsed = Object.fromEntries(systemIds.map((id) => [id, [...new Set(result.scenarios.flatMap((sr) => (sr.runs[id]?.outputs ?? []).flatMap((o) => o.models)))]]));
+  const blocked = result.scenarios.flatMap((sr) => Object.values(sr.runs).flatMap((r) => (r?.outputs ?? []).flatMap((o) => o.blockedWrites ?? [])));
   const notes = [
-    `AUGMTD entry: \`converse(client, probeUserId, { kind: 'global' }, q, { history, skills })\` — the call app/api/home/ask/route.ts makes (JSON path), in-process on the probe host; converse client = **${session.mode}**${session.note ? ` (${session.note})` : ''}.`,
+    ...(realUser ? [`**REAL USER ${userId.slice(0, 8)} — owner-requested, no-persist mode.** Service-role client, no session minted, no roomKey; every Supabase write refused (${blocked.length} refused: ${[...new Set(blocked)].join(', ') || 'none'}).`] : noPersist ? [`No-persist guard armed: ${blocked.length} write(s) refused.`] : []),
+    `Models actually called: ${systemIds.map((id) => `${id} → ${modelsUsed[id].join(' + ') || 'none metered'}`).join(' · ')}${result.judgeModel ? ` · judge → ${result.judgeModel}` : ''}.`,
+    `Scenario pack: **${packName}**.`,
+    `AUGMTD entry: \`converse(client, ${realUser ? 'realUserId' : 'probeUserId'}, { kind: 'global' }, q, { history, skills })\` — the call app/api/home/ask/route.ts makes (JSON path), in-process on the ${realUser ? 'REAL user' : 'probe host'}; converse client = **${session.mode}**${session.note ? ` (${session.note})` : ''}.`,
     'No roomKey → no room turn persisted; the route\'s after() user-context lane and skill offer are not run (answer path only).',
     `Background calls billed after their turn: ${lateCalls} (€${late.toFixed(4)}); calls outside any turn: ${orphans.length} (€${orphanCost.toFixed(4)}).`,
     ...(wire ? ['**WIRE SELF-CHECK — the model was stubbed at the transport. Scores are meaningless; this proves the in-process entry, metering and report.**'] : []),
   ];
   const report = renderReport(result, { title: wire ? 'W22.C — wire self-check (real core, stubbed model)' : undefined, notes });
-  const out = await writeReport(report, wire ? `w22-eval-wire-${stamp}.md` : `w22-eval-${stamp}.md`);
+  const tag = `${packName === 'core' ? '' : `${packName}-`}${realUser ? `user-${realUser.slice(0, 8)}-` : ''}`;
+  const out = await writeReport(report, wire ? `w22-eval-wire-${tag}${stamp}.md` : `w22-eval-${tag}${stamp}.md`);
   console.log(`\nreport → ${out}\nTOTAL metered cost: €${result.totalCostEur.toFixed(4)}${result.budgetHit ? ' (BUDGET HIT — some runs skipped)' : ''}`);
+  for (const id of systemIds) console.log(`models used · ${id}: ${modelsUsed[id].join(' + ') || 'none metered'}`);
+  if (result.judgeModel) console.log(`models used · judge: ${result.judgeModel}`);
+  if (noPersist) console.log(`no-persist: ${blocked.length} write(s) refused${blocked.length ? ` (${[...new Set(blocked)].join(', ')})` : ''}`);
   if (wire) {
     const aug = result.scenarios.flatMap((s) => s.runs.augmtd?.outputs ?? []);
     const errs = aug.filter((o) => o.error);

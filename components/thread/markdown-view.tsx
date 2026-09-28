@@ -41,9 +41,25 @@ function WithPlaceholders({ text }: { text: string }) {
   );
 }
 
+const placeholderText: MarkdownTextRenderer = (text) => <WithPlaceholders text={text} />;
+
+/** ── A WRITING BLOCK'S BODY (W23.1) — the prose inside a prompt/email/… block is itself markdown
+ *  (a generated prompt carries `# EXECUTIVE SUMMARY`, `- Key market size…`). It renders through the
+ *  SAME safe parser + renderer as the chat (no HTML path), in the `writing` variant: headings are
+ *  small bold lines subordinate to the chat's own, sizes inherit the block's, a nested fence is a
+ *  plain preformatted run (never a second Copy block), and every plain-text run marks its fill-in
+ *  placeholders — inside list items, headings, bold and table cells alike. Blocks keyed by position:
+ *  a streaming, unclosed block grows its last node only (the no-mutation law). */
+function WritingBody({ value }: { value: string }) {
+  const blocks = parseMarkdown(value);
+  return <>{blocks.map((b, i) => <Block key={i} b={b} k={`w${i}`} renderText={placeholderText} v="writing" />)}</>;
+}
+
 /** ── A COPYABLE BLOCK (W23.A) — a fenced block renders bordered, with its label, Copy and Expand.
- *  Writing (prompt · email · text · draft · message) reads as wrapped prose with its placeholders
- *  marked; anything else is code. Expand opens the same text full-width in a dialog. */
+ *  Writing (prompt · email · text · draft · message) reads as rendered prose (W23.1) with its
+ *  placeholders marked; anything else is code, raw and monospace. Copy always takes the RAW fenced
+ *  text byte-for-byte (the reader pastes the prompt elsewhere, markdown and all). Expand opens the
+ *  same rendering full-width in a dialog. */
 function CopyBlock({ lang, value, tail }: { lang: string; value: string; tail?: React.ReactNode }) {
   const kind = codeBlockKind(lang);
   const [copied, setCopied] = React.useState(false);
@@ -63,7 +79,7 @@ function CopyBlock({ lang, value, tail }: { lang: string; value: string; tail?: 
   }, [expanded]);
   const btn = 'inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11.5px] text-neutral-500 transition-colors hover:bg-neutral-200/60 hover:text-neutral-800 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-300';
   const body = (big: boolean) => (kind.writing
-    ? <div className={`whitespace-pre-wrap break-words px-3.5 py-3 text-neutral-800 ${big ? 'text-[15px] leading-[1.7]' : 'text-[13.5px] leading-[1.65]'}`}><WithPlaceholders text={value} /></div>
+    ? <div data-writing-body className={`space-y-2 break-words px-3.5 py-3 text-neutral-800 ${big ? 'text-[15px] leading-[1.7]' : 'text-[13.5px] leading-[1.65]'}`}><WritingBody value={value} /></div>
     : <pre className={`overflow-x-auto px-3.5 py-3 font-mono leading-[1.55] text-neutral-800 ${big ? 'text-[13.5px]' : 'text-[12.5px]'}`}><code>{value}</code></pre>);
   const actions = (inDialog: boolean) => (
     <span className="flex items-center gap-0.5">
@@ -134,22 +150,43 @@ function Inlines({ nodes, k, renderText }: { nodes: MdInline[]; k: string; rende
   );
 }
 
-const H_CLASS: Record<1 | 2 | 3 | 4, string> = {
-  1: 'text-[16px] font-semibold text-neutral-900 leading-snug pt-1',
-  2: 'text-[15px] font-semibold text-neutral-900 leading-snug pt-1',
-  3: 'text-[14px] font-semibold text-neutral-900 leading-snug',
-  4: 'text-[13.5px] font-semibold text-neutral-700 leading-snug',
+/** The chat's own heading scale, and the WRITING variant's (inside a prompt/email block): sizes
+ *  relative to the block's text, always below the chat's — a heading in a pasted prompt is a small
+ *  bold line, never a section title of the answer. */
+const H_CLASS: Record<'chat' | 'writing', Record<1 | 2 | 3 | 4, string>> = {
+  chat: {
+    1: 'text-[16px] font-semibold text-neutral-900 leading-snug pt-1',
+    2: 'text-[15px] font-semibold text-neutral-900 leading-snug pt-1',
+    3: 'text-[14px] font-semibold text-neutral-900 leading-snug',
+    4: 'text-[13.5px] font-semibold text-neutral-700 leading-snug',
+  },
+  writing: {
+    1: 'text-[1.04em] font-semibold text-neutral-900 leading-snug pt-0.5',
+    2: 'text-[1em] font-semibold text-neutral-900 leading-snug pt-0.5',
+    3: 'text-[1em] font-semibold text-neutral-800 leading-snug',
+    4: 'text-[0.96em] font-semibold text-neutral-700 leading-snug',
+  },
 };
 
-function Block({ b, k, renderText, tail }: { b: MdBlock; k: string; renderText: MarkdownTextRenderer; tail?: React.ReactNode }) {
+type Variant = 'chat' | 'writing';
+const TEXT_CLASS: Record<Variant, string> = {
+  chat: 'text-[14px] leading-[1.65] text-neutral-700',
+  writing: '',
+};
+const LI_CLASS: Record<Variant, string> = {
+  chat: 'pl-0.5 text-[14px] leading-[1.6] text-neutral-700',
+  writing: 'pl-0.5',
+};
+
+function Block({ b, k, renderText, tail, v = 'chat' }: { b: MdBlock; k: string; renderText: MarkdownTextRenderer; tail?: React.ReactNode; v?: Variant }) {
   switch (b.t) {
     case 'h': {
       const Tag = (`h${b.level + 1 > 6 ? 6 : b.level + 1}`) as 'h2' | 'h3' | 'h4' | 'h5';
-      return <Tag className={H_CLASS[b.level]}><Inlines nodes={b.c} k={k} renderText={renderText} />{tail}</Tag>;
+      return <Tag className={H_CLASS[v][b.level]}><Inlines nodes={b.c} k={k} renderText={renderText} />{tail}</Tag>;
     }
     case 'p':
       return (
-        <p className="text-[14px] leading-[1.65] text-neutral-700">
+        <p className={TEXT_CLASS[v] || undefined}>
           {b.lines.map((ln, i) => (
             <React.Fragment key={i}>{i > 0 && <br />}<Inlines nodes={ln} k={`${k}.${i}`} renderText={renderText} /></React.Fragment>
           ))}
@@ -159,18 +196,20 @@ function Block({ b, k, renderText, tail }: { b: MdBlock; k: string; renderText: 
     case 'hr':
       return <><hr className="border-neutral-200" />{tail}</>;
     case 'code':
+      // Inside a writing block a nested fence is a plain preformatted run — never a second Copy block.
+      if (v === 'writing') return <pre className="overflow-x-auto rounded bg-neutral-50 px-2.5 py-2 font-mono text-[0.92em] leading-[1.55]"><code>{b.v}</code>{tail}</pre>;
       return <CopyBlock lang={b.lang} value={b.v} tail={tail} />;
     case 'quote':
       return (
         <blockquote className="space-y-2 border-l-2 border-neutral-200 pl-3 text-neutral-600">
-          {b.c.map((c, i) => <Block key={i} b={c} k={`${k}.${i}`} renderText={renderText} tail={i === b.c.length - 1 ? tail : undefined} />)}
+          {b.c.map((c, i) => <Block key={i} b={c} k={`${k}.${i}`} renderText={renderText} v={v} tail={i === b.c.length - 1 ? tail : undefined} />)}
         </blockquote>
       );
     case 'table':
       return (
         <div>
           <div className="overflow-x-auto rounded-lg border border-neutral-200">
-            <table className="w-full border-collapse text-[13px]">
+            <table className={`w-full border-collapse ${v === 'writing' ? 'text-[0.95em]' : 'text-[13px]'}`}>
               <thead className="bg-neutral-50">
                 <tr>
                   {b.head.map((h, i) => (
@@ -203,13 +242,13 @@ function Block({ b, k, renderText, tail }: { b: MdBlock; k: string; renderText: 
           {b.items.map((it, i) => {
             const lastItem = i === b.items.length - 1;
             return (
-              <li key={i} className="pl-0.5 text-[14px] leading-[1.6] text-neutral-700">
+              <li key={i} className={LI_CLASS[v]}>
                 {it.c.map((ln, j) => (
                   <React.Fragment key={j}>{j > 0 && <br />}<Inlines nodes={ln} k={`${k}.${i}.${j}`} renderText={renderText} /></React.Fragment>
                 ))}
                 {it.children.length > 0 && (
                   <div className="mt-1 space-y-1">
-                    {it.children.map((ch, ci) => <Block key={ci} b={ch} k={`${k}.${i}.c${ci}`} renderText={renderText} tail={lastItem && ci === it.children.length - 1 ? tail : undefined} />)}
+                    {it.children.map((ch, ci) => <Block key={ci} b={ch} k={`${k}.${i}.c${ci}`} renderText={renderText} v={v} tail={lastItem && ci === it.children.length - 1 ? tail : undefined} />)}
                   </div>
                 )}
                 {lastItem && it.children.length === 0 ? tail : null}

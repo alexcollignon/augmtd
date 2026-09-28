@@ -3,9 +3,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   questionSentences, listItems, hasMarkdownTable, looksLikeRefusal, claimsSend, parseJudge, estimateCost,
-  runEval, renderReport, judgeMean, buildJudgePrompt,
+  runEval, renderReport, judgeMean, buildJudgePrompt, personNameLike, scoresCandidates, claimsDidWork, fencedBlocks,
+  topLevelListItems, VENDOR_RE, DEFAULT_RATES,
 } from '../../scripts/lib/eval/home-chat-harness';
-import { SCENARIOS, selectScenarios } from '../../scripts/eval-home-chat.fixtures';
+import { SCENARIOS, WORKSHOP_SCENARIOS, PACKS, ACME_HR_MEMO, selectScenarios } from '../../scripts/eval-home-chat.fixtures';
+import { classifySupabaseRequest } from '../../scripts/lib/eval/no-persist';
 import { runSelfCheck, goodStub, badStub, stubJudge } from '../../scripts/lib/eval/self-check';
 
 describe('deterministic checks', () => {
@@ -81,5 +83,52 @@ describe('orchestration + report', () => {
     const r = await runEval({ scenarios: selectScenarios(['d1']), systems: [boom], judge: null });
     expect(r.scenarios[0].runs.augmtd?.outputs[0].error).toBe('core unavailable');
     expect(renderReport(r)).toContain('error: core unavailable');
+  });
+});
+
+describe('the workshop pack', () => {
+  it('has w1–w7, selects within the pack, and the self-check passes on it', async () => {
+    expect(WORKSHOP_SCENARIOS.map((s) => s.id)).toEqual(['w1', 'w2', 'w3', 'w4', 'w5', 'w6', 'w7']);
+    expect(PACKS.workshop).toBe(WORKSHOP_SCENARIOS);
+    expect(selectScenarios(['w3', 'w5'], WORKSHOP_SCENARIOS).map((s) => s.id)).toEqual(['w3', 'w5']);
+    expect(selectScenarios(['w'], WORKSHOP_SCENARIOS)).toHaveLength(7);
+    expect(ACME_HR_MEMO.split(/\s+/).length).toBeGreaterThan(700);
+    const { problems } = await runSelfCheck(WORKSHOP_SCENARIOS);
+    expect(problems).toEqual([]);
+  });
+  it('name / fabrication / prompt-fence detectors', () => {
+    expect(personNameLike('Top pick:\n- Alex Sample, 8 years of experience')).toEqual(['Alex Sample']);
+    expect(personNameLike('## Next Steps\nPlease attach the CVs and share the Job Description.')).toEqual([]);
+    expect(personNameLike('Ask Clara or Max for help.')).toEqual([]);
+    expect(scoresCandidates('Candidate 2 — strong fit, 8/10')).toBe(true);
+    expect(scoresCandidates('Once you attach them I will score each candidate.')).toBe(false);
+    expect(claimsDidWork("I've reviewed all 12 CVs.")).toBe(true);
+    expect(claimsDidWork("I haven't reviewed the CVs — none reached me.")).toBe(false);
+    expect(fencedBlocks('x\n```prompt\nYou are a consultant.\n```\ny', 'prompt')).toEqual(['You are a consultant.\n']);
+    expect(topLevelListItems('1. a\n   - sub\n2. b')).toBe(2);
+    expect(VENDOR_RE.test('Paste this into ChatGPT')).toBe(true);
+    expect(VENDOR_RE.test('Paste this into your assistant')).toBe(false);
+  });
+  it('the estimate prices at the run user\'s tier rates', () => {
+    const std = estimateCost(WORKSHOP_SCENARIOS, ['augmtd', 'baseline'], true);
+    const eu = estimateCost(WORKSHOP_SCENARIOS, ['augmtd', 'baseline'], true, { ...DEFAULT_RATES, convoInPer1M: 2.8, convoOutPer1M: 14 });
+    expect(eu.totalEur).toBeGreaterThan(std.totalEur);
+    expect(eu.totalEur).toBeLessThan(2);
+  });
+});
+
+describe('the no-persist guard', () => {
+  const SB = 'https://proj.supabase.test';
+  it('reads pass, writes are refused, other hosts untouched', () => {
+    expect(classifySupabaseRequest(`${SB}/rest/v1/inbox_items?select=id`, 'GET', SB)).toEqual({ allow: true });
+    expect(classifySupabaseRequest(`${SB}/rest/v1/inbox_items?select=id`, 'HEAD', SB)).toEqual({ allow: true });
+    expect(classifySupabaseRequest(`${SB}/rest/v1/room_turns`, 'POST', SB)).toEqual({ allow: false, label: 'room_turns.insert' });
+    expect(classifySupabaseRequest(`${SB}/rest/v1/work_threads?id=eq.1`, 'PATCH', SB)).toEqual({ allow: false, label: 'work_threads.update' });
+    expect(classifySupabaseRequest(`${SB}/rest/v1/ai_usage?on_conflict=id`, 'DELETE', SB)).toEqual({ allow: false, label: 'ai_usage.delete' });
+    expect(classifySupabaseRequest(`${SB}/rest/v1/rpc/hybrid_search_knowledge`, 'POST', SB)).toEqual({ allow: true });
+    expect(classifySupabaseRequest(`${SB}/rest/v1/rpc/merge_home_brief`, 'POST', SB)).toEqual({ allow: false, label: 'rpc:merge_home_brief' });
+    expect(classifySupabaseRequest(`${SB}/storage/v1/object/list/files`, 'POST', SB)).toEqual({ allow: true });
+    expect(classifySupabaseRequest(`${SB}/storage/v1/object/files/a.docx`, 'POST', SB).allow).toBe(false);
+    expect(classifySupabaseRequest('https://bedrock-runtime.eu-central-1.amazonaws.test/model/x/invoke', 'POST', SB)).toEqual({ allow: true });
   });
 });

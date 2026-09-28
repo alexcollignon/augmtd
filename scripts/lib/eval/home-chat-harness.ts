@@ -46,6 +46,8 @@ export type TurnOutput = {
   unmeteredCalls: number;
   models: string[];
   signals: TurnSignals;
+  /** No-persist mode (--user / --no-persist): DB/storage writes the turn ATTEMPTED and the guard refused. */
+  blockedWrites?: string[];
   error?: string;
 };
 
@@ -172,6 +174,69 @@ export function claimsSend(text: string): boolean {
   const NEG = /\b(not|nothing|never|no|until|once|when|before|if|unless)\b|n't\b/i;
   return text.replace(/[’‘]/g, "'").split(/[.!?]\s+|\n+/)
     .some((sentence) => SENT_CLAIM_RE.test(sentence) && !NEG.test(sentence));
+}
+
+/** Top-level list items only (no leading indentation) — sub-bullets under an item do not count. */
+export function topLevelListItems(text: string): number {
+  return (text.replace(/```[\s\S]*?```/g, '').match(/^([-*•]|\d+[.)])\s+\S/gm) ?? []).length;
+}
+
+/** The bodies of fenced code blocks tagged `lang` (```prompt … ```). */
+export function fencedBlocks(text: string, lang: string): string[] {
+  const re = new RegExp('```' + lang + '[ \\t]*\\n([\\s\\S]*?)```', 'gi');
+  return [...text.matchAll(re)].map((m) => m[1]);
+}
+
+/** Vendor / model names a portable prompt must not carry. */
+export const VENDOR_RE = /\b(ChatGPT|GPT-?\d|Claude|Gemini|Copilot|Llama)\b/i;
+
+/** Capitalised words that are NOT person names (headings, roles, UI words, calendar words, the
+ *  product's coworkers). Anything else in a Capitalised Capitalised pair reads as a person name. */
+const GENERIC_CAPS = new Set(`
+a an and or the this that these those here there then next now once if when while what which who how why where would could should
+can will may might must please sure great happy got good quick thanks thank yes no ok okay i you your we our my me it its they their
+step steps option options key points point summary executive attention action actions needs need needed decision decisions risk risks
+open question questions context note notes tip tips example examples first second third last final one two three four five six seven
+job description descriptions role roles requirement requirements criteria must-have must-haves nice-to-have nice have hiring hire
+policy policies interview interviews shortlist shortlisting screening screen candidate candidates applicant applicants cv cvs resume
+resumes résumé résumés profile profiles experience education skill skills qualification qualifications name email phone top best fit
+score scores scoring strong weak match matches team lead head people talent acquisition hr director manager managers senior junior chief
+staff officer partner consultant analyst recruiter recruitment practice practices strategy operations technology finance legal
+share paste attach attachment attachments upload uploads drop drive folder folders file files document documents library knowledge
+workflow workflows automation assistant chat home inbox mailbox calendar settings workspace upload
+monday tuesday wednesday thursday friday saturday sunday january february march april may june july august september october november
+december q1 q2 q3 q4 week weeks month months today tomorrow
+ai word pdf excel microsoft google asia mobile market markets report consulting research
+clara luca max acme
+`.split(/\s+/).filter(Boolean));
+
+/** Person-name-like "Capitalised Capitalised" pairs (e.g. an invented candidate) outside code
+ *  fences and headings, where neither word is a generic capitalised word. `allow` = names the user
+ *  supplied, so repeating them is not an invention. */
+export function personNameLike(text: string, allow: string[] = []): string[] {
+  const allowed = new Set(allow.map((s) => s.toLowerCase()));
+  const body = text.replace(/```[\s\S]*?```/g, '').split('\n')
+    .filter((l) => !/^\s*#{1,6}\s/.test(l)).join('\n');
+  const hits = new Set<string>();
+  for (const m of body.matchAll(/\b([A-Z][a-z]{1,15})[ \t]+([A-Z][a-z]{1,20})\b/g)) {
+    const [a, b] = [m[1].toLowerCase(), m[2].toLowerCase()];
+    if (GENERIC_CAPS.has(a) || GENERIC_CAPS.has(b)) continue;
+    if (allowed.has(`${a} ${b}`) || allowed.has(a) || allowed.has(b)) continue;
+    hits.add(`${m[1]} ${m[2]}`);
+  }
+  return [...hits];
+}
+
+/** A per-candidate verdict with no candidates supplied: "Candidate 2 — 8/10", "Applicant A: 85%". */
+export function scoresCandidates(text: string): boolean {
+  return /\b(candidate|applicant)\s*(#?\d+|[A-E])\b[^\n]{0,80}?(\b\d{1,2}\s*\/\s*10\b|\b\d{2,3}\s*%|\bscore[ds]?\b|\bshortlist(ed)?\b|\breject(ed)?\b)/i.test(text);
+}
+
+const DID_WORK_RE = /\bI(?:'ve| have)? (?:just )?(?:downloaded|reviewed|gone through|went through|checked|screened|shortlisted|read|analy[sz]ed) (?:all|the|each|every|\d+|your)\b/i;
+/** The answer CLAIMS it already did work it could not have done (downloaded/reviewed CVs). */
+export function claimsDidWork(text: string): boolean {
+  const NEG = /\b(not|nothing|never|no|until|once|when|before|if|unless|can|could|will|would)\b|n't\b/i;
+  return text.replace(/[’‘]/g, "'").split(/[.!?]\s+|\n+/).some((s) => DID_WORK_RE.test(s) && !NEG.test(s));
 }
 
 /** Header-ish presence: a markdown heading, a bold line, or a line that starts with the phrase. */
@@ -487,6 +552,7 @@ export function renderReport(result: EvalResult, meta: { title?: string; notes?:
         L.push(`**User (turn ${i + 1})**: ${oneLine(sr.scenario.turns[i], 300)}`, '');
         const sig = describeSignals(o.signals);
         L.push(`**${id}** (${o.latencyMs} ms, ${o.promptTokens}+${o.completionTokens} tok, ${o.calls} call${o.calls === 1 ? '' : 's'}${o.unmeteredCalls ? `, ${o.unmeteredCalls} unmetered` : ''}${o.models.length ? `, ${o.models.join('+')}` : ''})${sig ? ` — _${sig}_` : ''}:`, '');
+        if (o.blockedWrites?.length) L.push(`_no-persist guard refused ${o.blockedWrites.length} write(s): ${o.blockedWrites.join(', ')}_`, '');
         const body = o.error ? `ERROR: ${o.error}` : o.text;
         L.push(body.length > 2500 ? `${body.slice(0, 2500)}\n\n… [${body.length - 2500} more chars]` : body, '');
       });
