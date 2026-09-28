@@ -130,8 +130,10 @@ const CALENDAR_COLLECTION: ThreadCard = {
   ],
 };
 
+/** AN EMPTY SET IS NOT A CARD (W19.2a): mounted on purpose — the kit renders NOTHING for it, so the
+ *  bubble below shows its sentence alone. The harness proves the absence, it does not paint a box. */
 const EMPTY_COLLECTION: ThreadCard = {
-  kind: 'collection', id: 'coll-empty', rows: [], emptyLine: 'No workflows yet.',
+  kind: 'collection', id: 'coll-empty', rows: [],
 };
 
 /** THE CITATIONS ARE A DOCUMENTS COLLECTION (Sep 22) — the files a coworker's answer was grounded
@@ -682,9 +684,10 @@ const HOME_ITEMS: ThreadItem[] = [
     cards: [CALENDAR_COLLECTION],
   },
   {
-    // TRUTH BEFORE PRESENTATION — an empty set says so plainly, never a row-shaped ghost.
+    // AN EMPTY SET IS NOT A CARD (W19.2a) — the sentence carries the empty fact; the zero-row card
+    // mounted here renders nothing (never a box repeating the sentence above it).
     type: 'actor_bubble', id: 'hc1e', actorId: 'clara', actorName: 'Clara',
-    text: 'Nothing standing yet on that one.',
+    text: 'No workflows set up yet.',
     cards: [EMPTY_COLLECTION],
   },
   {

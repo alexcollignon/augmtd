@@ -21,9 +21,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { id } = await params;
     const { force } = (await request.json().catch(() => ({}))) as { force?: boolean };
 
-    const { data: ent } = await supabase.from('work_entities')
+    const { data: entRaw } = await supabase.from('work_entities')
       .select('id, name, state, next_move, sig, people').eq('id', id).eq('user_id', user.id).maybeSingle();
-    if (!ent) return NextResponse.json({ error: 'not found' }, { status: 404 });
+    if (!entRaw) return NextResponse.json({ error: 'not found' }, { status: 404 });
+    // W19.A · the update is composed from the state as SERVED (settled claims dropped · time words floored).
+    const [ent] = await import('@/lib/entities/state').then(({ floorEntityRows }) => floorEntityRows(supabase, user.id, [entRaw as typeof entRaw & Record<string, unknown>]));
 
     // A SUGGESTED recipient (never auto-filled beyond suggestion): the first external email on the
     // deal's people fingerprint.

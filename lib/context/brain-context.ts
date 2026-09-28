@@ -67,8 +67,10 @@ export async function renderBrainContext(supabase: SupabaseClient, userId: strin
   try {
     const entityId = await linkedEntityId(supabase, userId, opts);
     if (entityId) {
-      const { data: hit } = await supabase.from('work_entities').select('name, state')
+      const { data: hitRaw } = await supabase.from('work_entities').select('id, name, state')
         .eq('id', entityId).eq('user_id', userId).eq('kind', 'initiative').maybeSingle();
+      // W19.A · the wider-work block reads the state as SERVED (settled claims dropped · time words floored).
+      const [hit] = hitRaw ? await await import('@/lib/entities/state').then(({ floorEntityRows }) => floorEntityRows(supabase, userId, [hitRaw as Record<string, unknown>])) : [null];
       const st = (hit?.state ?? null) as { summary?: string; stage?: string | null } | null;
       if (hit?.name && st?.summary) {
         const p = [`[THE WIDER WORK — ${hit.name}]`, `Where it stands: ${st.summary}`];

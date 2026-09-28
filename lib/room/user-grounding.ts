@@ -220,7 +220,11 @@ async function readProjects(client: SupabaseClient, userId: string, depth: 'stat
       .eq('user_id', userId).eq('kind', 'initiative').eq('status', 'active')
       .order('last_event_at', { ascending: false }).limit(80);
     const nowMs = Date.now();
-    const rows = ((data ?? []) as Array<Record<string, unknown>>)
+    const live = ((data ?? []) as Array<Record<string, unknown>>).filter((e) => e.tracked === true || !!e.state);
+    // W19.A · THE SUMMARY IS NOT A SECOND TRUTH: at 'state' depth the stored prose is served through the
+    // one floor (settled claims against each entity's ledger heads · time words); 'names' surfaces none.
+    const served = depth === 'state' ? await import('@/lib/entities/state').then(({ floorEntityRows }) => floorEntityRows(client, userId, live)) : live;
+    const rows = served
       // An untracked entity with no synthesized state is a machine draft — it does not claim a seat.
       .filter((e) => e.tracked === true || !!e.state)
       .map((e): ProjectRow => {
@@ -247,10 +251,13 @@ async function readProjects(client: SupabaseClient, userId: string, depth: 'stat
 async function readPeople(client: SupabaseClient, userId: string): Promise<PersonRow[]> {
   try {
     const { getPersonEntities } = await import('@/lib/entities/people');
+    const { serveStateProse } = await import('@/lib/entities/state');
     return (await getPersonEntities(client, userId))
       .filter((p) => p.state?.summary && (p.state.momentum === 'you_owe' || p.state.momentum === 'gone_quiet' || p.state.momentum === 'needs_you'))
       .sort((a, b) => (b.lastEventAt || '').localeCompare(a.lastEventAt || ''))
-      .map((p) => ({ name: p.name, momentum: String(p.state!.momentum), summary: String(p.state!.summary) }));
+      // W19.A · TIME TRUTH: a person state's prose passes the time floor (an unprovable relative word is withheld).
+      .map((p) => ({ name: p.name, momentum: String(p.state!.momentum), summary: serveStateProse(String(p.state!.summary), { composedAt: (p.state as { composedAt?: string }).composedAt ?? null }).text }))
+      .filter((p) => !!p.summary);
   } catch { return []; }
 }
 

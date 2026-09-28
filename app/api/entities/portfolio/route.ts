@@ -55,6 +55,8 @@ export async function GET() {
           .select('id, name, tracked, status, state, next_move, priority, last_event_at')
           .eq('user_id', user.id).eq('kind', 'initiative').order('id', { ascending: true }).range(from, to));
     }
+    // W19.A · every entity's stored state is served through the one floor (settled claims · time words).
+    rows = await import('@/lib/entities/state').then(({ floorEntityRows }) => floorEntityRows(supabase, user.id, rows));
     const intent = new Map<string, { goals: string[]; rules: string[] }>();
     for (const r of rows) {
       intent.set(r.id as string, {

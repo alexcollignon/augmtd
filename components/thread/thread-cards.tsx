@@ -21,7 +21,7 @@ import { ExpandableRows } from '@/components/home/expandable-rows';
 import { Badge } from '@/components/ui';
 import { AvatarStatus } from './avatar-status';
 // ONE NUMBER, NOT TWO: the inline-rows default lives with the contract both halves read.
-import { COLLECTION_INLINE_ROWS } from '@/lib/present/collection';
+import { COLLECTION_INLINE_ROWS, collectionHasRows } from '@/lib/present/collection';
 import { COLLECTION_ROW_MAX_VERBS } from './types';
 import type {
   BulkCard, CollectionCard, CollectionRow, CollectionRowTone, CollectionRowVerb,
@@ -975,15 +975,15 @@ const COLLECTION_MAX_W = THREAD_CARD_W;
 
 function CollectionCardView({ card }: { card: CollectionCard }) {
   const fold = card.foldAfter ?? COLLECTION_INLINE_ROWS;
+  // AN EMPTY SET IS NOT A CARD (W19.2a): the turn's own sentence already said there is nothing — a
+  // box repeating it is the same fact twice. Absent, for every host that mounts this kit card.
+  if (!collectionHasRows(card)) return null;
   return (
     <div className={cn(SHELL, COLLECTION_MAX_W, 'flex flex-col overflow-hidden')}>
       {card.title && (
         <div className="px-4 pt-3 text-[13px] font-semibold text-neutral-900">{card.title}</div>
       )}
-      {card.rows.length === 0 ? (
-        // TRUTH BEFORE PRESENTATION: nothing to list is said plainly, never a row-shaped ghost.
-        <div className="px-4 py-3 text-[12px] text-neutral-400">{card.emptyLine ?? 'Nothing here yet.'}</div>
-      ) : (
+      {card.rows.length > 0 && (
         <div className="flex flex-col">
           <ExpandableRows
             items={card.rows} limit={fold}

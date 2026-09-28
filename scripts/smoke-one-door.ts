@@ -164,7 +164,9 @@ console.log('\nD · the project door still speaks the project; deck rows of TRAC
     && /buildRoomView\(supabase, uid, id, null\)/.test(room));
   const eroom = src('components/entities/entity-room.tsx');
   gate('D2 the project room mounts the rail as the ENTITY door (its own key, its own opening), with the focused mail as its object',
-    /<ItemRail kind="entity" id=\{entityId\} view=\{rail\}/.test(eroom)
+    // ⟲ RE-POINTED W19: the view is the served rail, re-read (never mutated) so a waiting nudge's CTA
+    // says "Review nudge" (lib/room/presentation moveForLane) — still the entity door's own payload.
+    /<ItemRail kind="entity" id=\{entityId\} view=\{railView \?\? rail\}/.test(eroom)
     && /sourceItemId=\{focused\?\.kind === 'email' \? focused\.id : null\}/.test(eroom));
   const homeBrief = src('app/api/home/brief/route.ts');
   gate('D3 THE ROOM-DOOR LAW is unchanged: the deck\'s project registry is TRACKED-only, so only a tracked member\'s row opens a project room',

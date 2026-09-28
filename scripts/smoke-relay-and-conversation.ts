@@ -147,7 +147,9 @@ async function main() {
   const ful = src('lib/commitments/fulfillment.ts');
   const settle = src('lib/work/evidence-settle.ts');
   ok('C5 the other side is labelled in the judge prompt, with the confirmation clause', /the OTHER SIDE \(/.test(ful) && /THE CONFIRMATION CLAUSE/.test(ful));
-  ok('C5 the settle hands the judge the actor of the other side\'s pieces', /toCandidates\(client, userId, evidence, work\.fulfiller\)/.test(settle) && /e\.by === 'counterparty'/.test(settle));
+  // ⟲ RE-POINTED W19: the settle now also hands toCandidates the bodies the W19.A relevance gate
+  // already read (gateEvidenceAboutWork — no second read); the fulfiller argument, the law here, is unchanged.
+  ok('C5 the settle hands the judge the actor of the other side\'s pieces', /toCandidates\(client, userId, evidence, work\.fulfiller(?:, gated\.bodies)?\)/.test(settle) && /e\.by === 'counterparty'/.test(settle));
   ok('C5 SETTLE_MATCH carries the conversation window (the judge + room see what the settle sees)', SETTLE_MATCH.conversation === true);
 
   // C6 · the direction floor's none never masks a live looks-done record.

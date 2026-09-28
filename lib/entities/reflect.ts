@@ -114,9 +114,12 @@ export async function reflectEntities(
   opts: { commit?: boolean } = {},
 ): Promise<ReflectionVerdict[]> {
   // Load the registry + each entity's linked item titles (the content evidence for the judgment).
-  const { data: rows } = await supabase.from('work_entities')
+  const { data: rowsRaw } = await supabase.from('work_entities')
     .select('id, name, summary, aliases, people, embedding, state, created_at')
     .eq('user_id', userId).eq('kind', 'initiative').eq('status', 'active').limit(400);
+  // W19.A · the judged standing the merge judge reads is the state as SERVED (the one floor) — a settled
+  // "you owe" must not read as remembered-twice evidence.
+  const rows = await await import('@/lib/entities/state').then(({ floorEntityRows }) => floorEntityRows(supabase, userId, (rowsRaw ?? []) as Array<Record<string, unknown>>));
   const entities: Ent[] = [];
   for (const r of (rows ?? []) as Array<Record<string, unknown>>) {
     // Evidence = ALL link kinds (emails + commitments + meetings), each with a CONTENT snippet. The

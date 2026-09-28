@@ -26,6 +26,10 @@ const CUT_PATTERNS: RegExp[] = [
   /^From:\s.+\r?\nDate:\s.+\r?\nTo:\s.+$/im,                 // Apple Mail / new Outlook header block
   /^De:\s.+\r?\nEnviad[oa]:?\s.+$/im,                        // Outlook inline header block (PT/ES)
   /^Von:\s.+\r?\nGesendet:\s.+$/im,                          // Outlook inline header block (DE)
+  // W19.A — French Outlook writes a space BEFORE the colon ("De : … \nEnvoyé : …"); without this the
+  // whole quoted chain of a French reply read as the sender's own words (found live: a counterparty's
+  // one-line RIB request carried the quoted proposal thread, and matched unrelated work by it).
+  /^De\s?:\s.+\r?\nEnvoy[ée]\s?:\s.+$/im,                     // Outlook inline header block (FR)
 ];
 
 /** The sender's OWN words in this message — text above the first quoted-history marker. */

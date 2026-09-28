@@ -101,3 +101,102 @@ export function prepAnchorKey(kind: 'inbox' | 'commitment' | 'followup' | 'email
   const spine = kind === 'commitment' || kind === 'followup' ? 'commit' : 'inbox';
   return `prep:${spine}:${id}`;
 }
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// W19.C · THE KIND RIDES TO EVERY DOOR (owner walk, Sep 28 — "Could not load the thread").
+//
+// A move ref carries its object's KIND (`inbox:` · `commit:` · `meeting:`), and `moveTargetId`
+// deliberately strips it (every per-item route takes the raw id). The stage door then re-invented
+// the kind as "email" for EVERY id — so a nudge prepared on a counterparty-owed COMMITMENT opened as
+// a mail thread that does not exist. The class: an id handed to a door without its kind. The fix is
+// ONE producer of a door address from what the host already holds — the ref itself, or the board
+// row whose served `href` was built by the object's own reader — and "email" only when neither
+// knows better (the converse core's forward/invite stages, inbox-only by construction).
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** A spine ref → its per-item door, the kind carried (`commit:` → `?kind=commitment`). Null for a ref
+ *  with no item door (a deliverable, an event). THE ONE PRODUCER — hosts never hand-roll it. */
+export function refDoorHref(ref: string | null | undefined): string | null {
+  if (!ref) return null;
+  const at = ref.indexOf(':');
+  if (at < 0) return null;
+  const k = ref.slice(0, at);
+  const i = ref.slice(at + 1);
+  if (!i) return null;
+  return k === 'inbox' ? `/item/${i}?kind=email`
+    : k === 'commit' || k === 'commitment' ? `/item/${i}?kind=commitment`
+    : k === 'meeting' ? `/item/${i}?kind=meeting`
+    : null;
+}
+
+/** The kind an `/item/<id>?kind=…` address names (absent → email, the route's own default). */
+export function doorKindOf(href: string | null | undefined): 'email' | 'commitment' | 'followup' | 'meeting' | null {
+  const m = String(href ?? '').match(/^\/item\/[^/?]+(?:\?kind=(email|commitment|followup|meeting|awareness))?/);
+  if (!m) return null;
+  return m[1] === 'commitment' || m[1] === 'followup' || m[1] === 'meeting' ? m[1] : 'email';
+}
+
+/**
+ * THE STAGE DOOR's address for a raw item id (pure). Reads, in order: the host's own board row for
+ * that id (its `href` was served by the object's reader, kind and all), then the move ref that names
+ * it; only an id neither knows lands on the mail door. A commitment NEVER opens as an email.
+ */
+export function stageDoorHref(
+  itemId: string,
+  rows: Array<{ id: string; rawId?: string | null; href?: string | null }>,
+  moveRef?: string | null,
+): string {
+  const row = rows.find((r) => boardRowItemId(r) === itemId);
+  if (row?.href && doorKindOf(row.href)) return row.href;
+  if (moveRef && moveTargetId(moveRef) === itemId) {
+    const h = refDoorHref(moveRef);
+    if (h) return h;
+  }
+  return `/item/${itemId}?kind=email`;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// W19.C · A PREPARED CARD SAYS WHOSE MOVE IT IS (the same walk). A nudge Clara drafted for work the
+// COUNTERPARTY owes rendered as `Prepared — "<the task's own title>"` — the bare commitment text
+// ("Send presentation and agent documentation…") read as the user's own to-do, beside a CTA about
+// something else. The board already knows the direction: a row in the WAITING lane is owed TO the
+// user, so anything prepared on it is a chase. Read-time, from the rows as served — a stale card
+// heals on its next paint, no backfill.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+export type BoardLane = 'todo' | 'doing' | 'waiting';
+export const NUDGE_MOVE_LABEL = 'Review nudge';
+
+/** The counterparty a waiting row is waiting on — the GUARDED `blockedOn` first (never self), the
+ *  row's `who` otherwise; the display name only (an address never reaches a label). */
+export function waitingOnName(row: { blockedOn?: string | null; who?: string | null }): string | null {
+  const raw = String(row.blockedOn ?? row.who ?? '').split('<')[0].replace(/["']/g, '').trim();
+  return raw ? raw.split(/\s+/)[0] : null;
+}
+
+/** Is this row's prepared work a NUDGE (a chase for what someone else owes)? */
+export function isWaitingNudge(lane: BoardLane, row: { prepared?: string | null }): boolean {
+  return lane === 'waiting' && !!row.prepared;
+}
+
+/** The prepared card's label (pure). `quote` is the row title already clipped by the host's excerpt
+ *  rule. A waiting row speaks its direction; every other row keeps the existing grammar. */
+export function preparedCardLabel(
+  lane: BoardLane, row: { prepared?: string | null; blockedOn?: string | null; who?: string | null }, quote: string,
+): string {
+  if (isWaitingNudge(lane, row)) {
+    const who = waitingOnName(row);
+    return `Nudge ready — ${who ? `waiting on ${who}` : 'waiting on a reply'}: "${quote}"`;
+  }
+  return `${row.prepared === 'draft' ? 'Draft ready' : 'Prepared'} — "${quote}"`;
+}
+
+/** The CTA says what it does: a move whose target is a waiting row's prepared nudge reads
+ *  "Review nudge", whatever the composition called it (pure; a non-matching move passes through). */
+export function moveForLane<M extends { label: string; ref: string | null }>(
+  move: M | null | undefined, laneOfRef: (ref: string) => BoardLane | null, preparedOf: (ref: string) => boolean,
+): M | null {
+  if (!move) return null;
+  if (!move.ref) return move;
+  const lane = laneOfRef(move.ref);
+  return lane === 'waiting' && preparedOf(move.ref) ? { ...move, label: NUDGE_MOVE_LABEL } : move;
+}

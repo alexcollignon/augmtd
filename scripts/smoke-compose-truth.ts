@@ -210,7 +210,9 @@ console.log('\nC · regenerate ONCE with the failure named, else serve the hones
       /select\('id, created_at, source, source_id'\)/.test(br) && /from\('emails'\)\.select\('id, received_at'\)/.test(br)
       && /select\('id, received_at:source_data->>received_at'\)/.test(br) && /userTimezone\(client, userId\)/.test(br) && /localNow\(tz\)\.dateStr/.test(br));
     // ⟲ W18.D changed the prompt (ABSOLUTE_DATES_RULE) and bumped to 20 — the W12.1 net itself bumped nothing.
-    gate('E11 the W12.1 net did not bump the version; only a prompt change does (W18.D → 20)', ROOM_BRIEF_VERSION === 20);
+    // ⟲ RE-POINTED W19.2 — W19.2b changed the prompt (ALREADY READ + UPDATE_RULE + USER_INPUT_RULE) and
+    // bumped to 21; the gate keeps its law as a FLOOR (a pin breaks on every later prompt change).
+    gate('E11 the W12.1 net did not bump the version; only a prompt change does (W18.D → 20, W19.2b → 21)', (ROOM_BRIEF_VERSION as number) >= 20);
     gate('E12 the chase vocabulary itself is unchanged (the owner\'s words are caught by the W11.1 net)', !!chaseWordsIn(OWNER_DRAFT));
   }
 

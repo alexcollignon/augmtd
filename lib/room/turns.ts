@@ -252,8 +252,59 @@ export async function archiveRoomChat(client: SupabaseClient, userId: string, ro
       .is('dedupe_key', null).is('component', null).is('author', null)
       .select('id');
     if (!theirsErr) n += (theirs ?? []).length;
+    // W19.2b · A NEW SESSION GETS A FRESH OPENING: the pinned seen opening (and its update ledger)
+    // belonged to the session just saved — released, so the next open paints the room's newest
+    // composition (lib/room/room-update). The update turns themselves are chat, and archived above.
+    await releaseOpeningPin(client, userId, roomKey);
     return n;
   } catch { return 0; }
+}
+
+/**
+ * W19.2b · A NEW SESSION GETS A FRESH OPENING — the pin (and its update ledger) on the room's
+ * `room_brief` row is released; the newest composition's words are untouched and the next open paints
+ * them. Lives HERE (a leaf: the one item_plans door only), never in lib/room/brief — this module is
+ * reached by client bundles, and the composer's graph is server-only. Non-fatal.
+ */
+export async function releaseOpeningPin(client: SupabaseClient, userId: string, roomKey: string): Promise<void> {
+  try {
+    const { readPlan, updatePlan } = await import('@/lib/store/item-plans');
+    const data = await readPlan(client, userId, 'room_brief', roomKey);
+    const t = (data?.tasks ?? null) as Record<string, unknown> | null;
+    if (!t || (!t.shown && !t.update && !t.earlier)) return;
+    const rest = Object.fromEntries(Object.entries(t).filter(([k]) => k !== 'shown' && k !== 'update' && k !== 'earlier'));
+    await updatePlan(client, userId, 'room_brief', roomKey, rest as never, { updatedAt: data?.updated_at ?? undefined });
+  } catch { /* non-fatal — the worst case is the old opening standing one more session */ }
+}
+
+/**
+ * W19.2b · AN UPDATE IS A NEW MESSAGE (lib/room/room-update). The seat's delta is posted as its OWN
+ * words — a SYSTEM turn with no dedupe key, no component and no author: the exchange side of the room
+ * (W19.B's boundary), so New chat saves it with the session, Resume brings it back, and it renders as
+ * the seat's message through the one answer renderer. `replaceId` supersedes an update nobody has read
+ * yet (at most one pending update per room); an archived one is never touched — a fresh row lands.
+ * Returns the row's id + stamp, or null (non-fatal — the brief still stores).
+ */
+export async function postRoomUpdate(
+  client: SupabaseClient, userId: string, roomKey: string, text: string, replaceId?: string | null,
+): Promise<{ turnId: string | null; at: string } | null> {
+  try {
+    const body = String(text ?? '').trim();
+    if (!body) return null;
+    if (replaceId) {
+      const { data, error } = await client.from('room_turns').update({ text: body })
+        .eq('id', replaceId).eq('user_id', userId).eq('room_key', roomKey).is('archived_at', null)
+        .select('id, created_at');
+      const row = (data ?? [])[0] as { id: string; created_at: string } | undefined;
+      if (!error && row) return { turnId: row.id, at: new Date().toISOString() };
+    }
+    const { data, error } = await client.from('room_turns')
+      .insert({ user_id: userId, room_key: roomKey, role: 'system', text: body, refs: null, component: null, author: null, dedupe_key: null })
+      .select('id, created_at').maybeSingle();
+    if (error) return null;
+    const created = Date.parse(String(data?.created_at ?? ''));
+    return { turnId: (data?.id as string | undefined) ?? null, at: new Date(Number.isFinite(created) ? created : Date.now()).toISOString() };
+  } catch { return null; }
 }
 
 /**
@@ -307,27 +358,209 @@ export async function restoreRoomSession(
   } catch { return { restored: 0, saved }; }
 }
 
-export type RoomSession = { at: string; count: number; firstText: string };
+export type RoomSession = { at: string; count: number; title: string };
+
+/** THE CHAT BOUNDARY AS A PREDICATE (pure) — the exact rule `archiveRoomChat` / `restoreRoomSession`
+ *  filter by, for callers that hold rows: every USER turn, and a SYSTEM turn only with no dedupe key,
+ *  no component and no author. Durable handles (engine narrations, cards, a coworker's speech) are
+ *  never chat — so no session verb can ever move them. */
+export function isChatTurn(r: { role: string; dedupe_key?: string | null; component?: unknown; author?: unknown }): boolean {
+  if (r.role === 'user') return true;
+  return r.role === 'system' && !r.dedupe_key && !r.component && !r.author;
+}
+
+/** "Sep 28" from an ISO stamp, in UTC (server-side, zone-free — the label is a date, not a moment). */
+function sessionDay(at: string): string {
+  const d = new Date(at);
+  return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+/** W19.C · A SESSION IS TITLED BY THE READER'S OWN FIRST WORDS (owner walk, Sep 28: two saved chats
+ *  both titled "What do you want to pick up?"). The first turn of a batch was the persisted OPENER —
+ *  the seat's question, identical in every session. The title is the first USER turn, clipped at a
+ *  word boundary; a session with no user words falls back to its date. Pure. */
+export function sessionTitle(rows: Array<{ role: string; text: string }>, at: string): string {
+  const first = rows.find((r) => r.role === 'user' && String(r.text ?? '').trim());
+  if (first) return clip(String(first.text).replace(/\s+/g, ' '), 60);
+  const day = sessionDay(at);
+  return day ? `Chat · ${day}` : 'Chat';
+}
 
 /** The room's archived SESSIONS (History ⌄), newest first — turns sharing an archived_at batch.
  *  NO SILENT CAPS (invariant 10): a long-lived room's full archived history is a full listing —
  *  an unpaged `.limit(1000)` would silently drop older sessions from the History picker (and
  *  under-count a session's turns) once a room passed 1000 archived turns. Paged via
- *  `fetchAllRows`, keeping the room's existing stable `created_at` order. */
+ *  `fetchAllRows`, keeping the room's existing stable `created_at` order.
+ *  W19.C: a batch with NO user turn is not a chat (a settled engine ask archives under its own
+ *  stamp) and is not listed; a session is titled by `sessionTitle`. */
 export async function listRoomSessions(client: SupabaseClient, userId: string, roomKey: string): Promise<RoomSession[]> {
   try {
-    const data = await fetchAllRows<{ archived_at: string; text: string; created_at: string }>((from, to) =>
-      client.from('room_turns').select('archived_at, text, created_at')
+    const data = await fetchAllRows<{ archived_at: string; role: string; text: string; created_at: string }>((from, to) =>
+      client.from('room_turns').select('archived_at, role, text, created_at')
         .eq('user_id', userId).eq('room_key', roomKey).not('archived_at', 'is', null)
         .order('created_at', { ascending: true }).range(from, to));
-    const by = new Map<string, { count: number; firstText: string }>();
-    for (const r of data as Array<{ archived_at: string; text: string }>) {
+    const by = new Map<string, Array<{ role: string; text: string }>>();
+    for (const r of data) {
       const k = r.archived_at;
       const e = by.get(k);
-      if (e) e.count++;
-      else by.set(k, { count: 1, firstText: String(r.text ?? '').slice(0, 80) });
+      if (e) e.push(r); else by.set(k, [r]);
     }
-    return [...by.entries()].map(([at, v]) => ({ at, ...v })).sort((a, b) => b.at.localeCompare(a.at));
+    return [...by.entries()]
+      .filter(([, rows]) => rows.some((r) => r.role === 'user'))
+      .map(([at, rows]) => ({ at, count: rows.length, title: sessionTitle(rows, at) }))
+      .sort((a, b) => b.at.localeCompare(a.at));
+  } catch { return []; }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// W19.C · A PROJECT CHAT CAN BE DELETED OR MOVED OUT — AND NOTHING IT MADE GOES WITH IT.
+//
+// A project room's saved chat is an `archived_at` batch INSIDE the entity's own room key (never a
+// `chat:*` room), so the Home verbs did not apply. Two verbs, both CONDITIONAL CLAIMS (the batch is
+// claimed by one UPDATE filtered on its room key AND its stamp — a second click finds zero rows and
+// changes nothing: exactly once) and both REVERSIBLE:
+//   · DELETE re-keys the batch's CHAT turns to `deleted:<roomKey>` (still archived — no listing,
+//     no reader, no sidebar ever reads that key); undo re-keys them back under the same stamp.
+//   · MOVE OUT re-keys them to a fresh `chat:<uuid>` and makes them live — the conversation becomes a
+//     Home chat; undo re-keys that chat back into the project under the same stamp.
+// NOTHING CASCADES, BY CONSTRUCTION: both verbs touch `room_turns` rows only, and only rows the chat
+// boundary (`isChatTurn`) owns. Tasks, drafts and deliverables are keyed by ITEM, never by room —
+// no row anywhere references a turn (no FK on room_turns) — so they survive untouched.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+export const DELETED_ROOM_PREFIX = 'deleted:';
+export const deletedRoomKey = (roomKey: string): string => `${DELETED_ROOM_PREFIX}${roomKey}`;
+
+/** The ids of one archived batch's CHAT turns (the boundary predicate, applied to the rows). Paged —
+ *  a full listing (no silent caps). Null = the read failed (the caller does nothing). */
+async function sessionChatIds(
+  client: SupabaseClient, userId: string, roomKey: string, at: string, opts: { fromFirstUserTurn?: boolean } = {},
+): Promise<string[] | null> {
+  try {
+    const rows = await fetchAllRows<{ id: string; role: string; dedupe_key: string | null; component: unknown; author: unknown }>((from, to) =>
+      client.from('room_turns').select('id, role, dedupe_key, component, author')
+        .eq('user_id', userId).eq('room_key', roomKey).eq('archived_at', at)
+        .order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, to));
+    const chat = rows.filter(isChatTurn);
+    // A conversation that LEAVES the project starts at the reader's own words: the seat's opener
+    // ahead of them is the room's greeting, not the conversation (it stays behind, archived).
+    // No words of the reader's left in the batch → there is no conversation to move.
+    const start = opts.fromFirstUserTurn ? chat.findIndex((r) => r.role === 'user') : 0;
+    return start < 0 ? [] : chat.slice(start).map((r) => r.id);
+  } catch { return null; }
+}
+
+/** The ids currently under a key (+ stamp, or live when `at` is null). Paged. */
+async function idsUnder(client: SupabaseClient, userId: string, roomKey: string, at: string | null): Promise<string[] | null> {
+  try {
+    const rows = await fetchAllRows<{ id: string }>((from, to) => {
+      const q = client.from('room_turns').select('id').eq('user_id', userId).eq('room_key', roomKey);
+      return (at === null ? q.is('archived_at', null) : q.eq('archived_at', at))
+        .order('id', { ascending: true }).range(from, to);
+    });
+    return rows.map((r) => r.id);
+  } catch { return null; }
+}
+
+/** Re-key a claimed set of turns, CONDITIONALLY (room key + stamp still what we read), in bounded
+ *  chunks (an `in()` list rides the URL). Returns how many rows actually moved. */
+async function rekeyClaimed(
+  client: SupabaseClient, userId: string, ids: string[],
+  from: { roomKey: string; at: string | null }, to: { roomKey: string; at: string | null },
+): Promise<number> {
+  let n = 0;
+  for (let i = 0; i < ids.length; i += 200) {
+    let q = client.from('room_turns').update({ room_key: to.roomKey, archived_at: to.at })
+      .eq('user_id', userId).eq('room_key', from.roomKey).in('id', ids.slice(i, i + 200));
+    q = from.at === null ? q.is('archived_at', null) : q.eq('archived_at', from.at);
+    const { data, error } = await q.select('id');
+    if (!error) n += (data ?? []).length;
+  }
+  return n;
+}
+
+/** DELETE one saved session of a room (reversible). Returns how many turns left the listing. */
+export async function deleteRoomSession(client: SupabaseClient, userId: string, roomKey: string, at: string): Promise<number> {
+  try {
+    if (!roomKey || !at || roomKey.startsWith(DELETED_ROOM_PREFIX)) return 0;
+    const ids = await sessionChatIds(client, userId, roomKey, at);
+    if (!ids) return 0;
+    return await rekeyClaimed(client, userId, ids, { roomKey, at }, { roomKey: deletedRoomKey(roomKey), at });
+  } catch { return 0; }
+}
+
+/** UNDO a session delete — the batch comes back to the room's saved chats under its own stamp. */
+export async function restoreDeletedRoomSession(client: SupabaseClient, userId: string, roomKey: string, at: string): Promise<number> {
+  try {
+    if (!roomKey || !at) return 0;
+    const ids = await idsUnder(client, userId, deletedRoomKey(roomKey), at);
+    if (!ids) return 0;
+    return await rekeyClaimed(client, userId, ids, { roomKey: deletedRoomKey(roomKey), at }, { roomKey, at });
+  } catch { return 0; }
+}
+
+/** MOVE a saved session OUT of the project into a fresh Home chat (reversible). `chatKey` may be
+ *  supplied (a test, an idempotent retry); a fresh `chat:<uuid>` otherwise. Null = nothing moved. */
+export async function moveRoomSessionOut(
+  client: SupabaseClient, userId: string, roomKey: string, at: string, chatKey?: string,
+): Promise<{ chatKey: string; moved: number } | null> {
+  try {
+    if (!roomKey || !at || roomKey.startsWith('chat:') || roomKey.startsWith(DELETED_ROOM_PREFIX)) return null;
+    const key = chatKey && chatKey.startsWith('chat:') ? chatKey : `chat:${crypto.randomUUID()}`;
+    const ids = await sessionChatIds(client, userId, roomKey, at, { fromFirstUserTurn: true });
+    if (!ids?.length) return null;
+    const moved = await rekeyClaimed(client, userId, ids, { roomKey, at }, { roomKey: key, at: null });
+    return moved > 0 ? { chatKey: key, moved } : null;
+  } catch { return null; }
+}
+
+/** UNDO a move-out: the Home chat's live turns go back into the project as the saved session they
+ *  were (same stamp). Only a `chat:*` key moves, and only its live turns. */
+export async function moveRoomSessionBack(
+  client: SupabaseClient, userId: string, chatKey: string, roomKey: string, at: string,
+): Promise<number> {
+  try {
+    if (!chatKey.startsWith('chat:') || !roomKey || roomKey.startsWith('chat:') || !at) return 0;
+    const ids = await idsUnder(client, userId, chatKey, null);
+    if (!ids) return 0;
+    return await rekeyClaimed(client, userId, ids, { roomKey: chatKey, at: null }, { roomKey, at });
+  } catch { return 0; }
+}
+
+export type FiledChat = { key: string; title: string; at: string; count: number };
+
+/** THE HOME CHATS FILED INTO A PROJECT (the `room_scope` binding written by /api/rooms/adopt), each
+ *  titled like the sidebar does (the reader's rename, else the first user turn). A chat whose turns
+ *  are all archived (deleted from Home) is not listed. Full listings, paged (no silent caps). */
+export async function listFiledChats(client: SupabaseClient, userId: string, entityId: string): Promise<FiledChat[]> {
+  try {
+    // Through THE ONE item_plans door (lib/store/item-plans): every room_scope binding of this user
+    // (paged — a full listing), kept where the binding names THIS project.
+    const { readPlans } = await import('@/lib/store/item-plans');
+    const scopes = await readPlans(client, userId, 'room_scope', { keyPrefix: 'chat:' });
+    const keys = scopes.filter((r) => (r.tasks as { entityId?: string } | null)?.entityId === entityId).map((r) => r.key);
+    if (!keys.length) return [];
+    const [turns, titles] = await Promise.all([
+      fetchAllRows<{ room_key: string; role: string; text: string; created_at: string }>((from, to) =>
+        client.from('room_turns').select('room_key, role, text, created_at')
+          .eq('user_id', userId).in('room_key', keys).is('archived_at', null)
+          .order('created_at', { ascending: true }).range(from, to)),
+      readPlans(client, userId, 'room_title', { keys }),
+    ]);
+    const custom = new Map<string, string>();
+    for (const t of titles) {
+      const title = (t.tasks as { title?: unknown } | null)?.title;
+      if (typeof title === 'string' && title.trim()) custom.set(t.key, title.trim());
+    }
+    const by = new Map<string, Array<{ role: string; text: string; created_at: string }>>();
+    for (const t of turns) { const e = by.get(t.room_key); if (e) e.push(t); else by.set(t.room_key, [t]); }
+    const out: FiledChat[] = [];
+    for (const k of keys) {
+      const rows = by.get(k);
+      if (!rows?.some((r) => r.role === 'user')) continue;
+      const last = rows[rows.length - 1].created_at;
+      out.push({ key: k, title: custom.get(k) ?? sessionTitle(rows, last), at: last, count: rows.length });
+    }
+    return out.sort((a, b) => b.at.localeCompare(a.at));
   } catch { return []; }
 }
 

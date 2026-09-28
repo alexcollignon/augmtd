@@ -10,21 +10,23 @@
 // registry — a membership change here shows on the deck/timeline/meetings without any second store.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ChevronLeftIcon, ChevronRightIcon, CheckIcon, XMarkIcon, ArchiveBoxIcon, ArrowUturnLeftIcon,
   CalendarDaysIcon, CheckCircleIcon, TrashIcon, EnvelopeIcon,
   ClipboardDocumentCheckIcon, VideoCameraIcon, ChatBubbleLeftRightIcon, DocumentTextIcon,
-  ClockIcon, ArchiveBoxArrowDownIcon,
+  ClockIcon, ArchiveBoxArrowDownIcon, HomeIcon, ArrowUpOnSquareIcon, FolderMinusIcon,
 } from '@heroicons/react/24/outline';
+import { fmtMonthDay } from '@/lib/utils/format-date';
+import { deleteHomeChat, unfileHomeChat, deleteProjectChat, moveProjectChatOut } from '@/components/one/chat-actions';
 import { ItemRail, type RailView } from '@/components/home/item-rail';
 import { FacePile } from '@/components/thread/avatar-status';
 import { ItemDetail, type ReportedDecision } from '@/components/home/item-detail';
 import { RoomShell } from '@/components/room/room-shell';
 import { FiledIcon } from '@/components/room/filed-icon';
 import { pushDealTurn } from '@/components/home/item-rail';
-import { railCoversItem, moveTargetId, mountsEmailCard, boardRowItemId, prepAnchorKey } from '@/lib/room/presentation';
+import { railCoversItem, moveTargetId, mountsEmailCard, boardRowItemId, prepAnchorKey, refDoorHref, stageDoorHref, preparedCardLabel, isWaitingNudge, moveForLane, type BoardLane } from '@/lib/room/presentation';
 import { EmailCard } from '@/components/home/email-card';
 import { AddItemPicker } from '@/components/entities/add-item-picker';
 import GanttChart from '@/components/entities/gantt-chart';
@@ -128,11 +130,8 @@ export function clipLabel(text: string, max: number): string {
   const at = cut.lastIndexOf(' ');
   return `${(at > max * 0.6 ? cut.slice(0, at) : cut).replace(/[\s,;:—-]+$/, '')}…`;
 }
-const refHref = (ref: string | null): string | null => {
-  if (!ref) return null;
-  const [k, i] = ref.split(':');
-  return k === 'inbox' ? `/item/${i}?kind=email` : k === 'commit' ? `/item/${i}?kind=commitment` : k === 'meeting' ? `/item/${i}?kind=meeting` : null;
-};
+// THE ONE REF → DOOR producer (lib/room/presentation refDoorHref — the kind rides to the door).
+const refHref = (ref: string | null): string | null => refDoorHref(ref);
 
 function EditableIntent({ entityId, label, hint, values, onSaved }: { entityId: string; label: string; hint: string; values: string[]; onSaved: (next: string[]) => void }) {
   const [adding, setAdding] = useState(false);
@@ -561,54 +560,80 @@ function StatusUpdateModal({ entityId, dealName, onClose }: { entityId: string; 
   );
 }
 
-// ── THE DELIVERABLES BLOCK (was the living status brief, workbench B1b) — the filed list of what
-// this work has produced, assembled server-side from factual pool rows (zero AI on read).
-//
-// ONE FACT, ONE HOME (docs/threads-plan.md — the drawer is inventory, and it never re-narrates):
-// Key dates and People were deleted first (a third rendering of the Tasks/Meetings tabs), and in
-// Phase 3 the risk block left too — a warning is SPEECH: the synthesis's blocking line now reaches the
-// room's ONE composed brief through lib/room/grounding and is spoken inside the position, never
-// shouted as a second amber voice beside it. Deliverables stay: nothing else here lists them. ──
-function DeliverablesBlock({ deliverables, onPreviewDeliverable }: {
+// ══ THE CONVERSATIONS TAB — THREE GROUPS, ONE GRAMMAR (W19.C, owner walk Sep 28) ══════════════════
+// One tab used to mix three lists — "Saved chats", an unlabeled run of email threads, and (in the
+// drawer's footer, under every tab) the deliverables — with raw ISO dates. Each kind now owns a small
+// header with its house icon and its count, rows share one shape, and every date is the kit's short
+// grammar ("Sep 28", lib/utils/format-date). An empty group is ABSENT (the drawer never asks).
+function GroupHeader({ icon: Icon, label, count }: { icon: React.ComponentType<{ className?: string }>; label: string; count: number }) {
+  return (
+    <p className="flex items-center gap-1.5 px-2 mb-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+      <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+      {label}
+      <span className="tabular-nums font-normal text-neutral-300">{count}</span>
+    </p>
+  );
+}
+
+/** A row's quiet verb — shown on hover/focus, the house icon set, never motion under reduced-motion. */
+function RowVerb({ icon: Icon, title, onClick, danger = false }: { icon: React.ComponentType<{ className?: string }>; title: string; onClick: () => void; danger?: boolean }) {
+  return (
+    <button type="button" title={title} aria-label={title}
+      onClick={(ev) => { ev.stopPropagation(); onClick(); }}
+      className={`flex-shrink-0 rounded p-0.5 opacity-0 group-hover/s:opacity-100 focus:opacity-100 transition-opacity motion-reduce:transition-none ${danger ? 'text-neutral-300 hover:text-rose-500' : 'text-neutral-300 hover:text-neutral-600'}`}>
+      <Icon className="w-3.5 h-3.5" />
+    </button>
+  );
+}
+
+// ── WHAT THIS WORK HAS PRODUCED (was the drawer's footer; workbench B1b) — assembled server-side
+// from factual pool rows, zero AI on read. ONE FACT, ONE HOME: nothing else in the drawer lists them.
+function DeliverableRows({ deliverables, onPreviewDeliverable }: {
   deliverables: NonNullable<Detail['statusBrief']>['deliverables'];
   onPreviewDeliverable: (name: string, ref: string) => void;
 }) {
-  if (!deliverables.length) return null;
   return (
-    <div>
-      <p className="text-[10.5px] font-semibold uppercase tracking-wide text-neutral-400 mb-1.5">Deliverables</p>
-      <div className="space-y-0.5">
-        {deliverables.map((dv, i) => (
-          <button key={i} onClick={() => dv.ref && onPreviewDeliverable(dv.title, dv.ref)} className="flex items-baseline gap-2 w-full text-left group/dv">
-            <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-700 group-hover/dv:text-indigo-600 transition-colors">{dv.title}</span>
-            <span className="flex-shrink-0 text-[11px] text-neutral-400">{dv.by ? `${dv.by} · ` : ''}{dv.at ?? ''}</span>
-          </button>
-        ))}
-      </div>
+    <div className="space-y-0.5">
+      {deliverables.map((dv, i) => (
+        <button key={i} onClick={() => dv.ref && onPreviewDeliverable(dv.title, dv.ref)} className="group/dv w-full text-left flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-neutral-50/70 transition-colors motion-reduce:transition-none">
+          <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-700 group-hover/dv:text-indigo-700 transition-colors motion-reduce:transition-none">{dv.title}</span>
+          {dv.by && <span className="flex-shrink-0 text-[11px] text-neutral-400">{dv.by}</span>}
+          {dv.at && <span className="flex-shrink-0 text-[11px] text-neutral-300 tabular-nums">{fmtMonthDay(dv.at)}</span>}
+        </button>
+      ))}
     </div>
   );
 }
 
-// ── PAST CHAT SESSIONS (owner walk, Sep 14: "should we keep a chats tab as well under filed, so
-// that all chats within project stay saved?") ──────────────────────────────────────────────────
-// They live under Conversations, beside the room's email threads — the one place the drawer already
-// inventories "talk about this work". A row is the session's own record: when it was closed, how
-// many turns, its first words.
-//
-// A SAVED CHAT IS RESUMABLE, NOT A TRANSCRIPT (owner walk, Sep 14: "shouldn't clicking on saved
-// chats open the actual chat? and allow to resume from there?"). The room holds ONE live chat
-// session at a time; "saved" was a boundary, never a demotion. So the row's own click RESUMES —
-// the live exchange is saved through the same door, this session comes back to live
-// (PATCH /api/room/turns?session=<at>), the drawer closes and the composer is sitting under those
-// words. The chevron keeps the cheap read-only peek for when you only want to look.
-function ChatSessionRows({ roomKey, sessions, onResume }: {
-  roomKey: string; sessions: Array<{ at: string; count: number; firstText: string }>;
+// ── THE PROJECT'S CHATS (owner walks, Sep 14 + Sep 28) ────────────────────────────────────────────
+// Two kinds of chat live here, one grammar:
+//   · SAVED SESSIONS of this room (archived batches inside the project's own key). A row RESUMES on
+//     click (PATCH ?session= — the live exchange is saved, this one comes back); the chevron peeks
+//     read-only. Titled by the reader's own first words (lib/room/turns sessionTitle).
+//     Verbs: Move out (the session becomes a Home chat) · Delete — both reversible from the toast.
+//   · HOME CHATS FILED INTO THIS PROJECT (the /api/rooms/adopt binding). A row OPENS the chat at its
+//     address. Verbs: Remove from project · Delete — THE SAME verbs Home's sidebar fires
+//     (components/one/chat-actions — one implementation).
+// Nothing a chat created (tasks, drafts, deliverables) is touched by any verb here: those rows are
+// keyed by their item, never by the conversation that asked for them.
+type RoomSessionRow = { at: string; count: number; title: string };
+type FiledChatRow = { key: string; title: string; at: string; count: number };
+function ChatRows({ roomKey, sessions, filed, onResume, onChanged, onOpenChat }: {
+  roomKey: string; sessions: RoomSessionRow[]; filed: FiledChatRow[];
   /** Resumed — the host swaps the live conversation and closes the drawer. */
   onResume: () => void;
+  /** A verb changed the list — the host re-reads it (server truth, never a local patch). */
+  onChanged: () => void;
+  onOpenChat: (key: string) => void;
 }) {
   const [openAt, setOpenAt] = useState<string | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState<Record<string, Array<{ role: string; text: string; author?: { name?: string } | null }>>>({});
+  // A verb hides its row at once (the click answers); the re-read then states the truth — an Undo
+  // or a failure brings the row back through that same re-read.
+  const hide = (k: string) => setHidden((p) => new Set(p).add(k));
+  const settle = () => { setHidden(new Set()); onChanged(); };
   const toggle = async (at: string) => {
     if (openAt === at) { setOpenAt(null); return; }
     setOpenAt(at);
@@ -626,31 +651,56 @@ function ChatSessionRows({ roomKey, sessions, onResume }: {
       onResume();
     } finally { setResuming(null); }
   };
+  const rows = [
+    ...sessions.filter((sn) => !hidden.has(sn.at)).map((sn) => ({ kind: 'session' as const, id: sn.at, title: sn.title, count: sn.count, at: sn.at })),
+    ...filed.filter((c) => !hidden.has(c.key)).map((c) => ({ kind: 'filed' as const, id: c.key, title: c.title, count: c.count, at: c.at })),
+  ].sort((a, b) => b.at.localeCompare(a.at));
   return (
-    <div className="space-y-1">
-      {sessions.map((sn) => (
-        <div key={sn.at}>
-          <div className="group/s flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-neutral-50/70 transition-colors">
-            <button onClick={() => void toggle(sn.at)} title="Read it without resuming" className="flex-shrink-0">
-              <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-300 hover:text-neutral-500 transition-all duration-200 ${openAt === sn.at ? 'rotate-90' : ''}`} />
+    <div className="space-y-0.5">
+      {rows.map((r) => (
+        <div key={r.id}>
+          <div className="group/s flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-neutral-50/70 transition-colors motion-reduce:transition-none">
+            {r.kind === 'session' ? (
+              <button onClick={() => void toggle(r.id)} title="Read it without resuming" className="flex-shrink-0">
+                <ChevronRightIcon className={`w-3.5 h-3.5 text-neutral-300 hover:text-neutral-500 transition-transform duration-200 motion-reduce:transition-none ${openAt === r.id ? 'rotate-90' : ''}`} />
+              </button>
+            ) : (
+              <HomeIcon className="w-3.5 h-3.5 flex-shrink-0 text-neutral-300" aria-label="A Home chat filed here" />
+            )}
+            <button
+              onClick={() => (r.kind === 'session' ? void resume(r.id) : onOpenChat(r.id))}
+              title={r.kind === 'session' ? 'Pick this conversation back up' : 'Open this chat'}
+              className="min-w-0 flex-1 text-left flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-700 group-hover/s:text-indigo-700 transition-colors motion-reduce:transition-none">{r.title}</span>
+              {resuming === r.id && <span className="flex-shrink-0 text-[11px] font-medium text-indigo-600">Resuming…</span>}
+              <span className="flex-shrink-0 text-[11px] text-neutral-300 tabular-nums">{fmtMonthDay(r.at)}</span>
             </button>
-            <button onClick={() => void resume(sn.at)} title="Pick this conversation back up" className="min-w-0 flex-1 text-left flex items-center gap-2.5">
-              <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-700 group-hover/s:text-indigo-700 transition-colors">{sn.firstText || 'Chat'}</span>
-              <span className="flex-shrink-0 text-[11px] font-medium text-indigo-600 opacity-0 group-hover/s:opacity-100 transition-opacity">{resuming === sn.at ? 'Resuming…' : 'Resume'}</span>
-              <span className="flex-shrink-0 text-[11px] text-neutral-400">{sn.count}</span>
-              <span className="flex-shrink-0 text-[11px] text-neutral-300 tabular-nums">{sn.at.slice(0, 10)}</span>
-            </button>
+            {r.kind === 'session' ? (
+              <>
+                <RowVerb icon={ArrowUpOnSquareIcon} title="Move out of the project (becomes a Home chat)"
+                  onClick={() => { hide(r.id); void moveProjectChatOut(roomKey, r.id, settle); }} />
+                <RowVerb icon={TrashIcon} title="Delete this chat" danger
+                  onClick={() => { hide(r.id); void deleteProjectChat(roomKey, r.id, settle); }} />
+              </>
+            ) : (
+              <>
+                <RowVerb icon={FolderMinusIcon} title="Remove from project (stays in your chats)"
+                  onClick={() => { hide(r.id); void unfileHomeChat(r.id, roomKey, settle); }} />
+                <RowVerb icon={TrashIcon} title="Delete this chat" danger
+                  onClick={() => { hide(r.id); void deleteHomeChat(r.id, settle); }} />
+              </>
+            )}
           </div>
-          {openAt === sn.at && (
-            <div className="ml-6 mt-1 space-y-1.5 border-l border-neutral-100 pl-3">
-              {(loaded[sn.at] ?? []).map((t, i) => (
+          {r.kind === 'session' && openAt === r.id && (
+            <div className="ml-6 mt-1 mb-1.5 space-y-1.5 border-l border-neutral-100 pl-3">
+              {(loaded[r.id] ?? []).map((t, i) => (
                 <p key={i} className="text-[12px] leading-snug text-neutral-500">
                   {t.role === 'user' ? <span className="font-medium text-neutral-700">You: </span>
                     : t.author?.name ? <span className="font-medium text-neutral-700">{t.author.name.split(' ')[0]}: </span> : null}
                   {t.text}
                 </p>
               ))}
-              {!loaded[sn.at] && <p className="text-[12px] text-neutral-300">Reading…</p>}
+              {!loaded[r.id] && <p className="text-[12px] text-neutral-300">Reading…</p>}
             </div>
           )}
         </div>
@@ -748,7 +798,9 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
   // The room's ARCHIVED chat sessions (Filed → Conversations). Fetched only while the drawer is
   // open — inventory nobody is looking at is not worth a request — and re-read when New chat
   // closes one (the nonce is that deed's own echo, not a poll).
-  const [chatSessions, setChatSessions] = useState<Array<{ at: string; count: number; firstText: string }>>([]);
+  const [chatSessions, setChatSessions] = useState<RoomSessionRow[]>([]);
+  // W19.C: the Home chats filed into this project — served by the same read (`filed`).
+  const [filedChats, setFiledChats] = useState<FiledChatRow[]>([]);
   const [chatSessionsNonce, setChatSessionsNonce] = useState(0);
   // THE ROOM'S OWN RECORD — reported by the shared rail (history left the stream, Sep 14) and
   // filed here like every other fact about this work.
@@ -759,7 +811,11 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
     let alive = true;
     fetch(`/api/room/turns?key=${encodeURIComponent(entityId)}&sessions=1`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((dd) => { if (alive && Array.isArray(dd?.sessions)) setChatSessions(dd.sessions); })
+      .then((dd) => {
+        if (!alive) return;
+        if (Array.isArray(dd?.sessions)) setChatSessions(dd.sessions);
+        if (Array.isArray(dd?.filed)) setFiledChats(dd.filed);
+      })
       .catch(() => {});
     return () => { alive = false; };
   }, [drawerOpen, entityId, chatSessionsNonce]);
@@ -988,6 +1044,39 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
     return replyRows.length === 1 ? boardRowItemId(replyRows[0]) : null;
   })();
 
+  // ── W19.C · THE BOARD WITH ITS LANES (read-time, from the rows as served) — the direction a row
+  // carries decides how its prepared work speaks (a waiting row's is a nudge), and every door below
+  // resolves an id's KIND from here.
+  const laneRows: Array<{ r: BoardItem; lane: BoardLane }> = [
+    ...(d?.board.todo ?? []).map((r) => ({ r, lane: 'todo' as const })),
+    ...(d?.board.doing ?? []).map((r) => ({ r, lane: 'doing' as const })),
+    ...(d?.board.waiting ?? []).map((r) => ({ r, lane: 'waiting' as const })),
+  ];
+  const openPrepared = (r: BoardItem, lane: BoardLane) => {
+    if (isWaitingNudge(lane, r) && r.preparedRef) {
+      setFocused({ kind: 'deliverable', id: r.preparedRef, title: preparedCardLabel(lane, r, clipLabel(r.title, 52)) });
+      return;
+    }
+    openHref(r.href, false);
+  };
+  // THE CTA SAYS WHAT IT DOES: a move whose target is a waiting row's nudge reads "Review nudge"
+  // (lib/room/presentation moveForLane) — the served view is re-read, never mutated.
+  const roomMove = rail?.entity?.move ?? rail?.move ?? null;
+  // Memoised on the two payloads it reads, so the rail's `view` keeps its identity between renders.
+  const railView: RailView | null = useMemo(() => {
+    const mv = rail?.entity?.move;
+    if (!rail?.entity || !mv) return null;
+    const waiting = d?.board.waiting ?? [];
+    const others = [...(d?.board.todo ?? []), ...(d?.board.doing ?? [])];
+    const laneOf = (ref: string): BoardLane | null => {
+      const id = moveTargetId(ref);
+      return waiting.some((r) => boardRowItemId(r) === id) ? 'waiting' : others.some((r) => boardRowItemId(r) === id) ? 'todo' : null;
+    };
+    const preparedOf = (ref: string) => [...waiting, ...others].some((r) => boardRowItemId(r) === moveTargetId(ref) && !!r.prepared);
+    const next = moveForLane(mv, laneOf, preparedOf);
+    return next === mv ? null : { ...rail, entity: { ...rail.entity, move: next } };
+  }, [rail, d]);
+
   const handOff = async () => {
     if (!e?.nextMove || !suggestedWorker || handing) return;
     setHanding(true);
@@ -1135,7 +1224,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
       // The room now stands in its OWN shape until its view lands, using the same skeleton the
       // route boundary uses (one shape, two moments — a fill, never a re-layout).
       conversation={rail ? (
-        <ItemRail kind="entity" id={entityId} view={rail}
+        <ItemRail kind="entity" id={entityId} view={railView ?? rail}
           // HISTORY LEAVES THE STREAM (Sep 14) — the rail reports the record, the drawer files it.
           onHistory={setHistoryLines}
           // THE OPENING CONTRACT (clause 2): the room's ask/decision shows WHAT IT IS ABOUT. The
@@ -1168,12 +1257,14 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
           // clothes, felt like a different product). Derived from the board's own prepared state;
           // Open focuses the item on the room's stage (one navigation).
           artifacts={(() => {
-            const rows = [...(d?.board.todo ?? []), ...(d?.board.doing ?? []), ...(d?.board.waiting ?? [])].filter((r) => r.prepared);
+            // W19.C · THE LANE RIDES WITH THE ROW: a waiting row's prepared work is a NUDGE (the
+            // counterparty owes), and its card says so — never the bare task title as if it were yours.
+            const rows = laneRows.filter(({ r }) => r.prepared);
             // The card-bearing row LEADS, so the room's agenda can never fall off the end of the
             // three-card cap (a CTA pointing at a card the stream declined to render is the
             // lying-door class).
-            const ordered = [...rows].sort((a, b) => (boardRowItemId(a) === cardRowId ? -1 : boardRowItemId(b) === cardRowId ? 1 : 0));
-            return ordered.slice(0, 3).map((r) => ({
+            const ordered = [...rows].sort((a, b) => (boardRowItemId(a.r) === cardRowId ? -1 : boardRowItemId(b.r) === cardRowId ? 1 : 0));
+            return ordered.slice(0, 3).map(({ r, lane }) => ({
               ...(cardRowId === boardRowItemId(r) ? {
                 // ══ THE CARD CONTRACT REACHES THE PROJECT THREAD (owner walk, Sep 14) ═══════════
                 // "Why isn't this using the email component we did? is it because it's a project?"
@@ -1203,9 +1294,11 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
               // slice(44) cut "…Thursday 11h with A and B" down to "…with A" — a card
               // that quietly dropped a co-attendee and read as a contradiction of the brief
               // beside it. A clip ends at a word boundary and DECLARES itself.
-              label: `${r.prepared === 'draft' ? 'Draft ready' : 'Prepared'} — "${clipLabel(r.title, 52)}"`,
+              label: preparedCardLabel(lane, r, clipLabel(r.title, 52)),
               by: r.prepared && r.prepared !== 'draft' ? r.prepared : null,
-              onOpen: () => openHref(r.href, false),
+              // A nudge opens AS the nudge (its prepared deliverable) — the work it chases is one
+              // click further, through the row's own kind-carrying door.
+              onOpen: () => openPrepared(r, lane),
               anchorKey: prepAnchorKey(r.id.startsWith('commit:') ? 'commitment' : 'inbox', boardRowItemId(r)),
             }));
           })()}
@@ -1231,9 +1324,16 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
           // its card is the editor — and the deepest this door goes is the THREAD (the same place
           // the card's own "Thread →" lands). A reply stage is unreachable from here, by
           // construction; forward/invite keep their stages (their cards are not in the thread yet).
+          //
+          // W19.C · THE KIND RIDES TO THE DOOR: the rail hands a RAW id (moveTargetId strips the
+          // kind), so the address is resolved from this room's own board row / the move's ref — a
+          // commitment opens as a commitment, never as a mail thread that does not exist.
           onStage={(stage, itemId) => {
-            if (stage === 'reply') { openHref(`/item/${itemId}?kind=email`, false); return true; }
-            openHref(`/item/${itemId}?kind=email`, false);
+            const hit = laneRows.find(({ r }) => boardRowItemId(r) === itemId);
+            if (hit && isWaitingNudge(hit.lane, hit.r)) { openPrepared(hit.r, hit.lane); return true; }
+            const href = stageDoorHref(itemId, laneRows.map(({ r }) => r), roomMove?.ref ?? null);
+            openHref(href, false);
+            if (stage === 'reply' || !href.includes('kind=email')) return true;
             setFocusStage(stage === 'forward' ? 'forward' : 'invite');
             setStageNonce((n) => n + 1);
             return true;
@@ -1303,17 +1403,10 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
               </div>
             ) : null
           }
-          footer={
-            /* What this work has PRODUCED — the one list nothing else in the drawer holds. */
-            d.statusBrief ? (
-              <DeliverablesBlock deliverables={d.statusBrief.deliverables}
-                onPreviewDeliverable={(name, ref) => { setDrawerOpen(false); setFocused({ kind: 'deliverable', id: ref, title: name }); }} />
-            ) : null
-          }
           sections={([
             {
               id: 'work', icon: ClipboardDocumentCheckIcon,
-              label: 'Tasks' + (d.counts.total ? ` · ${d.counts.total}` : ''),
+              label: 'Tasks', count: d.counts.total,
               node: (<div>
                 {/* B2 — PROPOSED from the meeting: the review gate. Accept = real work + a learning
                     signal; Reject = dismissed + a learning signal. Never on the board until accepted.
@@ -1389,7 +1482,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
             /* B1a — the deal's SCHEDULE: the shared event-Gantt over the served rows (the same
                component the portfolio/Timeline use — one timeline language everywhere). */
             ...(scheduleRows.length > 0 ? [{
-              id: 'schedule', icon: CalendarDaysIcon, label: `Schedule · ${scheduleRows.length}`,
+              id: 'schedule', icon: CalendarDaysIcon, label: 'Schedule', count: scheduleRows.length,
               node: (
                 <GanttChart
                   groups={[{ id: entityId, name: e.name, items: scheduleRows }]}
@@ -1399,7 +1492,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
               ),
             }] : []),
             ...(d.meetings.length > 0 ? [{
-              id: 'meetings', icon: VideoCameraIcon, label: `Meetings · ${d.meetings.length}`,
+              id: 'meetings', icon: VideoCameraIcon, label: 'Meetings', count: d.meetings.length,
               node: (
                 <div className="space-y-1.5">
                   {d.meetings.map((mt) => (
@@ -1411,45 +1504,68 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
                 </div>
               ),
             }] : []),
-            /* THE SUM LAW: the tab counts exactly what it lists — this room's email threads AND its
-               saved chat sessions (owner, Sep 14: "keep a chats tab as well under filed, so that
-               all chats within project stay saved"). */
-            ...((d.conversations ?? []).length + chatSessions.length > 0 ? [{
-              id: 'conv', icon: ChatBubbleLeftRightIcon, label: `Conversations · ${(d.conversations ?? []).length + chatSessions.length}`,
-              node: (
-                <div className="space-y-4">
-                  {chatSessions.length > 0 && (
-                    <div>
-                      <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-400 mb-0.5">Saved chats</p>
-                      <ChatSessionRows
-                        roomKey={entityId} sessions={chatSessions}
-                        // RESUME LANDS YOU IN THE CONVERSATION: the rail drops its live cache and
-                        // re-reads (the same echo "New chat" fires — one event for "the live session
-                        // changed", never a second mechanism), the drawer gets out of the way, and
-                        // the session list re-reads because the swap saved the outgoing exchange.
-                        onResume={() => {
-                          window.dispatchEvent(new CustomEvent('aug:room-chat-reset', { detail: { roomKey: entityId } }));
-                          setChatSessionsNonce((n) => n + 1);
-                          setDrawerOpen(false);
-                        }}
-                      />
-                    </div>
-                  )}
-                  <div className="space-y-1">
-                    {(d.conversations ?? []).map((c) => (
-                      <button key={c.id} onClick={() => { setDrawerOpen(false); setFocused({ kind: 'email', id: c.id }); }} className="group/c w-full text-left flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-neutral-50/70 transition-colors">
-                        <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${c.open ? 'bg-indigo-400' : 'bg-neutral-200'}`} title={c.open ? 'Open' : 'Handled'} />
-                        <span className="min-w-0 flex-1 text-[12.5px] text-neutral-700 truncate group-hover/c:text-indigo-700 transition-colors">{c.subject}</span>
-                        {c.who && <span className="flex-shrink-0 text-[11px] text-neutral-400 truncate max-w-[120px]">{c.who.split('<')[0].trim()}</span>}
-                        {c.at && <span className="flex-shrink-0 text-[11px] text-neutral-300 tabular-nums">{c.at}</span>}
-                      </button>
-                    ))}
+            /* THE SUM LAW: the tab counts exactly what it lists — three groups (W19.C): the CHATS
+               (this room's saved sessions + the Home chats filed into it), its EMAIL THREADS, and the
+               DELIVERABLES this work produced (they left the drawer's footer, where they stood under
+               every tab). Each group heads itself with its icon and count; an empty group is absent. */
+            ...(() => {
+              const threads = d.conversations ?? [];
+              const produced = d.statusBrief?.deliverables ?? [];
+              const chats = chatSessions.length + filedChats.length;
+              const total = chats + threads.length + produced.length;
+              if (total === 0) return [];
+              return [{
+                id: 'conv', icon: ChatBubbleLeftRightIcon, label: 'Conversations', count: total,
+                node: (
+                  <div className="space-y-5">
+                    {chats > 0 && (
+                      <div>
+                        <GroupHeader icon={ChatBubbleLeftRightIcon} label="Chats" count={chats} />
+                        <ChatRows
+                          roomKey={entityId} sessions={chatSessions} filed={filedChats}
+                          // RESUME LANDS YOU IN THE CONVERSATION: the rail drops its live cache and
+                          // re-reads (the same echo "New chat" fires — one event for "the live session
+                          // changed", never a second mechanism), the drawer gets out of the way, and
+                          // the session list re-reads because the swap saved the outgoing exchange.
+                          onResume={() => {
+                            window.dispatchEvent(new CustomEvent('aug:room-chat-reset', { detail: { roomKey: entityId } }));
+                            setChatSessionsNonce((n) => n + 1);
+                            setDrawerOpen(false);
+                          }}
+                          onChanged={() => setChatSessionsNonce((n) => n + 1)}
+                          // A Home chat opens at ITS OWN address (the address law) — never re-rendered here.
+                          onOpenChat={(key) => { setDrawerOpen(false); router.push(`/home?chat=${encodeURIComponent(key)}`); }}
+                        />
+                      </div>
+                    )}
+                    {threads.length > 0 && (
+                      <div>
+                        <GroupHeader icon={EnvelopeIcon} label="Email threads" count={threads.length} />
+                        <div className="space-y-0.5">
+                          {threads.map((c) => (
+                            <button key={c.id} onClick={() => { setDrawerOpen(false); setFocused({ kind: 'email', id: c.id }); }} className="group/c w-full text-left flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-neutral-50/70 transition-colors motion-reduce:transition-none">
+                              <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${c.open ? 'bg-indigo-400' : 'bg-neutral-200'}`} title={c.open ? 'Open' : 'Handled'} />
+                              <span className="min-w-0 flex-1 text-[12.5px] text-neutral-700 truncate group-hover/c:text-indigo-700 transition-colors motion-reduce:transition-none">{c.subject}</span>
+                              {c.who && <span className="flex-shrink-0 text-[11px] text-neutral-400 truncate max-w-[120px]">{c.who.split('<')[0].trim()}</span>}
+                              {c.at && <span className="flex-shrink-0 text-[11px] text-neutral-300 tabular-nums">{fmtMonthDay(c.at)}</span>}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {produced.length > 0 && (
+                      <div>
+                        <GroupHeader icon={DocumentTextIcon} label="Deliverables" count={produced.length} />
+                        <DeliverableRows deliverables={produced}
+                          onPreviewDeliverable={(name, ref) => { setDrawerOpen(false); setFocused({ kind: 'deliverable', id: ref, title: name }); }} />
+                      </div>
+                    )}
                   </div>
-                </div>
-              ),
-            }] : []),
+                ),
+              }];
+            })(),
             ...((d.files ?? []).length > 0 ? [{
-              id: 'files', icon: DocumentTextIcon, label: `Files · ${(d.files ?? []).length}`,
+              id: 'files', icon: DocumentTextIcon, label: 'Files', count: (d.files ?? []).length,
               node: (
                 <div className="space-y-1">
                   {(d.files ?? []).map((f, i) => (
@@ -1464,13 +1580,13 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
               ),
             }] : []),
             ...(history.length > 0 ? [{
-              id: 'history', icon: ClockIcon, label: `Activity · ${history.length}`,
+              id: 'history', icon: ClockIcon, label: 'Activity', count: history.length,
               node: <HistoryList lines={history} onOpen={(href) => { setDrawerOpen(false); openHref(href); }} />,
             }] : []),
             /* THE RECORD'S SEAT (Sep 14): the conversation's own past — what used to expand from
                "earlier (N)" in the middle of the thread. Read-only, like everything filed. */
             ...(historyLines.length > 0 ? [{
-              id: 'record', icon: ArchiveBoxArrowDownIcon, label: `History · ${historyLines.length}`,
+              id: 'record', icon: ArchiveBoxArrowDownIcon, label: 'History', count: historyLines.length,
               node: <RoomHistorySection lines={historyLines} />,
             }] : []),
           ] as FiledSection[])}

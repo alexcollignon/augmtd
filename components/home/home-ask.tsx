@@ -49,8 +49,11 @@ import { docCardTypeOf, resolveDocVersion, type DocCardType } from '@/lib/docume
 import { projectHref } from '@/lib/room/project-href';
 // THE REF IS ITS TAG — the ONE ref grammar, shared with the two serving doors (lib/home/ask.ts,
 // lib/entities/ask.ts). A chip resolves by id here, never by its position in the served array.
-import { ASK_TAG_LETTERS, askTagRe, bracketTags, indexByTag, resolveAskRefs } from '@/lib/home/ask-refs';
+import { ASK_TAG_LETTERS } from '@/lib/home/ask-refs';
+import { Answer } from '@/components/home/ask-answer';
+import { orphanQuestion, ORPHAN_LINE, ORPHAN_RETRY } from '@/components/home/room-chat';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
+import { dmParamOf, dmThreadLsKey } from '@/components/one/chat-address';
 import { peekChatTurns, fetchChatTurns } from '@/components/home/chat-turns-warm';
 import { mergeThreadLanding, readThreadCache, threadCacheOf } from '@/lib/home/thread-cache';
 import { ROLE_LABELS, ROLE_SPECIALTIES, ROLE_STARTERS, GENERIC_STARTERS, INTAKE_STARTERS } from '@/lib/workers/roles';
@@ -230,57 +233,8 @@ function AnimatedAnswer({ text, refs, onOpen, animate }: { text: string; refs: R
   return <Answer text={shown} refs={refs} onOpen={onOpen} />;
 }
 
-function Answer({ text, refs, onOpen }: { text: string; refs: Ref[]; onOpen: (r: Ref) => void }) {
-  // FORMATTING GUARDS: the renderer is plain-prose — strip any markdown the model leaks, and
-  // SEPARATE adjacent chips with " · ". Structure: blank lines split the answer into real spaced
-  // paragraphs (never one massive block).
-  const clean = text.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/(?<!\w)\*([^*\n]+)\*(?!\w)/g, '$1').replace(/^#+\s*/gm, '');
-  // ── THE REF IS ITS TAG (Sep 21 — the wrong-object-door incident; lib/home/ask-refs.ts) ──
-  // This loop used to walk the served array with a cursor: chips resolved BY EMIT ORDER across the
-  // whole answer. One grouped bracket ("[R1, R2]") consumed the first two served refs — two
-  // clickable doors to work the sentence never named. A chip resolves by its ID or it does not render: a missing chip is a gap,
-  // a wrong chip is a lie the user can click.
-  //
-  // THE SAFE DEGRADE for turns stored BEFORE the law (refs without tags): the positional fallback
-  // IS the bug, so it is not kept quietly — such a turn indexes to nothing, its tags are stripped,
-  // and it renders as clean prose with no inline chips. We deliberately do NOT reconstruct chips in
-  // the "counts happen to match" case: a rule with an exception is the rule people trust wrongly.
-  const byTag = indexByTag(refs);
-  // ONE PASS removes every tag this turn cannot resolve (and tidies the space it leaves) through
-  // the SAME resolver the server serves by — so notation can never reach the reader as raw text,
-  // on a live answer or a rehydrated one. The cap is what this turn actually holds: the ceiling was
-  // already enforced at the door, and re-capping here would silently drop a served ref.
-  const prose = resolveAskRefs(clean, (t) => byTag.get(t), { cap: byTag.size }).text;
-  const re = askTagRe();
-  let k = 0;
-  const renderPara = (para: string) => {
-    const parts: React.ReactNode[] = [];
-    let last = 0, m: RegExpExecArray | null, prevWasRef = false;
-    re.lastIndex = 0;
-    while ((m = re.exec(para)) !== null) {
-      if (m.index > last) { parts.push(<span key={`t${k++}`}>{para.slice(last, m.index)}</span>); prevWasRef = false; }
-      for (const id of bracketTags(m[1])) {
-        const r = byTag.get(id) ?? null;
-        if (!r) continue;                     // unresolvable: the tag renders as nothing at all
-        if (prevWasRef) parts.push(<span key={`s${k++}`} className="text-neutral-300"> · </span>);
-        parts.push(<button key={`r${k++}`} onClick={() => onOpen(r)} className="inline font-medium text-indigo-700 hover:underline decoration-indigo-300 underline-offset-2">{r.label}</button>);
-        prevWasRef = true;
-      }
-      last = m.index + m[0].length;
-    }
-    if (last < para.length) parts.push(<span key={`t${k++}`}>{para.slice(last)}</span>);
-    return parts;
-  };
-  const paras = prose.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
-  return (
-    <div className="space-y-2.5">
-      {paras.map((para, i) => (
-        // THE VOICE (design language): the team's answers are the team speaking — serif.
-        <p key={i} className="text-[14px] text-neutral-700 leading-[1.65] whitespace-pre-line">{renderPara(para)}</p>
-      ))}
-    </div>
-  );
-}
+// THE ANSWER RENDERER lives in ONE module now (components/home/ask-answer.tsx — W19.B): the Home
+// chat and the project/item room draw the chief of staff's answer through the same component.
 
 // A long paste must never render as an endless wall — but the collapse is the thread KIT's law
 // now (thread-timeline's UserBubbleText), so this host hands the FULL text over and mounts no
@@ -320,7 +274,12 @@ function writeChatAddress(key: string | null) {
     const url = new URL(window.location.href);
     if (url.pathname !== '/home') return;
     if (key) url.searchParams.set('chat', key); else url.searchParams.delete('chat');
+    // W19.2b · a resolvable DM address (`?dm=<agent>`) is replaced by the thread's own once known.
+    url.searchParams.delete('dm');
     if (url.href !== window.location.href) window.history.replaceState(null, '', url);
+    // W19.C: announce the address (a replaceState is invisible to the sidebar) — it lights exactly
+    // one seat from it (components/one/nav-active).
+    window.dispatchEvent(new CustomEvent('aug:chat-address', { detail: { key } }));
   } catch { /* no history */ }
 }
 
@@ -382,10 +341,30 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // the SHELL'S WIRES: the sidebar's Home resets this panel (and lands the caret in the composer);
   // opening a past conversation from the sidebar / All-conversations view loads it here.
   useEffect(() => {
+    // THE FACEPILE'S CHAT VERB (coherence slice #4): open the coworker's DM conversation
+    // (find-or-create the "Chat with" thread) — same door as addressing them by name.
+    // THE OPEN PATH IS ONE HOP WHEN THE ADDRESS IS KNOWN (owner walk, Sep 7). The pane, the face
+    // and the name paint SYNCHRONOUSLY; the cached thread mapping is read synchronously too, so a
+    // warm reopen goes straight to the messages load. Only a genuinely unknown thread pays the
+    // find-or-create hop, under a skeleton. ONE opener for the same-page event AND the `?dm=` landing.
+    const openDm = (w: { id: string; name: string }) => {
+      setOpen(true);
+      workerRoomRef.current = w; setDmActor(w); setDmLoading(true);
+      const known = cachedDmThread(w.id);
+      if (known) { void loadWorkerRoom(`worker:${known}:${w.id}`); return; }
+      void dmThread(w).then((tid) => {
+        if (tid) void loadWorkerRoom(`worker:${tid}:${w.id}`);
+        else setDmLoading(false);
+      });
+    };
     try {
       // THE SEAM DOOR: a project room's "Open the conversation" ref lands here with ?chat= —
       // an explicit click, it outranks every other rehydration path.
       const chatParam = new URLSearchParams(window.location.search).get('chat');
+      // W19.2b · THE DM DOOR'S RESOLVABLE ADDRESS (components/one/chat-address): `?dm=<agent>` from a
+      // sidebar click on another page — resolved to the coworker's thread here, and the address is
+      // rewritten to its own `?chat=worker:<tid>:<agent>` by loadWorkerRoom.
+      const dmParam = dmParamOf(window.location.search);
       // A PRE-FILED NEW CHAT (the project room's "New chat" door): the intent carries the
       // project — the fresh conversation starts already scoped, binding written up front.
       const scopeIntent = sessionStorage.getItem('aug-new-chat-scope');
@@ -404,6 +383,15 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         // THE RETIREMENT REPOINT (slice #5): every link that used to say /workers?worker&thread
         // now opens the coworker conversation HERE — one URL form for a conversation.
         void loadWorkerRoom(chatParam); setOpen(true);
+      } else if (dmParam) {
+        // The name paints the header and titles a first-contact thread: the roster the sidebar
+        // caches, else the one roster read (never an id wearing a face).
+        const known = presenceName(dmParam);
+        if (known) openDm({ id: dmParam, name: known });
+        else void getRoster().then((roster) => {
+          const name = roster.find((x) => x.id === dmParam)?.name;
+          if (name) openDm({ id: dmParam, name });
+        });
       } else if (scopeIntent) {
         sessionStorage.removeItem('aug-new-chat-scope');
         try {
@@ -418,15 +406,11 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             setTimeout(() => focusComposer(), 120);
           }
         } catch { /* bad blob */ }
-      } else if (sessionStorage.getItem('aug-open-chat-intent')) {
-        // A cross-page "open this conversation" intent (sidebar recents / All conversations /
-        // facepile from another route) — the ONLY landing path that restores the stored key:
-        // an explicit click, the panel opens with its conversation.
-        sessionStorage.removeItem('aug-open-chat-intent');
-        const key = localStorage.getItem(CHAT_KEY_LS);
-        if (key?.startsWith('chat:')) { loadRoom(key); setOpen(true); }
-        else if (key?.startsWith('worker:')) { void loadWorkerRoom(key); setOpen(true); }
       } else {
+        // W19.2b · THE PAYLOAD-LESS FLAG IS RETIRED AS A LANDING: a cross-page open is an ADDRESS now
+        // (?chat= / ?dm= above). A flag a same-page door left behind is only eaten here — it used to
+        // restore the LAST chat (the wrong conversation for a coworker click), which the fresh floor forbids.
+        sessionStorage.removeItem('aug-open-chat-intent');
         // THE FRESH FLOOR (Aug 11, owner — "clicking the chat opens the older one; it should
         // just be the empty home chat"): NO implicit rehydration on landing. The deck is the
         // default; the composer is a fresh chief chat; past conversations open ONLY through
@@ -475,27 +459,13 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // reset's own state flush to paint, so the FIRST click lands it (see focusComposerWhenSettled).
       focusComposerWhenSettled();
     };
-    // THE FACEPILE'S CHAT VERB (coherence slice #4): open the coworker's DM conversation
-    // (find-or-create the "Chat with" thread) — same door as addressing them by name.
-    // THE OPEN PATH IS ONE HOP WHEN THE ADDRESS IS KNOWN (owner walk, Sep 7). The pane, the face
-    // and the name paint SYNCHRONOUSLY off the click's own detail; the cached thread mapping is
-    // read synchronously too, so a warm reopen goes straight to the messages load — no
-    // find-then-load round-trip in front of it. Only a genuinely unknown thread pays the
-    // find-or-create hop, and it pays it under a skeleton, not a blank page.
+    // The same-page facepile click: the ONE opener above (openDm), off the click's own detail.
     const onDm = (e: Event) => {
       const d = (e as CustomEvent).detail as { agentId?: string; name?: string } | undefined;
       if (!d?.agentId || !d?.name) return;
-      const w = { id: d.agentId, name: d.name };
       // Same one-shot, same law (the facepile leaves the flag too): a same-page DM open consumes it.
       try { sessionStorage.removeItem('aug-open-chat-intent'); } catch { /* no storage */ }
-      setOpen(true);
-      workerRoomRef.current = w; setDmActor(w); setDmLoading(true);
-      const known = cachedDmThread(w.id);
-      if (known) { void loadWorkerRoom(`worker:${known}:${w.id}`); return; }
-      void dmThread(w).then((tid) => {
-        if (tid) void loadWorkerRoom(`worker:${tid}:${w.id}`);
-        else setDmLoading(false);
-      });
+      openDm({ id: d.agentId, name: d.name });
     };
     window.addEventListener('aug:dm-worker', onDm);
     window.addEventListener('aug:new-chat', onNew);
@@ -1112,7 +1082,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // The DM pointer — v2 key: v1 took threads[0] (most-recent) and could GLUE the Home DM onto a
   // delegation/report thread ("Handed to Clara: …", found live Aug 7). The DM is its own
   // "Chat with <name>" thread — found by title, created if absent; old v1 keys are orphaned.
-  const dmKey = (agentId: string) => `aug-dm2-${agentId}`;
+  const dmKey = dmThreadLsKey; // ONE spelling, shared with the sidebar's DM address (components/one/chat-address)
   // THE MAPPING IS READ SYNCHRONOUSLY (the open path's first cut): knowing the address is what
   // lets the click go straight to the thread's messages. Stamped through the house cache — read
   // AGELESS, because a thread id is durable identity and never decays into a false claim (a
@@ -1818,6 +1788,18 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           ),
         }] : [],
       });
+    }
+    // NO ORPHAN QUESTION (W19.B — components/home/room-chat.ts, the room's same rule): a thread that
+    // ends on the reader's words with nothing in flight (a reload mid-stream, a failed or empty
+    // answer) says so in one quiet line, and "Ask again" re-sends the words through the same door.
+    // (Not in a coworker DM: a coworker's reply can legitimately still be in production there.)
+    const orphan = dm ? null : orphanQuestion(turns, busy);
+    if (orphan) {
+      out.push({ type: 'event_line', id: 'orphan-question', text: ORPHAN_LINE,
+        refs: [{ label: ORPHAN_RETRY, onClick: () => {
+          setTurns((prev) => prev.filter((x) => x !== orphan));
+          void handleSubmit(orphan.text, []);
+        } }] });
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps

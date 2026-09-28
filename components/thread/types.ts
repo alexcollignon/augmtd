@@ -734,7 +734,8 @@ export type CollectionRowTone = 'active' | 'paused' | 'draft' | 'attention' | 'd
  *   the rows     name · status chip · one meta line · a door · at most two verbs
  *   the fold     past `foldAfter` the tail folds behind the ONE expander idiom
  *   `more`       what the server CAPPED — a cap is never silent
- *   `emptyLine`  what stands where rows would ("No workflows yet.")
+ *   no rows      NO CARD (W19.2a) — the framing sentence above carries the empty fact; a card
+ *                with nothing in it renders nothing, never a box repeating that sentence
  *
  * ONE TYPE SCALE: hierarchy is spacing and weight, never a second font size per row.
  */
@@ -745,7 +746,6 @@ export interface CollectionCard extends CardBase {
   rows: CollectionRow[];
   /** "and 12 more →" — the served set's own cap, with a door where one exists. */
   more?: { count: number; label?: string; onOpen?: () => void };
-  emptyLine?: string;
   /** Defaults to COLLECTION_INLINE_ROWS (lib/present/collection) — ONE number, not two. */
   foldAfter?: number;
 }

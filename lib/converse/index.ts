@@ -28,7 +28,7 @@ import { capabilitiesFor } from '@/lib/home/capability-map';
 // lives on the registry row, not in a local set here. See the law's note below.
 import { resultIsProse, resultIsPresentation, presentsCollectionKind } from '@/lib/work/surface-registry';
 // WAVE 1 — THE COLLECTION CARD: the contract both halves read, and the builders that fill it.
-import type { CollectionSpec } from '@/lib/present/collection';
+import { collectionHasRows, type CollectionSpec } from '@/lib/present/collection';
 import { isListingAsk } from '@/lib/present/listing-ask';
 // WAVE 2 — THE EVENT CARD: one calendar object, the verbs its state allows, nothing fired from here.
 import type { EventSpec } from '@/lib/present/event';
@@ -534,7 +534,54 @@ type Verdict = {
   facts: string[];
   delegate: { coworker: string; task: string; revises?: boolean } | null;
   open: boolean; // composite / doesn't fit → the agent loop
+  /** THE SYNTHESIS DIMENSION (W19.2a): the note asks for a JUDGMENT across the work — a catch-up,
+   *  a status, what changed, what is open/decided/next, a multi-part review — rather than for a
+   *  LIST of one kind of record. The router judges it; `synthesisPrecedence` applies it. */
+  synthesis: boolean;
 };
+
+/** Parse the router's JSON into a Verdict. Pure (exported for the zero-AI gates); a malformed reply
+ *  is the open default — the loop is always a correct answer. */
+export function parseVerdict(raw: string): Verdict {
+  try {
+    const o = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)) as Partial<Verdict> & { command?: { tool?: string; args?: Record<string, unknown> } | null };
+    return {
+      command: o.command?.tool ? { tool: String(o.command.tool), args: o.command.args ?? {} } : null,
+      question: o.question === true,
+      facts: Array.isArray(o.facts) ? o.facts.filter((f): f is string => typeof f === 'string' && !!f.trim()).slice(0, 3) : [],
+      delegate: o.delegate && typeof (o.delegate as { coworker?: string }).coworker === 'string'
+        ? { coworker: String((o.delegate as { coworker: string }).coworker), task: String((o.delegate as { task?: string }).task ?? ''), revises: (o.delegate as { revises?: unknown }).revises === true }
+        : null,
+      open: o.open === true,
+      synthesis: o.synthesis === true,
+    };
+  } catch { return { command: null, question: false, facts: [], delegate: null, open: true, synthesis: false }; }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// A CATCH-UP GETS A REAL ANSWER (W19.2a — owner walk, Sep 28). In a project room the owner asked
+// "Catch me up on this client. What has changed since the last meeting? Show me the current
+// decisions, open questions, next actions…" and was served a 7-day RECORDINGS listing: "Nothing
+// recorded in the last 7 days." — over an empty card saying it again. The router had named the
+// meeting read (the words "last meeting"), and a named read was forced into the tool loop, whose
+// last presenting read became the answer's card. The same question on Home got a grounded catch-up.
+//
+// THE PRECEDENCE: a note that asks for SYNTHESIS is answered from the grounded page (the Home answer
+// path, with the room's own page as its focus) — a read the router named for it is dropped, because
+// a judgment over the work is not a list of one kind of record. The answering pass keeps its REACH
+// valve, so a synthesis that genuinely needs a lookup still gets one. Two floors keep it honest:
+//   · a LITERAL listing ask (`isListingAsk` — the fast path's own rule) is never synthesis, whatever
+//     the router said, so "list my recordings" still gets its collection;
+//   · a DEED the router named (a prose command) or a hand-off is never dropped by this rule.
+// Pure; exported for the gates.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+export function synthesisPrecedence(v: Verdict, text: string): Verdict {
+  if (!v.synthesis || v.delegate || isListingAsk(text)) return { ...v, synthesis: false };
+  const namedRead = !!v.command && !resultIsProse(v.command.tool);
+  if (v.command && !namedRead) return { ...v, synthesis: false };   // a deed is never dropped
+  if (!v.question && !namedRead) return { ...v, synthesis: false }; // an instruction stays one
+  return { ...v, command: null, question: true, open: false, synthesis: true };
+}
 
 async function classifyTurn(client: SupabaseClient, userId: string, scope: ConverseScope, text: string, transcript = ''): Promise<Verdict> {
   // The command list is DERIVED from the chief-of-staff registry slice — the router can only route to
@@ -554,7 +601,7 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
     `Return ONLY JSON:\n` +
     `{"command":{"tool":"<registry tool>","args":{...}}|null,` +
     `"question":true|false,"facts":["0-3 durable facts worth remembering on this deal"],` +
-    `"delegate":{"coworker":"<name>","task":"<what>","revises":true|false}|null,"open":true|false}\n` +
+    `"delegate":{"coworker":"<name>","task":"<what>","revises":true|false}|null,"open":true|false,"synthesis":true|false}\n` +
     `Rules:\n` +
     `- "command" ONLY for a plain single action the registry lists (e.g. "dismiss this" → resolve_inbox_item ` +
     `{"resolution":"dismiss"}; "mark it done" → {"resolution":"complete"}; "find the pricing deck" → find_file ` +
@@ -582,22 +629,21 @@ async function classifyTurn(client: SupabaseClient, userId: string, scope: Conve
     `(change a chart, add a section, rework the tone of "the report") — new work is revises:false.\n` +
     (inItem ? `- A DRAFT INSTRUCTION (rewrite/shorten/soften/add something to the reply or follow-up being drafted here) is a CORRECTION, not open — return command:null, question:false, open:false; the draft is reworked on that path.\n` : '') +
     `- "open" = true when the note needs COMPOSITION (several actions, or an action the registry doesn't list).\n` +
+    // THE SYNTHESIS DIMENSION (W19.2a): a question that asks for a JUDGMENT across the work is not a
+    // lookup of one record kind — naming a read tool for it served a 7-day listing as a catch-up.
+    `- "synthesis" = true when the note asks you to SYNTHESISE or JUDGE across the work — catch me up, ` +
+    `status, what changed / what's new since X, what's open / decided / next, who owns what, what ` +
+    `conflicts, a review with several parts — rather than to LIST records of one kind. A synthesis ` +
+    `question is question:true with command:null: it is answered from the work's memory, never by a ` +
+    `single read tool (a mention of "the last meeting" or "this week" is a time anchor, not a request ` +
+    `for a meeting listing). "list/show my recordings", "what's on tomorrow", "which workflows do I ` +
+    `have" are LISTS — synthesis:false.\n` +
     `THE NOTE: ${text}`;
   try {
     const { client: ai, model } = await getAIClient(userId, 'classification', client);
     const res = await aiCreate(ai, { model, max_tokens: 500, temperature: 0, messages: [{ role: 'user', content: prompt }] });
-    const raw = res.choices?.[0]?.message?.content ?? '';
-    const o = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)) as Partial<Verdict> & { command?: { tool?: string; args?: Record<string, unknown> } | null };
-    return {
-      command: o.command?.tool ? { tool: String(o.command.tool), args: o.command.args ?? {} } : null,
-      question: o.question === true,
-      facts: Array.isArray(o.facts) ? o.facts.filter((f): f is string => typeof f === 'string' && !!f.trim()).slice(0, 3) : [],
-      delegate: o.delegate && typeof (o.delegate as { coworker?: string }).coworker === 'string'
-        ? { coworker: String((o.delegate as { coworker: string }).coworker), task: String((o.delegate as { task?: string }).task ?? ''), revises: (o.delegate as { revises?: unknown }).revises === true }
-        : null,
-      open: o.open === true,
-    };
-  } catch { return { command: null, question: false, facts: [], delegate: null, open: true }; }
+    return parseVerdict(res.choices?.[0]?.message?.content ?? '');
+  } catch { return parseVerdict(''); }
 }
 
 /** The pool the reply/forward matcher ranks: the user's OPEN inbox work. Deliberately pending-only
@@ -1441,7 +1487,13 @@ async function agentLoop(
       `When they ask to clear, archive, unsubscribe from or bin a WHOLE GROUP you are holding quiet, call ` +
       `prepare_bulk_deed — it only previews; the card states what would happen and their click is the commit. ` +
       `Ground every claim in the ` +
-      `CONTEXT below; when it doesn't cover something, say so plainly. PLAIN PROSE, no markdown, 1-4 sentences.\n\n` +
+      `CONTEXT below; when it doesn't cover something, say so plainly. PLAIN PROSE, no markdown, 1-4 sentences. ` +
+      // A CATCH-UP GETS A REAL ANSWER (W19.2a): the tool precedence for synthesis — a listing read
+      // won a "catch me up" once, and its empty result became the whole answer.
+      `A catch-up, status, "what changed" or "what's open" question is answered FROM the CONTEXT, which ` +
+      `already carries the work's decisions, open items, owners and next actions; a read tool is only for ` +
+      `a specific fact the context lacks, and a read that comes back EMPTY is never the answer by itself — ` +
+      `answer from what the context does show.\n\n` +
       `THE TEAM (assign production work with assign_to_coworker): Clara — chief of staff: ops, admin, inbox, ` +
       `calendar, writing, documents, reports, and anything that spans the team · Max — research, analysis · ` +
       `Luca — branding, design, LinkedIn. When the user asks ` +
@@ -1578,7 +1630,9 @@ async function agentLoop(
       const turn = isToolData(out) ? null : out;
       if (isToolData(out) && out.present) {
         if (isEventPresent(out.present)) event = { id: out.present.spec.id, spec: out.present.spec };
-        else collection = { id: crypto.randomUUID(), spec: out.present };
+        // AN EMPTY SET IS NOT A CARD (W19.2a): a read that found nothing hands the model its text
+        // (below) and hands the turn nothing to show — the prose carries the empty fact.
+        else if (collectionHasRows(out.present)) collection = { id: crypto.randomUUID(), spec: out.present };
       }
       if (turn?.applied) applied.push(...turn.applied);
       if (turn?.files) files.push(...turn.files);
@@ -1936,7 +1990,7 @@ async function converseInner(
   // produced work); the full text stays with the paths that do the work. A TRANSITION skips
   // classification entirely — its verdict is structural (the correction/rework branch).
   const verdict = isTransition
-    ? { command: null, question: false, facts: [], delegate: null, open: false } as Verdict
+    ? { command: null, question: false, facts: [], delegate: null, open: false, synthesis: false } as Verdict
     : await classifyTurn(client, userId, scope,
     materialNames ? `${text}\n(THE USER ATTACHED FILES WITH THIS MESSAGE: ${materialNames})` : text,
     prior ? `${transcript}\n(THIS CONVERSATION PRODUCED A DOCUMENT: "${prior.title}" — its card is still open in the panel.)` : transcript);
@@ -1972,6 +2026,9 @@ async function converseInner(
   // delegate AND create_task_item, and the command fast-path ran first — the addressed
   // work landed on the user's own plate instead of the coworker's).
   if (verdict.delegate) verdict.command = null;
+  // A CATCH-UP GETS A REAL ANSWER (W19.2a — see `synthesisPrecedence`): a synthesis question is
+  // answered from the grounded page, never by the read the router happened to name for it.
+  if (!answeringAnOffer) Object.assign(verdict, synthesisPrecedence(verdict, text));
 
   /** The DATA read the router named and the fast path refused to serve (THE PRESENTATION LAW). It
    *  is a stated lookup, so it opens the reach valve below — the loop is told to GO AND GET it. */
@@ -2035,9 +2092,10 @@ async function converseInner(
       const present = isToolData(out) ? out.present : undefined;
       const spec = present && !isEventPresent(present) ? present : undefined;
       // THE FRAMING IS THE ONLY SENTENCE THIS PATH MAY SERVE — never `modelText`, whose whole job
-      // is to be read by a model. An empty collection still answers honestly (its emptyLine is the
-      // card's, the framing is the turn's), so a truthful "nothing yet" is a card too.
-      if (spec) return { say: spec.framing, refs: [], collection: { id: crypto.randomUUID(), spec } };
+      // is to be read by a model. AN EMPTY SET IS NOT AN ANSWER (W19.2a): a read that found nothing
+      // serves no card and no framing — it falls through to the answer path below, which composes
+      // from the grounded page (and still has the read, as a tool).
+      if (spec && collectionHasRows(spec)) return { say: spec.framing, refs: [], collection: { id: crypto.randomUUID(), spec } };
     }
     skippedDataRead = verdict.command.tool;
     // THE SKIPPED READ IS STILL A LOOKUP (Sep 22, found by the T17 replay the same hour the law
@@ -2088,6 +2146,17 @@ async function converseInner(
       const { answer, refs } = await answerHomeQuestion(client, userId, text, opts.history ?? []);
       if (needsReach(answer)) escalateToReach = true;
       else return { say: sayInsteadOfSentinel(await honestyFloor(client, userId, answer, text, null)), refs };
+    }
+    // A CATCH-UP GETS A REAL ANSWER (W19.2a): a synthesis question asked INSIDE a project room is
+    // answered by the SAME path the Home chat answers it with — the user's grounded world with THIS
+    // room's page as the focused work (pinned by scope, never guessed from the words) — so "catch me
+    // up" is one answer from both doors.
+    if (!escalateToReach && scope.kind === 'entity' && verdict.synthesis) {
+      opts.onProgress?.('Looking across this work…');
+      const { answerHomeQuestion } = await import('@/lib/home/ask');
+      const { answer, refs } = await answerHomeQuestion(client, userId, text, opts.history ?? [], { focusEntityId: scope.entityId });
+      if (needsReach(answer)) escalateToReach = true;
+      else return { say: sayInsteadOfSentinel(await honestyFloor(client, userId, answer, text, scopeEntity)), refs };
     }
     if (!escalateToReach) {
       const entityId = await entityOfScope(client, userId, scope);

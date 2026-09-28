@@ -13,7 +13,7 @@
 import { leanSelect, foldLeanRows, BOARD_KEYS } from '@/lib/home/lean-source';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { readPlans, asRawResult } from '@/lib/store/item-plans';
-import { assembleLedger } from '@/lib/entities/state';
+import { assembleLedger, serveEntityState, entityStateStale, isClosedLedgerLine, ledgerLineHead } from '@/lib/entities/state';
 import { renderGroundEvidence } from '@/lib/room/ground-evidence';
 import { clipLedgerLine } from '@/lib/inbox/thread-now';
 import { clipForPrompt, clipLabel, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
@@ -495,22 +495,49 @@ export async function assembleRoomGrounding(
 
   // ── The entity view + the ONE rendered page. ──
   const ent = entRes.data as Record<string, unknown> | null;
-  const st = ((ent?.state ?? {}) as { summary?: string; momentum?: string; blocking?: string | null; whoOwes?: { you?: string[]; them?: string[] } });
+  const st = ((ent?.state ?? {}) as { summary?: string; momentum?: string; blocking?: string | null; whoOwes?: { you?: string[]; them?: string[] }; composedAt?: string });
   const nm = ((ent?.next_move ?? null) as { title?: string; entityRef?: string | null } | null);
-  const entity: RoomGrounding['entity'] = ent ? {
+  const ledger = (ledgerRes as { ledger: Array<{ at: string; kind: string; who: string | null; text: string; ref: string }> }).ledger ?? [];
+  // W19.A · THE SUMMARY IS NOT A SECOND TRUTH — the stored synthesis is a DERIVED VIEW of the rows
+  // this page also carries. It is served through the one floor (lib/entities/state serveEntityState):
+  // a claim naming SETTLED ledger matter as owed/blocking/overdue is dropped against the LIVE ledger,
+  // and every sentence passes TIME TRUTH against the state's own composition time.
+  const served = ent ? serveEntityState(st, {
+    ledger, entityName: String(ent.name ?? ''), nextMove: nm?.title ?? null, tz: await tzP,
+    generic: await import('@/lib/entities/recognize').then((m) => m.GENERIC_WORK_WORDS).catch(() => new Set<string>()),
+  }) : null;
+  const legacySummary = ent && !st.summary && typeof ent.summary === 'string' ? ent.summary : null;
+  const entity: RoomGrounding['entity'] = ent && served ? {
     id: String(ent.id), name: String(ent.name), tracked: !!ent.tracked,
-    summary: st.summary ?? (ent.summary as string | null) ?? null,
+    summary: served.summary ?? legacySummary ?? null,
     momentum: st.momentum ?? null,
-    blocking: (typeof st.blocking === 'string' && st.blocking.trim()) ? st.blocking.trim() : null,
-    whoOwesYou: Array.isArray(st.whoOwes?.you) ? st.whoOwes!.you!.slice(0, 3) : [],
-    whoOwesThem: Array.isArray(st.whoOwes?.them) ? st.whoOwes!.them!.slice(0, 3) : [],
-    nextMove: nm?.title ? { title: nm.title, ref: nm.entityRef ?? null } : null,
+    blocking: served.blocking,
+    whoOwesYou: served.whoOwesYou.slice(0, 3),
+    whoOwesThem: served.whoOwesThem.slice(0, 3),
+    nextMove: nm?.title && served.nextMove ? { title: served.nextMove, ref: nm.entityRef ?? null } : null,
     goals: Array.isArray(ent.goals) ? (ent.goals as string[]) : [],
     rules: Array.isArray(ent.rules) ? (ent.rules as string[]) : [],
     sig: (ent.sig as string) ?? null,
   } : null;
-
-  const ledger = (ledgerRes as { ledger: Array<{ at: string; kind: string; who: string | null; text: string; ref: string }> }).ledger ?? [];
+  // …and a state older than the ledger it summarises is MARKED for its one sig-gated recompose (the
+  // existing coalesced path — lib/entities/refresh-schedule, maxRun 0 = mark only; the next sync tail
+  // drains it). Never a synthesis on this read, never a mass recompose.
+  const ledgerSig = (ledgerRes as { sig?: string }).sig ?? null;
+  if (entityId && ent && entityStateStale(ent.sig as string | null, ledgerSig)) {
+    try {
+      const { scheduleEntityRefresh } = await import('@/lib/entities/refresh-schedule');
+      await scheduleEntityRefresh(client, userId, [entityId], { maxRun: 0 });
+    } catch { /* marking is an enhancement — the floor above already serves the rows' truth */ }
+  }
+  // THE LEDGER NOW (W19.A): the settled rows, stated as settled, AHEAD of the synthesis — so any
+  // consumer's head-clip keeps the rows and loses the older prose, never the reverse.
+  const settledNow = ledger
+    .filter((l) => (l.ref.startsWith('inbox:') || l.ref.startsWith('commit:')) && isClosedLedgerLine(l.text))
+    .slice(0, 6)
+    .map((l) => {
+      const how = /\(dismissed/.test(l.text) ? 'dismissed' : /^DONE — /.test(l.text) ? 'done' : 'handled';
+      return `- "${clipLabel(ledgerLineHead(l.text), 90)}" — SETTLED (${how})`;
+    });
   const ledgerRefs = new Map<string, { label: string; href: string | null }>();
   const ledgerLines = ledger.slice(0, 22).map((l, i) => {
     const id = `L${i + 1}`;
@@ -542,8 +569,9 @@ export async function assembleRoomGrounding(
     // reader can consume the judged verb without the deed that may have settled it.
     `${b.evidence.length ? `\n  · LATER EVIDENCE: ${b.evidence.join(' | ')}` : ''}`);
 
-  const body = [
-    entity ? `THE WORK: "${entity.name}"${entity.tracked ? ' (a tracked project)' : ' (recognized, untracked)'}` : `THE WORK: a standalone item`,
+  // W19.A · THE ROWS LEAD: the page opens with what the ledger says NOW (settled rows, then the live
+  // board and the world's record under it); the synthesis follows, declared as the older derived view.
+  const synthesis = [
     entity?.summary ? `WHERE IT STANDS: ${entity.summary}${entity.momentum ? ` [${entity.momentum}]` : ''}` : null,
     // The blocker sits with the position it belongs to — the composer speaks it INSIDE the position,
     // never as a second alarm (the standalone amber block died with the right pane).
@@ -551,13 +579,18 @@ export async function assembleRoomGrounding(
     entity?.whoOwesYou.length ? `THE USER OWES: ${entity.whoOwesYou.join('; ')}` : null,
     entity?.whoOwesThem.length ? `OWED TO THE USER: ${entity.whoOwesThem.join('; ')}` : null,
     entity?.nextMove ? `THE SYNTHESIZED NEXT MOVE: ${entity.nextMove.title}` : null,
-    entity?.goals.length ? `GOALS: ${entity.goals.join(' · ')}` : null,
-    entity?.rules.length ? `RULES: ${entity.rules.join(' · ')}` : null,
+  ].filter(Boolean);
+  const body = [
+    entity ? `THE WORK: "${entity.name}"${entity.tracked ? ' (a tracked project)' : ' (recognized, untracked)'}` : `THE WORK: a standalone item`,
+    settledNow.length ? `THE LEDGER NOW — SETTLED (these rows are closed: never speak them as owed, due, overdue or blocking; the rows win over any summary below):\n${settledNow.join('\n')}` : null,
     board.length ? `THE LIVE BOARD (each item: judged work + what is ACTUALLY prepared — these are the only truths about preparedness).\nA document listed as ATTACHED TO IT is IN OUR POSSESSION and was sent to the user BY the counterparty: never say it is missing or was not received, never ask for it to be resent, and never propose sending the counterparty their own document back.\n${board.some((b) => b.evidence.length) ? `${BOARD_EVIDENCE_RULE}\n` : ''}${boardLines.join('\n')}${boardOmitted ? `\n(NOTE: ~${boardOmitted} older linked item${boardOmitted === 1 ? '' : 's'} not shown — never claim this list is everything.)` : ''}` : null,
     // THE GROUND WINS: the world's record sits DIRECTLY UNDER the board it may contradict, so no
     // reader can consume the judged verbs without also reading what has actually happened since —
     // and so it survives every clip a consumer applies to the tail of this page.
     renderGroundEvidence(groundEvidence),
+    synthesis.length ? `THE SYNTHESIS (a derived summary of the rows above, composed earlier — where it disagrees with the ledger or the board, the rows win):\n${synthesis.join('\n')}` : null,
+    entity?.goals.length ? `GOALS: ${entity.goals.join(' · ')}` : null,
+    entity?.rules.length ? `RULES: ${entity.rules.join(' · ')}` : null,
     prodRes.length ? `STANDING PRODUCTION (scheduled workflows serving this work — deliverables arrive on their own; never propose building what already runs):\n${prodRes.map((w) => `- "${w.name}"${w.scheduleLabel ? ` — ${w.scheduleLabel}` : ''}${w.status !== 'active' ? ` [${w.status}]` : ''}${w.lastRunAt ? ` · last ran ${String(w.lastRunAt).slice(0, 10)}` : ' · never run yet'}${w.nextRunAt ? ` · next ${String(w.nextRunAt).slice(0, 10)}` : ''}`).join('\n')}` : null,
     asks.length ? `OPEN ASKS TO THE USER (each one is STANDING on the page under your brief — an ask you walk past is a second voice):\n${asks.map((a) => `- ${askAttribution(a.who, speaker)}, since ${a.since ?? '?'}${a.proceeded ? ' (user said go ahead)' : ''}: ${a.items.join('; ')}`).join('\n')}` : null,
     ledgerLines.length ? `HISTORY (newest first, reference as [L#]):\n${ledgerLines.join('\n')}` : null,

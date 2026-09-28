@@ -101,7 +101,9 @@ const DATE_BEFORE = new RegExp(`(?:\\d{1,2}\\.?|(?:${MONTH_ALT}))\\s*[,(]?\\s*$`
 // Each entry: a pattern (case-insensitive, Unicode word boundaries added around it) and what it
 // means — a day OFFSET from the composition day (exact → rewritable), or 'vague' (no single date).
 type Meaning = number | 'vague' | ((m: RegExpExecArray) => number | 'vague' | null);
-type Entry = { lang: TimeLang; re: string; mean: Meaning; frenchOnly?: boolean };
+/** `overdue` (W19.A): the phrase is a DURATION PAST A DEADLINE ("nine days overdue") — its offset is
+ *  the DEADLINE's day (composition day − N), and it is rewritten whole to "overdue since <date>". */
+type Entry = { lang: TimeLang; re: string; mean: Meaning; frenchOnly?: boolean; overdue?: boolean };
 
 const WD = (l: TimeLang) => WEEKDAYS[l].sort(byLength).join('|');
 const NUM = { en: numAlt('en'), pt: numAlt('pt'), de: numAlt('de'), fr: numAlt('fr') };
@@ -177,6 +179,34 @@ const TABLE: Entry[] = [
   { lang: 'fr', re: 'la semaine (?:derni[èe]re|prochaine)|cette semaine|le mois (?:dernier|prochain)|ce mois-ci|(?:ce|le) week-end|l[\'’]ann[ée]e (?:derni[èe]re|prochaine)|cette ann[ée]e', mean: 'vague' },
   { lang: 'fr', re: `(?:${WD('fr')})\\s+(?:dernier|prochain)|ce\\s+(?:${WD('fr')})`, mean: 'vague' },
   { lang: 'fr', re: `(?:${WD('fr')})`, mean: 'vague', frenchOnly: true },
+
+  // ── W19.A · OVERDUE COUNTS (TIME TRUTH, owner walk Sep 28). "Nine days overdue" is a DURATION computed
+  // on the composition day — true that day, false every day after ("nine days past the deadline" was
+  // still served ten days on). Exact counts are rewritten to the deadline's date ("overdue since
+  // Sep 18"); a vague count ("several days late", "two weeks overdue") has no one date → withheld.
+  // Longest-at-earliest wins (findRelativeTime), so a qualified count ("about 9 days late") reads vague.
+  // ── EN · exact
+  { lang: 'en', re: `(?:a|one)\\s+day\\s+(?:overdue|late|behind|past\\s+(?:the\\s+|its\\s+|their\\s+)?(?:deadline|due\\s+date)|past\\s+due)`, mean: -1, overdue: true },
+  { lang: 'en', re: `${NUM.en}[- ]days?[- ](?:overdue|late|behind(?:\\s+schedule)?|past\\s+(?:the\\s+|its\\s+|their\\s+)?(?:deadline|due\\s+date)|past\\s+due)`, mean: (m) => { const n = numOf(m[1], 'en'); return n === null ? null : -n; }, overdue: true },
+  { lang: 'en', re: `(?:overdue|late|behind)\\s+by\\s+${NUM.en}\\s+days?`, mean: (m) => { const n = numOf(m[1], 'en'); return n === null ? null : -n; }, overdue: true },
+  // ── EN · vague
+  { lang: 'en', re: `${EN_QUAL}\\s+(?:\\d{1,3}|[a-z-]+)\\s+days?\\s+(?:overdue|late|behind|past\\s+(?:the\\s+|its\\s+)?(?:deadline|due\\s+date)|past\\s+due)`, mean: 'vague', overdue: true },
+  { lang: 'en', re: `(?:(?:a couple of|a few|several|some|many)\\s+days|(?:a|an|${NUM.en.slice(1, -1)})\\s+(?:weeks?|months?))\\s+(?:overdue|late|behind|past\\s+(?:the\\s+|its\\s+)?(?:deadline|due\\s+date)|past\\s+due)`, mean: 'vague', overdue: true },
+  { lang: 'en', re: `(?:overdue|late|behind)\\s+by\\s+(?:(?:a couple of|a few|several|some|many)\\s+days|(?:a|an|${NUM.en.slice(1, -1)})\\s+(?:weeks?|months?))`, mean: 'vague', overdue: true },
+  // ── PT · exact
+  { lang: 'pt', re: `(?:com\\s+)?${NUM.pt}\\s+dias?\\s+(?:de\\s+atraso|em\\s+atraso|atrasad[oa]s?|(?:ap[óo]s|depois\\s+d)[oa]?\\s+(?:o\\s+)?prazo)`, mean: (m) => { const n = numOf(m[1], 'pt'); return n === null ? null : -n; }, overdue: true },
+  { lang: 'pt', re: `(?:atrasad[oa]s?|em\\s+atraso)\\s+(?:h[áa]|por|faz)\\s+${NUM.pt}\\s+dias?`, mean: (m) => { const n = numOf(m[1], 'pt'); return n === null ? null : -n; }, overdue: true },
+  // ── PT · vague
+  { lang: 'pt', re: `(?:com\\s+)?(?:(?:v[áa]rios|alguns|uns|poucos|muitos)\\s+dias|(?:uma|um|${NUM.pt.slice(1, -1)})\\s+(?:semanas?|m[eê]s(?:es)?))\\s+(?:de\\s+atraso|em\\s+atraso|atrasad[oa]s?)`, mean: 'vague', overdue: true },
+  // ── DE · exact
+  { lang: 'de', re: `(?:seit\\s+|um\\s+)?${NUM.de}\\s+tag(?:e|en)?\\s+(?:[üu]berf[äa]llig|ueberfaellig|zu\\s+sp[äa]t|zu\\s+spaet|im\\s+verzug|in\\s+verzug|versp[äa]tet|nach\\s+(?:der|dem)\\s+(?:frist|termin|f[äa]lligkeit))`, mean: (m) => { const n = numOf(m[1], 'de'); return n === null ? null : -n; }, overdue: true },
+  // ── DE · vague
+  { lang: 'de', re: `(?:seit\\s+)?(?:(?:einige|einigen|ein paar|mehrere|mehreren|wenige|wenigen)\\s+tag(?:e|en)?|(?:einer|einem|${NUM.de.slice(1, -1)})\\s+(?:wochen?|monaten?))\\s+(?:[üu]berf[äa]llig|ueberfaellig|zu\\s+sp[äa]t|im\\s+verzug|versp[äa]tet)`, mean: 'vague', overdue: true },
+  // ── FR · exact
+  { lang: 'fr', re: `(?:avec\\s+)?${NUM.fr}\\s+jours?\\s+(?:de\\s+retard|en\\s+retard|apr[èe]s\\s+(?:l['’]\\s*[ée]ch[ée]ance|la\\s+date\\s+limite))`, mean: (m) => { const n = numOf(m[1], 'fr'); return n === null ? null : -n; }, overdue: true },
+  { lang: 'fr', re: `(?:en\\s+)?retard\\s+de\\s+${NUM.fr}\\s+jours?`, mean: (m) => { const n = numOf(m[1], 'fr'); return n === null ? null : -n; }, overdue: true },
+  // ── FR · vague
+  { lang: 'fr', re: `(?:avec\\s+)?(?:(?:plusieurs|quelques)\\s+jours|(?:une|un|${NUM.fr.slice(1, -1)})\\s+(?:semaines?|mois))\\s+(?:de\\s+retard|en\\s+retard)`, mean: 'vague', overdue: true },
 ];
 
 const L = '(?<![\\p{L}\\p{N}])';
@@ -198,6 +228,8 @@ export type RelativeSpan = {
   phrase: string; index: number; lang: TimeLang;
   /** Day offset from the composition day (exact → rewritable), or 'vague'. */
   offset: number | 'vague';
+  /** W19.A — a count past a deadline ("nine days overdue"): `offset` is the DEADLINE's day. */
+  overdue?: boolean;
 };
 
 /** Every relative-time expression in `text`, non-overlapping, left to right (longest wins). */
@@ -216,7 +248,7 @@ export function findRelativeTime(text: string | null | undefined): RelativeSpan[
       if (WEEKDAY_TAIL.test(phrase) && (DATE_AFTER.test(s.slice(index + phrase.length)) || DATE_BEFORE.test(s.slice(Math.max(0, index - 16), index)))) continue;
       const mean = typeof e.mean === 'function' ? e.mean(m) : e.mean;
       if (mean === null) continue;
-      all.push({ phrase, index, lang: e.lang, offset: mean });
+      all.push({ phrase, index, lang: e.lang, offset: mean, ...(e.overdue ? { overdue: true } : {}) });
     }
   }
   all.sort((a, b) => a.index - b.index || b.phrase.length - a.phrase.length);
@@ -295,12 +327,34 @@ function fitted(head: string, sp: RelativeSpan, day: string, servingDay: string)
   return { head, insert };
 }
 
+/** W19.A — an overdue count, rewritten whole to the deadline's date in the phrase's own language
+ *  ("nine days overdue" → "overdue since Sep 18" · "em atraso desde 18 de setembro" · "überfällig seit
+ *  dem 18. September" · "en retard depuis le 18 septembre"). */
+function overdueWords(head: string, sp: RelativeSpan, day: string, servingDay: string): { head: string; insert: string } {
+  const words = dateWords(day, sp.lang, servingDay);
+  const starts = !head.trim() || /[.!?:]\s*$/.test(head);
+  // The count's own verb ("a 4 jours de retard", "tem 9 dias de atraso") becomes the state verb.
+  if (sp.lang === 'fr') head = head.replace(/(^|\s)(a|ont|avait|avaient)\s+$/iu, (_m, pre: string, v: string) => `${pre}${({ a: 'est', ont: 'sont', avait: 'était', avaient: 'étaient' } as Record<string, string>)[v.toLowerCase()]} `);
+  if (sp.lang === 'pt') head = head.replace(/(^|\s)(tem|têm|tinha)\s+$/iu, (_m, pre: string, v: string) => `${pre}${({ tem: 'está', 'têm': 'estão', tinha: 'estava' } as Record<string, string>)[v.toLowerCase()]} `);
+  const insert = sp.lang === 'pt' ? `em atraso desde ${words}`
+    : sp.lang === 'de' ? `überfällig seit dem ${words}`
+      : sp.lang === 'fr' ? `en retard depuis le ${words}`
+        : `overdue since ${words}`;
+  return { head, insert: starts ? insert.charAt(0).toUpperCase() + insert.slice(1) : insert };
+}
+
 function rewriteExact(text: string, spans: RelativeSpan[], composeDay: string, servingDay: string): { text: string; rewritten: string[] } {
   let out = text;
   const rewritten: string[] = [];
   for (const sp of [...spans].reverse()) {
     if (sp.offset === 'vague') continue;
     const day = addDays(composeDay, sp.offset);
+    if (sp.overdue) {
+      const { head, insert } = overdueWords(out.slice(0, sp.index), sp, day, servingDay);
+      out = head + insert + out.slice(sp.index + sp.phrase.length);
+      rewritten.push(`${sp.phrase} → ${insert}`);
+      continue;
+    }
     const { head, insert } = fitted(out.slice(0, sp.index), sp, day, servingDay);
     out = head + insert + out.slice(sp.index + sp.phrase.length);
     rewritten.push(`${sp.phrase} → ${insert}`);

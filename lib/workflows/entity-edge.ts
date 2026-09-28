@@ -134,8 +134,10 @@ export async function workflowDraftGrounding(
   // information changes the output.
   let line = '';
   try {
-    const { data: ent } = await client.from('work_entities')
-      .select('summary, state, goals, rules').eq('id', found.id).eq('user_id', userId).maybeSingle();
+    const { data: entRaw } = await client.from('work_entities')
+      .select('id, name, summary, state, goals, rules').eq('id', found.id).eq('user_id', userId).maybeSingle();
+    // W19.A · the state line is the state as SERVED (the one floor).
+    const [ent] = entRaw ? await await import('@/lib/entities/state').then(({ floorEntityRows }) => floorEntityRows(client, userId, [entRaw as Record<string, unknown>])) : [null];
     const st = (ent?.state ?? {}) as { summary?: string };
     const parts = [
       (st.summary ?? ent?.summary) ? `state: ${String(st.summary ?? ent?.summary).slice(0, 160)}` : null,

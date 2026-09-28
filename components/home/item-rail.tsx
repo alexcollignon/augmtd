@@ -73,6 +73,11 @@ import { useLiveRefresh } from '@/components/workflows/use-live-refresh';
 import { announceDeed, DEED_EVENT } from '@/lib/room/deed-echo';
 // HISTORY LEAVES THE STREAM — the record's seat is the ONE drawer, at every door.
 import type { RoomHistoryLine } from '@/components/room/filed-drawer';
+// THE ROOM'S CONVERSATION IS A REAL CHAT (W19.B): one reading of a turn for fold AND render, the
+// opener's one producer, the orphan rule — and the ONE answer renderer the Home chat draws with.
+import { isAnswerTurn, isNarrationTurn, isPersistedOpener, openerInvite, OPENER_INVITE, orphanQuestion, ORPHAN_LINE, ORPHAN_RETRY } from '@/components/home/room-chat';
+import { Answer } from '@/components/home/ask-answer';
+import { stripUnresolvedTags } from '@/lib/home/ask-refs';
 
 // 'entity' = the PROJECT DOOR (P7c-c2): the same rail inside the project room — id is the entity
 // id, steer/ingest run in entity scope, the Overview chip hides (you're already there).
@@ -139,8 +144,10 @@ export type TurnAction = { label: string } & (
   );
 
 type Turn =
-  | { role: 'user'; text: string }
-  | { role: 'system'; text: string; key?: string; actions?: TurnAction[]; refs?: Array<{ label: string; href: string | null }>; files?: Array<{ id: string; filename: string; source: string }>; author?: { name: string; role?: string | null };
+  /** W19.B · `reqId` = the per-question key the steer door wrote the question under (`ask:<reqId>`);
+   *  `turnId` = its durable row. "Ask again" on an orphan re-keys THAT row through the same door. */
+  | { role: 'user'; text: string; reqId?: string; turnId?: string }
+  | { role: 'system'; text: string; key?: string; actions?: TurnAction[]; refs?: Array<{ label: string; href: string | null; tag?: string }>; files?: Array<{ id: string; filename: string; source: string }>; author?: { name: string; role?: string | null };
       /** FIX 3 — a coworker's ASK renders as an inline checklist (input_checklist component): the
        *  concrete things they need from the principal. Rows wire to the 📎 ingest funnel. */
       checklist?: string[];
@@ -260,7 +267,7 @@ export function pushDealTurn(entityId: string, text: string, opts?: { key?: stri
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 type ServerTurnRow = {
   id?: string; key?: string; role: 'user' | 'system'; text: string; createdAt?: string;
-  refs?: Array<{ label: string; href: string | null }>;
+  refs?: Array<{ label: string; href: string | null; tag?: string }>;
   author?: { name: string; role?: string | null } | null;
   component?: { key?: string; refId?: string; state?: { targetId?: string; options?: Array<{ label: string; sourceId: string }>; items?: string[]; proceeded?: boolean;
     /** THE PRESENTED POINTER (W4-C) — `lib/present/pointer.ts` writes both of these shapes. */
@@ -268,9 +275,18 @@ type ServerTurnRow = {
 };
 
 function mapServerTurns(rows: ServerTurnRow[]): Turn[] {
-  return rows.map((t) => {
+  // THE OPENER IS CHROME (W19.B — components/home/room-chat.ts): a pre-W19 persisted opener row is
+  // dropped at read, never rendered and never counted as the room's record. A read-time floor; no
+  // data write.
+  return rows.filter((t) => !isPersistedOpener(t)).map((t) => {
     const turn: Turn = { role: t.role, text: t.text, refs: t.refs ?? undefined, author: t.author ?? undefined } as Turn;
     if (turn.role === 'system' && t.key) turn.dkey = t.key;
+    // The reader's question carries its door key (`ask:<reqId>`) and its row id, so an orphan's
+    // "Ask again" re-answers the SAME question row instead of writing it twice.
+    if (turn.role === 'user') {
+      if (t.key?.startsWith('ask:')) turn.reqId = t.key.slice(4);
+      if (t.id) turn.turnId = t.id;
+    }
     // THE GROUND LAW: the durable write time — the narration-expiry fold's only input.
     if (turn.role === 'system' && t.createdAt) turn.at = String(t.createdAt);
     // THE STANDING PROPOSAL AGES INTO THE DRAWER (owner walk, Sep 7 — ONE AGENDA PER ROOM): a
@@ -761,9 +777,10 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   // nothing composed (a young room, a version bump), it carries the summary's own first sentence so
   // the conversation is never mute. Zero spend, zero latency, nothing to invalidate.
   //
-  // It is EPHEMERAL until engaged (the pushDealTurn({ephemeral}) idiom): it renders, it is never
-  // written, and `send` persists it exactly once if the reader actually answers — so N resets can
-  // never stack N greetings in the record.
+  // It is EPHEMERAL, full stop (W19.B — THE OPENER IS CHROME): it renders while the reader has said
+  // nothing and is never written, not even when they answer. It used to be persisted on the first
+  // send as an authorless system turn — the grey "What do you want to pick up?" standing over every
+  // saved chat. Rows written before W19 are dropped at read (mapServerTurns → `isPersistedOpener`).
   const openerText = (() => {
     if (!inRoom) return null;                              // the project door's own grammar
     if (turns.some((t) => t.role === 'user')) return null;  // the exchange has started — step aside
@@ -780,9 +797,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     // brief watermark, a synthesized summary and any standing narration each exist only because
     // this work has a past. Only a room with none of them is genuinely new.
     const hasRecord = !!pinned || !!opening.at || !!sum || turns.length > 0;
-    const invite = hasRecord
-      ? (name ? `Picking ${name} back up — what do you want to look at?` : 'Picking this back up — what do you want to look at?')
-      : (name ? `Fresh start on ${name}. What do you want to pick up?` : 'Fresh start. What do you want to pick up?');
+    const invite = openerInvite(name, hasRecord);
     // ── THE OPENER NEVER STANDS AS A SECOND GREETER (THE OPENING CONTRACT, clause 5 — owner walk,
     // Sep 19) ────────────────────────────────────────────────────────────────────────────────────
     // With a position pinned one bubble above, "Picking <X> back up" is the room naming its own
@@ -791,13 +806,11 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     // less: with a brief standing, the opener is PURELY the invitation — no preamble, no subject.
     // And when that brief already ends by asking something, the turn is ALREADY back with the
     // reader: a question under a question is the machine talking to itself, so nothing renders.
-    if (pinned) return /\?\s*$/.test(pinned.trim()) ? null : 'What do you want to pick up?';
+    if (pinned) return /\?\s*$/.test(pinned.trim()) ? null : OPENER_INVITE;
     const firstSentence = sum ? (sum.match(/^[\s\S]{0,220}?[.!?](?=\s|$)/)?.[0] ?? null) : null;
-    if (firstSentence) return `${firstSentence} What do you want to pick up?`;
+    if (firstSentence) return `${firstSentence} ${OPENER_INVITE}`;
     return name ? invite : null;
   })();
-  const openerRef = useRef<string | null>(null);
-  openerRef.current = openerText;
 
   // THE RESET GENERATION, at the two seams every async op needs (see the module note above):
   //   `stale(gen)`  — has this room been reset since the op started?
@@ -872,28 +885,27 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     } finally { setBusy(false); }
   };
 
-  const send = async (raw: string) => {
+  const send = async (raw: string, reask?: Extract<Turn, { role: 'user' }>) => {
     const t = raw.trim();
     if (!t || busy) return;
     const gen = genOf(roomKey);
-    // THE OPENER BECOMES HISTORY THE MOMENT IT IS ANSWERED (see THE CoS OPENS, below): it renders
-    // as speech and persists only here, on the first real reply — so a room that is reset twice
-    // never stacks two greetings, and a conversation that actually happened reads whole.
-    if (openerRef.current) {
-      const o = openerRef.current;
-      openerRef.current = null;
-      await fetch('/api/room/turns', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomKey, role: 'system', text: o }),
-      }).catch(() => {});
-      if (stale(gen)) { dropStale(); return; }
-    }
-    addTurn({ role: 'user', text: t });
+    // ── THE ANSWER IS SAVED (W19.B — app/api/items/steer/answer-door.ts) ────────────────────────────
+    // The steer door writes BOTH halves now: the question (keyed `ask:<reqId>`, exactly once) and —
+    // only for the request that claims that question — the answer, in the Home door's shape. The
+    // rail paints both live and writes neither: one writer per turn. (It used to persist the question
+    // and keep the answer in client state only, so every reload ended on the reader's own words.)
+    // "Ask again" on an orphan re-keys THAT question row (from its old key, or from none for a question
+    // written before W19) under a fresh key, so the record never holds the same question twice.
+    const reqId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    if (reask) setTurns((prev) => prev.map((x) => (x === reask ? { ...x, reqId } : x)));
+    else setTurns((prev) => [...prev, { role: 'user', text: t, reqId }]);
     setBusy(true);
     try {
       const res = await fetch('/api/items/steer', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind, id, text: t }),
+        body: JSON.stringify({ kind, id, text: t, answerKey: reqId,
+          ...(reask?.turnId ? { reaskTurnId: reask.turnId, ...(reask.reqId ? { reaskKey: reask.reqId } : {}) } : {}) }),
       });
       const d = await res.json().catch(() => ({}));
       // THE RESET WINS (Sep 15): a "New chat" between the ask and its answer means this answer
@@ -912,7 +924,8 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
         // client (route + exactly-once hash + outcome log — never a second send path), and a
         // stage verb summons its stage. The outcome lands as a visible turn either way.
         if (d.commit?.kind === 'send_reply' && d.commit.itemId && d.commit.body) {
-          addTurn({ role: 'system', text: String(d.say || 'Sending it now…') });
+          // The door already saved this answer (W19.B) — paint it, never write it a second time.
+          setTurns((prev) => [...prev, { role: 'system', text: String(d.say || 'Done.') }]);
           const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
           const html = String(d.commit.body).replace(/\r\n/g, '\n').split(/\n{2,}/)
             .map((p: string) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
@@ -938,9 +951,12 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
           : [];
         setTurns((prev) => [...prev, {
           role: 'system',
-          // Refs render as chips below — the raw [L4]/[F2] markers must never sit in the prose.
-          text: String(d.say || d.answer || 'Done.').replace(/\s*\[[LF]?\d+(?:\s*,\s*[LF]?\d+)*\]/g, ''),
-          refs: [...artRef, ...(Array.isArray(d.refs) ? d.refs.map((r: { label?: string; href?: string | null }) => ({ label: String(r.label ?? ''), href: r.href ?? null })) : [])],
+          // THE ANSWER READS AS THE HOME ANSWER (W19.B): the prose keeps its grounding tags and the
+          // refs keep theirs — the ONE answer renderer resolves each tag BY ID into an inline source
+          // chip and strips the rest (components/home/ask-answer.tsx). The text is the door's own
+          // stored text (`answerTextOf`), so the live turn and the saved row are the same words.
+          text: String(d.say || 'Done.'),
+          refs: [...artRef, ...(Array.isArray(d.refs) ? d.refs.map((r: { label?: string; href?: string | null; tag?: string }) => ({ label: String(r.label ?? ''), href: r.href ?? null, ...(typeof r.tag === 'string' && r.tag ? { tag: r.tag } : {}) })) : [])],
           files: Array.isArray(d.files) ? d.files : undefined,
           ...(d.workflowDraft ? { workflowDraft: d.workflowDraft as WorkflowDraft } : {}),
           // THE PRESENTED OBJECT PAINTS AT ONCE (W4-C): the served spec rides the answer, so the
@@ -976,12 +992,14 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
       const d = await res.json().catch(() => ({}));
       if (stale(gen)) { dropStale(); return; }     // the room was reset while this was in flight
       if (!res.ok) addTurn({ role: 'system', text: d.error || "I couldn't read that file." });
-      else setTurns((prev) => [...prev, {
+      // The seat's reply to the attach is part of the exchange — written like the failure line is, so
+      // a reload never ends on "Attached: …" with nothing under it (W19.B, no orphan question).
+      else addTurn({
         role: 'system',
         text: d.satisfiedStep
           ? `Got it — that covers "${d.satisfiedStep}". It's folded into this work now.`
           : `Got it — I've folded ${d.filename} into this work. Anything running here can read it now.`,
-      }]);
+      });
     } catch {
       addTurn({ role: 'system', text: "I couldn't read that file." });
     } finally { setBusy(false); if (fileRef.current) fileRef.current.value = ''; }
@@ -1026,9 +1044,12 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     const ms = Date.parse(at);
     return Number.isFinite(ms) && Date.now() - ms > graceMs;
   };
+  // ONE PREDICATE FOR FOLD AND RENDER (W19.B — components/home/room-chat.ts): only ENGINE NARRATION
+  // expires — the same turns the render draws as the muted event line. A card turn (the collection /
+  // event / change cards this list used to forget) and the seat's own ANSWER never fold: an answer
+  // folding into History while its question stayed on screen was the owner's Sep 28 walk.
   const isExpiredNarration = (t: Turn) => t.role === 'system'
-    && !t.author?.name && !t.checklist?.length && !t.actions?.length
-    && !t.standingSpec && !t.workflowDraft && !t.approval
+    && isNarrationTurn(t)
     && !!t.at
     && (foldBriefAt ? t.at < foldBriefAt : narrationAged(t.at, NARRATION_GRACE_MS));
   // THE ORPHAN-PREP FOLD (found live, Aug 14 — the ghost line): a `prep:*` narration whose
@@ -1057,9 +1078,20 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   // W16 · ON AN ITEM PAGE the stream carries only the reader's OWN exchange (from their first word
   // on); every engine narration is the record, filed in the drawer's History. The project door keeps
   // its newest-three tail.
-  const firstUserTurn = turns.findIndex((t) => t.role === 'user');
-  const itemExchange = firstUserTurn < 0 ? [] : turns.slice(firstUserTurn).filter((t) => stream.includes(t)).slice(-4);
-  const visibleTail = inRoom ? fresh.slice(-3) : itemExchange;
+  // W19.2b · AN UPDATE IS A NEW MESSAGE (lib/room/room-update): the seat's posted update is its own
+  // words (an answer turn — no key, no author, no component), so the exchange also starts at the first
+  // one standing before the reader's first word: the opening stays as met, the news lands beneath it.
+  const firstExchangeTurn = turns.findIndex((t) => t.role === 'user' || isAnswerTurn(t));
+  // W19.B · the whole exchange, as a chat shows it (the four-turn cap could cut a question away from
+  // the answer under it).
+  const itemExchange = firstExchangeTurn < 0 ? [] : turns.slice(firstExchangeTurn).filter((t) => stream.includes(t));
+  // THE ROOM'S CONVERSATION IS A REAL CHAT (W19.B): the reader's live exchange shows WHOLE, from their
+  // first word on — as the Home chat shows it; a question is never cut away from its answer by a
+  // turn count. Before the first word, the newest-three rule still governs the standing narration.
+  const firstFreshUser = fresh.findIndex((t) => t.role === 'user');
+  const visibleTail = inRoom
+    ? fresh.filter((_t, i) => i >= fresh.length - 3 || (firstFreshUser >= 0 && i >= firstFreshUser))
+    : itemExchange;
   const visibleSet = new Set(visibleTail);
   const historyTurns = stream.filter((t) => !visibleSet.has(t));
 
@@ -1070,7 +1102,9 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     id: `hist-${i}`,
     role: t.role === 'user' ? 'user' : 'system',
     who: t.role === 'system' ? t.author?.name ?? null : null,
-    text: t.text,
+    // An answer's grounding tags are notation, never the drawer's words (the renderer resolves them
+    // live; a plain-text line strips them).
+    text: t.role === 'system' ? stripUnresolvedTags(t.text, []) : t.text,
     at: t.role === 'system' ? t.at ?? null : null,
   }));
   const historySig = historyLines.map((l) => `${l.role}|${l.at ?? ''}|${l.text.slice(0, 60)}`).join('~');
@@ -1495,7 +1529,9 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   // and their refs/files keep the renders the rail already had; the kit seats them as ONE custom
   // card on the speaking bubble.
   const turnExtras = (t: Extract<Turn, { role: 'system' }>): React.ReactNode => {
-    const shownRefs = (t.refs ?? []).filter((r) => inRoom || !r.href?.includes(`/item/${id}`));
+    // A TAGGED ref is an inline source chip inside the answer's own prose (the ONE answer renderer);
+    // only untagged refs (a produced document's chip, a legacy row) keep the quiet link row here.
+    const shownRefs = (t.refs ?? []).filter((r) => !r.tag && (inRoom || !r.href?.includes(`/item/${id}`)));
     const has = !!(t.checklist?.length || t.workflowDraft || t.standingSpec || t.approval || t.collection || t.event || t.change || t.actions?.length || shownRefs.length || t.files?.length);
     if (!has) return null;
     return (
@@ -1688,6 +1724,38 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     const own = plan.artifact && !['ask', 'decision', 'gate', 'input_gate', 'booked_event'].includes(plan.artifact) ? byArtifact(plan.artifact) : null;
     return { plan, card: own };
   })();
+  // ── A SPOKEN TURN (W19.B) — one bubble builder for both doors. A coworker speaks in their own face
+  // with their own words; the SEAT's answer (`isAnswerTurn`) wears the seat's face and draws its prose
+  // through THE ONE ANSWER RENDERER the Home chat uses (components/home/ask-answer.tsx): plain
+  // paragraphs, grounding tags resolved by id into inline source chips, the rest stripped. A card turn
+  // keeps its words and mounts its card beneath, as before.
+  const speechBubble = (t: Extract<Turn, { role: 'system' }>, key: string): ThreadItem => {
+    const extras = turnExtras(t);
+    const answer = isAnswerTurn(t) && !!t.text;
+    const cards: ThreadCard[] = [
+      ...(answer ? [{ kind: 'custom' as const, id: `${key}-answer`,
+        node: <Answer text={t.text} refs={t.refs ?? []} onOpen={(r) => { if (r.href) go(r.href); }} /> }] : []),
+      ...(extras ? [{ kind: 'custom' as const, id: `${key}-extras`, node: extras }] : []),
+    ];
+    return {
+      type: 'actor_bubble', id: key,
+      actorId: t.author?.role ?? t.author?.name ?? seatId,
+      actorName: t.author?.name ? t.author.name.split(' ')[0] : seatName,
+      ...(t.author?.name ? {} : { actorRoleLabel: seatLabel }),
+      ...(!answer && t.text ? { text: t.text } : {}),
+      ...(cards.length ? { cards } : {}),
+    };
+  };
+  // ── NO ORPHAN QUESTION (W19.B): an exchange that ends on the reader's words with nothing in flight
+  // says so, in one quiet line, and offers the one door — "Ask again" re-answers THAT question
+  // through the same steer door (its key, or its row for a pre-W19 question), never a second copy.
+  const pushOrphanLine = (exchange: Turn[]) => {
+    const orphan = orphanQuestion(exchange, busy);
+    if (!orphan || orphan.role !== 'user') return;
+    items.push({ type: 'event_line', id: 'orphan-question', text: ORPHAN_LINE,
+      refs: [{ label: ORPHAN_RETRY, onClick: () => { void send(orphan.text, orphan); } }] });
+  };
+
   if (itemPage) {
     const { plan, card } = itemPage;
     // CLARA — one sentence, the SOURCE widget directly under it (the thing the sentence is about),
@@ -1720,16 +1788,9 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     itemExchange.forEach((t, i) => {
       const key = `x${i}`;
       if (t.role === 'user') { items.push({ type: 'user_bubble', id: key, text: t.text }); return; }
-      const extras = turnExtras(t);
-      items.push({
-        type: 'actor_bubble', id: key,
-        actorId: t.author?.role ?? t.author?.name ?? seatId,
-        actorName: t.author?.name ? t.author.name.split(' ')[0] : seatName,
-        ...(t.author?.name ? {} : { actorRoleLabel: seatLabel }),
-        ...(t.text ? { text: t.text } : {}),
-        ...(extras ? { cards: [{ kind: 'custom' as const, id: `${key}-extras`, node: extras }] } : {}),
-      });
+      items.push(speechBubble(t, key));
     });
+    pushOrphanLine(itemExchange);
   }
 
   // THE OPENING IS A MESSAGE (owner walk, Sep 14: "this can just look like a message, so remove
@@ -1839,9 +1900,10 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     }
     // ONE PREP CLASS at the render too (Sep 8): `anticipate:` narrations are prep narrations.
     if ((((artifacts?.length ?? 0) > 0) || composed) && t.dkey && /^(prep:|meeting-prep:|anticipate:)/.test(t.dkey)) return;
-    // A component turn is never narration — it carries a live affordance, so it speaks with a face.
-    const hasComponent = !!(t.checklist?.length || t.actions?.length || t.standingSpec || t.workflowDraft || t.approval || t.collection || t.event || t.change || t.key === 'founding-proposal');
-    if (!t.author?.name && !hasComponent) {
+    // ONE PREDICATE (W19.B — components/home/room-chat.ts, the same one the fold reads): a component
+    // turn is never narration, and neither is the seat's ANSWER — only engine narration, keyed to its
+    // work, is the muted event line.
+    if (isNarrationTurn(t)) {
       // THE EVENT LINE — the narrator's muted one-liner: system, NO author, NO affordance. Its
       // refs survive as quiet inline words (law 8 — the P2d wall, closed kit-side same day),
       // filtered by the same self-target rule as bubble refs and routed through the ONE
@@ -1852,16 +1914,9 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
       items.push({ type: 'event_line', id: key, text: t.text, ...(lineRefs.length ? { refs: lineRefs } : {}) });
       return;
     }
-    const extras = turnExtras(t);
-    items.push({
-      type: 'actor_bubble', id: key,
-      actorId: t.author?.role ?? t.author?.name ?? seatId,
-      actorName: t.author?.name ? t.author.name.split(' ')[0] : seatName,
-      ...(t.author?.name ? {} : { actorRoleLabel: seatLabel }),
-      ...(t.text ? { text: t.text } : {}),
-      ...(extras ? { cards: [{ kind: 'custom' as const, id: `${key}-extras`, node: extras }] } : {}),
-    });
+    items.push(speechBubble(t, key));
   });
+  if (!itemPage) pushOrphanLine(visibleTail);
 
   // Cards without a visible anchor turn — the stream's end (never above later talk).
   if (!itemPage) endArtifacts.forEach((art, i) => {

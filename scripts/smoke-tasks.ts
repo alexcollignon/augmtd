@@ -152,7 +152,8 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
   // Workbench B1a reversed the "Gantt out" call (user ask, July 24): the Schedule disclosure
   // renders the ONE shared Gantt — behind a fold, so first paint stays calm.
   check('R3d · typed inventory behind ONE tab bar (Tasks · Schedule · Meetings · Conversations · Files · Activity)',
-    er.includes('<TabBar') && ['Schedule · ', 'Conversations · ', 'Files · ', 'Activity · '].every((t) => er.includes(t)));
+    // ⟲ RE-POINTED W19: the tab bar lives in the one filed drawer; counts ride its inline `count` prop.
+    er.includes('<FiledDrawer') && ["label: 'Schedule'", "label: 'Conversations'", "label: 'Files'", "label: 'Activity'"].every((t) => er.includes(t)));
   check('R3a · create_task_item exposed to every chat surface',
     new Set(capabilitiesFor('chief_of_staff').map((c) => c.tool)).has('create_task_item'));
   // ── R2 — the one shell. ──

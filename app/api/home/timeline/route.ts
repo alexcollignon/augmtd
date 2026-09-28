@@ -37,8 +37,11 @@ async function computePayload(supabase: any, userId: string) {
       const nowMs = Date.now();
       // USER-CREATED ONLY: an item's project TAG (and a project lane) may only carry a TRACKED
       // name — an untracked entity is invisible as a project on every surface.
-      const { data: wents } = await supabase.from('work_entities')
+      const { data: wentsRaw } = await supabase.from('work_entities')
         .select('id, name, tracked, state, last_event_at').eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null).limit(400);
+      // W19.A · the slip flag reads whoOwes — served through the one floor (a settled claim never slips a project).
+      const { floorEntityRows } = await import('@/lib/entities/state');
+      const wents = await floorEntityRows(supabase, user.id, ((wentsRaw ?? []) as Array<Record<string, unknown>>).filter((e) => e.tracked));
       const slipById = new Map<string, boolean>();
       const nameById = new Map<string, string>();
       for (const e of (wents ?? []) as Array<{ id: string; name: string; tracked?: boolean; state: { momentum?: string; whoOwes?: { you?: string[] } } | null; last_event_at: string | null }>) {

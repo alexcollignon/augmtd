@@ -46,6 +46,9 @@ import { warmEntityRoom, cancelWarmEntityRoom } from '@/lib/room/warm-room';
 import { momentumOf } from '@/lib/work-items/states';
 import { toast } from 'sonner';
 import { prefetchChatTurns } from '@/components/home/chat-turns-warm';
+import { deleteHomeChat } from '@/components/one/chat-actions';
+import { navActive, chatKeyFromSearch, CHAT_ADDRESS_EVENT } from '@/components/one/nav-active';
+import { chatHref, dmHref, dmThreadLsKey } from '@/components/one/chat-address';
 
 type Conversation = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null; sub?: string };
 // `unread` — THE PROJECT RAISING ITS HAND (Sep 7): per project room key, the count of live turns
@@ -111,10 +114,11 @@ export default function OneSidebar({
   const removeConv = async (c: Conversation) => {
     setConvMenu(null);
     setRooms((r) => ({ ...r, conversations: r.conversations.filter((x) => x.key !== c.key) }));
+    // A Home chat's delete is THE ONE chat verb (components/one/chat-actions — the project room's
+    // Chats group fires the same one); a coworker DM archives its thread.
+    if (c.kind === 'chat') { await deleteHomeChat(c.key); return; }
     try {
-      const res = c.kind === 'chat'
-        ? await fetch(`/api/room/turns?key=${encodeURIComponent(c.key)}`, { method: 'DELETE' })
-        : await fetch(`/api/work/threads/${workerTid(c.key)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'archived' }) });
+      const res = await fetch(`/api/work/threads/${workerTid(c.key)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'archived' }) });
       if (!res.ok) throw new Error();
       bump();
       toast('Conversation deleted', {
@@ -123,9 +127,7 @@ export default function OneSidebar({
           onClick: () => {
             void (async () => {
               try {
-                const r = c.kind === 'chat'
-                  ? await fetch('/api/rooms/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: c.key }) })
-                  : await fetch(`/api/work/threads/${workerTid(c.key)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'active' }) });
+                const r = await fetch(`/api/work/threads/${workerTid(c.key)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'active' }) });
                 if (!r.ok) throw new Error();
                 bump();
               } catch { toast.error("Couldn't restore it — check All conversations."); }
@@ -205,23 +207,34 @@ export default function OneSidebar({
   // THE CLICK ANSWERS AT ONCE: the row it opened wears the active seat immediately (the panel's
   // own pane paints on the same click — see home-ask's chat lane). It clears whenever the chat
   // lane does: Home hands the dashboard back, and a new chat leaves no past conversation open.
+  // W19.C · THE ADDRESS DECIDES (components/one/nav-active): the open chat is read from `?chat=`
+  // on every route change and on home-ask's own address announcement — a chat opened from ANY door
+  // (the sidebar, All conversations, a project's seam link, a deep link) lights its row, and Home
+  // goes dark while it is open. The click still lights its row at once (the pane paints on the
+  // same click); the address it then writes agrees.
   const [openConvKey, setOpenConvKey] = useState<string | null>(null);
   useEffect(() => {
+    try { setOpenConvKey(chatKeyFromSearch(window.location.search)); } catch { /* SSR */ }
+  }, [pathname]);
+  useEffect(() => {
     const clear = () => setOpenConvKey(null);
+    const onAddress = (e: Event) => setOpenConvKey(((e as CustomEvent).detail?.key as string | null) ?? null);
     window.addEventListener('augmtd:home-reset', clear);
     window.addEventListener('aug:new-chat', clear);
-    window.addEventListener('aug:dm-worker', clear);
+    window.addEventListener(CHAT_ADDRESS_EVENT, onAddress);
     return () => {
       window.removeEventListener('augmtd:home-reset', clear);
       window.removeEventListener('aug:new-chat', clear);
-      window.removeEventListener('aug:dm-worker', clear);
+      window.removeEventListener(CHAT_ADDRESS_EVENT, onAddress);
     };
   }, []);
+  // W19.2b · A CROSS-PAGE DOOR IS AN ADDRESS (components/one/chat-address): on /home the mounted
+  // panel hears the event; from any other page the click NAVIGATES to the conversation's own URL —
+  // never an event nobody hears plus a flag that restores whatever chat was last.
   const openChat = (key: string) => {
-    try { localStorage.setItem('aug-home-chat-key', key); sessionStorage.setItem('aug-open-chat-intent', '1'); } catch { /* no LS */ }
     setOpenConvKey(key);
+    if (pathname !== '/home') { router.push(chatHref(key)); return; }
     window.dispatchEvent(new CustomEvent('aug:open-chat', { detail: { key } }));
-    if (pathname !== '/home') router.push('/home');
   };
 
   // THE TEAM FACEPILE (coherence slice #4, Aug 10) — presence in the footer, deliberately NOT
@@ -254,11 +267,12 @@ export default function OneSidebar({
     return () => document.removeEventListener('mousedown', onDown);
   }, [teamOpen]);
   useEffect(() => { if (team?.length) saveLS('aug-team-presence-v1', team); }, [team]);
+  // THE DM DOOR HAS AN ADDRESS (W19.2b): off /home the click lands on the DM itself — the thread's
+  // own `?chat=worker:<tid>:<agent>` when Home has cached it, else `?dm=<agent>`, which Home resolves.
   const dmWorker = (w: TeamMate) => {
     setTeamOpen(false);
-    try { sessionStorage.setItem('aug-open-chat-intent', '1'); } catch { /* no LS */ }
+    if (pathname !== '/home') { router.push(dmHref(w.id, loadLS<string>(dmThreadLsKey(w.id)))); return; }
     window.dispatchEvent(new CustomEvent('aug:dm-worker', { detail: { agentId: w.id, name: w.name } }));
-    if (pathname !== '/home') router.push('/home');
   };
 
   // THE LENS MIRROR (owner, Aug 9 — "why is it all 'home'?"): the sidebar highlights the
@@ -271,8 +285,8 @@ export default function OneSidebar({
     window.addEventListener('aug:view-changed', onLens);
     return () => window.removeEventListener('aug:view-changed', onLens);
   }, []);
-  const onHome = pathname === '/home';
-  const lensIs = (...vs: string[]) => onHome && vs.includes(lens ?? 'dashboard');
+  const nav = navActive({ pathname, lens, openChatKey: openConvKey });
+  const lensIs = nav.lens;
 
   const item = (active: boolean) =>
     `flex items-center gap-2.5 px-2.5 py-[7px] mb-px rounded-lg text-[12.5px] transition-colors ${
@@ -344,7 +358,7 @@ export default function OneSidebar({
             Home isn't mounted yet), so it leaves the one-shot intent the Home consumes on mount —
             the established `aug-*-intent` idiom. Ordinary loads carry no intent and never steal
             the caret. */}
-        <Link href="/home" className={item(lensIs('dashboard', 'timeline') || pathname.startsWith('/item'))}
+        <Link href="/home" className={item(nav.home)}
           onClick={(e) => {
             if (pathname !== '/home') {
               try { sessionStorage.setItem('aug-home-focus-intent', '1'); } catch { /* no storage */ }
@@ -363,7 +377,7 @@ export default function OneSidebar({
             e.preventDefault();
             window.dispatchEvent(new CustomEvent('augmtd:home-reset'));
           }}>
-          <HomeIcon className={`w-[17px] h-[17px] flex-shrink-0 ${lensIs('dashboard', 'timeline') ? 'text-indigo-500' : 'text-neutral-400'}`} />
+          <HomeIcon className={`w-[17px] h-[17px] flex-shrink-0 ${nav.home ? 'text-indigo-500' : 'text-neutral-400'}`} />
           Home
           {/* THE NEEDS-YOU BADGE — the deck's own count (dayProgress.needYou), never a decoration.
               No fresh served count → no badge (honest or absent). */}
@@ -470,7 +484,7 @@ export default function OneSidebar({
                   )}
                 </>
               );
-              const rowCls = `${item(onHome && openConvKey === c.key)} group/conv w-full text-left !flex-col !items-stretch !gap-0 cursor-pointer`;
+              const rowCls = `${item(nav.chat(c.key))} group/conv w-full text-left !flex-col !items-stretch !gap-0 cursor-pointer`;
               return manageable ? (
                 <div key={c.key} role="button" tabIndex={0} onClick={() => { if (convRenaming !== c.key) openChat(c.key); }}
                   // W17 · HOVER WARMS THE NEXT PAGE: the conversation's turns are read (a peek — no

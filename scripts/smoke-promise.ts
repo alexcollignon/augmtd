@@ -1210,7 +1210,9 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       converseSrc.indexOf('THE FAST PATH IS FAST AGAIN'),
       converseSrc.indexOf('skippedDataRead = verdict.command.tool;'));
     check('P21e · the fast path serves a collection ONLY as { say: spec.framing, collection: { id, spec } } — no branch puts modelText in `say`',
-      fastPath.includes('if (spec) return { say: spec.framing, refs: [], collection: { id: crypto.randomUUID(), spec } };') &&
+      // ⟲ RE-POINTED W19.2: the fast path serves a collection only when it HAS rows — an empty set is
+      // not an answer and falls through to the answer path (AN EMPTY SET IS NOT A CARD).
+      fastPath.includes('if (spec && collectionHasRows(spec)) return { say: spec.framing, refs: [], collection: { id: crypto.randomUUID(), spec } };') &&
       // RE-POINTED Sep 22 (Wave 2): `modelText` may reach a `say` on EXACTLY ONE path — the
       // `presentation` branch, whose "modelText" is a sentence COMPOSED BY CODE from the object's
       // own facts (no model wrote it). The law being kept is the leak's actual shape: a DATA read's
@@ -1328,7 +1330,7 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       B.documentSpec([{ fileId: '4366060c-0000-4000-8000-0000000000bb', filename: 'Pricing deck.pdf', summary: 'The 2026 pricing structure and its bands.', similarity: 0.7, topCitation: 'Pricing deck.pdf, p.3' }], 'pricing'),
       B.recordingSpec([{ id: '4366060c-0000-4000-8000-0000000000cc', title: 'Acme kick-off', dateLabel: 'Mon 21 Sep 2026', duration_minutes: 45, actionItems: ['send the scope'], attendees: [{ email: 'sam@acme-example.com' }] }], { since: '7d' }),
     ];
-    const rendered = specs.flatMap((s) => [s.framing, s.emptyLine ?? '', ...s.rows.flatMap((r) => [r.title, r.meta ?? '', r.status?.word ?? ''])]);
+    const rendered = specs.flatMap((s) => [s.framing, ...s.rows.flatMap((r) => [r.title, r.meta ?? '', r.status?.word ?? ''])]);
     check('P21e · every built spec is structurally valid and NOTHING a person reads carries a uuid (ids ride `id`/`facts`, which is where the doors read them)',
       specs.every(isCollectionSpec) && !rendered.some((t) => UUID.test(t)) &&
       specs[1].rows[0].meta === 'The 2026 pricing structure and its bands.' &&
@@ -1353,7 +1355,8 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       // routes a single-object card to its own field. The law — the loop's FINAL turn carries the
       // object it reasoned about — is asserted on both halves.
       converseSrc.includes('if (isToolData(out) && out.present) {') &&
-      converseSrc.includes('else collection = { id: crypto.randomUUID(), spec: out.present };') &&
+      // ⟲ RE-POINTED W19.2: only a set WITH rows rides the turn — an empty read is text for the model.
+      converseSrc.includes('else if (collectionHasRows(out.present)) collection = { id: crypto.randomUUID(), spec: out.present };') &&
       converseSrc.includes('if (isEventPresent(out.present)) event = { id: out.present.spec.id, spec: out.present.spec };') &&
       converseSrc.includes('...(collection ? { collection } : {}), ...(event ? { event } : {}) };') &&
       converseSrc.includes('? clipForPrompt(out.modelText, 4000)'));

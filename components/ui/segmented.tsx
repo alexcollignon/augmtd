@@ -55,6 +55,9 @@ export interface TabItem<T extends string> {
   id: T;
   label: string;
   icon?: React.ComponentType<{ className?: string }>;
+  /** A served count, rendered INLINE after the label as a muted number ("Tasks 5") — never baked
+   *  into the label string (a "· 5" suffix wrapped onto its own line in a narrow bar). 0/absent → none. */
+  count?: number;
 }
 
 export interface TabBarProps<T extends string> {
@@ -66,7 +69,8 @@ export interface TabBarProps<T extends string> {
 
 export function TabBar<T extends string>({ tabs, active, onChange, className }: TabBarProps<T>) {
   return (
-    <div className={cn('flex gap-0 border-b border-neutral-100 px-2', className)}>
+    // The bar SCROLLS rather than wraps: every tab keeps its label and count on one line.
+    <div className={cn('flex gap-0 border-b border-neutral-100 px-2 overflow-x-auto [scrollbar-width:none]', className)}>
       {tabs.map(tab => {
         const isActive = tab.id === active;
         const Icon = tab.icon;
@@ -75,12 +79,15 @@ export function TabBar<T extends string>({ tabs, active, onChange, className }: 
             key={tab.id}
             onClick={() => onChange(tab.id)}
             className={cn(
-              'flex items-center gap-1.5 px-3.5 py-2.5 text-[12.5px] font-medium border-b-2 transition-colors -mb-px',
+              'flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap px-3.5 py-2.5 text-[12.5px] font-medium border-b-2 transition-colors motion-reduce:transition-none -mb-px',
               isActive ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-neutral-400 hover:text-neutral-600',
             )}
           >
             {Icon && <Icon className="w-3.5 h-3.5 flex-shrink-0" />}
             {tab.label}
+            {typeof tab.count === 'number' && tab.count > 0 && (
+              <span className="tabular-nums font-normal text-neutral-400">{tab.count}</span>
+            )}
           </button>
         );
       })}

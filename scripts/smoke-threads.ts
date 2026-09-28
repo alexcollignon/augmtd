@@ -781,8 +781,12 @@ console.log('\nT6 · THE ROOM’S CONVERSATION — the rail, through the ONE kit
     && /import \{ useCosSeat \} from '@\/hooks\/use-cos-seat'/.test(askSurface));
 
   // THE THREE GRAMMARS, structurally derived — and narration stays FACELESS BY GRAMMAR.
+  // ⟲ RE-POINTED W19 (THE ROOM'S CONVERSATION IS A REAL CHAT): "authorless" is no longer the whole
+  // test — the seat's ANSWER is authorless too and must wear the seat's face. Narration is now read
+  // through the ONE shared predicate (components/home/room-chat.ts isNarrationTurn: authorless, no
+  // card, and KEYED to its work); scripts/smoke-room-chat.ts gates the predicate's behaviour.
   gate('T6.9 authorless narration maps to event_line (no face render on a narration turn)',
-    !!rail && /if \(!t\.author\?\.name && !hasComponent\) \{/.test(rail)
+    !!rail && /if \(isNarrationTurn\(t\)\) \{/.test(rail)
     && /items\.push\(\{ type: 'event_line', id: key, text: t\.text, \.\.\.\(lineRefs\.length \? \{ refs: lineRefs \} : \{\}\) \}\);/.test(rail)
     && !/<img src=\{ROLE_AVATARS/.test(rail));
   gate('T6.10 a coworker’s own speech is an actor bubble with THEIR face (the one-narrator law)',
@@ -971,10 +975,13 @@ console.log('\nT7 · THE HEADER + THE DRAWER — the right pane collapses; the w
     // ⚠️ RE-POINTED (Sep 15): the tab row gained ICONS (leading the label, the kit's own optional)
     // and the intent band lost the `intentOpen` flag with the ⋯ row that set it. Both clauses of the
     // law stand: the counts still ride the labels, and goals/rules still render ONLY when set.
-    !!drawer && /<TabBar tabs=\{sections\.map\(\(s\) => \(\{ id: s\.id, label: s\.label, \.\.\.\(s\.icon \? \{ icon: s\.icon \} : \{\}\) \}\)\)\} active=\{activeId\}/.test(drawer)
-    && !!room && /label: 'Tasks' \+ \(d\.counts\.total \? ` · \$\{d\.counts\.total\}` : ''\)/.test(room)
+    // ⟲ RE-POINTED W19: counts ride the kit TabBar's `count` prop (inline, never baked into the
+    // label — "Tasks · 5" wrapped in the narrow drawer), and the deliverables moved from the footer
+    // into Conversations → Deliverables (their own group, same list).
+    !!drawer && /<TabBar tabs=\{sections\.map\(\(s\) => \(\{ id: s\.id, label: s\.label, \.\.\.\(s\.icon \? \{ icon: s\.icon \} : \{\}\), \.\.\.\(typeof s\.count === 'number' \? \{ count: s\.count \} : \{\}\) \}\)\)\} active=\{activeId\}/.test(drawer)
+    && !!room && /label: 'Tasks', count: d\.counts\.total,/.test(room)
     && /\(e\.goals\.length > 0 \|\| e\.rules\.length > 0\) \? \(/.test(room)
-    && /<DeliverablesBlock deliverables=\{d\.statusBrief\.deliverables\}/.test(room));
+    && /<DeliverableRows deliverables=\{produced\}/.test(room));
   gate('T7.10 the address still decides the first open (?tab=work lands on Tasks, ?tab=timeline on Activity)',
     !!room && /useState\(initialTab === 'work' \|\| initialTab === 'timeline'\)/.test(room)
     && /const initialSection = initialTab === 'timeline' \? 'history' : 'work';/.test(room)
@@ -3325,7 +3332,9 @@ console.log('\nT22 · THE GROUND EVIDENCE + ONE AGENDA AT THE RENDER — the roo
     })());
   gate('T22.6 THE SIG CARRIES IT — a sent message or a booked meeting recomposes the opening with no deed seam at all',
     !!brief && /const groundDigest = g\.groundEvidence\.join\('\|'\)\.slice\(0, 400\);/.test(brief)
-    && /blockingDigest, groundDigest, lastTurn/.test(brief));
+    // ⟲ RE-POINTED W19.2 — the chat tail (lastTurn) left the sig (a chat turn never re-authors the
+    // opening); the ground digest is still a member of the joined sig.
+    && /blockingDigest, groundDigest, extra\]\.join\('::'\)/.test(brief));
   gate('T22.7 THE GROUND WINS — the law is COMPOSED, one rule to the mind (a settled debt is spoken as done or not at all)',
     !!ge && /export const GROUND_EVIDENCE_RULE =/.test(ge)
     && /THE GROUND WINS: when the page below carries a GROUND EVIDENCE block/.test(ge)
@@ -3936,7 +3945,8 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
 
   // ── (a) THE THREAD READS IN THE DRAWER — through the SHARED renderer, never a second one ──
   gate('T25.1 the drawer holds a THREAD section, and it is the SHARED <ThreadMessages/> (no second thread renderer)',
-    !!detail && /id: 'thread', label: `\$\{extra\.threadLabel \?\? 'Thread'\}\$\{n > 1 \? ` · \$\{n\}` : ''\}`/.test(detail)
+    // ⟲ RE-POINTED W19: the count rides the TabBar's inline `count` prop (still only above one message).
+    !!detail && /id: 'thread', label: extra\.threadLabel \?\? 'Thread', \.\.\.\(n > 1 \? \{ count: n \} : \{\}\),/.test(detail)
     && /threadLabel: objectKind === 'email_thread' \? 'Thread' : 'Source',/.test(detail)
     && /thread: threadErr/.test(detail)
     // both reading kinds hand the ONE renderer in
@@ -3972,7 +3982,8 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     && /note: 'Came with this email'/.test(detail)
     && /ref: \{ kind: 'kb', id: f\.id \}, note: 'Filed on this work'/.test(detail)
     // counted, never subtracted, and deduped so one document never wears two seats
-    && /label: `Files · \$\{files\.length\}`/.test(detail) && /const seen = new Set<string>\(\);/.test(detail));
+    // ⟲ RE-POINTED W19: the count rides the TabBar's inline `count` prop.
+    && /label: 'Files', count: files\.length,/.test(detail) && /const seen = new Set<string>\(\);/.test(detail));
   gate('T25.4 ONE LIGHTBOX COMPONENT EXISTS, and it is the only file modal in the tree',
     !!box && /export function AttachmentLightbox\(/.test(box)
     && !!uiIndex && /export \{ AttachmentLightbox, AttachmentChip, fmtBytes \}/.test(uiIndex)
@@ -4364,7 +4375,8 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
         && !!room && /\.filter\(\(r\) => mountsEmailCard\(r\)\)/.test(room)
         // ⟲ RE-POINTED (stabilization W2.1, Sep 22): the same import now also carries `prepAnchorKey`
         // (the ONE reader-side prep anchor producer) — the predicate's home is unchanged.
-        && /import \{ railCoversItem, moveTargetId, mountsEmailCard, boardRowItemId(?:, prepAnchorKey)? \} from '@\/lib\/room\/presentation'/.test(room)
+        // ⟲ RE-POINTED W19: the import also carries the kind-carrying door + lane-label producers.
+        && /import \{ railCoversItem, moveTargetId, mountsEmailCard, boardRowItemId(?:, prepAnchorKey)?[^}]*\} from '@\/lib\/room\/presentation'/.test(room)
         // the room no longer decides candidacy on a token string of its own (the LABEL may still
         // read `prepared`; what may not is the filter that decides whether a card mounts)
         && !/filter\([^)]*prepared === 'draft'/.test(room)
@@ -4406,8 +4418,9 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
       })());
   }
   gate('T28.4h the card-bearing row LEADS the three-card cap — a CTA can never point at a card the stream declined to render',
-    !!room && /const ordered = \[\.\.\.rows\]\.sort\(\(a, b\) => \(boardRowItemId\(a\) === cardRowId \? -1 : boardRowItemId\(b\) === cardRowId \? 1 : 0\)\);/.test(room)
-    && /return ordered\.slice\(0, 3\)\.map/.test(room));
+    // ⟲ RE-POINTED W19: the rows carry their LANE ({ r, lane }) so a waiting row's card says it is a nudge.
+    !!room && /const ordered = \[\.\.\.rows\]\.sort\(\(a, b\) => \(boardRowItemId\(a\.r\) === cardRowId \? -1 : boardRowItemId\(b\.r\) === cardRowId \? 1 : 0\)\);/.test(room)
+    && /return ordered\.slice\(0, 3\)\.map\(\(\{ r, lane \}\) =>/.test(room));
   gate('T28.4i ONE DEED CHANNEL — the card announces its send once (announceDeed → DEED_EVENT); the room does not wire a second callback for the same fact',
     !!room && !/<EmailCard[\s\S]{0,200}onSent=/.test(room)
     && /window\.addEventListener\(DEED_EVENT, onPrepared\)/.test(room)
@@ -4575,7 +4588,10 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
         && /if \(loading\) \{[\s\S]{0,600}animate-pulse/.test(card);
     })());
   gate('T28.30 NO HYDRATION FALLBACK — the room can never raise a reply composer, so one button cannot have two behaviours',
-    !!room && /if \(stage === 'reply'\) \{ openHref\(`\/item\/\$\{itemId\}\?kind=email`, false\); return true; \}/.test(room)
+    // ⟲ RE-POINTED W19: the door's address now carries the item's KIND (stageDoorHref — a
+    // commitment never opens as an email); a reply stage still only ever opens the thread.
+    !!room && /const href = stageDoorHref\(itemId, laneRows\.map\(\(\{ r \}\) => r\), roomMove\?\.ref \?\? null\);/.test(room)
+    && /if \(stage === 'reply' \|\| !href\.includes\('kind=email'\)\) return true;/.test(room)
     && /THE ROOM NEVER RAISES A REPLY COMPOSER/.test(room)
     // …and the only remaining stage intents are the two whose cards are not in the thread yet
     && /setFocusStage\(stage === 'forward' \? 'forward' : 'invite'\)/.test(room));
@@ -4693,12 +4709,15 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
         && /setTurnsNonce/.test(seg);
     })());
   gate('T28.24 the saved sessions are LISTED and READ under Filed → Conversations, through the SAME door that archived them',
-    !!room && /<ChatSessionRows\s/.test(room)
-    && /roomKey=\{entityId\} sessions=\{chatSessions\}/.test(room)
+    // ⟲ RE-POINTED W19: one ChatRows lists the saved sessions AND the Home chats filed here; the
+    // tab counts its three groups (chats + threads + deliverables) through the TabBar's count prop.
+    !!room && /<ChatRows\s/.test(room)
+    && /roomKey=\{entityId\} sessions=\{chatSessions\} filed=\{filedChats\}/.test(room)
     && /\/api\/room\/turns\?key=\$\{encodeURIComponent\(entityId\)\}&sessions=1/.test(room)
     && /&session=\$\{encodeURIComponent\(at\)\}/.test(room)
     // THE SUM LAW: the tab counts exactly what it lists
-    && /label: `Conversations · \$\{\(d\.conversations \?\? \[\]\)\.length \+ chatSessions\.length\}`/.test(room));
+    && /const total = chats \+ threads\.length \+ produced\.length;/.test(room)
+    && /label: 'Conversations', count: total,/.test(room));
 
   // 2b · A SAVED CHAT IS RESUMABLE, NOT A TRANSCRIPT (owner walk, Sep 14: "shouldn't clicking on
   //      saved chats open the actual chat? and allow to resume from there?").
@@ -4742,10 +4761,11 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     })());
   gate('T28.34 the saved-chat row RESUMES (and the peek stays) — the live conversation swaps and the drawer gets out of the way',
     !!room && (() => {
-      const i = room!.indexOf('function ChatSessionRows(');
-      const seg = room!.slice(i, i + 3200);
+      // ⟲ RE-POINTED W19: the rows are ChatRows (sessions + filed Home chats, one grammar).
+      const i = room!.indexOf('function ChatRows(');
+      const seg = room!.slice(i, i + 6000);
       const resumes = /method: 'PATCH'/.test(seg) && /onResume\(\)/.test(seg)
-        && /Resuming…/.test(seg) && /void toggle\(sn\.at\)/.test(seg);   // read-only peek survives
+        && /Resuming…/.test(seg) && /void toggle\(r\.id\)/.test(seg);   // read-only peek survives
       // the host: ONE echo for "the live session changed" (the same one New chat fires), the session
       // list re-reads because the swap saved the outgoing exchange, and the drawer closes.
       const j = room!.indexOf('onResume={() => {');
@@ -4786,8 +4806,9 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
 
   gate('T28.17 A FAILURE IS NOT HISTORY — a failed deed renders its apology and never persists it',
     !!rail && (() => {
-      const i = rail!.indexOf('const send = async (raw: string)');
-      const seg = rail!.slice(i, i + 2400);
+      const i = rail!.indexOf('const send = async (raw: string');
+      // ⟲ RE-POINTED W19: the send door grew its answer-key preamble — the window widens, the law is unchanged.
+      const seg = rail!.slice(i, i + 4200);
       // no durable write on either failure path of the one send door…
       return !/addTurn\(\{ role: 'system', text: d\.error/.test(seg)
         && /setTurns\(\(prev\) => \[\.\.\.prev, \{ role: 'system', text: d\.error \|\| "That didn't go through/.test(seg);
@@ -4869,10 +4890,11 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     && ALL.filter((f) => /export function RoomHistorySection\(/.test(read(f) ?? '')).length === 1
     // the project door files it…
     && !!room && /onHistory=\{setHistoryLines\}/.test(room)
-    && /id: 'record', icon: \w+, label: `History · \$\{historyLines\.length\}`/.test(room)
+    // ⟲ RE-POINTED W19: counts ride the TabBar's inline `count` prop (both doors).
+    && /id: 'record', icon: \w+, label: 'History', count: historyLines\.length,/.test(room)
     // …and every kind of the loose door does, through the ONE assembler
     && !!detail && (detail.match(/onHistory=\{setHistoryLines\}/g) ?? []).length === 4
-    && /tabs\.push\(\{ id: 'record', label: `History · \$\{hist\.length\}`/.test(detail));
+    && /tabs\.push\(\{ id: 'record', label: 'History', count: hist\.length,/.test(detail));
 
   // 4 · THE CARD'S OWN DOOR
   // ⟲ RE-POINTED W18: the item page passes `null` (no door — the source card above unfolds the
@@ -5126,23 +5148,27 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     // …and it makes NO model call of its own: no fetch, no cache key, no signature in its derivation
     && (() => {
       const i = rail30.indexOf('const openerText =');
-      const seg = rail30.slice(i, rail30.indexOf('const openerRef'));
+      const seg = rail30.slice(i, rail30.indexOf('// THE RESET GENERATION, at the two seams'));
       return i > 0 && !/fetch\(/.test(seg) && !/await /.test(seg);
     })());
   gate('T30.3b A ROOM WITH A RECORD IS NEVER GREETED AS A NEW ONE — "Fresh start" is reserved for a room with no past at all',
     !!rail30 && (() => {
       const i = rail30.indexOf('const openerText =');
-      const seg = rail30.slice(i, rail30.indexOf('const openerRef'));
+      const seg = rail30.slice(i, rail30.indexOf('// THE RESET GENERATION, at the two seams'));
       return i > 0
         // the record is DERIVED from what the room already holds — no second fetch, no new fact
         // ⟲ RE-POINTED (W7.2 ONE OBJECT, ONE DOOR): the brief watermark is the DOOR's own opening's
         // (`opening.at` — the entity's on the entity door, the item's on an item door).
         && /const hasRecord = !!pinned \|\| !!opening\.at \|\| !!sum \|\| turns\.length > 0;/.test(seg)
         // …both branches exist, and the fresh one is the ELSE
-        && /Picking \$\{name\} back up — what do you want to look at\?/.test(seg)
-        && /Fresh start on \$\{name\}\. What do you want to pick up\?/.test(seg)
-        // …the fresh wording is the ELSE of the record test, not the default
-        && /const invite = hasRecord\s*\n\s*\? \(name \? `Picking/.test(seg)
+        // ⟲ RE-POINTED W19: the wordings moved to the opener's ONE producer (components/home/room-chat.ts
+        // `openerInvite`) so the read floor that drops pre-W19 persisted openers recognises exactly them.
+        && /const invite = openerInvite\(name, hasRecord\);/.test(seg)
+        && (() => { const rc = read('components/home/room-chat.ts') ?? '';
+          return /Picking \$\{name\} back up — what do you want to look at\?/.test(rc)
+            && /Fresh start on \$\{name\}\. \$\{OPENER_INVITE\}/.test(rc)
+            // …the fresh wording is the ELSE of the record test, not the default
+            && /=> hasRecord\s*\n\s*\? \(name \? `Picking/.test(rc); })()
         // one wording, one seat: the no-brief return goes through the derived invite
         // (RE-POINTED Sep 19 — THE OPENING CONTRACT clause 5 moved the PINNED branch off `invite`
         // entirely; see T30.3c below. The record law this gate exists for is unchanged.)
@@ -5154,27 +5180,29 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   gate('T30.3c THE OPENER NEVER STANDS AS A SECOND GREETER — with a brief pinned it is PURELY the invitation, and under a brief that already asks something it does not render at all',
     !!rail30 && (() => {
       const i = rail30.indexOf('const openerText =');
-      const seg = rail30.slice(i, rail30.indexOf('const openerRef'));
+      const seg = rail30.slice(i, rail30.indexOf('// THE RESET GENERATION, at the two seams'));
       return i > 0
         // the pinned branch carries NO preamble and NO subject — just the forward question
-        && /if \(pinned\) return \/\\\?\\s\*\$\/\.test\(pinned\.trim\(\)\) \? null : 'What do you want to pick up\?';/.test(seg)
+        // ⟲ RE-POINTED W19: the invitation is the ONE producer's constant (OPENER_INVITE).
+        && /if \(pinned\) return \/\\\?\\s\*\$\/\.test\(pinned\.trim\(\)\) \? null : OPENER_INVITE;/.test(seg)
+        && /export const OPENER_INVITE = 'What do you want to pick up\?';/.test(read('components/home/room-chat.ts') ?? '')
         // …and it is still derived, with no second composed voice behind it
         && !/fetch\(/.test(seg) && !/await /.test(seg)
         // the preamble wordings survive ONLY for the no-brief case they were written for
-        && /Picking \$\{name\} back up/.test(seg) && /Fresh start on \$\{name\}/.test(seg);
+        && /const invite = openerInvite\(name, hasRecord\);/.test(seg) && /return name \? invite : null;/.test(seg);
     })());
-  gate('T30.4 THE OPENER IS EPHEMERAL UNTIL ANSWERED — it is written exactly once, by the reply that answers it, so N resets can never stack N greetings',
-    !!rail30 && /const openerRef = useRef<string \| null>\(null\);/.test(rail30)
+  // ⟲ RE-POINTED W19 (THE OPENER IS CHROME, owner walk Sep 28): the opener used to be persisted
+  // exactly once, by the reply that answered it — and then stood as a grey authorless line over every
+  // saved chat. It is now NEVER written, and rows written before W19 are dropped at read. The law this
+  // gate existed for (N resets can never stack N greetings) holds a fortiori: zero writes.
+  gate('T30.4 THE OPENER IS CHROME — never written (not even when answered), and persisted openers never render',
+    !!rail30 && !/openerRef/.test(rail30)
     && (() => {
-      const i = rail30.indexOf('if (openerRef.current) {');
-      if (i < 0) return false;
-      const seg = rail30.slice(i, i + 620);
-      // claimed before the write (so a double-send cannot double-persist), then persisted ONCE
-      return seg.indexOf('openerRef.current = null;') < seg.indexOf("method: 'POST'")
-        && /role: 'system', text: o/.test(seg);
+      const i = rail30.indexOf('const send = async (raw: string');
+      const seg = rail30.slice(i, rail30.indexOf('// 📎 — the ingest funnel'));
+      return i > 0 && !/role: 'system', text: o/.test(seg) && !/fetch\('\/api\/room\/turns'/.test(seg);
     })()
-    // the ONLY place it persists — the render never writes it
-    && (rail30.match(/openerRef\.current = null;/g) ?? []).length === 1);
+    && /return rows\.filter\(\(t\) => !isPersistedOpener\(t\)\)\.map\(/.test(rail30));
 
   // 3 · THE CARD LOADS IN ITS OWN SHAPE.
   gate('T30.5 THE LOADING STATE IS THE CARD’S SHAPE — tab row, to-row, body lines and commit row, never a bare pill',
@@ -5730,8 +5758,9 @@ console.log('\nT33 · THE ONE COLLECTION CARD — a set of the user’s own obje
     && /import \{ ExpandableRows \} from '@\/components\/home\/expandable-rows'/.test(kit33)
     && /<ExpandableRows\s+items=\{card\.rows\}/.test(kit33)
     && /card\.foldAfter \?\? COLLECTION_INLINE_ROWS/.test(kit33)
-    // …and an empty set says so plainly rather than wearing row-shaped ghosts
-    && /card\.rows\.length === 0 \?/.test(kit33) && /\{card\.emptyLine \?\? 'Nothing here yet\.'\}/.test(kit33));
+    // ⟲ RE-POINTED W19.2 — an empty set renders NO CARD (the answer's sentence carries the empty
+    // fact; the old gate held an empty-state box that repeated it). Behaviour: scripts/smoke-answer-shape.ts.
+    && /if \(!collectionHasRows\(card\)\) return null;/.test(kit33) && !/emptyLine/.test(kit33));
 
   // ── (c) THE HOST OWNS THE VERBS, AND EVERY DEED IS A DOOR THAT ALREADY EXISTED ──
   gate('T33.7 THE STATE DECIDES, NEVER THE LABEL — the verb map reads `state` and never a status word',
@@ -5824,7 +5853,8 @@ console.log('\nT33 · THE ONE COLLECTION CARD — a set of the user’s own obje
     && /receipt: 'running'/.test(harness33)
     && /\{ id: 'pause', label: 'Pause', tone: 'quiet' \}/.test(harness33)   // no handler ⇒ plain text
     && /more: \{ count: 12, onOpen: noop \}/.test(harness33)
-    && /emptyLine: 'No workflows yet\.'/.test(harness33)
+    // ⟲ RE-POINTED W19.2 — the empty fixture carries no empty line: it proves the card's ABSENCE.
+    && /kind: 'collection', id: 'coll-empty', rows: \[\],/.test(harness33) && !/emptyLine/.test(harness33)
     && /cards: \[WORKFLOWS_COLLECTION\]/.test(harness33) && /cards: \[DOCUMENTS_COLLECTION\]/.test(harness33));
 
   // ── (h) THE COWORKER DM IS THE SAME CARD, NOT A SECOND ONE ──

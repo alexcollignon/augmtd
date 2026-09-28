@@ -51,7 +51,9 @@ export const FILED_LABEL = 'Details';
 /** A drawer section — the filed truth, summoned. Empty sections are ABSENT, never scaffolded.
  *  The icon is the section's own mark in the tab row — the house icon set, leading the label; a
  *  section without one simply renders its words (the kit's own optional). */
-export type FiledSection = { id: string; label: string; node: React.ReactNode; icon?: React.ComponentType<{ className?: string }> };
+export type FiledSection = { id: string; label: string; node: React.ReactNode; icon?: React.ComponentType<{ className?: string }>;
+  /** W19.C: the section's count, rendered inline by the kit TabBar (never baked into the label). */
+  count?: number };
 
 export function FiledDrawer({
   open, onClose, title, sections, initialId, signal, banner, footer, emptyLine,
@@ -156,7 +158,7 @@ export function FiledDrawer({
             behind it never reaches this component at all. */}
         {sections.length > 1 && (
           <div className="flex-shrink-0 px-2">
-            <TabBar tabs={sections.map((s) => ({ id: s.id, label: s.label, ...(s.icon ? { icon: s.icon } : {}) }))} active={activeId} onChange={setTab} />
+            <TabBar tabs={sections.map((s) => ({ id: s.id, label: s.label, ...(s.icon ? { icon: s.icon } : {}), ...(typeof s.count === 'number' ? { count: s.count } : {}) }))} active={activeId} onChange={setTab} />
           </div>
         )}
 

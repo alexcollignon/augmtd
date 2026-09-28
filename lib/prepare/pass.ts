@@ -352,7 +352,9 @@ async function prepareDecisionBrief(
   let dealLine = '';
   if (w.entity?.id) {
     try {
-      const { data: ent } = await admin.from('work_entities').select('name, state').eq('id', w.entity.id).eq('user_id', userId).maybeSingle();
+      const { data: entRaw } = await admin.from('work_entities').select('id, name, state').eq('id', w.entity.id).eq('user_id', userId).maybeSingle();
+      // W19.A · the deal line is the state as SERVED (settled claims dropped · time words floored).
+      const [ent] = entRaw ? await await import('@/lib/entities/state').then(({ floorEntityRows }) => floorEntityRows(admin, userId, [entRaw as Record<string, unknown>])) : [null];
       const st = (ent?.state ?? {}) as { summary?: string };
       if (st.summary) dealLine = `THE DEAL (${String(ent?.name)}): ${st.summary}`;
     } catch { /* optional */ }
@@ -947,8 +949,10 @@ async function delegatePrepare(admin: SupabaseClient, userId: string, w: WorkIte
   try {
     const bits: string[] = [];
     if (w.entity?.id) {
-      const { data: ent } = await admin.from('work_entities').select('name, state, goals, rules')
+      const { data: entRaw } = await admin.from('work_entities').select('id, name, state, goals, rules')
         .eq('id', w.entity.id).eq('user_id', userId).maybeSingle();
+      // W19.A · the body-of-work block reads the state as SERVED (the one floor).
+      const [ent] = entRaw ? await await import('@/lib/entities/state').then(({ floorEntityRows }) => floorEntityRows(admin, userId, [entRaw as Record<string, unknown>])) : [null];
       if (ent) {
         const st = (ent.state ?? {}) as { summary?: string };
         const goals = Array.isArray(ent.goals) ? (ent.goals as string[]).filter(Boolean) : [];

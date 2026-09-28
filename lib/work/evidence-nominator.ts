@@ -122,6 +122,34 @@ export function matchEvidenceReport(pool: Pick<EvidencePool, 'events'>, work: Op
   return matchEventsReport(pool.events ?? [], { afterISO: work.afterISO, fulfiller: work.fulfiller, keys: keysOfWork(work) }, nowISO, opts);
 }
 
+/**
+ * W19.A · EVIDENCE IS ABOUT ITS OBJECT — the IO half of lib/evidence/relevance `aboutWork`. A piece
+ * connected to the work only through its PERSON (or entity membership) must share the work's matter
+ * in its OWN words; the ≤N such pieces' bodies are hydrated here through each source row's
+ * `hydrateBody` (the object key and meetings need no read). Returns what stays, what was vetoed
+ * (counted — NO SILENT CAPS), and the bodies already read so the settle never reads them twice.
+ * Non-fatal: a failed hydration judges the piece by its title.
+ */
+export async function gateEvidenceAboutWork(
+  client: SupabaseClient, userId: string, evidence: Evidence[], description: string,
+): Promise<{ evidence: Evidence[]; vetoed: number; bodies: Map<string, string> }> {
+  const { aboutWork } = await import('@/lib/evidence/relevance');
+  const bodies = new Map<string, string>();
+  const needs = evidence.filter((e) => (e.key === 'person' || e.key === 'entity') && !e.status && (e.loadBody || e.type === 'email'));
+  const bySource = new Map<string, string[]>();
+  for (const e of needs) { const k = e.source ?? e.type; bySource.set(k, [...(bySource.get(k) ?? []), e.id]); }
+  for (const [key, ids] of bySource) {
+    const row = evidenceSource(key);
+    if (!row?.hydrateBody) continue;
+    try { for (const [id, b] of await row.hydrateBody(client, userId, ids)) bodies.set(`${key}:${id}`, b); } catch { /* judged by title */ }
+  }
+  const kept = evidence.filter((e) => aboutWork({
+    key: e.key, deed: e.deed, status: e.status, title: e.title, attachmentCount: e.attachmentCount ?? null,
+    body: bodies.get(`${e.source ?? e.type}:${e.id}`) ?? null,
+  }, description));
+  return { evidence: kept, vetoed: evidence.length - kept.length, bodies };
+}
+
 /** A stable identity for a set of evidence — the judge's cache sig: a NEW piece re-judges, the same
  *  set never re-spends. Order-independent. */
 export const evidenceSig = (ev: Array<Pick<Evidence, 'type' | 'id'>>): string =>

@@ -34,8 +34,9 @@ import { sigOf } from '@/lib/core/sig';
 import { DIRECTION_FLOOR_REASON } from '@/lib/work/direction-floor-word';
 import { readPlan, upsertPlan } from '@/lib/store/item-plans';
 import { normalizeEmail } from '@/lib/core/email';
-import { loadEvidencePool, loadOpenWork, scopeOf, matchEvidence, evidenceSig, evidenceNewToPrior, resolveCommitmentAddress, SETTLE_MATCH, type Evidence, type EvidencePool, type EvidenceScope } from '@/lib/work/evidence-nominator';
+import { loadEvidencePool, loadOpenWork, scopeOf, matchEvidence, gateEvidenceAboutWork, evidenceSig, evidenceNewToPrior, resolveCommitmentAddress, SETTLE_MATCH, type Evidence, type EvidencePool, type EvidenceScope } from '@/lib/work/evidence-nominator';
 import { actorLabel } from '@/lib/evidence/actor';
+import { serveStateProse, floorEntityRows } from '@/lib/entities/state';
 import { deedWords } from '@/lib/evidence/sources';
 
 // ── LATER EVIDENCE (W3.1 EVIDENCE SETTLES, judge half · invariant 7) ─────────────────────────────
@@ -137,11 +138,15 @@ import { COMPONENT_KEYS, gateOf, renderComponentOptions, componentForWork, JUDGE
 /** The entity fields the judge prompt reads, as rendered into it. '' when the item has no entity. */
 export function dealBlockOf(ent: { name?: unknown; state?: unknown; next_move?: unknown; goals?: unknown; rules?: unknown } | null | undefined): string {
   if (!ent) return '';
-  const st = (ent.state ?? {}) as { summary?: string };
+  const st = (ent.state ?? {}) as { summary?: string; composedAt?: string };
   const nm = (ent.next_move ?? null) as { title?: string } | null;
   const goals = Array.isArray(ent.goals) ? (ent.goals as string[]).filter(Boolean) : [];
   const rules = Array.isArray(ent.rules) ? (ent.rules as string[]).filter(Boolean) : [];
-  return `THE DEAL (${String(ent.name ?? '')}): ${st.summary ?? ''}${nm?.title ? ` · next move: ${nm.title}` : ''}` +
+  // W19.A · TIME TRUTH reaches the deal block: the stored summary is served through the one floor
+  // (a sentence whose relative words — "nine days overdue" — cannot be proven true today is withheld;
+  // exact ones are dated). A summary with no such words renders byte-identical (the sig is unmoved).
+  const summary = st.summary ? serveStateProse(st.summary, { composedAt: st.composedAt ?? null }).text : '';
+  return `THE DEAL (${String(ent.name ?? '')}): ${summary}${nm?.title ? ` · next move: ${nm.title}` : ''}` +
     `${goals.length ? ` · goals: ${goals.join('; ')}` : ''}${rules.length ? ` · rules: ${rules.join('; ')}` : ''}\n`;
 }
 
@@ -627,10 +632,14 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     const { data: link } = await client.from('entity_links').select('entity_id')
       .eq('user_id', userId).eq('item_kind', input.kind === 'inbox' ? 'inbox_item' : 'commitment')
       .eq('item_id', input.id).not('entity_id', 'is', null).maybeSingle();
-    const ent = link?.entity_id
-      ? (await client.from('work_entities').select('name, state, next_move, goals, rules')
+    const entRaw = link?.entity_id
+      ? (await client.from('work_entities').select('id, name, state, next_move, goals, rules')
         .eq('id', link.entity_id).eq('user_id', userId).maybeSingle()).data
       : null;
+    // W19.A · THE SUMMARY IS NOT A SECOND TRUTH: the deal block reads the state as SERVED — a claim naming
+    // a closed ledger row is dropped (the counterparty-owed commitment was once judged against a stale
+    // "your RIB is overdue" summary), and the time floor runs in dealBlockOf.
+    const [ent] = entRaw ? await floorEntityRows(client, userId, [entRaw as Record<string, unknown>]) : [null];
     const dealBlock = dealBlockOf(ent);
     // W9.3 THE MATERIAL STAMP — computed before the sig/cache read, stored with the verdict.
     const matNow: MaterialStamp = {
@@ -650,6 +659,10 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
           counterpartyEmail: whoEmail ? normalizeEmail(whoEmail) : null, threadId: evThreadId,
           fulfiller: evFulfiller, description: title,
         }, new Date().toISOString(), SETTLE_MATCH);
+        // W19.A · EVIDENCE IS ABOUT ITS OBJECT: a person-keyed piece whose own words do not share this
+        // item's matter never reaches its verdict (a counterparty's mail about a DIFFERENT obligation
+        // once framed the judge's reason on this one). The same-conversation pieces always stand.
+        if (evidence.length) evidence = (await gateEvidenceAboutWork(client, userId, evidence, title)).evidence;
       } catch { evidence = []; } // the evidence fact is an enhancement
     }
     // THE ONE SIG HELPER (W2.5): `<JUDGE_VERSION>:<day>:<deps>` — the version and day slots stay

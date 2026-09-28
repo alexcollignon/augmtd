@@ -195,7 +195,10 @@ export async function GET() {
     supabase.from('work_entities')
       .select('id, name, status, state, next_move, priority, last_event_at, tracked')
       .eq('user_id', user.id).eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null)
-      .order('id', { ascending: true }).range(from, to)));
+      .order('id', { ascending: true }).range(from, to))
+    // W19.A · THE SUMMARY IS NOT A SECOND TRUTH — every row's stored state is served through the one
+    // floor (settled claims against the entity's ledger heads · time words) before any card reads it.
+    .then((rows) => import('@/lib/entities/state').then(({ floorEntityRows }) => floorEntityRows(supabase, user.id, rows))));
   const connsP = inFlight(Promise.resolve(supabase.from('connections').select('id, last_sync')
     .eq('user_id', user.id).in('provider', ['gmail', 'outlook']).eq('status', 'active')));
   const featsP = inFlight(import('@/lib/workspace/features').then(({ getWorkspaceFeatures }) => getWorkspaceFeatures(user.id, supabase)));
@@ -1125,10 +1128,13 @@ export async function GET() {
         const personStates = new Map<string, { momentum: string; summary: string }>();
         try {
           const { getPersonEntities, findPersonEntity } = await import('@/lib/entities/people');
+          const { serveStateProse } = await import('@/lib/entities/state');
           const registry = await getPersonEntities(supabase, user.id);
           for (const k of [...new Set(mustRespondRaw.map((m) => (m.fromEmail || '').toLowerCase()).filter(Boolean))]) {
             const pe = findPersonEntity(registry, k, null);
-            if (pe?.state?.summary) personStates.set(k, { momentum: pe.state.momentum || 'active', summary: pe.state.summary });
+            // W19.A · TIME TRUTH: a person state's prose passes the time floor (an unprovable relative word is withheld).
+            const psum = pe?.state?.summary ? serveStateProse(pe.state.summary, { composedAt: (pe.state as { composedAt?: string }).composedAt ?? null }).text : '';
+            if (pe && psum) personStates.set(k, { momentum: pe.state?.momentum || 'active', summary: psum });
           }
         } catch { /* non-fatal */ }
         const synth = await synthesizeBrief(await getAIClient(user.id, 'summarization', supabase), {
