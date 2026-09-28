@@ -50,15 +50,26 @@ import type { DocumentArtifact } from '@/lib/types/inbox';
 import { docCardTypeOf, resolveDocVersion, type DocCardType } from '@/lib/documents/doc-card';
 import { projectHref } from '@/lib/room/project-href';
 // THE REF IS ITS TAG — the ONE ref grammar, shared with the two serving doors (lib/home/ask.ts,
-// lib/entities/ask.ts). A chip resolves by id here, never by its position in the served array.
-import { ASK_TAG_LETTERS } from '@/lib/home/ask-refs';
+// lib/entities/ask.ts). A chip resolves by id in the answer renderer; the partial-tag trim reads the
+// same letters through components/home/chat-flight.ts (`trimPartialTag`).
 import { Answer } from '@/components/home/ask-answer';
+import { AnswerActions } from '@/components/home/ask-answer';
+import { inFlightLine, failureLine, FAILURE_RETRY, trimPartialTag, STILL_WORKING_MS, ASK_TIMEOUT_MS, type FlightFailure } from '@/components/home/chat-flight';
+import { classifyPaste, pastedNote, pastedWire, pastedAsFileName, PASTE_LIMIT, type PastedPiece } from '@/components/home/paste-material';
+import { PastedChip } from '@/components/home/pasted-chip';
+import { SEAT_LABEL } from '@/lib/workers/roles';
 import { orphanQuestion, ORPHAN_LINE, ORPHAN_RETRY } from '@/components/home/room-chat';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { dmParamOf, dmThreadLsKey } from '@/components/one/chat-address';
 import { peekChatTurns, fetchChatTurns } from '@/components/home/chat-turns-warm';
 import { mergeThreadLanding, readThreadCache, threadCacheOf } from '@/lib/home/thread-cache';
 import { ROLE_LABELS, ROLE_SPECIALTIES, ROLE_STARTERS, GENERIC_STARTERS, INTAKE_STARTERS } from '@/lib/workers/roles';
+// SKILLS IN CHAT (W21): the send body's `skills`, the answer's receipt + offer, the header's "uses" line.
+import { followedFor, skillsBody, skillTurnFields, skillsReceiptItem, skillOfferItem, type SkillPick, type SkillFollowed, type SkillOffer } from '@/components/skills/skill-menu-model';
+import { readFollowedByTurn } from '@/components/skills/followed-read';
+import { SkillsUsesLine } from '@/components/skills/skills-uses-line';
+import { useSkillDraft } from '@/components/skills/use-skill-draft';
+import { declineSkillOffer } from '@/components/one/chat-actions';
 // (BriefingBlock removed from the chat — Phase 3 F2: the prose brief duplicated the deck; the
 // composeBriefing machinery survives as the deck's ordering anchor + the daily report.)
 
@@ -149,11 +160,28 @@ type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
    *  the kit composes them from the ONE wording table (lib/work/trace.ts), so a tool id can never
    *  reach a sentence a person reads. */
   trace?: TraceEntry[];
+  /** SKILLS IN CHAT (W21) — the skills this answer followed (its muted receipt, live and reloaded)
+   *  and, at most once, the quiet offer to save the exchange as a skill. */
+  skillsFollowed?: SkillFollowed[];
+  skillOffer?: SkillOffer;
+  /** A reloaded room turn's durable row id — the key its followed skills are served under
+   *  (GET /api/skills/followed; room turns carry no metadata of their own). */
+  rowId?: string;
   /** When this turn was SPOKEN (ISO, from work_messages.created_at). Only loaded history carries
    *  it — a live turn has no timestamp until it is reloaded. ONE CONTINUOUS THREAD (the Slack
    *  model, owner, Aug 13): time is the only separator, so a date divider renders where two
    *  consecutive dated turns fall on different days. */
-  at?: string };
+  at?: string;
+  /** W22.B · A LONG PASTE IS MATERIAL — the pieces that rode this user turn (chips, expandable). */
+  pasted?: PastedPiece[];
+  /** W22.B · the question exactly as the chief door was asked (with its KB/hint notes) — what
+   *  Retry re-sends through the same door. */
+  asked?: string;
+  /** W22.B · this message's skill pick (W21), so Retry asks under the same skills. */
+  skillPick?: SkillPick;
+  /** W22.B · NEVER A SILENT RING — this answer failed (error or client timeout). The partial text,
+   *  if any streamed, stays readable; a visible line with Retry follows it. */
+  failed?: FlightFailure };
 
 // ── NEVER A TWIN (docs/attention-plan.md, law D2: "the new version lands on the SAME card") ─────
 // A revision is a NEW artifact id on the SAME chain, so a thread that has revised twice would
@@ -226,13 +254,20 @@ function useTypewriter(full: string, active: boolean): string {
   }, [full, active]);
   // ONE VOCABULARY (Sep 21): the partial-tag trim reads the same letter set the resolver does, so a
   // half-revealed [L3] can never flash as raw notation just because this copy knew fewer letters.
-  return full.slice(0, len).replace(new RegExp(`\\[[${ASK_TAG_LETTERS}]?\\d*(?:\\s*,\\s*[${ASK_TAG_LETTERS}]?\\d*)*$`), '');
+  return trimPartialTag(full.slice(0, len));
 }
 
 // Split answer text on [E#]/[C#]/[R#] tags → inline chips that open the referenced item.
-function AnimatedAnswer({ text, refs, onOpen, animate }: { text: string; refs: Ref[]; onOpen: (r: Ref) => void; animate: boolean }) {
+// W22.B · THE ANSWER'S ACTIONS ride a quiet hover row beneath it (Copy · Retry) — `group/answer` is
+// the hover scope, so the row reveals under the answer the pointer is on, not under every answer.
+function AnimatedAnswer({ text, refs, onOpen, animate, onRetry }: { text: string; refs: Ref[]; onOpen: (r: Ref) => void; animate: boolean; onRetry?: () => void }) {
   const shown = useTypewriter(text, animate);
-  return <Answer text={shown} refs={refs} onOpen={onOpen} />;
+  return (
+    <div className="group/answer">
+      <Answer text={shown} refs={refs} onOpen={onOpen} />
+      {shown.length === text.length && text.trim() ? <AnswerActions text={text} refs={refs} onRetry={onRetry} /> : null}
+    </div>
+  );
 }
 
 // THE ANSWER RENDERER lives in ONE module now (components/home/ask-answer.tsx — W19.B): the Home
@@ -244,7 +279,7 @@ function AnimatedAnswer({ text, refs, onOpen, animate }: { text: string; refs: R
 // (the pilot's 1k-vs-3k report): one law, one home.
 
 // THE CoS SEAT (docs/threads-plan.md — the identity law): the Home thread's answers wear the
-// seat-holder's face, name and the constant "chief of staff" label. Read through the ONE client
+// seat-holder's face, name and the constant seat label (SEAT_LABEL). Read through the ONE client
 // hook (`hooks/use-cos-seat.ts` → /api/workers/cos-seat → the ONE resolver), cached AGELESS —
 // identity is ambient, not an action surface, so a remembered face is never a stale claim.
 // `null` = a worker-less account (pre-seed): we fall back to the resolver's OWN name fallback
@@ -330,6 +365,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // so the pane takes the page at CLICK time. `chatLoading` is its honest cold path — the same
   // thread-shaped skeleton the DM waits under, never a blank pane and never a dead click.
   const [chatRoom, setChatRoom] = useState<string | null>(null);
+  // W21 · the reloaded room answers' followed skills, by turn row id (applied at render).
+  const [followedByTurn, setFollowedByTurn] = useState<Record<string, SkillFollowed[]>>({});
+  const followedAsked = useRef<Set<string>>(new Set());
   const [chatLoading, setChatLoading] = useState(false);
   // W17: the room a landing belongs to must still be the room on screen — a read for a room the
   // reader already left (another chat, a DM, New, Home) writes to nothing.
@@ -482,7 +520,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // Load ANY chat room into the panel (mount rehydration + the History picker share this).
-  const mapServerTurns = (raw: Array<{ role: string; text: string; refs?: Array<{ label: string; href: string | null; tag?: string }>;
+  const mapServerTurns = (raw: Array<{ id?: string; role: string; text: string; refs?: Array<{ label: string; href: string | null; tag?: string }>;
     author?: { kind?: string; id?: string; name?: string } | null;
     component?: { key?: string; refId?: string; state?: Record<string, unknown> } | null }>): Turn[] =>
     raw.map((t) => ({
@@ -500,6 +538,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // the item rooms). Live state is re-read by each card's host: only pointers (and an invite's /
       // standalone draft's first-paint payload) survive the store, never a frozen verdict.
       ...chatCardsOfComponent(t.component),
+      // THE RECEIPT SURVIVES THE RELOAD (W21): the same reader as the live answer.
+      ...(t.role === 'user' ? {} : { ...skillTurnFields(t), ...(t.id ? { rowId: String(t.id) } : {}) }),
       // …and so does every card an addressed COWORKER produced — as POINTERS at their own homes
       // (hydrateCardRefs below re-reads them). Nothing about a card's mutable state is copied
       // here: send the draft, revise the document or confirm the task in the DM, and this room
@@ -708,6 +748,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           : {
               role: 'assistant' as const, text: m.content, author: name.split(' ')[0], authorId: agentId,
               ...(m.created_at ? { at: m.created_at } : {}),
+              ...skillTurnFields(m),
               ...(m.metadata?.workflow_drafts?.length ? { workflowDrafts: m.metadata.workflow_drafts } : {}),
               // THE TRACE SURVIVES THE RELOAD, FOLDED: the stored facts come back and the kit
               // re-composes the sentence from the ONE wording table. A malformed entry is dropped
@@ -933,6 +974,11 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     } catch { /* persistence is an enhancement — the session still works */ }
   };
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!busy) { setSlow(false); return; }
+    const tm = window.setTimeout(() => setSlow(true), STILL_WORKING_MS);
+    return () => window.clearTimeout(tm);
+  }, [busy]);
   // The live STAGE from the streaming ask ("Searching your files…") — the busy line speaks it.
   const [stage, setStage] = useState<string | null>(null);
   // TOKEN STREAMING (Aug 10): the answer materializing live while the core writes it — replaced
@@ -943,6 +989,23 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // thought); pendingFiles buffer until send (the worker-chat pattern — upload rides the route).
   const [prefill, setPrefill] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  // W22.B · A LONG PASTE IS MATERIAL — pieces buffered with the message (chips), and the composer's
+  // out-loud refusal when a paste is over the limit (never a quiet cut).
+  const [pendingPastes, setPendingPastes] = useState<PastedPiece[]>([]);
+  const [pasteNotice, setPasteNotice] = useState<string | null>(null);
+  const onComposerPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    if (busy) return;
+    const text = e.clipboardData?.getData('text/plain') ?? '';
+    const v = classifyPaste(text, pendingPastes.length);
+    if (v.kind === 'inline') return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (v.kind === 'refused') { setPasteNotice(v.reason); return; }
+    setPasteNotice(null);
+    setPendingPastes((p) => [...p, v.piece]);
+  };
+  // W22.B · NEVER A SILENT RING — past STILL_WORKING_MS with nothing streamed, the line says so.
+  const [slow, setSlow] = useState(false);
   // THE SHELL OWNS THE SCROLLER (the port's one DOM reach): the thread column is the kit's, so
   // "pin to the newest turn" finds the shell's own overflow container instead of a sentinel div.
   const shellRef = useRef<HTMLDivElement>(null);
@@ -1074,7 +1137,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
 
   const askWorker = async (
     question: string, w: { id: string; name: string },
-    extra?: { mentions?: Array<{ id: string; type: string; label: string }>; files?: File[]; echoed?: boolean },
+    extra?: { mentions?: Array<{ id: string; type: string; label: string }>; files?: File[]; echoed?: boolean; skills?: SkillPick; retry?: boolean },
   ) => {
     const fileNote = extra?.files?.length ? ` (attached: ${extra.files.map((f) => f.name).join(', ')})` : '';
     setOpen(true);
@@ -1085,13 +1148,19 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     // THIS room (worker mode has its own store and persistTurn structurally opts out there), and
     // until now nothing of that exchange was written: the reload found the room empty and every
     // card the coworker produced died with it. The ask persists NOW, the answer when it lands.
-    persistTurn('user', question + fileNote);
-    const patchLast = (text: string) => setTurns((prev) => {
+    // A retry's question is already in the room — exactly once (W22.B).
+    if (!extra?.retry) persistTurn('user', question + fileNote);
+    const patchLast = (text: string, failed?: FlightFailure) => setTurns((prev) => {
       const next = [...prev];
       const last = next[next.length - 1];
-      if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, text };
+      if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, text, ...(failed ? { failed } : {}) };
       return next;
     });
+    // NEVER A SILENT RING (W22.B): the same client timeout as the chief door, aborted out loud.
+    const ctl = new AbortController();
+    let timedOut = false;
+    const timer = window.setTimeout(() => { timedOut = true; ctl.abort(); }, ASK_TIMEOUT_MS);
+    let acc = '';
     try {
       const tid = await dmThread(w);
       if (!tid) throw new Error('no thread');
@@ -1108,17 +1177,18 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         } catch { attachments = []; }
       }
       const res = await fetch(`/api/work/threads/${tid}/chat`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           content: question, agentId: w.id,
           ...(extra?.mentions?.length ? { mentions: extra.mentions } : {}),
           ...(attachments.length ? { attachments } : {}),
+          ...skillsBody(extra?.skills),
         }),
       });
       if (!res.ok || !res.body) throw new Error('stream failed');
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let acc = ''; let lineBuffer = '';
+      let lineBuffer = '';
       const cards: NonNullable<Turn['cards']> = [];
       const drafts: NonNullable<Turn['drafts']> = [];
       const wfDrafts: WorkflowDraft[] = [];
@@ -1174,6 +1244,14 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
               event?: { id?: string; spec?: EventSpec };
               change?: { id?: string; spec?: ChangeSpec };
             };
+            // THE RECEIPT (W21): whichever frame carries `skillsFollowed` / `skillOffer` settles them on the turn.
+            { const sk = skillTurnFields(event);
+              if (sk.skillsFollowed || sk.skillOffer) setTurns((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, ...sk };
+                return next;
+              }); }
             if (event.type === 'text') { acc += event.delta ?? ''; patchLast(acc); }
             else if (event.type === 'text_clear') { acc = ''; patchLast(acc); }
             // ── THE TRACE LINE (Sep 22) ─────────────────────────────────────────────────────
@@ -1278,8 +1356,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         ...(refs.length ? { component: { key: 'worker_cards', refId: tid, state: { items: refs } } } : {}),
       });
     } catch {
-      patchLast(`Couldn't reach ${w.name.split(' ')[0]} right now — try again in a moment.`);
-    } finally { setBusy(false); }
+      // A visible failure with Retry (the failure line), the partial reply kept readable above it.
+      patchLast(trimPartialTag(acc).trim(), timedOut ? 'timeout' : 'error');
+    } finally { window.clearTimeout(timer); setBusy(false); }
   };
 
   // The browser's File.type is unreliable for dragged Office files (often empty) — the
@@ -1328,26 +1407,30 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // THE ONE ROUTING (the consolidation's brain): a coworker MENTION is the address; else the
   // typed address; else the chief. Files follow the route — the addressed thread's attach door,
   // or the knowledge base. Temporary mode: no worker routing, no uploads (both stores persist).
-  const handleSubmit = async (text: string, mentions: Array<{ id: string; type: 'coworker' | 'task' | 'document'; label: string }>) => {
+  const handleSubmit = async (text: string, mentions: Array<{ id: string; type: 'coworker' | 'task' | 'document'; label: string }>, skills?: SkillPick) => {
     const question = text.trim();
     const files = pendingFiles;
-    if ((!question && !files.length) || busy) return;
+    const pastes = pendingPastes;
+    if ((!question && !files.length && !pastes.length) || busy) return;
     if (temp && files.length) {
       setPendingFiles([]);
       setTurns((prev) => [...prev, { role: 'assistant', text: 'Attachments are off in a temporary chat (they would persist). Switch Temporary off to attach.' }]);
       return;
     }
     setPendingFiles([]);
+    setPendingPastes([]);
+    setPasteNotice(null);
     // THE INSTANT ECHO (owner, Aug 6 — "looked like nothing happened"): the submitted turn and
     // the busy line land SYNCHRONOUSLY, before any routing/roster/upload awaits. Feedback is
     // never gated on the network.
     const fileNote = files.length ? ` (attached: ${files.map((f) => f.name).join(', ')})` : '';
-    const shown = (question || 'Attached files.') + fileNote;
+    const said = question || (files.length ? 'Attached files.' : 'Pasted text.');
+    const shown = said + fileNote + pastedNote(pastes);
     setOpen(true);
     // The bubble shows the user's OWN words + chips for what rode with them; `sent` keeps the
     // literal string the brain was given (the attachment note included), so history stays exact.
     const chips = [...files.map((f) => f.name), ...mentions.map((m) => m.label)];
-    setTurns((prev) => [...prev, { role: 'user', text: question || 'Attached files.', sent: shown, ...(chips.length ? { chips } : {}) }]);
+    setTurns((prev) => [...prev, { role: 'user', text: said, sent: shown, ...(chips.length ? { chips } : {}), ...(pastes.length ? { pasted: pastes } : {}), ...(skills ? { skillPick: skills } : {}) }]);
     setBusy(true);
     try {
       if (!temp) {
@@ -1357,14 +1440,17 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         const w = cw ? { id: cw.id, name: cw.label }
           : (workerRoomRef.current ?? detectAddress(question, await getRoster()));
         if (w) {
-          await askWorker(question || 'Here are the files.', w, {
+          // A paste bound for a coworker rides that thread's OWN attach door, as a text file —
+          // material, never inline words.
+          const pasteFiles = pastes.map((p, k) => new File([p.text], pastedAsFileName(p, k), { type: 'text/plain' }));
+          await askWorker(question || (files.length ? 'Here are the files.' : 'Here is the pasted text.'), w, {
             mentions: mentions.filter((m) => !(m.type === 'coworker' && m.id === w.id)),
-            files, echoed: true,
+            files: [...files, ...pasteFiles], echoed: true, ...(skills ? { skills } : {}),
           });
           return;
         }
       }
-      await askChief(question, files, mentions, shown);
+      await askChief(question || (files.length ? '' : 'Pasted text.'), files, mentions, shown, skills, { pastes });
     } finally { setBusy(false); setStage(null); setLiveText(''); liveTextRef.current = ''; }
   };
 
@@ -1385,8 +1471,13 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   const askChief = async (
     question: string, files: File[],
     mentions: Array<{ id: string; type: 'coworker' | 'task' | 'document'; label: string }>, shown: string,
+    skills?: SkillPick,
+    // W22.B · `pastes` ride as MATERIAL; `retry` re-asks an already-echoed, already-persisted question
+    // through the same door (its `base` is the conversation BEFORE that question).
+    opts: { pastes?: PastedPiece[]; retry?: { asked: string; base: Turn[] } } = {},
   ) => {
-    let sendQ = question;
+    let sendQ = opts.retry ? opts.retry.asked : question;
+    const pastes = opts.pastes ?? [];
     let attachments: Array<{ name: string; text: string | null; image?: { dataB64: string; mime: string }; file?: { dataB64: string; ext: string } }> = [];
     if (files.length) {
       setStage('Reading the files…');
@@ -1403,11 +1494,19 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     }
     const hints = mentions.filter((m) => m.type !== 'coworker').map((m) => m.label);
     if (hints.length) sendQ += ` (about: ${hints.join('; ')})`;
+    if (!opts.retry && pastes.length) sendQ += pastedNote(pastes);
+    // The asked words are kept on the user turn — Retry re-sends exactly these through this door.
+    if (!opts.retry) setTurns((prev) => prev.map((x, ix) => (ix === prev.length - 1 && x.role === 'user' ? { ...x, asked: sendQ } : x)));
+    // A LONG PASTE IS MATERIAL (paste-material.ts): the `pasted` field + the attachments bridge.
+    const wire = pastedWire(pastes);
+    attachments = [...attachments, ...wire.attachments];
     // History excludes the just-echoed user turn (it rides as `question`). An assistant turn
     // that produced a document sends its card ref along (REVISION-IN-PLACE: "make the chart
     // blue" must resolve to THAT artifact, not mint a second one).
     // CHROME IS NOT CONVERSATION (W4.1): a faceless first-contact line was never said by anyone.
-    const history = turns.filter((t) => !t.chrome).map((t) => {
+    // A retry's history is the conversation BEFORE its question; a failed answer with no words was never said.
+    const history = (opts.retry ? opts.retry.base.filter((t) => !t.chrome) : turns.filter((t) => !t.chrome))
+      .filter((t) => !(t.role === 'assistant' && t.failed && !t.text)).map((t) => {
       const artCard = t.cards?.find((c) => c.art);
       return {
         // THE BRAIN READS WHAT IT WAS TOLD — the bubble's clean text is presentation; `sent`
@@ -1416,20 +1515,32 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         ...(artCard?.art ? { artifact: { id: artCard.art.id, threadId: artCard.art.tid, title: artCard.label } } : {}),
       };
     });
-    persistTurn('user', shown);
+    // A retry's question is already in the room (it was persisted when first asked) — exactly once.
+    if (!opts.retry) persistTurn('user', shown);
     // THE ANSWER SURVIVES THE TAB (Aug 26, found live): passing the room key makes the SERVER
     // persist the system turn the moment the answer is composed — a mid-stream reload used to
     // leave an orphan room (the ask with no reply). When the key was sent, the client's own
     // answer-persist below is SKIPPED (exactly one writer per turn).
     const sentRoomKey = temp || workerRoomRef.current ? null : chatRoomKey();
+    // NEVER A SILENT RING (W22.B): the client stops waiting at ASK_TIMEOUT_MS — the request is
+    // aborted and the thread says so, with Retry. A stream that ends without its `done` frame is a
+    // failure too, never a fake answer.
+    const ctl = new AbortController();
+    let timedOut = false;
+    const timer = window.setTimeout(() => { timedOut = true; ctl.abort(); }, ASK_TIMEOUT_MS);
+    let st = initialAskStream;
+    const fail = (reason: FlightFailure) => {
+      const partial = trimPartialTag(liveTextRef.current || st.live).trim();
+      setTurns((prev) => { pendingAnimate.current = -1; return [...prev, { role: 'assistant', text: partial, failed: reason }]; });
+    };
     try {
       // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
       // line speaks them), `done` carries the answer. A non-SSE response (error JSON) falls back.
-      const res = await fetch('/api/home/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(sentRoomKey ? { roomKey: sentRoomKey } : {}), ...(attachments.length ? { attachments } : {}), ...(scope ? { entityId: scope.id } : {}) }) });
+      const res = await fetch('/api/home/ask', { method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(sentRoomKey ? { roomKey: sentRoomKey } : {}), ...(attachments.length ? { attachments } : {}), ...(wire.pasted ? { pasted: wire.pasted } : {}), ...(scope ? { entityId: scope.id } : {}), ...skillsBody(skills) }) });
       let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string; type?: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string; type?: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike }; emailDraft?: { id: string; itemId?: string; draft?: StandaloneEmailDraft }; collection?: { id: string; spec: CollectionSpec }; event?: { id?: string; spec: EventSpec }; change?: { id: string; spec: ChangeSpec } } = {};
       // THE STREAM NEVER RETYPES: the reducer's own verdict decides whether the seated turn
       // animates — it must be the thing the component reads, not a parallel re-derivation.
-      let st = initialAskStream;
+      let gotDone = false;
       if (isConverseStream(res)) {
         // THE ONE STREAM, READ (components/home/ask-stream-read.ts — shared with the item rooms).
         await readConverseStream(res, (ev) => {
@@ -1439,11 +1550,15 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           st = askStreamReducer(st, ev as AskStreamEvent);
           if (st.stage !== null) setStage(st.stage);
           if (st.live !== liveTextRef.current) { liveTextRef.current = st.live; setLiveText(st.live); }
-          if (ev.type === 'done') d = ev as typeof d;
+          if (ev.type === 'done') { d = ev as typeof d; gotDone = true; }
         });
-      } else {
+      } else if (res.ok) {
         d = await res.json();
+        gotDone = true;
       }
+      // NO DONE, NO ANSWER: an error frame, a dropped stream or a refused request is a FAILURE line
+      // with Retry — the partial text (if any) stays readable above it.
+      if (!gotDone) { fail(timedOut ? 'timeout' : 'error'); return; }
       // ARTIFACTS-INTO-ORIGIN (Aug 9): a dispatched deliverable's card rides the answer turn and
       // the viewer opens HERE — the conversation that asked holds the work.
       const artList = d.artifacts?.length ? d.artifacts : d.artifact ? [d.artifact] : [];
@@ -1471,15 +1586,40 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // A token-streamed answer already revealed itself — the typewriter must not re-type it
       // (the reducer decides; `animate:false` means the user has already read these words, so a
       // final text that differs only slightly settles in place instead of clearing and retyping).
-      setTurns((prev) => { pendingAnimate.current = st.animate ? prev.length : -1; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...chatCardsOfPayload(d as Record<string, unknown>), ...artCard }]; });
+      setTurns((prev) => { pendingAnimate.current = st.animate ? prev.length : -1; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...chatCardsOfPayload(d as Record<string, unknown>), ...skillTurnFields(d), ...artCard }]; });
       if (d.artifact) void openArtifact(d.artifact.threadId, d.artifact.id);
       if (d.answer && !sentRoomKey) persistTurn('system', d.answer, d.refs ?? []);
       if (d.focus && !scope && !temp) setScopeHint(d.focus);
     } catch {
-      setTurns((prev) => [...prev, { role: 'assistant', text: "Something went wrong reaching your brain — try again." }]);
-    } finally { setBusy(false); setStage(null); setLiveText(''); liveTextRef.current = ''; }
+      fail(timedOut ? 'timeout' : 'error');
+    } finally { window.clearTimeout(timer); setBusy(false); setStage(null); setLiveText(''); liveTextRef.current = ''; }
   };
   const ask = (q: string) => { void handleSubmit(q, []); };
+
+  // ── RETRY (W22.B) — the LAST answer (or its failure line) re-asks the SAME question through the SAME
+  // door: the answer is dropped from the view, the question is NOT echoed or persisted again (it is
+  // already in the room — exactly once), and the new answer lands in its place. A coworker's answer
+  // re-asks that coworker; the chief's re-sends the words the chief door was asked.
+  const retryLast = () => {
+    if (busy) return;
+    const i = turns.length - 1;
+    const t = turns[i];
+    if (!t || t.role !== 'assistant' || t.chrome) return;
+    let u = i - 1;
+    while (u >= 0 && turns[u].role !== 'user') u--;
+    if (u < 0) return;
+    const q = turns[u];
+    setTurns((prev) => prev.slice(0, u + 1));
+    setBusy(true);
+    if (t.author && t.authorId) {
+      void askWorker(q.text, { id: t.authorId, name: t.author }, { echoed: true, retry: true, ...(q.skillPick ? { skills: q.skillPick } : {}) });
+      return;
+    }
+    void askChief(q.text, [], [], q.sent ?? q.text, q.skillPick, {
+      pastes: q.pasted ?? [],
+      retry: { asked: q.asked ?? q.sent ?? q.text, base: turns.slice(0, u) },
+    });
+  };
 
   // ── THE TIMELINE, DERIVED (Phase 2c — docs/threads-plan.md) ─────────────────────────────────
   // THE ONE THREAD COMPONENT renders BOTH modes of this surface: the Home thread (the CoS seat's
@@ -1491,15 +1631,45 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // documents speak the grammar's own `deliverable` card. A port is a mount, never a rewrite.
   //
   // THE VOICE HAS A FACE: an unauthored answer is the CoS speaking, so it wears the seat-holder's
-  // face + name + the constant "chief of staff" label (resolveCosSeat is the ONE resolver behind
+  // face + name + the constant seat label (SEAT_LABEL, from ROLE_LABELS; resolveCosSeat is the ONE resolver behind
   // /api/workers/cos-seat — no name or headshot is chosen here). A worker-less account resolves to
   // no seat: we then speak as the resolver's own fallback name, unlabelled, never a minted persona.
+  // ── SAVE AS SKILL (W21) — the conversation's own address (a Home chat's `chat:<uuid>`, a DM's
+  // `worker:<tid>:<agent>`), read, never minted: a temporary chat has none and offers nothing.
+  // THE RECEIPTS OF A RELOADED ROOM (W21 — the room rail's rule): room turns carry no metadata, so a
+  // reloaded answer's followed skills are ONE companion read (GET /api/skills/followed), fired only when
+  // an answer row this pane has not asked about appears, and applied at render — never a rewrite.
+  useEffect(() => {
+    if (!chatRoom) return;
+    const unasked = turns.filter((t) => t.rowId && !followedAsked.current.has(t.rowId));
+    if (!unasked.length) return;
+    unasked.forEach((t) => followedAsked.current.add(t.rowId as string));
+    const key = chatRoom;
+    void readFollowedByTurn(key).then((by) => {
+      if (chatRoomRef.current === key && Object.keys(by).length) setFollowedByTurn((prev) => ({ ...prev, ...by }));
+    });
+  }, [turns, chatRoom]);
+  // The contract spells a DM's address `thread:<uuid>` (lib/skills/chat-contract.ts); a Home chat's is its room key.
+  const skillDraft = useSkillDraft();
+  const conversationKey = (): string | null => {
+    if (temp) return null;
+    try {
+      const k = localStorage.getItem(CHAT_KEY_LS);
+      if (k?.startsWith('chat:')) return k;
+      const tid = k?.startsWith('worker:') ? k.split(':')[1] : null;
+      return tid ? `thread:${tid}` : null;
+    } catch { return null; }
+  };
   const items = useMemo<ThreadItem[]>(() => {
     const dm = workerRoomRef.current;
     const out: ThreadItem[] = [];
     const seatId = cosSeat?.agentId ?? 'cos';
     const seatName = cosSeat?.name ?? 'Your assistant';
-    const seatLabel = cosSeat ? 'chief of staff' : undefined;
+    // W22.B · THE SEAT'S LABEL IS THE ROLE'S LABEL — one source (lib/workers/roles.ts ROLE_LABELS),
+    // never a private string that drifts from the roster's own word.
+    const seatLabel = cosSeat ? SEAT_LABEL : undefined;
+    // RETRY rides only the LAST answer, and only while nothing is in flight.
+    const lastIdx = turns.length - 1;
 
     // THE SENSIBLE ASK's chips — ONE renderer for a speaking turn and a chrome line alike.
     const optionChips = (t: Turn, i: number, key: string): ThreadCard => ({
@@ -1537,6 +1707,17 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
 
       if (t.role === 'user') {
         const cards: ThreadCard[] = [];
+        // A LONG PASTE IS MATERIAL (W22.B): each piece rides the user's bubble as an expandable chip.
+        if (t.pasted?.length) {
+          cards.push({
+            kind: 'custom', id: `${key}-pasted`,
+            node: (
+              <span className="flex flex-wrap justify-end gap-1.5">
+                {t.pasted.map((p, j) => <PastedChip key={j} piece={p} />)}
+              </span>
+            ),
+          });
+        }
         if (t.chips?.length) {
           cards.push({
             kind: 'custom', id: `${key}-chips`,
@@ -1558,10 +1739,11 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       }
 
       const cards: ThreadCard[] = [];
+      const canRetry = !busy && i === lastIdx;
       if (t.text) {
         cards.push({
           kind: 'custom', id: `${key}-body`,
-          node: <AnimatedAnswer text={t.text} refs={t.refs ?? []} onOpen={openRef} animate={!t.author && i === animateIdx} />,
+          node: <AnimatedAnswer text={t.text} refs={t.refs ?? []} onOpen={openRef} animate={!t.author && i === animateIdx} onRetry={canRetry && !t.failed ? retryLast : undefined} />,
         });
       }
       // A produced document speaks the grammar's own card — a DOCUMENT opens the artifact panel
@@ -1626,6 +1808,22 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // THE ANSWER STREAMS INTO THE VISIBLE BUBBLE: an addressed coworker's reply is already its
       // own turn, patched as the tokens land — while it is in flight the AVATAR carries the state.
       const inFlight = busy && i === turns.length - 1;
+      // NEVER A SILENT RING (W22.B): an addressed coworker's reply with nothing written yet is the
+      // thread's ONE working line — the face + the words of what is happening, "still working" past
+      // the wait — never an empty bubble behind a ring.
+      if (inFlight && !t.text && !cards.length) {
+        const who = (t.author ?? seatName).split(' ')[0];
+        out.push({ type: 'working_line', id: `${key}-working`, actorId: t.authorId ?? t.author ?? seatId, actorName: t.author ?? seatName,
+          line: inFlightLine(stage, slow, `${who} is replying…`) });
+        if (t.trace?.length) t.trace.forEach((e, j) => out.push({ type: 'trace_line', id: `${key}-trace-${j}`, entries: [e] }));
+        return;
+      }
+      // A FAILED ANSWER with nothing written is its failure line alone (below) — no empty bubble.
+      if (t.failed && !t.text && !cards.length) {
+        out.push({ type: 'event_line', id: `${key}-failed`, text: failureLine(t.failed),
+          refs: canRetry ? [{ label: FAILURE_RETRY, onClick: retryLast }] : [] });
+        return;
+      }
       out.push({
         type: 'actor_bubble', id: key,
         actorId: t.authorId ?? t.author ?? seatId,
@@ -1644,6 +1842,26 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         if (inFlight) t.trace.forEach((e, j) => out.push({ type: 'trace_line', id: `${key}-trace-${j}`, entries: [e] }));
         else out.push({ type: 'trace_line', id: `${key}-trace`, entries: t.trace });
       }
+      // NEVER A SILENT RING (W22.B): a failure that left a partial answer keeps it readable, and says so.
+      if (t.failed && !inFlight) {
+        out.push({ type: 'event_line', id: `${key}-failed`, text: failureLine(t.failed),
+          refs: canRetry ? [{ label: FAILURE_RETRY, onClick: retryLast }] : [] });
+      }
+      // ── SKILLS IN CHAT (W21) — the receipt ("followed: A, B") and, at most, ONE quiet offer ──────
+      // Both in the kit's one muted line; the offer's two words are its doors (Save · Not now).
+      if (!inFlight) {
+        const receipt = skillsReceiptItem(key, followedFor(t, followedByTurn));
+        if (receipt) out.push(receipt);
+        const offer = skillOfferItem(key, t.skillOffer, {
+          save: () => { const k = conversationKey(); if (k) void skillDraft.open(k); },
+          decline: () => {
+            const pk = t.skillOffer?.patternKey;
+            setTurns((prev) => prev.map((x, ix) => (ix === i ? { ...x, skillOffer: undefined } : x)));
+            if (pk) void declineSkillOffer(pk);
+          },
+        });
+        if (offer) out.push(offer);
+      }
     });
 
     // The chief's own reply has no turn until the `done` frame lands — while it is in flight it is
@@ -1653,20 +1871,27 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     // narration in the timeline"): before the first token the FACE (status 'working', its ring)
     // carries the state and the core's stage rides the hover hint ONLY — no pulsing dot, no
     // "Writing the reply…" line in the stream. Streaming the reply itself is the allowed live append.
+    //
+    // ⟲ W22.B (owner: "the Home chat should feel like ChatGPT/Claude") — the stage now SPEAKS: before
+    // the first token the chief's in-flight state is the thread's ONE working line (the kit's
+    // `working_line`: the face + "Looking at your calendar…", "still working…" past the wait), the same
+    // grammar the item room uses. Once tokens land it is the working bubble, the tokens rendered
+    // through THE ONE CHAT MARKDOWN RENDERER — the same renderer the seated answer uses, so painted
+    // blocks keep their nodes as the stream grows and nothing re-types when `done` lands.
     const last = turns[turns.length - 1];
     if (busy && !(last && last.role === 'assistant')) {
-      out.push({
-        type: 'actor_bubble', id: 'streaming', actorId: seatId, actorName: seatName,
-        actorRoleLabel: seatLabel, status: 'working', statusHint: stage ?? 'Thinking…',
-        cards: liveText ? [{
-          kind: 'custom', id: 'streaming-body',
-          node: (
-            <span className="block whitespace-pre-wrap text-[13.5px] leading-relaxed text-neutral-800">
-              {liveText}<span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-indigo-400 align-text-bottom" />
-            </span>
-          ),
-        }] : [],
-      });
+      if (!liveText) {
+        out.push({ type: 'working_line', id: 'working', actorId: seatId, actorName: seatName, line: inFlightLine(stage, slow) });
+      } else {
+        out.push({
+          type: 'actor_bubble', id: 'streaming', actorId: seatId, actorName: seatName,
+          actorRoleLabel: seatLabel, status: 'working', statusHint: stage ?? 'Thinking…',
+          cards: liveText ? [{
+            kind: 'custom', id: 'streaming-body',
+            node: <Answer text={trimPartialTag(liveText)} refs={[]} onOpen={openRef} cursor />,
+          }] : [],
+        });
+      }
     }
     // NO ORPHAN QUESTION (W19.B — components/home/room-chat.ts, the room's same rule): a thread that
     // ends on the reader's words with nothing in flight (a reload mid-stream, a failed or empty
@@ -1682,7 +1907,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turns, busy, stage, liveText, animateIdx, cosSeat]);
+  }, [turns, busy, stage, liveText, animateIdx, cosSeat, followedByTurn, slow]);
 
   const hasThread = turns.length > 0;
   // THE DM'S HEADER, TAKEN FROM WHAT WE ALREADY KNOW: face · name · role. Recomputed only when the
@@ -1693,6 +1918,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         title: dmActor.name,
         leadFace: { id: dmActor.id, name: dmActor.name },
         ...(presenceRoleLabel(dmActor.id) ? { subtitle: presenceRoleLabel(dmActor.id) } : {}),
+        // SKILLS IN CHAT (W21): the coworker's always-on skills, quietly, where their name is.
+        actions: <SkillsUsesLine actor={dmActor.id} className="max-w-[45%]" />,
       }
     : undefined), [dmActor]);
   // THE COLD PATH WEARS THE THREAD'S OWN SHAPE (owner walk, Sep 7): a DM that has nothing cached
@@ -1774,10 +2001,31 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         <div
           ref={composerWrapRef}
           onFocusCapture={() => { if (!programmaticFocusRef.current) setOpen(true); }}
+          onPasteCapture={onComposerPaste}
           className="rounded-2xl border overflow-hidden transition-all duration-300 border-neutral-200 bg-white shadow-[0_4px_28px_-12px_rgba(23,23,23,0.22)] focus-within:border-indigo-300 focus-within:shadow-[0_4px_32px_-10px_rgba(79,70,229,0.28)]">
+          {/* A LONG PASTE IS MATERIAL (W22.B): the pieces riding this message, and — out loud — the limit
+              when a paste is over it. The composer never cuts a paste quietly. */}
+          {(pendingPastes.length > 0 || pasteNotice) && (
+            <div className="flex flex-col gap-1.5 px-3 pt-2.5">
+              {pendingPastes.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {pendingPastes.map((p, j) => (
+                    <PastedChip key={j} piece={p} onRemove={() => setPendingPastes((prev) => prev.filter((_, k) => k !== j))} />
+                  ))}
+                </div>
+              )}
+              <p role={pasteNotice ? 'alert' : undefined} className={`text-[11.5px] ${pasteNotice ? 'text-amber-700' : 'text-neutral-400'}`}>
+                {pasteNotice ?? `Sent as material, not as your message — up to ${PASTE_LIMIT.toLocaleString('en-US')} characters per paste.`}
+              </p>
+            </div>
+          )}
           <WorkerMentionInput
             frameless
-            onSubmit={(text, mentions) => { void handleSubmit(text, mentions); }}
+            onSubmit={(text, mentions, skills) => { void handleSubmit(text, mentions, skills); }}
+            // SKILLS IN CHAT (W21): the chat's actor — the coworker in a DM, else the chief. The Home
+            // chat has no header band, so the chief's "uses" line rides the composer's row; a DM's
+            // rides its header.
+            skills={{ actor: dmActor ? dmActor.id : 'chief', roomKey: hasThread ? conversationKey() : null, usesInRow: !dmActor }}
             disabled={busy}
             placeholder={workerRoomRef.current ? `Message ${workerRoomRef.current.name.split(' ')[0]}… — @ pulls a teammate's work or a document in` : "Ask anything — @ mentions your team"}
             prefill={prefill}
@@ -1870,6 +2118,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           no backdrop; the conversation shifts left (the section's margin) and BOTH stay live.
           Editing is the conversation: "make it shorter" continues the same worker thread, the
           new version arrives, and the pane refreshes to it. Close = the pane's own ✕. */}
+      {skillDraft.node}
       {artifactPanel && (
         <div className="fixed right-0 top-0 z-40 h-screen w-[min(720px,94vw)] border-l border-neutral-200 shadow-[-12px_0_40px_-24px_rgba(23,23,23,0.25)] bg-neutral-50">
           <ThreadArtifactsPanel

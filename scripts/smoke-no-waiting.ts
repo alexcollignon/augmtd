@@ -226,7 +226,7 @@ async function main() {
     gate('C4 pure: a table pick outranks the slot (a painted widget is never displaced by a reservation)',
       composeItemPage({ ...base, machine: { state: 'awaiting_decision' }, mounted: { decision: true }, slot: { artifact: 'reply_draft', inFlight: true } }).action === 'decision');
 
-    const SEAT = { id: 'cos', name: 'Clara', roleLabel: 'chief of staff' };
+    const SEAT = { id: 'cos', name: 'Clara', roleLabel: 'Personal Assistant' };
     const items1 = itemPageItems(pendingPlan, { seat: SEAT, pending: React.createElement(PreparingSlot, { widget: 'email', who: 'Clara' }) });
     const items2 = itemPageItems(landedPlan, { seat: SEAT, action: { node: React.createElement('div', { 'data-widget': 'email' }, 'the reply card'), by: null } });
     const seat1 = items1.find((i) => i.id === 'action');

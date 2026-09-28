@@ -212,7 +212,9 @@ async function main() {
     }));
     ok('B2 tags resolve by id into inline source chips; unresolvable tags never show', /<button[^>]*>Send RIB for pilot payment<\/button>/.test(html) && !/\[L\d\]/.test(html), html);
     ok('B2 a chip never reads the ledger\'s bookkeeping', !/\(handled\)/.test(html) && !/&quot;Bonjour Sam, voici/.test(html));
-    ok('B2 plain prose: leaked markdown is stripped', !/\*\*/.test(html) && /Next is the invoice/.test(html));
+    // ⟲ RE-POINTED W22.B — the answer is MARKDOWN now (owner: the chat should feel like a real AI
+    // chat): bold RENDERS as bold instead of being stripped; the raw `**` still never reaches the reader.
+    ok('B2 markdown renders (bold is bold), never leaks as raw notation', !/\*\*/.test(html) && /<strong[^>]*>Next<\/strong> is the invoice/.test(html));
     ok('B3 refChipLabel: title kept, status + gist + attachment note dropped; a titleless line falls back to its gist; a plain label passes',
       refChipLabel('Pilot terms (handled) — "Bonjour…" [attached: a.pdf]') === 'Pilot terms'
       && refChipLabel('(handled) — "Bonjour Sam…"') === 'Bonjour Sam…'

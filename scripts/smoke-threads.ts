@@ -131,16 +131,23 @@ gate('T1.5 middleware protects /project', !!mw && /'\/project'/.test(mw));
 // promotion depends on — ONE label map carrying the new label, the role KEY untouched at all three
 // identity sites (roles.ts · seed.ts · workers.py), the two prompts still speaking as Clara, and
 // no private copy of the old label left anywhere in the app to drift back (the Luca lesson).
-console.log('\nTI · THE IDENTITY LAW — Clara holds the chief-of-staff seat, everywhere');
+console.log('\nTI · THE IDENTITY LAW — Clara holds the seat, labelled Personal Assistant everywhere');
 {
   const roles   = read('lib/workers/roles.ts');
   const seed    = read('lib/workers/seed.ts');
   const workers = read('infra/agentos/workers.py');
 
-  gate('TI.1 the ONE label map says Chief of Staff',
-    !!roles && /personal_assistant:\s*'Chief of Staff'/.test(roles));
-  gate('TI.2 the old label is gone from the label map',
-    !!roles && !/Personal Assistant/.test(roles));
+  // ⟲ RE-POINTED W22 — owner renamed the seat label (Sep 28): "Chief of Staff" → "Personal Assistant",
+  // and the seat label DERIVES from the one map (SEAT_LABEL) instead of a private lowercase string.
+  gate('TI.1 the ONE label map says Personal Assistant, and the seat label derives from it',
+    !!roles && /personal_assistant:\s*'Personal Assistant'/.test(roles)
+    && /export const SEAT_LABEL: string = ROLE_LABELS\[SEAT_ROLE_KEY\]/.test(roles));
+  gate('TI.2 the old label is gone from the label map, and every role label is Title Case',
+    !!roles && !/Chief of Staff'/.test(roles) && (() => {
+      const body = roles.match(/export const ROLE_LABELS[^{]*\{([\s\S]*?)\n\};/)?.[1] ?? '';
+      const labels = [...body.matchAll(/:\s*'([^']+)'/g)].map((m) => m[1]);
+      return labels.length >= 4 && labels.every((l) => l.split(' ').every((w) => /^[A-Z]/.test(w)));
+    })());
 
   // The KEY is identity: Slack apps, email local-parts, AgentOS routing and the seat resolver all
   // hang off `personal_assistant`. A label move that renames the key breaks every one of them.
@@ -162,12 +169,14 @@ console.log('\nTI · THE IDENTITY LAW — Clara holds the chief-of-staff seat, e
   }
 
   // NO PRIVATE COPIES — a second label map is how half a rename ships.
+  // ⟲ RE-POINTED W22 — owner renamed the seat label: the gate used to forbid "Personal Assistant"; it
+  // now forbids the OLD label as a UI string literal ('Chief of Staff' / 'chief of staff' in quotes) in
+  // any UI source (app · components · hooks · the seat modules). Persona PROMPT text (lib/converse,
+  // lib/workers/seed.ts, lib/work/tool-vocabulary.ts) is a separate owner-gated step and not scanned.
   {
-    const OWN = new Set(['scripts/smoke-threads.ts', 'scripts/sweep-clara-chief-of-staff.ts']);
-    const offenders = [...sourceFiles('app'), ...sourceFiles('components'), ...sourceFiles('lib')]
-      .filter((f) => !OWN.has(f))
-      .filter((f) => (read(f) ?? '').includes('Personal Assistant'));
-    gate('TI.6 no source file under app/components/lib carries the old label',
+    const UI = [...sourceFiles('app'), ...sourceFiles('components'), ...sourceFiles('hooks'), 'lib/workers/roles.ts', 'lib/workers/cos-seat.ts'];
+    const offenders = UI.filter((f) => /(['"`])chief of staff\1/i.test(read(f) ?? ''));
+    gate('TI.6 no UI source carries the old seat label as a string (app/components/hooks + the seat modules)',
       offenders.length === 0, offenders.join(', '));
   }
 }
@@ -649,8 +658,10 @@ console.log('\nT5 · THE LIVE CHAT SURFACE — the Home thread and the coworker 
     !!ask && /useCosSeat\(\)/.test(ask)
     && /cosSeat\?\.name/.test(ask) && /cosSeat\?\.agentId/.test(ask)
     && !/\/workers\/[a-z]+\.png/.test(ask) && !/ROLE_AVATARS/.test(ask));
+  // ⟲ RE-POINTED W22 — owner renamed the seat label; the constant is SEAT_LABEL (derived from ROLE_LABELS).
   gate('T5.11 the seat label is the constant, and only an UNAUTHORED answer wears it',
-    !!ask && /const seatLabel = cosSeat \? 'chief of staff' : undefined;/.test(ask)
+    !!ask && /const seatLabel = cosSeat \? SEAT_LABEL : undefined;/.test(ask)
+    && /import \{ SEAT_LABEL \} from '@\/lib\/workers\/roles';/.test(ask)
     && /actorRoleLabel: t\.author \? undefined : seatLabel/.test(ask));
   {
     const seatHook = read('hooks/use-cos-seat.ts');
@@ -775,7 +786,8 @@ console.log('\nT6 · THE ROOM’S CONVERSATION — the rail, through the ONE kit
   // THE FACE OF THE VOICE — one seat, one hook, no identity chosen in the room.
   gate('T6.7 the pinned face rides the ONE seat hook (never a hardcoded name or headshot)',
     !!rail && /useCosSeat\(\)/.test(rail)
-    && /const seatLabel = seat \? 'chief of staff' : undefined;/.test(rail)
+    // ⟲ RE-POINTED W22 — owner renamed the seat label; the rail reads SEAT_LABEL (derived from ROLE_LABELS).
+    && /const seatLabel = seat \? SEAT_LABEL : undefined;/.test(rail)
     && !/ROLE_AVATARS/.test(rail) && !/\/workers\/[a-z]+\.png/.test(rail));
   gate('T6.8 ONE useCosSeat implementation (home-ask keeps no private copy)',
     !!seatHook && /export function useCosSeat\(\)/.test(seatHook)

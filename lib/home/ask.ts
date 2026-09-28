@@ -1,14 +1,12 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// HOME ASK — the entry to the brain. A grounded Q&A over the ONE registry: the user's active bodies of
-// work (entities: state / next-move / who-owes / category), the people needing attention, open
-// commitments, today's schedule, and recent replies they owe. ONE reasoned pass, GROUNDED — it answers
-// only from this context, cites the items it used, and is honest ("nothing on that") rather than guessing
-// (the trust invariant; hallucination is what kills these products). Read-only in v1; actions come later.
+// HOME ASK — the Home chat's WORLD PAGE. `buildBrainSnapshot` assembles the bounded page the one
+// conversation (lib/converse) reads as its context on Home: the user's work as the app judges it
+// (THE ONE USER GROUNDING), plus the focused project's full room page when the message names one.
+// The focus/filing claim matchers (`findEntityFocus`, `suggestFilingFocus`) live here too. W22: the
+// records-only answering pass that used to live here is retired (see the note at the bottom).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { aiCall } from '@/lib/ai/call';
-import { resolveFileUniversal } from '@/lib/knowledge/resolve';
 // THE ONE IDENTITY PRIMITIVE — never a second generic-word list. `namesStatedIn`/`distinctiveTokens`
 // are built on GENERIC_WORK_WORDS (lib/entities/recognize), the same law the case pre-pass, the
 // workflow-scope seam and the named-subject veto speak.
@@ -16,11 +14,7 @@ import { namesStatedIn, distinctiveTokens } from '@/lib/workflows/case-step';
 import { topMessageOf } from '@/lib/inbox/top-message';
 import { projectHref } from '@/lib/room/project-href';
 import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
-import { REACH_CONTRACT } from '@/lib/converse/reach';
-// THE REF IS ITS TAG — the ONE ref grammar, shared with the renderer (lib/home/ask-refs.ts).
-import { resolveAskRefs, ASK_TAG_CAP } from '@/lib/home/ask-refs';
 import { clipWithRule } from '@/lib/utils/pack-context';
-import { clipLabel } from '@/lib/utils/clip-for-prompt';
 
 /** `tag` is the grounding id the answer placed ([E7], [R2]…) — THE identity a chip resolves by.
  *  Optional only because the type is also read back from turns stored before that law. */
@@ -183,85 +177,11 @@ export async function buildBrainSnapshot(
   return { text: parts.join('\n\n') || '(nothing active right now)', refs };
 }
 
-export async function answerHomeQuestion(
-  supabase: SupabaseClient, userId: string, question: string, history: AskTurn[] = [],
-  /** THE ONE ANSWER PATH, REUSED (W19.2a): a project room's synthesis question pins its own page. */
-  opts: { focusEntityId?: string | null } = {},
-): Promise<AskAnswer> {
-  const { text: snapshot, refs } = await buildBrainSnapshot(supabase, userId, question, { focusEntityId: opts.focusEntityId ?? null });
-  // FILE LANE via THE ONE RESOLVER (single-source #2): question-driven retrieval across pool → KB →
-  // connected drives, so "do we have the deck?" is answerable. Top hits ride as [F#] refs. Non-fatal.
-  let fileBlock = '';
-  try {
-    const fCands = await resolveFileUniversal(supabase, { userId }, question, 4);
-    if (fCands.length) {
-      const lines = fCands.map((c, i) => {
-        const id = `F${i + 1}`;
-        refs.set(id, { id, kind: 'file', label: c.filename, href: null });
-        // A LABEL IS NOT AN EXCERPT (clip-for-prompt.ts): this is a one-line file preview, not a
-        // prompt-budget excerpt — `clipLabel` ends at a word boundary without a marker (a raw
-        // `.slice()` produced mid-word chrome here, the same class the report-back label bug was).
-        return `[${id}] ${c.filename}${c.snippet ? ` — ${clipLabel(c.snippet, 90)}` : ''}${c.source === 'gdrive' || c.source === 'onedrive' ? ` (${c.source})` : ''}`;
-      });
-      fileBlock = `\n\nFILES that may relate to the question (reference as [F#]):\n${lines.join('\n')}`;
-    }
-  } catch { /* no file lane */ }
-  const priorTurns = history.slice(-6).map((t) => `${t.role === 'user' ? 'THEM' : 'YOU'}: ${t.text}`).join('\n');
-  const prompt =
-    // THE PROMPT STOPS OVERCLAIMING (Wave 1, Sep 18): this sentence used to promise "their whole
-    // working context … calendar", and the snapshot held only TODAY — so when the user asked about
-    // two future weeks the model, told it holds the calendar, answered from nothing and said "free".
-    // A prompt that overstates its context is an instruction to confabulate. It now enumerates
-    // exactly what the snapshot carries, and states the calendar's reach and its EDGE.
-    `You are the user's assistant inside their work app. The context below is what you hold: the work ` +
-    `they owe as the app itself judges it (replies, promises, actions — the SAME rows their Home deck ` +
-    `shows; a thing not listed there is not owed as far as this app knows), what they are waiting on, ` +
-    `their projects, the people needing attention, their recent deeds, today's schedule — and their ` +
-    `calendar for TODAY AND THE NEXT 14 DAYS ONLY. Answer like a sharp, ` +
-    `calm colleague who already knows their world, GROUNDED STRICTLY in that context.\n\n` +
-    `THE CALENDAR RULE: availability, free time and scheduling come ONLY from the calendar block below — ` +
-    `never from memory, never from what sounds likely. NEVER state or imply someone is free or busy on a ` +
-    // THE REACH VALVE OUTRANKS THE CONFESSION (Sep 18, found by the R3 gate): this sentence used to
-    // read "beyond those 14 days you cannot see the calendar: say so plainly and offer to check" —
-    // Wave 1's honesty fix, written when confessing WAS the best this toolless lane could do. With the
-    // valve mounted that instruction became the thing BLOCKING it: asked about a day 35 days out the
-    // model dutifully offered to check instead of emitting the token that would have gone and checked.
-    // An honest edge is a floor, never a ceiling — a question beyond the window IS the REACH case.
-    `day you cannot see. A question about a day BEYOND this window is exactly the REACH case below: ` +
-    `do not answer it from here and do not offer to check — emit the token and the lookup happens. ` +
-    `If the calendar block itself says NO CALENDAR IS SYNCED, availability is unknowable here: say ` +
-    `plainly that no calendar is connected, never call a day free or busy, and never offer a check. ` +
-    `Weekday names are already computed in the context — use them verbatim and never work one out yourself.\n\n` +
-    `THEIR CONTEXT:\n${snapshot}${fileBlock}\n\n` +
-    (priorTurns ? `EARLIER IN THIS CHAT:\n${priorTurns}\n\n` : '') +
-    `THEIR QUESTION: ${question}\n\n` +
-    `Rules:\n` +
-    // FIRST, NOT LAST (Sep 18, the R3 gate): the reach clause sat at the BOTTOM of this list, behind
-    // "say so plainly" — and the model obeyed the rule it read first. A clause that loses to the rule
-    // it is meant to outrank is not mounted; prominence is part of the contract.
-    `- ${REACH_CONTRACT}\n` +
-    `- Answer ONLY from the context (after the REACH rule above has been considered). If it doesn't cover the question AND no lookup could, say so plainly ("I don't have anything on that yet") — NEVER invent people, dates, or facts.\n` +
-    `- HARD LIMITS (exceeding them is a failed answer): a simple question = 1-3 sentences. A summary question ("what did I miss", "plan my week") = at most 3 short paragraphs and 100 words TOTAL, separated by blank lines. Pick the 3-4 things that matter MOST and STOP — never inventory; the deck below the chat already lists everything. End a summary with the one thing you'd do first.\n` +
-    `- PLAIN PROSE ONLY: no markdown (no **bold**, no headers, no tables, no bullet lists). Whenever the answer runs past two sentences, break it into short paragraphs separated by a BLANK LINE — never one solid block. Never place two refs back-to-back — connect them with words.\n` +
-    // ONE NUMBER, ONE SOURCE (Sep 21): the ceiling the prompt states is the constant the code
-    // enforces — a prompt-only limit is a hope. Extra tags are stripped, never shown raw.
-    `- HARD LIMIT: at most ${ASK_TAG_CAP} tags total, ONE id per bracket ([E7] — NEVER [E7, E8]), placed immediately AFTER the thing it names (\"the pilot [E10]\"), never dangling at a sentence end. The app turns each into a link.\n` +
-    `- Reason across items when useful (connect a deal to its commitments / its meeting / who owes what).\n` +
-    `Return ONLY JSON: {"answer":"<the answer, with [E#]/[C#]/[R#]/[W#]/[F#] tags>","refs":["E1","C2","F1",...]}`;
-
-  // BUDGET ROUTING (one policy, deterministic): lookups run on the CHEAP tier; only synthesis-intent
-  // questions ("what did I miss", "prioritize", "should I…") escalate to deep reasoning. Typical asks
-  // become ~5-8x cheaper with no visible loss on the easy majority.
-  const deep = /miss|summar|priorit|plan\b|why\b|should|think|advice|catch me up|overview|strategy|recommend/i.test(question) || question.length > 120;
-  const res = await aiCall<{ answer?: string; refs?: string[] }>({
-    userId, supabase, shape: deep ? { output: 'json', reasoning: 'deep' } : { output: 'json' }, prompt, maxTokens: 450, temperature: 0.2, source: 'brain_synthesis',
-  });
-  const raw = String(res.json?.answer || '').trim() || "I don't have anything on that yet.";
-  // THE REF IS ITS TAG (Sep 21 — the wrong-object-door incident, lib/home/ask-refs.ts): the served
-  // set is derived from the tags the answer actually PLACES, resolved by id against this snapshot —
-  // never from the model's declared list in declaration order (which the renderer then walked
-  // positionally, so one grouped bracket handed the reader two chips belonging to other work).
-  // The declared `refs` array is now only a hint we no longer need; the prose is the record.
-  const { text: answer, refs: outRefs } = resolveAskRefs(raw, (tag) => refs.get(tag));
-  return { answer, refs: outRefs };
-}
+// ── THE RECORDS-ONLY QUESTION LANE IS RETIRED (W22 — THE HOME CHAT IS ONE ASSISTANT). `answerHomeQuestion`
+// answered every "question" from this snapshot alone, as JSON, in 1-3 plain sentences at 450 tokens —
+// and served "I don't have anything on that yet." for any parse failure, a truncated answer included.
+// A workshop asking the chat to facilitate ("ask me one question at a time") was refused by it. The
+// Home chat is now ONE tool-using conversation (lib/converse `agentLoop`) that reads THIS snapshot as
+// its context page (`buildBrainSnapshot`, unchanged) and grounds every claim about the user's work in
+// it or in a tool result — while following instructions freely. The file lane it carried is the
+// loop's `find_file` / `search_knowledge_base` tools.

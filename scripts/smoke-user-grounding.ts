@@ -40,7 +40,11 @@ const treeFiles = ['lib', 'app', 'components'].flatMap((d) => walk(join(ROOT, d)
     ask.includes("import('@/lib/room/user-grounding')") && ask.includes('assembleUserGrounding(supabase, userId)')
     // ⟲ RE-POINTED W19.2: the answer path now also takes a PINNED focus (a project room's synthesis
     // question reuses it) — the question still threads through as the focus query.
-    && ask.includes('assembleRoomGrounding') && ask.includes('buildBrainSnapshot(supabase, userId, question, { focusEntityId: opts.focusEntityId ?? null })'));
+    // ⟲ RE-POINTED W22: the records-only answering pass is retired; the snapshot is the one conversation's
+    // Home context page (lib/converse reads buildBrainSnapshot) and keeps its pinned-focus option.
+    && ask.includes('assembleRoomGrounding') && /export async function buildBrainSnapshot\(/.test(ask)
+    && /opts: \{ focusEntityId\?: string \| null \} = \{\}/.test(ask)
+    && src('lib/converse/index.ts').includes('buildBrainSnapshot(client, userId, text)'));
 
   // Every user-scope world consumer imports the one door; the old private renderer is gone.
   const consumers = ['app/api/work/threads/[id]/chat/route.ts', 'lib/work/agentos-bridge.ts', 'lib/home/ask.ts'];

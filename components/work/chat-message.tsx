@@ -9,6 +9,7 @@ import { ClarificationWidget, ClarificationData } from './clarification-widget';
 import { ThreadCardView } from '@/components/thread';
 import { docCardTypeOf } from '@/lib/documents/doc-card';
 import { MENTION_ICONS, MENTION_COLORS, MentionChip } from './chat-input-bar';
+import { Markdown } from '@/components/thread/markdown-view';
 
 // Coworker-chat mention types (coworker/task/document) — mirrors WorkerMentionInput.
 const WORKER_MENTION_ICONS: Record<string, React.ElementType> = { coworker: UserCircleIcon, task: BoltIcon, document: DocumentTextIcon };
@@ -19,130 +20,13 @@ const WORKER_MENTION_COLORS: Record<string, string> = {
 };
 
 // ── Markdown renderer ─────────────────────────────────────────────────────────
-
-function renderInline(text: string): React.ReactNode {
-  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g);
-  return (
-    <>
-      {parts.map((part, i) => {
-        if (part.startsWith('**') && part.endsWith('**'))
-          return <strong key={i} className="font-semibold text-neutral-900">{part.slice(2, -2)}</strong>;
-        if (part.startsWith('*') && part.endsWith('*'))
-          return <em key={i} className="italic">{part.slice(1, -1)}</em>;
-        if (part.startsWith('`') && part.endsWith('`'))
-          return <code key={i} className="font-mono text-[12.5px] bg-neutral-100 px-1 py-0.5 rounded">{part.slice(1, -1)}</code>;
-        return <span key={i}>{part}</span>;
-      })}
-    </>
-  );
-}
+// W22.B · ONE CHAT MARKDOWN RENDERER: the coworker chat's hand-rolled subset (no links, no code
+// blocks, its own table/list reading) is retired — `MarkdownText` is now the kit's one renderer
+// (components/thread/markdown-view.tsx), the same one the Home chat, the Home DM and the rooms draw
+// answers with. Safe by construction: React elements only, links allow-listed, images never loaded.
 
 export function MarkdownText({ content, cursor }: { content: string; cursor?: boolean }) {
-  // Ensure heading lines are always their own block so content after them renders correctly
-  const normalized = content.replace(/(^#{1,4} .+$)\n(?!\n)/gm, '$1\n\n');
-  const blocks = normalized.split(/\n{2,}/);
-
-  return (
-    <div className="space-y-2.5">
-      {blocks.map((block, bi) => {
-        const lines = block.split('\n').filter(l => l.trim() !== '');
-        if (lines.length === 0) return null;
-
-        const isListBlock = lines.every(l => /^[-•*]\s/.test(l) || /^\d+\.\s/.test(l));
-        if (isListBlock) {
-          const isOrdered = /^\d+\.\s/.test(lines[0]);
-          return (
-            <ul key={bi} className="space-y-1">
-              {lines.map((line, li) => {
-                const text = isOrdered ? line.replace(/^\d+\.\s/, '') : line.replace(/^[-•*]\s/, '');
-                return (
-                  <li key={li} className="flex items-start gap-2 text-[13.5px] text-neutral-800 leading-relaxed">
-                    <span className="text-neutral-400 flex-shrink-0 mt-px select-none text-[11px]">
-                      {isOrdered ? `${li + 1}.` : '·'}
-                    </span>
-                    <span>
-                      {renderInline(text)}
-                      {cursor && bi === blocks.length - 1 && li === lines.length - 1 && (
-                        <span className="inline-block w-0.5 h-3.5 bg-neutral-400 ml-0.5 animate-pulse align-middle" />
-                      )}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          );
-        }
-
-        // Table detection: all lines are pipe-delimited and at least one is a separator row
-        const isTableBlock =
-          lines.length >= 2 &&
-          lines.every(l => l.trim().startsWith('|') && l.trim().endsWith('|')) &&
-          lines.some(l => /^\|[\s|:-]+\|$/.test(l.trim()));
-
-        if (isTableBlock) {
-          const parseRow = (line: string) =>
-            line.trim().split('|').slice(1, -1).map(c => c.trim());
-          const dataRows = lines.filter(l => !/^\|[\s|:-]+\|$/.test(l.trim()));
-          if (dataRows.length === 0) return null;
-          const [headerRow, ...bodyRows] = dataRows;
-          const headers = parseRow(headerRow);
-          return (
-            <div key={bi} className="overflow-x-auto rounded-lg border border-neutral-200">
-              <table className="w-full text-[13px] border-collapse">
-                <thead className="bg-neutral-50">
-                  <tr>
-                    {headers.map((h, i) => (
-                      <th key={i} className="text-left px-3 py-2 text-[11.5px] font-medium text-neutral-500 uppercase tracking-wide border-b border-neutral-200">
-                        {renderInline(h)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {bodyRows.map((row, ri) => (
-                    <tr key={ri} className="border-b border-neutral-100 last:border-0">
-                      {parseRow(row).map((cell, ci) => (
-                        <td key={ci} className="px-3 py-2 text-neutral-700 leading-snug">
-                          {renderInline(cell)}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          );
-        }
-
-        // Heading detection (H1–H4+)
-        const firstLine = lines[0];
-        const headingMatch = firstLine.match(/^(#{1,4})\s+(.+)$/);
-        if (headingMatch) {
-          const level = headingMatch[1].length;
-          const text = headingMatch[2];
-          const cls =
-            level === 1 ? 'text-[15px] font-semibold text-neutral-900' :
-            level === 2 ? 'text-[14px] font-semibold text-neutral-900' :
-            level === 3 ? 'text-[13px] font-semibold text-neutral-700 uppercase tracking-wide' :
-                          'text-[12.5px] font-semibold text-neutral-600 uppercase tracking-wide';
-          return <p key={bi} className={cls}>{renderInline(text)}</p>;
-        }
-
-        return (
-          <p key={bi} className="text-[13.5px] text-neutral-800 leading-relaxed">
-            {lines.map((line, li) => (
-              <span key={li} className="block">
-                {renderInline(line)}
-                {cursor && bi === blocks.length - 1 && li === lines.length - 1 && (
-                  <span className="inline-block w-0.5 h-3.5 bg-neutral-400 ml-0.5 animate-pulse align-middle" />
-                )}
-              </span>
-            ))}
-          </p>
-        );
-      })}
-    </div>
-  );
+  return <Markdown text={content} cursor={cursor} />;
 }
 
 // ── Tool status chip ──────────────────────────────────────────────────────────

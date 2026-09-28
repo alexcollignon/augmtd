@@ -7,7 +7,12 @@ import { buildChatSystemPrompt, detectModelFamily } from '@/lib/work/chat-system
 // Intent classifier removed — replaced by lightweight heuristic router below.
 // import { classifyIntent } from '@/lib/work/intent-classifier';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
-import { buildSkillsBlock } from '@/lib/work/worker-skills-context';
+// W21 — SKILLS IN CHAT (contract: lib/skills/chat-contract.ts): the ONE skills-for-turn resolver (the
+// addressed coworker's assigned skills + this message's adds − its skips), the followed floor, the offer.
+import { resolveSkillsForTurn, sanitizeSkillPick, EMPTY_SKILLS_FOR_TURN } from '@/lib/skills/for-turn';
+import { settleSkillsFollowed, createSkillsMarkerFilter } from '@/lib/skills/followed';
+import { evaluateSkillOffer } from '@/lib/skills/offer';
+import type { SkillFollowed, SkillOffer } from '@/lib/skills/chat-contract';
 import { buildKBContext } from '@/lib/knowledge/build-kb-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
@@ -297,7 +302,9 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { content, sources = ['kb', 'inbox', 'calendar'], mentions = [], attachments = [], agentId } = body as {
+    const { content, sources = ['kb', 'inbox', 'calendar'], mentions = [], attachments = [], agentId, skills: rawSkills } = body as {
+      /** W21 — this message's skills pick ({ add?, skip? } skill ids; this message only). */
+      skills?: unknown;
       content: string;
       sources?: string[];
       mentions?: Array<{ id: string; type: string; label: string; subtitle?: string }>;
@@ -489,6 +496,13 @@ export async function POST(
 
     }
 
+    // W21 — THE TURN'S SKILLS through the ONE resolver: the addressed coworker's assigned skills are
+    // always on; this message's pick adds / skips FOR THIS MESSAGE ONLY. The offer reads the user's
+    // recent asks in parallel (zero AI) and is awaited only at the end of the stream.
+    const turnSkills = await resolveSkillsForTurn(supabase, user.id, agentId ? { kind: 'agent', agentId } : null, sanitizeSkillPick(rawSkills))
+      .catch(() => EMPTY_SKILLS_FOR_TURN);
+    const offerPromise: Promise<SkillOffer | null> = evaluateSkillOffer(supabase, user.id, content).then((e) => e.offer).catch(() => null);
+
     // Format context blocks
     // When an agent is active, its identity takes top priority — injected BEFORE the base prompt.
     // This ensures the model adopts the agent's role rather than treating instructions as an addendum.
@@ -538,8 +552,7 @@ export async function POST(
           const mine = [ids.login, ...ids.connected].filter(Boolean);
           if (mine.length) contextParts.push(`[YOUR EMAIL ADDRESSES]\nThe user ("me"/"us") can be reached at: ${mine.join(', ')}. Use these when asked to email the user themselves.`);
         } catch { /* non-fatal */ }
-        const skillsBlock = await buildSkillsBlock(supabase, agent.id);
-        if (skillsBlock) contextParts.push(skillsBlock);
+        if (turnSkills.block) contextParts.push(turnSkills.block);
         const integrationsBlock = await buildConnectedIntegrationsBlock(adminClient, user.id, agent.id);
         if (integrationsBlock) contextParts.push(integrationsBlock);
         // ONE USER GROUNDING (W2.2): the user's world — judged work owed, promises, projects, people,
@@ -578,6 +591,8 @@ export async function POST(
     } else {
       contextParts.push(buildChatSystemPrompt(modelFamily));
     }
+    // A non-worker conversation (a plain thread or a custom agent) still honours the message's pick.
+    if (!isWorker && turnSkills.block) contextParts.push(turnSkills.block);
 
     if (userContextBlock) {
       contextParts.push(
@@ -877,6 +892,9 @@ export async function POST(
 
     // ── Stream ────────────────────────────────────────────────────────────────
     let fullAssistantText = '';
+    // W21: what this answer followed (floored to the loaded set) and the one offer it may carry.
+    let skillsFollowed: SkillFollowed[] = [];
+    let skillOffer: SkillOffer | null = null;
     const allToolCalls: Array<{ name: string; summary: string; citations?: string[]; clarification?: object }> = [];
     // THE TRACE — the turn's receipt (lib/work/trace.ts). Execution order, outcome only: what
     // persists is `{tool, ok}` and nothing else, because a receipt that carries the payload is a
@@ -914,6 +932,8 @@ export async function POST(
         const send = (data: object) => {
           try { controller.enqueue(encoder.encode(SSE(data))); } catch { /* stream closed */ }
         };
+        // W21: the live text never shows the SKILLS REPORT marker (held until it can be dropped).
+        const skillsTextFilter = createSkillsMarkerFilter((t) => send({ type: 'text', delta: t }));
 
         // SPEAK → SHOW: a read that hands back typed rows streams them BESIDE the coworker's prose
         // (the DM stays conversational — the card never replaces what they say). ONE seam for both
@@ -1091,7 +1111,7 @@ export async function POST(
                       }
                     }
                   } else {
-                    send({ type: 'text', delta: delta.content });
+                    skillsTextFilter.push(delta.content);
                   }
                 } else if (inThinkBlock) {
                   // Stream thinking content chunk by chunk until </think>
@@ -1201,6 +1221,7 @@ export async function POST(
                   if (breach && !wordDeedCorrected) {
                     // ONE corrective round, never a loop.
                     wordDeedCorrected = true;
+                    skillsTextFilter.reset();
                     send({ type: 'text_clear' });
                     messages.push({ role: 'assistant', content: cleanText || '' });
                     messages.push({ role: 'user', content: deedCorrection(breach) });
@@ -1229,6 +1250,7 @@ export async function POST(
                   send({ type: 'text_set', content: cleanTurnText });
                 }
                 // Signal client to clear streaming text now that tools are about to fire
+                skillsTextFilter.reset();
                 send({ type: 'text_clear' });
 
                 const toolCalls: OpenAI.Chat.ChatCompletionMessageToolCall[] =
@@ -1426,7 +1448,24 @@ export async function POST(
             }).catch(() => {});
           }
 
-          send({ type: 'done' });
+          // W21 — THE FOLLOWED FLOOR (lib/skills/followed.ts): strip the report marker from the answer
+          // and claim only skills that were loaded into this prompt AND reported. The bubble is re-set
+          // to the clean text when a marker was there.
+          skillsTextFilter.flush();
+          {
+            const settled = settleSkillsFollowed(fullAssistantText, turnSkills.offered);
+            if (settled.text !== fullAssistantText) {
+              fullAssistantText = settled.text;
+              send({ type: 'text_set', content: fullAssistantText });
+            }
+            skillsFollowed = settled.followed;
+          }
+          skillOffer = skillsFollowed.length || !fullAssistantText.trim() ? null : await offerPromise;
+          send({
+            type: 'done',
+            ...(skillsFollowed.length ? { skillsFollowed } : {}),
+            ...(skillOffer ? { skillOffer } : {}),
+          });
         } catch (err) {
           console.error('[Chat] Stream error:', err);
           send({ type: 'error', message: 'An error occurred. Please try again.' });
@@ -1474,6 +1513,8 @@ export async function POST(
                 // A POINTER, NEVER THE ARGUMENTS: `GET /api/changes/[id]` re-derives the status.
                 ...(allChanges.length > 0 ? { changes: allChanges } : {}),
                 ...(clarificationCall?.clarification ? { clarification: clarificationCall.clarification } : {}),
+                // W21 — A CLAIM RENDERS: the skills this answer followed (loaded AND reported).
+                ...(skillsFollowed.length > 0 ? { skillsFollowed } : {}),
               },
             });
             await adminClient

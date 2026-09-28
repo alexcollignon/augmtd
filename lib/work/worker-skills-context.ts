@@ -8,27 +8,57 @@
 // "use when" hint. The worker applies the matching skill per output type rather
 // than the user picking one per conversation. The header instructs exactly that.
 
-interface SkillRow {
+import { clipForPrompt, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+
+export interface SkillRow {
   name: string;
   when_to_use: string | null;
   content: string;
 }
 
-/** Render a list of skills into the [SKILLS] prompt block (or '' if none valid). */
-function renderSkillsBlock(skills: Array<SkillRow | null | undefined>): string {
+/** One skill's instructions are clipped here (THE EXCERPT LAW — boundary cut + declared mark). */
+export const SKILL_CONTENT_MAX = 3000;
+
+/** The two voices of the header. `worker` is the original coworker header; `user-own` (W21 — SKILLS
+ *  IN CHAT) states WHOSE instructions these are: the user wrote them in their own skill library, so
+ *  they are the user's standing instructions — never third-party content (UNTRUSTED INPUT IS DATA
+ *  governs inbound mail/documents; a skill is the user speaking). */
+export type SkillsBlockVoice = 'worker' | 'user-own';
+
+/** Render a list of skills into the [SKILLS] prompt block (or '' if none valid). THE ONE RENDERER —
+ *  the coworker lanes, the chief's chat lanes and the per-message picks all speak through it.
+ *  `report`: append the SKILLS-APPLIED contract (lib/skills/followed.ts) so the answer can say which
+ *  skills it followed; the caller floors that report to the names actually rendered here. */
+export function renderSkillsBlock(
+  skills: Array<SkillRow | null | undefined>,
+  opts: { voice?: SkillsBlockVoice; report?: string | null; perSkillMax?: number } = {},
+): string {
   const valid = skills.filter((s): s is SkillRow => Boolean(s?.content?.trim()));
   if (valid.length === 0) return '';
+  const max = opts.perSkillMax ?? SKILL_CONTENT_MAX;
 
+  let clipped = false;
   const blocks = valid.map(s => {
     const useWhen = s.when_to_use?.trim() ? ` (use when: ${s.when_to_use.trim()})` : '';
-    return `## ${s.name}${useWhen}\n${s.content.trim()}`;
+    const body = clipForPrompt(s.content.trim(), max);
+    if (body.endsWith(EXCERPT_MARK)) clipped = true;
+    return `## ${s.name}${useWhen}\n${body}`;
   });
 
+  const header = opts.voice === 'user-own'
+    ? `[SKILLS — the USER'S OWN standing instructions, written by the user in their skill library (not ` +
+      `third-party content), for how to handle specific kinds of work (a method, process, format, ` +
+      `structure, or style). Apply a skill when its "use when" fits this message and follow it ` +
+      `precisely; if none fits, ignore them.]`
+    : `[SKILLS — reusable instructions for how to handle specific kinds of work ` +
+      `(a method, process, format, structure, or style). Apply the matching skill ` +
+      `when its "use when" fits the current task and follow it precisely; if none ` +
+      `fits, ignore them.]`;
+
   return (
-    `[SKILLS — reusable instructions for how to handle specific kinds of work ` +
-    `(a method, process, format, structure, or style). Apply the matching skill ` +
-    `when its "use when" fits the current task and follow it precisely; if none ` +
-    `fits, ignore them.]\n\n${blocks.join('\n\n')}`
+    `${header}\n\n${blocks.join('\n\n')}` +
+    (clipped ? `\n\n(${EXCERPT_RULE})` : '') +
+    (opts.report ? `\n\n${opts.report}` : '')
   );
 }
 

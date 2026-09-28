@@ -4,12 +4,17 @@
 // the OUTCOME — which answer path a note reaches, and whether a card rides the turn.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-type Scripted = { router: Record<string, unknown>; loop: Array<{ tool?: string; args?: Record<string, unknown>; say?: string }> };
+// ⟲ RE-POINTED W22 (THE HOME CHAT IS ONE ASSISTANT): the model ROUTER and its synthesis verdict are
+// retired — a catch-up is answered by the ONE loop from the same grounded page (the read is a tool it
+// may use; an empty read is never the answer by itself), and a literal listing takes the deterministic
+// command fast path. The laws asserted are unchanged: a catch-up gets a real answer, an empty set is
+// not a card, a listing with rows is served by its card.
+type Scripted = { loop: Array<{ tool?: string; args?: Record<string, unknown>; say?: string }> };
 const stub = vi.hoisted(() => ({
-  script: { router: {}, loop: [] } as Scripted,
+  script: { loop: [] } as Scripted,
   loopCalls: 0,
   toolsOffered: [] as string[],
-  homeAsks: [] as Array<{ q: string; focusEntityId: string | null }>,
+  systems: [] as string[],
   entityAsks: [] as string[],
   meetings: [] as Array<Record<string, unknown>>,
 }));
@@ -19,11 +24,8 @@ vi.mock('@/lib/ai/factory', async (orig) => ({
   getAIClient: vi.fn(async () => ({ client: { chat: { completions: { create: async () => { throw new Error('no stream in the stub'); } } } }, model: 'stub' })),
   getSystemClient: vi.fn(() => ({ client: {}, model: 'stub' })),
   aiCreate: vi.fn(async (_ai: unknown, req: { messages: Array<{ role: string; content: string }>; tools?: Array<{ function: { name: string } }> }) => {
-    const first = String(req.messages?.[0]?.content ?? '');
-    if (/You are the router of a work assistant/.test(first)) {
-      return { choices: [{ message: { content: JSON.stringify(stub.script.router) } }] };
-    }
-    // The agent loop: scripted steps (a tool call, then an answer).
+    stub.systems.push(String(req.messages?.[0]?.content ?? ''));
+    // The ONE loop: scripted steps (a tool call, then an answer).
     stub.toolsOffered = (req.tools ?? []).map((t) => t.function.name);
     const step = stub.script.loop[stub.loopCalls++] ?? { say: 'Loop answer.' };
     if (step.tool) {
@@ -35,10 +37,6 @@ vi.mock('@/lib/ai/factory', async (orig) => ({
 vi.mock('@/lib/ai/call', () => ({ aiCall: vi.fn(async () => ({ json: null, text: '' })) }));
 vi.mock('@/lib/home/ask', async (orig) => ({
   ...(await orig<typeof import('@/lib/home/ask')>()),
-  answerHomeQuestion: vi.fn(async (_c: unknown, _u: string, q: string, _h: unknown, opts?: { focusEntityId?: string | null }) => {
-    stub.homeAsks.push({ q, focusEntityId: opts?.focusEntityId ?? null });
-    return { answer: 'Grounded catch-up: two decisions stand, one question is open, Sam owns the next step.', refs: [] };
-  }),
   buildBrainSnapshot: vi.fn(async () => ({ text: 'WORLD', refs: new Map() })),
 }));
 vi.mock('@/lib/entities/ask', () => ({
@@ -49,7 +47,7 @@ vi.mock('@/lib/entities/ask', () => ({
 }));
 vi.mock('@/lib/room/grounding', async (orig) => ({
   ...(await orig<typeof import('@/lib/room/grounding')>()),
-  assembleRoomGrounding: vi.fn(async () => ({ text: 'ROOM PAGE', entity: { id: 'ent-1', name: 'Acme' }, ledgerRefs: new Map() })),
+  assembleRoomGrounding: vi.fn(async () => ({ text: 'ROOM PAGE — decisions: two stand · open: one question · owner: Sam', entity: { id: 'ent-1', name: 'Acme' }, ledgerRefs: new Map() })),
 }));
 vi.mock('@/lib/tools/get-meeting-context', async (orig) => ({
   ...(await orig<typeof import('@/lib/tools/get-meeting-context')>()),
@@ -62,7 +60,7 @@ vi.mock('@/lib/converse/read-budget', () => ({
   packMeetingRead: (blocks: Array<{ id: string; text: string }>) => ({ text: blocks.map((b) => b.text).join('\n'), seen: new Set(blocks.map((b) => b.id)) }),
 }));
 
-import { converse, parseVerdict, synthesisPrecedence } from '@/lib/converse';
+import { converse } from '@/lib/converse';
 
 /** A Supabase stand-in where every read is empty and every write succeeds. */
 function emptyDb() {
@@ -87,41 +85,41 @@ const CATCH_UP = 'Catch me up on this client. What has changed since the last me
 const MEETING = { id: 'm-1', title: 'Acme kick-off', dateLabel: 'Mon 21 Sep 2026', duration_minutes: 30, actionItems: ['send the scope'], attendees: [{ email: 'sam@acme-example.com' }] };
 
 beforeEach(() => {
-  stub.script = { router: {}, loop: [] };
-  stub.loopCalls = 0; stub.toolsOffered = []; stub.homeAsks = []; stub.entityAsks = []; stub.meetings = [];
+  stub.script = { loop: [] };
+  stub.loopCalls = 0; stub.toolsOffered = []; stub.systems = []; stub.entityAsks = []; stub.meetings = [];
 });
 
-describe('A CATCH-UP GETS A REAL ANSWER — the router\'s synthesis verdict outranks the read it named', () => {
-  it('the incident: a room catch-up the router mapped to the meeting read reaches the Home answer path, pinned to the room — no card', async () => {
-    stub.script.router = { command: { tool: 'get_meeting_context', args: { since: '7d' } }, question: true, facts: [], delegate: null, open: false, synthesis: true };
+describe('A CATCH-UP GETS A REAL ANSWER — the one loop answers it from the grounded page', () => {
+  it('the incident: a room catch-up is answered by the loop over the ROOM PAGE, told an empty read is never the answer — no card', async () => {
+    stub.script.loop = [{ tool: 'get_meeting_context', args: { since: '7d' } }, { say: 'Two decisions stand, one question is open, Sam owns the next step.' }];
     const turn = await converse(emptyDb(), 'u-1', { kind: 'entity', entityId: 'ent-1' }, CATCH_UP);
-    expect(stub.homeAsks).toEqual([{ q: CATCH_UP, focusEntityId: 'ent-1' }]);
-    expect(stub.loopCalls).toBe(0);
-    expect(turn.say).toMatch(/^Grounded catch-up/);
+    expect(stub.loopCalls).toBe(2);
+    expect(stub.systems[0]).toMatch(/ROOM PAGE/);
+    expect(stub.systems[0]).toMatch(/a read that comes back EMPTY is never the answer by itself/);
+    expect(turn.say).toMatch(/^Two decisions stand/);
     expect(turn.collection ?? null).toBeNull();
+    expect(stub.entityAsks).toEqual([]);
   });
 
-  it('a literal listing ask still gets its collection (the fast path), whatever the router said about synthesis', async () => {
+  it('a literal listing ask gets its collection on the command fast path — no model call', async () => {
     stub.meetings = [MEETING];
-    stub.script.router = { command: { tool: 'get_meeting_context', args: { since: '7d' } }, question: true, facts: [], delegate: null, open: false, synthesis: true };
-    const turn = await converse(emptyDb(), 'u-1', { kind: 'entity', entityId: 'ent-1' }, 'list my recordings');
-    expect(stub.homeAsks).toEqual([]);
+    const turn = await converse(emptyDb(), 'u-1', { kind: 'entity', entityId: 'ent-1' }, 'list my recordings from this week');
+    expect(stub.loopCalls).toBe(0);
     expect(turn.collection?.spec.kind).toBe('recordings');
     expect(turn.collection?.spec.rows).toHaveLength(1);
     expect(turn.say).toBe('1 recording in the last 7 days.');
   });
 
   it('a zero-row collection is NOT the answer: the listing ask with nothing to list falls through to a composed answer, with no card', async () => {
-    stub.script.router = { command: { tool: 'get_meeting_context', args: { since: '7d' } }, question: false, facts: [], delegate: null, open: false, synthesis: false };
     stub.script.loop = [{ tool: 'get_meeting_context', args: { since: '7d' } }, { say: 'You have not recorded anything this week — the last recorded call was the kick-off.' }];
-    const turn = await converse(emptyDb(), 'u-1', { kind: 'entity', entityId: 'ent-1' }, 'list my recordings');
+    const turn = await converse(emptyDb(), 'u-1', { kind: 'entity', entityId: 'ent-1' }, 'list my recordings from this week');
     expect(stub.loopCalls).toBe(2);
+    expect(stub.systems[0]).toMatch(/came back EMPTY/);
     expect(turn.say).toMatch(/not recorded anything/);
     expect(turn.collection ?? null).toBeNull();
   });
 
   it('in the loop, an empty read never rides the turn as a card — and a read with rows still does (SPEAK → SHOW)', async () => {
-    stub.script.router = { command: null, question: false, facts: [], delegate: null, open: true, synthesis: false };
     stub.script.loop = [{ tool: 'get_meeting_context', args: {} }, { say: 'Nothing recorded, so here is what the page shows.' }];
     const empty = await converse(emptyDb(), 'u-1', { kind: 'entity', entityId: 'ent-1' }, 'prep me for Thursday and draft the agenda');
     expect(empty.collection ?? null).toBeNull();
@@ -132,32 +130,11 @@ describe('A CATCH-UP GETS A REAL ANSWER — the router\'s synthesis verdict outr
     expect(full.collection?.spec.rows).toHaveLength(1);
   });
 
-  it('a simple (non-synthesis) room question keeps the room\'s own answer path', async () => {
-    stub.script.router = { command: null, question: true, facts: [], delegate: null, open: false, synthesis: false };
+  it('a simple room question is the same conversation (no second answering lane)', async () => {
+    stub.script.loop = [{ say: 'Sam is the contact at Acme.' }];
     const turn = await converse(emptyDb(), 'u-1', { kind: 'entity', entityId: 'ent-1' }, 'who is the contact at Acme?');
-    expect(stub.entityAsks).toEqual(['who is the contact at Acme?']);
-    expect(stub.homeAsks).toEqual([]);
-    expect(turn.say).toBe('Entity answer.');
-  });
-});
-
-describe('the precedence rule, pure', () => {
-  const base = { command: null, question: true, facts: [], delegate: null, open: false, synthesis: true };
-  it('drops a named READ for a synthesis question and makes it a question', () => {
-    const v = synthesisPrecedence({ ...base, command: { tool: 'get_meeting_context', args: {} }, question: false, open: true }, 'what changed since the last meeting and what is still open?');
-    expect(v).toMatchObject({ command: null, question: true, open: false, synthesis: true });
-  });
-  it('never drops a DEED, never overrides a hand-off, never claims a literal listing', () => {
-    expect(synthesisPrecedence({ ...base, command: { tool: 'resolve_inbox_item', args: {} } }, 'catch me up and mark it done').command?.tool).toBe('resolve_inbox_item');
-    expect(synthesisPrecedence({ ...base, delegate: { coworker: 'Max', task: 'x' } }, 'catch me up').synthesis).toBe(false);
-    expect(synthesisPrecedence({ ...base, command: { tool: 'get_meeting_context', args: {} } }, 'list my recordings')).toMatchObject({ synthesis: false, command: { tool: 'get_meeting_context' } });
-  });
-  it('an instruction (not a question, no read named) stays an instruction', () => {
-    expect(synthesisPrecedence({ ...base, question: false, open: true }, 'summarise the week and email it to Sam')).toMatchObject({ open: true, synthesis: false });
-  });
-  it('parseVerdict reads the router\'s synthesis field and defaults a malformed reply to the open loop', () => {
-    expect(parseVerdict('{"command":null,"question":true,"synthesis":true}').synthesis).toBe(true);
-    expect(parseVerdict('{"command":null,"question":true}').synthesis).toBe(false);
-    expect(parseVerdict('not json')).toMatchObject({ open: true, synthesis: false, command: null });
+    expect(stub.entityAsks).toEqual([]);
+    expect(stub.loopCalls).toBe(1);
+    expect(turn.say).toBe('Sam is the contact at Acme.');
   });
 });

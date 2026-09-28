@@ -1,8 +1,9 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // POST /api/items/steer — a THIN wrapper over THE ONE CONVERSATION CORE (lib/converse — P6b).
-// The rail's composer posts here with item scope; the core routes the turn (command / question /
-// correction / delegate / open-agent-loop) against the chief-of-staff capability slice. No logic
-// lives in this route — every chat surface wires to the same core.
+// The rail's composer posts here with item scope; the core answers the turn — an exact registry
+// command on its deterministic fast path, a decision-card choice through the redraft lane, everything
+// else as THE ONE CONVERSATION (W22) over the chief-of-staff capability slice. No logic lives in this
+// route — every chat surface wires to the same core.
 //
 // Body: { kind: 'email'|'followup'|'commitment'|'awareness'|'meeting'|'entity', id, text }
 //   kind 'entity' = the PROJECT DOOR (P7c-c2): id is the entity id; the core runs in entity scope.
@@ -11,7 +12,8 @@
 //     invite?, bulkDeed?, emailDraft?, collection?, event?, change? }
 // `stream: true` → the same payload as the `done` frame of THE ONE STREAM (lib/present/converse-stream).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
+import { clipWithRule } from '@/lib/utils/pack-context';
 import { createClient } from '@/lib/supabase/server';
 import { converse, type ConverseScope } from '@/lib/converse';
 import {
@@ -20,6 +22,11 @@ import {
 } from './answer-door';
 import { cardPayloadOf, cardTurnOf, normalizeTurnCards } from '@/lib/present/turn-card';
 import { converseStreamResponse } from '@/lib/present/converse-stream';
+// W21 — SKILLS IN CHAT (contract: lib/skills/chat-contract.ts): the item/project chat talks to the chief,
+// so the chief's assigned skills are on here too, through the ONE resolver.
+import { resolveSkillsForTurn, sanitizeSkillPick } from '@/lib/skills/for-turn';
+import { evaluateSkillOffer } from '@/lib/skills/offer';
+import { recordAnswerSkills } from '@/lib/skills/followed-store';
 
 export const maxDuration = 120;
 
@@ -53,11 +60,14 @@ export async function POST(request: NextRequest) {
       /** THE WORK SHOWS (W20.B): answer over THE ONE STREAM (progress frames, then one `done` frame
        *  carrying exactly the JSON payload below) — the rail's composer asks for it. */
       stream?: boolean;
+      /** W21 — this message's skills pick ({ add?, skip? } skill ids; this message only). */
+      skills?: unknown;
     };
     const kind = body.kind && VALID.includes(body.kind) ? body.kind : null;
     const id = body.id?.trim();
-    // Same paste ceiling as the Home door — pasted source material must reach the brain whole.
-    let text = (body.text ?? '').trim().slice(0, 20000);
+    // Same paste ceiling as the Home door — pasted source material must reach the brain whole, and a
+    // longer paste is cut DECLAREDLY (the excerpt law; W22 — the raw 20k slice lost a tail silently).
+    let text = clipWithRule(String(body.text ?? '').trim(), 60_000);
     if (!kind || !id || !text) return NextResponse.json({ error: 'kind, id and text required' }, { status: 400 });
     // A preview is a read of what a direction WOULD say — it can never carry a decision's consequence.
     const preview = body.preview === true;
@@ -99,8 +109,21 @@ export async function POST(request: NextRequest) {
     // ── THE ANSWER, ONE BODY FOR BOTH TRANSPORTS (W20.B) ────────────────────────────────────────
     // JSON (every non-chat caller) or THE ONE STREAM (the rail's composer: `stream: true`), the same
     // work runs: the core answers, the card is written as a turn, the payload is composed.
-    const answer = async (onProgress?: (label: string) => void): Promise<Record<string, unknown>> => {
-      const turn = await converse(supabase, user.id, scope, text, onProgress ? { onProgress } : {});
+    // W21 — THE TURN'S SKILLS (the ONE resolver; a pick never assigns or unassigns). A decision pick is
+    // a structured transition, never a repeated ask — it earns no skill offer.
+    const skillsPromise = resolveSkillsForTurn(supabase, user.id, { kind: 'chief' }, sanitizeSkillPick(body.skills));
+    const offerPromise = body.decision?.option
+      ? Promise.resolve(null)
+      : evaluateSkillOffer(supabase, user.id, text).then((e) => e.offer).catch(() => null);
+    // W22 — the core's door options: a background hand-off posts into THIS chat (the keyed chat room, or
+    // the item's own room), and outlives the response through `after()`.
+    const door = {
+      postRoomKey: chatRoomKey ?? steerRoomKey(kind, id),
+      defer: (work: () => Promise<void>) => after(work),
+    };
+    const answer = async (onProgress?: (label: string) => void, onToken?: (t: string) => void): Promise<Record<string, unknown>> => {
+      const skills = await skillsPromise;
+      const turn = await converse(supabase, user.id, scope, text, { ...(onProgress ? { onProgress } : {}), skills, ...door, ...(onToken ? { onToken } : {}) });
       // …and THE RESET WINS: a question a New chat archived while the reasoning ran gets no answer.
       const claimed = claim === 'claimed' && !!answerKey && !!chatRoomKey
         && await questionStillLive(supabase, user.id, chatRoomKey, answerKey);
@@ -112,6 +135,11 @@ export async function POST(request: NextRequest) {
       // next open (it used to write three kinds and drop the rest — "Here's the invite" over nothing).
       // AN EMPTY SET IS NOT A CARD (W19.2a) — the table's floor. Without a chat key the card still
       // rides as before; with one, only the CLAIMING request writes it (exactly-once, W19.B).
+      // A FAILED TURN IS NOT THE ANSWER (W22): nothing is written — the claimed question stays an orphan,
+      // which the room renders with its "Ask again" line; the response carries the visible failure.
+      if (turn.failure) {
+        return { ok: true, say: turn.say, refs: [], failure: turn.failure };
+      }
       normalizeTurnCards(turn);
       const card = cardTurnOf(turn);
       if (card && (!answerKey || claimed)) {
@@ -129,13 +157,18 @@ export async function POST(request: NextRequest) {
             dedupeKey: card.dedupeKey,
             component: card.component,
           });
+          // W21: the answer's followed skills — ONE companion record keyed by the stored turn's id.
+          await recordAnswerSkills(supabase, user.id, steerRoomKey(kind, id),
+            turn.say?.trim() ? answerTextOf(turn.say) : answerTextOf(fallback), turn.skillsFollowed);
         } catch { /* the card is an enhancement — the answer stands without it */ }
       } else if (claimed && chatRoomKey && answerKey) {
         // THE ANSWER IS SAVED — the Home door's shape, no handle (the exchange boundary). A failed write
         // leaves the question an orphan, which the room renders with its "Ask again" line.
         const ok = await writeAnswerTurn(supabase, user.id, chatRoomKey, turn);
         if (!ok) console.error('[items/steer] the answer could not be saved', chatRoomKey);
+        else await recordAnswerSkills(supabase, user.id, chatRoomKey, answerTextOf(turn.say), turn.skillsFollowed);
       }
+      const skillOffer = await offerPromise;
 
       return {
         ok: true,
@@ -163,13 +196,18 @@ export async function POST(request: NextRequest) {
         // has been sent, acted or applied — each card's own click is the deed.
         ...cardPayloadOf(turn),
         ...(turn.options?.length ? { options: turn.options } : {}),
+        // W21 — A CLAIM RENDERS: only skills loaded into this answer AND reported (floored in the core);
+        // ONE offer, never beside an answer that followed a skill.
+        ...(turn.skillsFollowed?.length ? { skillsFollowed: turn.skillsFollowed } : {}),
+        ...(skillOffer && !turn.skillsFollowed?.length && turn.say?.trim() ? { skillOffer } : {}),
       };
     };
 
     // THE WORK SHOWS (W20.B — lib/present/converse-stream.ts, the Home door's transport): the core's
     // per-tool labels ("Putting the invite together…") reach the room while it works.
     if (body.stream === true) {
-      return converseStreamResponse((send) => answer((label) => send({ type: 'progress', label })), { label: 'items/steer' });
+      // ⟲ W22: the answer's tokens stream too (the ONE STREAM's `token` frames, as on the Home door).
+      return converseStreamResponse((send) => answer((label) => send({ type: 'progress', label }), (t) => send({ type: 'token', t })), { label: 'items/steer' });
     }
     return NextResponse.json(await answer());
   } catch (e) {

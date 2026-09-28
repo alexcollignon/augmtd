@@ -181,6 +181,13 @@ export const ITEM_PLAN_REGISTRY = {
   looks_done:      spec('record', '`<kind>:<id>` (commitment | inbox)', 'lib/evidence/looks-done.ts',
     obj({ sig: str, evidence: z.unknown().optional(), verdict: str, at: str, refusedSig: str, refusedAt: str })),
 
+  // ── W21 skills in chat ──
+  // A declined "save this as a skill" offer — never re-offered for the same pattern.
+  skill_offer:  spec('record', 'pattern key (`ask:<token>+<token>…`)', 'lib/skills/offer.ts', obj({ state: str, at: str })),
+  // A ROOM answer's followed skills (room turns have no metadata column; a component would break the chat boundary).
+  turn_skills:  spec('record', '`<room key>|<room_turns id>`', 'lib/skills/followed-store.ts',
+    obj({ roomKey: str, skills: opt(z.array(obj({ id: str, name: str }))) })),
+
   // ── platform ──
   status_alert: spec('token', 'problem-set key', 'app/api/cron/status-alerts/route.ts'),
   autonomy:     spec('record', 'ledger key', 'lib/autonomy/ledger.ts (PARKED design record)'),

@@ -188,10 +188,12 @@ console.log('\nC6 · THE HOME CONVERSE CORE — steer · remember · run prepare
     /prepareChange\(client, userId, \{ tool: 'run_task'/.test(src) && !/executeRunTask/.test(src) && /spokenIsResumeNotRun\(userText\)/.test(src));
   gate('C6.2 steer_standing_task prepares with the model-chosen instruction shown, never applied',
     /tool: 'steer_standing_task', args: \{ commitmentId: scope\.itemId, instruction:/.test(branch('steer_standing_task')) && !/executeSteerStandingTask/.test(src));
-  gate('C6.3 remember_fact (the tool) prepares; the correction door is the ONLY direct remember, and it reads the user’s own words',
+  // ⟲ RE-POINTED W22 (THE HOME CHAT IS ONE ASSISTANT): the router's CORRECTION lane — the one place the
+  // core remembered a router-extracted fact directly — is retired with the router. The law gets
+  // STRICTER, not weaker: every remembered fact in the core is now a confirm card.
+  gate('C6.3 remember_fact (the tool) prepares; NO direct remember survives anywhere in the core',
     /tool: 'remember_fact'/.test(branch('remember_fact'))
-    && (src.match(/executeRememberFact\(/g) ?? []).length === 1
-    && /if \(scope\.kind === 'item' && !verdict\.open && !escalateToReach\) \{[\s\S]{0,400}executeRememberFact\(/.test(src));
+    && (src.match(/executeRememberFact\(/g) ?? []).length === 0);
   gate('C6.4 a change ends the loop like every other hand-off (the model never talks past its own card)',
     /\|\| turn\?\.change\) return \{ \.\.\.turn/.test(src));
   // ⟲ RE-POINTED W20 (A CLAIM RENDERS IN EVERY CHAT): both doors now write + forward every card kind

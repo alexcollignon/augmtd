@@ -9,7 +9,7 @@ import { loadLS, saveLS } from '@/lib/utils/local-cache';
  *
  * "The CoS is a SEAT, not a hardcoded name." Every surface where the platform's own voice speaks —
  * the Home thread's answers, a room's pinned brief, the engine's asks — wears the seat-holder's
- * face, name and the constant "chief of staff" label. The seat is decided in exactly one place
+ * face, name and the constant seat label (SEAT_LABEL — "Personal Assistant", from lib/workers/roles.ts). The seat is decided in exactly one place
  * server-side (`lib/workers/cos-seat.ts` behind `/api/workers/cos-seat`); this hook is the one
  * place it is READ client-side, so a second surface can never mint a second identity ladder.
  *

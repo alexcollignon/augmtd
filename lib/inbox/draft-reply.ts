@@ -261,7 +261,7 @@ export async function generateNudgeDraft(
      *  them) or 'you' (the user owes this, and a message about their own obligation must never be
      *  written as a chase). One drafter, told the truth about the direction; every existing caller
      *  keeps its exact behaviour by omitting it. */
-    direction?: 'them' | 'you';
+    direction?: 'them' | 'you' | 'new';
     /** W11.1 — the conversation this message belongs to: its MAILBOX scopes the voice + signature. */
     threadId?: string | null },
   client: DBClient,
@@ -302,7 +302,14 @@ export async function generateNudgeDraft(
       model, max_tokens: 400, temperature: 0.6,
       messages: [{ role: 'user', content:
         `${voiceBlock ? voiceBlock + '\n\n' : ''}${brainBlock ? brainBlock + '\n\n' : ''}${assistantSkills ? assistantSkills + '\n\n' : ''}` +
-        (opts.direction === 'you'
+        (opts.direction === 'new'
+          // W22 — A NEW EMAIL (the chat's "draft an email to Sam proposing Tuesday 10am"): the SAME
+          // drafter, told the truth — this is the first message, neither a reply nor a chase.
+          ? `You are ${userName}. Write a NEW email from ${userName} to ${who}: ${opts.description}. It is the ` +
+            `first message on this subject — not a reply and not a follow-up, so never refer to an earlier ` +
+            `message. Say exactly what is asked, concretely, and keep it short. Address ${who} and sign as ` +
+            `${userName} — NEVER sign as the recipient. ${COMPLETION_HONESTY_RULE} `
+          : opts.direction === 'you'
           ? `You are ${userName}. Write a brief, friendly message from ${userName} to ${who} about something ` +
             `${userName} OWES THEM: "${opts.description}". ${userName} is the one on the hook here — write it as ` +
             `an update/hand-over from ${userName}, never as a chase and never as a request for something from ` +

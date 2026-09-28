@@ -1,16 +1,32 @@
 'use client';
 
-// Coworker-chat composer with @-mention (Coworkers / Tasks / Documents). Ported from
+// Coworker-chat composer with @-mention (Coworkers / Tasks / Documents / Skills). Ported from
 // the /work ChatInputBar mention machinery, re-contextualized. Streaming stays in the
-// parent — this just emits onSubmit(text, mentions).
+// parent — this just emits onSubmit(text, mentions, skills).
+//
+// SKILLS IN CHAT (W21) — ONE DOOR: the @ menu gains a "Skills" page, and "/" at the start of a word
+// opens it directly. The page is components/skills/skill-menu.tsx over the pure model in
+// components/skills/skill-menu-model.ts: the addressed actor's assigned skills first and CHECKED
+// (unchecking = skip for this message, never an unassign), the rest below (checking = this message
+// only). Picks ride as chips and leave with the message as `skills: { add, skip }`, then clear. The
+// SAME composer serves the Home chat, every coworker DM and the item/project room.
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   PaperAirplaneIcon, AtSymbolIcon, PaperClipIcon, ChevronRightIcon, ChevronLeftIcon,
-  UserCircleIcon, BoltIcon, DocumentTextIcon,
+  UserCircleIcon, BoltIcon, DocumentTextIcon, AcademicCapIcon,
 } from '@heroicons/react/24/outline';
 import type { AttachmentChip } from '@/components/work/chat-input-bar';
+import { SkillMenu, SkillChips, skillRowDomId } from '@/components/skills/skill-menu';
+import { SkillsUsesView } from '@/components/skills/skills-uses-line';
+import { useSkillMenu, OPEN_SKILLS_MENU_EVENT } from '@/components/skills/use-skill-menu';
+import { useSkillDraft } from '@/components/skills/use-skill-draft';
+import { setSkillAssignment } from '@/components/one/chat-actions';
+import {
+  NO_PICK, chipsOf, dropChip, filterMenu, isEmptyPick, reconcilePick, stripTrigger, toggleSkill, triggerAt,
+  type ChatMenuSkill, type SkillPick,
+} from '@/components/skills/skill-menu-model';
 
 export interface WorkerMention { id: string; type: 'coworker' | 'task' | 'document'; label: string; subtitle?: string }
 
@@ -34,19 +50,31 @@ const ICON_BG: Record<WorkerMention['type'], string> = {
 // One stable empty list — an effect resetting the results must not mint a new array (a fresh [] is never
 // Object.is-equal, so React could never bail the update out).
 const NO_RESULTS: WorkerMention[] = [];
-const CATEGORIES: { type: WorkerMention['type']; label: string }[] = [
+/** A page of the @ menu: a mention type, or the Skills list (W21). */
+type MenuCat = WorkerMention['type'] | 'skill';
+const CATEGORIES: { type: MenuCat; label: string }[] = [
   { type: 'coworker', label: 'Coworkers' },
   { type: 'task', label: 'Tasks' },
   { type: 'document', label: 'Documents' },
 ];
+/** The Skills page joins the categories only where the host addressed an actor (`skills` prop). */
+const WITH_SKILLS: { type: MenuCat; label: string }[] = [...CATEGORIES, { type: 'skill', label: 'Skills' }];
+const CAT_ICONS: Record<MenuCat, React.ElementType> = { ...ICONS, skill: AcademicCapIcon };
+const CAT_BG: Record<MenuCat, string> = { ...ICON_BG, skill: 'bg-emerald-50 text-emerald-600' };
 
-function mentionQueryAt(value: string, cursor: number): string | null {
-  const m = value.slice(0, cursor).match(/@(\w*)$/);
-  return m ? m[1] : null;
+/** What the host tells the composer about SKILLS IN CHAT (W21). */
+export interface ComposerSkills {
+  /** The addressed actor — 'chief' (the Home chat / a room's seat) or a coworker's agent id. */
+  actor: string;
+  /** The conversation's address — present → "Save this chat as a skill" is offered in the menu. */
+  roomKey?: string | null;
+  /** Render the actor's "uses: A, B" line in the action row (surfaces with no header band). */
+  usesInRow?: boolean;
 }
 
 interface Props {
-  onSubmit: (text: string, mentions: WorkerMention[]) => void;
+  /** `skills` = the per-message pick ({ add, skip }) — absent when nothing was picked. */
+  onSubmit: (text: string, mentions: WorkerMention[], skills?: SkillPick) => void;
   disabled?: boolean;
   placeholder?: string;
   prefill?: string | null;
@@ -60,16 +88,31 @@ interface Props {
   /** Host-supplied control rendered in the action row after Attach (e.g. the Home's scope
       chip) — context controls live WITH the composer, not above the conversation. */
   accessory?: React.ReactNode;
+  /** SKILLS IN CHAT (W21) — present → the @ menu gains Skills, "/" opens it, picks ride the send. */
+  skills?: ComposerSkills;
 }
 
-export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, onPrefillConsumed, onAttach, attachments = [], onRemoveAttachment, frameless, accessory }: Props) {
+export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, onPrefillConsumed, onAttach, attachments = [], onRemoveAttachment, frameless, accessory, skills }: Props) {
   const [value, setValue] = useState('');
   const [mentions, setMentions] = useState<WorkerMention[]>([]);
   const [mq, setMq] = useState<string | null>(null);
-  const [cat, setCat] = useState<WorkerMention['type'] | null>(null);
+  const [cat, setCat] = useState<MenuCat | null>(null);
+  // THE "/" DOOR (W21): the open trigger was a slash at the start of a word — the Skills page, directly.
+  // Set by the keystroke HANDLER alongside `mq` (never by an effect).
+  const [slash, setSlash] = useState(false);
   // The menu's page is DERIVED, never state an effect keeps in step (it used to be a mode state set to 'items'
   // on every keystroke of an @-query — a passive-effect setState per key; see THE DROPDOWN'S ANCHOR).
-  const mode: 'categories' | 'items' = mq === null || (mq === '' && cat === null) ? 'categories' : 'items';
+  const mode: 'categories' | 'items' = mq === null || (mq === '' && cat === null && !slash) ? 'categories' : 'items';
+  // ── SKILLS IN CHAT (W21) ── the actor's menu (one shared read), the per-message pick, the draft door.
+  const hasSkills = !!skills?.actor;
+  const skillMenu = useSkillMenu(skills?.actor ?? null);
+  const [skillPick, setSkillPick] = useState<SkillPick>(NO_PICK);
+  const skillDraft = useSkillDraft();
+  const skillPage = hasSkills && mq !== null && (slash || cat === 'skill');
+  const skillRows: ChatMenuSkill[] = skillPage ? filterMenu(skillMenu?.skills ?? [], mq ?? '') : [];
+  const cats = hasSkills ? WITH_SKILLS : CATEGORIES;
+  const livePick = reconcilePick(skillPick, skillMenu?.skills);
+  const skillChips = hasSkills ? chipsOf(livePick, skillMenu?.skills) : [];
   const [results, setResults] = useState<WorkerMention[]>([]);
   const [idx, setIdx] = useState(0);
   const [loadingItems, setLoadingItems] = useState(false);
@@ -92,12 +135,19 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
     if (mq === null) return;
     const h = (e: MouseEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        setValue(v => v.replace(/@[^@\s]*$/, ''));
-        setMq(null); setCat(null);
+        const ch = slashRef.current ? '/' : '@';
+        setValue(v => stripTrigger(v, ch));
+        setMq(null); setCat(null); setSlash(false);
       }
     };
     document.addEventListener('mousedown', h); return () => document.removeEventListener('mousedown', h);
   }, [mq]);
+
+  // The trigger in force, for handlers that outlive a render (the outside click, the header's open).
+  const slashRef = useRef(slash);
+  slashRef.current = slash;
+  const valueRef = useRef(value);
+  valueRef.current = value;
 
   const cacheRef = useRef<Record<string, WorkerMention[]>>({});
   const prefetchedRef = useRef(false);
@@ -133,21 +183,72 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
 
   useEffect(() => {
     if (mq === null) { setResults(NO_RESULTS); setCat(null); return; }
+    // The Skills page reads the actor's skill menu, never the mention search.
+    if (slash || cat === 'skill') return;
     if (mq === '' && cat === null) { setResults(NO_RESULTS); return; }
     // Cache hit for a category's default list → render instantly, refresh silently.
-    const cached = cat && mq === '' ? cacheRef.current[cat] : undefined;
+    const cached = cat && mq === '' ? cacheRef.current[cat as WorkerMention['type']] : undefined;
     if (cached) { setResults(cached); setIdx(0); }
     if (debounce.current) clearTimeout(debounce.current);
-    debounce.current = setTimeout(() => fetchItems(mq, cat ?? undefined, !!cached), cat ? 0 : 180);
+    debounce.current = setTimeout(() => fetchItems(mq, (cat as WorkerMention['type'] | null) ?? undefined, !!cached), cat ? 0 : 180);
     return () => { if (debounce.current) clearTimeout(debounce.current); };
-  }, [mq, cat, fetchItems]);
+  }, [mq, cat, slash, fetchItems]);
 
   function onChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const v = e.target.value; setValue(v);
-    const q = mentionQueryAt(v, e.target.selectionStart ?? v.length);
-    if (q !== mq) setCat(null);
-    setMq(q);
+    const trig = triggerAt(v, e.target.selectionStart ?? v.length);
+    // "/" is a trigger only where skills are on; elsewhere the composer reads exactly as before.
+    const isSlash = hasSkills && trig?.char === '/';
+    const q = trig && (trig.char === '@' || isSlash) ? trig.q : null;
+    // The Skills page keeps its seat while its query is typed (it filters the list in place).
+    if (q !== mq && cat !== 'skill') setCat(null);
+    if (isSlash && !slash) setIdx(0);
+    setMq(q); setSlash(isSlash);
   }
+
+  // ── SKILLS IN CHAT (W21) — the handlers (events only; nothing here runs from an effect) ────────
+  const closeSkillMenu = () => {
+    const ch = slash ? '/' : '@';
+    setValue(v => stripTrigger(v, ch));
+    setMq(null); setCat(null); setSlash(false);
+  };
+  const toggleSkillRow = (s: ChatMenuSkill) => setSkillPick(p => toggleSkill(reconcilePick(p, skillMenu?.skills), s));
+  const assignSkillRow = (s: ChatMenuSkill) => {
+    if (!skillMenu) return;
+    void setSkillAssignment({ id: s.id, name: s.name }, skillMenu.actor, !s.assigned);
+  };
+  const saveAsSkill = skills?.roomKey ? () => { closeSkillMenu(); void skillDraft.open(skills.roomKey as string); } : undefined;
+  /** OPEN THE SKILLS LIST (AT a skill) — the header's "uses" names and the in-row line call this: a "/"
+   *  lands at the caret's word start, exactly as the Mention button lands an "@". */
+  const openSkillsAt = (skillId?: string) => {
+    const el = taRef.current; if (!el || !hasSkills) return;
+    const v = valueRef.current;
+    const pos = el.selectionStart ?? v.length;
+    const lead = pos > 0 && !/\s/.test(v[pos - 1]) ? ' ' : '';
+    setValue(v.slice(0, pos) + lead + '/' + v.slice(pos));
+    const at = skillId ? filterMenu(skillMenu?.skills ?? [], '').findIndex(x => x.id === skillId) : 0;
+    setMq(''); setCat(null); setSlash(true); setIdx(Math.max(0, at));
+    const caret = pos + lead.length + 1;
+    setTimeout(() => {
+      el.focus(); el.setSelectionRange(caret, caret);
+      if (skillId) document.getElementById(skillRowDomId(skillId))?.scrollIntoView({ block: 'nearest' });
+    }, 0);
+  };
+  const openSkillsAtRef = useRef(openSkillsAt);
+  openSkillsAtRef.current = openSkillsAt;
+  // The header's click is a window event (the header lives outside this box): the VISIBLE composer
+  // claims it — a hidden one (a lens behind the page) never opens a menu nobody sees.
+  useEffect(() => {
+    if (!hasSkills) return;
+    const onOpen = (e: Event) => {
+      if (!wrapRef.current || wrapRef.current.offsetParent === null) return;
+      if (DROP_CLAIMED.has(e)) return;
+      DROP_CLAIMED.add(e);
+      openSkillsAtRef.current((e as CustomEvent<{ skillId?: string }>).detail?.skillId);
+    };
+    window.addEventListener(OPEN_SKILLS_MENU_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_SKILLS_MENU_EVENT, onOpen);
+  }, [hasSkills]);
 
   function pick(m: WorkerMention) {
     const cursor = taRef.current?.selectionStart ?? value.length;
@@ -161,19 +262,27 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
   function submit() {
     const t = value.trim();
     if (!t || disabled) return;
-    onSubmit(t, mentions);
-    setValue(''); setMentions([]); setMq(null); setCat(null);
+    // The picks leave WITH the message and clear after it (a pick is per message, never sticky).
+    onSubmit(t, mentions, hasSkills && !isEmptyPick(livePick) ? livePick : undefined);
+    setValue(''); setMentions([]); setMq(null); setCat(null); setSlash(false); setSkillPick(NO_PICK);
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (mq !== null) {
-      const list = mode === 'categories' ? CATEGORIES : results;
+      const list: readonly unknown[] = mode === 'categories' ? cats : skillPage ? skillRows : results;
       if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => Math.min(i + 1, list.length - 1)); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setIdx(i => Math.max(i - 1, 0)); return; }
-      if (e.key === 'Escape') { e.preventDefault(); if (cat) { setCat(null); } else setMq(null); return; }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (slash) closeSkillMenu();
+        else if (cat) { setCat(null); setIdx(0); } else setMq(null);
+        return;
+      }
       if (e.key === 'Enter') {
         e.preventDefault();
-        if (mode === 'categories') { setCat(CATEGORIES[idx].type); }
+        if (mode === 'categories') { setCat(cats[idx].type); setIdx(0); }
+        // Enter on a skill toggles it and closes the list (the typed "/query" goes with it).
+        else if (skillPage) { if (skillRows[idx]) { toggleSkillRow(skillRows[idx]); closeSkillMenu(); } }
         else if (results.length) pick(results[idx]);
         return;
       }
@@ -208,25 +317,37 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
       {mode === 'categories' ? (
         <div>
           <div className="px-3 py-2 border-b border-neutral-100"><p className="text-[11px] font-medium text-neutral-400 uppercase tracking-wide">Mention</p></div>
-          {CATEGORIES.map((c, i) => {
-            const Icon = ICONS[c.type];
+          {cats.map((c, i) => {
+            const Icon = CAT_ICONS[c.type];
             return (
-              <button key={c.type} onMouseDown={e => { e.preventDefault(); setCat(c.type); }}
+              <button key={c.type} onMouseDown={e => { e.preventDefault(); setCat(c.type); setIdx(0); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left ${i === idx ? 'bg-neutral-50' : 'hover:bg-neutral-50'}`}>
-                <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${ICON_BG[c.type]}`}><Icon className="w-3.5 h-3.5" /></div>
+                <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${CAT_BG[c.type]}`}><Icon className="w-3.5 h-3.5" /></div>
                 <span className="flex-1 text-[13px] font-medium text-neutral-700">{c.label}</span>
                 <ChevronRightIcon className="w-3.5 h-3.5 text-neutral-300" />
               </button>
             );
           })}
         </div>
+      ) : skillPage ? (
+        <SkillMenu
+          actorName={skillMenu?.actor.name ?? 'them'}
+          skills={skillRows}
+          pick={livePick}
+          activeIdx={idx}
+          loading={!skillMenu}
+          onToggle={toggleSkillRow}
+          onAssign={assignSkillRow}
+          {...(!slash ? { onBack: () => { setCat(null); setIdx(0); } } : {})}
+          {...(saveAsSkill ? { onSaveAsSkill: saveAsSkill } : {})}
+        />
       ) : (
         <div>
           {cat && (
             <button onMouseDown={e => { e.preventDefault(); setCat(null); setResults([]); setIdx(0); }}
               className="w-full flex items-center gap-2 px-3 py-2 border-b border-neutral-100 hover:bg-neutral-50 text-left">
               <ChevronLeftIcon className="w-3.5 h-3.5 text-neutral-400" />
-              <span className="text-[12px] font-medium text-neutral-500">{CATEGORIES.find(c => c.type === cat)?.label}</span>
+              <span className="text-[12px] font-medium text-neutral-500">{cats.find(c => c.type === cat)?.label}</span>
             </button>
           )}
           <div className="max-h-[240px] overflow-y-auto">
@@ -254,14 +375,15 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
   function toggleMention() {
     // Clicking Mention again (dropdown open) closes it and strips the dangling @.
     if (mq !== null) {
-      setValue(v => v.replace(/@[^@\s]*$/, ''));
-      setMq(null); setCat(null);
+      const ch = slash ? '/' : '@';
+      setValue(v => stripTrigger(v, ch));
+      setMq(null); setCat(null); setSlash(false);
       return;
     }
     const el = taRef.current; if (!el) return;
     const pos = el.selectionStart ?? value.length;
     setValue(value.slice(0, pos) + '@' + value.slice(pos));
-    setMq(''); setCat(null); setIdx(0);
+    setMq(''); setCat(null); setSlash(false); setIdx(0);
     setTimeout(() => { el.focus(); el.setSelectionRange(pos + 1, pos + 1); }, 0);
   }
 
@@ -313,11 +435,12 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onAttach, disabled]);
 
-  const hasChips = mentions.length > 0 || attachments.length > 0;
+  const hasChips = mentions.length > 0 || attachments.length > 0 || skillChips.length > 0;
 
   return (
     <div className="relative" ref={wrapRef}>
       {dropdown}
+      {skillDraft.node}
       {dragOver && onAttach && (
         <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-indigo-300 bg-indigo-50/90 pointer-events-none">
           <span className="flex items-center gap-1.5 text-[13px] font-medium text-indigo-600">
@@ -339,6 +462,7 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
                 </div>
               );
             })}
+            <SkillChips chips={skillChips} onRemove={(c) => setSkillPick(p => dropChip(reconcilePick(p, skillMenu?.skills), c))} />
             {attachments.map(att => (
               <div key={att.id} className="flex items-center gap-1.5 px-2.5 py-1 bg-neutral-100 rounded-lg text-[12px] text-neutral-700">
                 {att.isUploading ? (
@@ -370,6 +494,13 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
             </button>
           )}
           {accessory}
+          {/* The actor's always-on skills, quietly — on surfaces with no header band to carry them. */}
+          {skills?.usesInRow && (
+            <>
+              <span className="flex-1" />
+              <SkillsUsesView skills={skillMenu?.skills} onOpen={(id) => openSkillsAt(id)} className="mr-2 max-w-[45%]" />
+            </>
+          )}
           <button onClick={submit} disabled={disabled || !value.trim()}
             className="ml-auto flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-600 text-white disabled:opacity-40 hover:bg-indigo-700 transition-colors">
             <PaperAirplaneIcon className="w-3.5 h-3.5" />

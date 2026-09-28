@@ -78,7 +78,13 @@ import type { RoomHistoryLine } from '@/components/room/filed-drawer';
 // opener's one producer, the orphan rule — and the ONE answer renderer the Home chat draws with.
 import { isAnswerTurn, isNarrationTurn, isPersistedOpener, openerInvite, OPENER_INVITE, orphanQuestion, ORPHAN_LINE, ORPHAN_RETRY } from '@/components/home/room-chat';
 import { Answer } from '@/components/home/ask-answer';
+// SKILLS IN CHAT (W21): the send body's `skills`, the answer's receipt + offer (the Home chat's own).
+import { followedFor, skillsBody, skillTurnFields, skillsReceiptItem, skillOfferItem, type SkillPick, type SkillFollowed, type SkillOffer } from '@/components/skills/skill-menu-model';
+import { readFollowedByTurn } from '@/components/skills/followed-read';
+import { useSkillDraft } from '@/components/skills/use-skill-draft';
+import { declineSkillOffer } from '@/components/one/chat-actions';
 import { stripUnresolvedTags } from '@/lib/home/ask-refs';
+import { SEAT_LABEL } from '@/lib/workers/roles';
 
 // 'entity' = the PROJECT DOOR (P7c-c2): the same rail inside the project room — id is the entity
 // id, steer/ingest run in entity scope, the Overview chip hides (you're already there).
@@ -180,7 +186,12 @@ type Turn =
        *  (components/home/chat-cards.tsx). A LIVE turn carries the served spec/payload; a REHYDRATED
        *  one carries the POINTER and each card's host re-reads its truth (a frozen copy would offer a
        *  door that stopped being true). */
-      cards?: ChatCards };
+      cards?: ChatCards;
+      /** SKILLS IN CHAT (W21) — the skills this answer followed (its muted receipt) and, at most once,
+       *  the quiet offer to save the exchange as a skill. Live and reloaded through ONE reader. */
+      skillsFollowed?: SkillFollowed[]; skillOffer?: SkillOffer;
+      /** The durable row id — the key a reloaded answer's followed skills are served under. */
+      rowId?: string };
 
 // THE ROOM (P7c-c1 → one-room R1): the conversation is PER-DEAL, not per-item — navigating between
 // a deal's artifacts keeps the chat. The module store is now only the LIVE RENDER CACHE; the durable
@@ -276,6 +287,8 @@ function mapServerTurns(rows: ServerTurnRow[]): Turn[] {
   return rows.filter((t) => !isPersistedOpener(t)).map((t) => {
     const turn: Turn = { role: t.role, text: t.text, refs: t.refs ?? undefined, author: t.author ?? undefined } as Turn;
     if (turn.role === 'system' && t.key) turn.dkey = t.key;
+    // THE RECEIPT SURVIVES THE RELOAD (W21) — the same reader the live answer goes through.
+    if (turn.role === 'system') Object.assign(turn, skillTurnFields(t), t.id ? { rowId: t.id } : {});
     // The reader's question carries its door key (`ask:<reqId>`) and its row id, so an orphan's
     // "Ask again" re-answers the SAME question row instead of writing it twice.
     if (turn.role === 'user') {
@@ -564,6 +577,11 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   // here — the item door then read and wrote a machine container's conversation).
   const roomKey = roomKeyForDoor(door);
   const [turns, setTurnsRaw] = useState<Turn[]>(() => _dealTurns.get(roomKey) ?? []);
+  // SKILLS IN CHAT (W21) — Save as skill drafts from THIS room's address and opens the one editor; the
+  // reloaded answers' followed skills, by row id (applied at render, never a rewrite of the turns).
+  const skillDraft = useSkillDraft();
+  const [followedByTurn, setFollowedByTurn] = useState<Record<string, SkillFollowed[]>>({});
+  const followedAsked = useRef<Set<string>>(new Set());
   const setTurns = (updater: (prev: Turn[]) => Turn[]) => {
     setTurnsRaw((prev) => { const next = updater(prev); _dealTurns.set(roomKey, next); return next; });
   };
@@ -639,6 +657,15 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
           try { window.dispatchEvent(new CustomEvent('aug:conversation-changed')); } catch { /* SSR */ }
         }
         const server: Turn[] = mapServerTurns(d.turns as ServerTurnRow[]);
+        // THE RECEIPTS OF A RELOADED ROOM (W21): the companion read runs only when an answer row this
+        // room has not asked about lands (the 20s live refresh never re-reads what it already knows).
+        const unasked = server.filter((t) => t.role === 'system' && t.rowId && !followedAsked.current.has(t.rowId));
+        if (unasked.length) {
+          unasked.forEach((t) => { if (t.role === 'system' && t.rowId) followedAsked.current.add(t.rowId); });
+          void readFollowedByTurn(roomKey).then((by) => {
+            if (alive && Object.keys(by).length) setFollowedByTurn((prev) => ({ ...prev, ...by }));
+          });
+        }
         // THE ENVELOPE THE WARM FILLS (Sep 8): the RAW rows are cached, so a hydrate re-enters the
         // SAME mapper above rather than a second reading of the same payload. TURNS ONLY — the
         // served marker is read by the sidebar's badge, never by this room's render.
@@ -720,7 +747,8 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   const seat = useCosSeat();
   const seatId = seat?.agentId ?? 'cos';
   const seatName = seat?.name ?? 'Your assistant';
-  const seatLabel = seat ? 'chief of staff' : undefined;
+  // W22.B · the seat's label is the role's label — ONE source (lib/workers/roles.ts ROLE_LABELS).
+  const seatLabel = seat ? SEAT_LABEL : undefined;
 
   // The kit owns the scroller now — pin to the newest turn through it.
   useEffect(() => {
@@ -858,7 +886,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     } finally { setBusy(false); }
   };
 
-  const send = async (raw: string, reask?: Extract<Turn, { role: 'user' }>) => {
+  const send = async (raw: string, reask?: Extract<Turn, { role: 'user' }>, skills?: SkillPick) => {
     const t = raw.trim();
     if (!t || busy) return;
     const gen = genOf(roomKey);
@@ -881,7 +909,8 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
       const res = await fetch('/api/items/steer', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ kind, id, text: t, answerKey: reqId, stream: true,
-          ...(reask?.turnId ? { reaskTurnId: reask.turnId, ...(reask.reqId ? { reaskKey: reask.reqId } : {}) } : {}) }),
+          ...(reask?.turnId ? { reaskTurnId: reask.turnId, ...(reask.reqId ? { reaskKey: reask.reqId } : {}) } : {}),
+          ...skillsBody(skills) }),
       });
       const d: Record<string, any> = isConverseStream(res) // eslint-disable-line @typescript-eslint/no-explicit-any
         ? ((await readConverseStream(res, (ev) => {
@@ -945,6 +974,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
           // payload reader, so the live card needs no round-trip. The DURABLE copy is the component
           // turn the steer door wrote server-side — the next open re-reads it as a pointer.
           ...(hasChatCards(liveCards) ? { cards: liveCards } : {}),
+          ...skillTurnFields(d),
         }]);
       }
     } catch {
@@ -1701,6 +1731,21 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   // ── NO ORPHAN QUESTION (W19.B): an exchange that ends on the reader's words with nothing in flight
   // says so, in one quiet line, and offers the one door — "Ask again" re-answers THAT question
   // through the same steer door (its key, or its row for a pre-W19 question), never a second copy.
+  // ── SKILLS IN CHAT (W21) — under a spoken answer: its receipt ("followed: A, B") and, at most, ONE
+  // quiet offer to save the exchange as a skill, both in the kit's one muted line (the Home chat's own).
+  const pushSkillLines = (t: Extract<Turn, { role: 'system' }>, key: string) => {
+    const receipt = skillsReceiptItem(key, followedFor(t, followedByTurn));
+    if (receipt) items.push(receipt);
+    const offer = skillOfferItem(key, t.skillOffer, {
+      save: () => { void skillDraft.open(roomKey); },
+      decline: () => {
+        const pk = t.skillOffer?.patternKey;
+        setTurns((prev) => prev.map((x) => (x === t ? { ...x, skillOffer: undefined } as Turn : x)));
+        if (pk) void declineSkillOffer(pk);
+      },
+    });
+    if (offer) items.push(offer);
+  };
   const pushOrphanLine = (exchange: Turn[]) => {
     const orphan = orphanQuestion(exchange, busy);
     if (!orphan || orphan.role !== 'user') return;
@@ -1740,7 +1785,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     itemExchange.forEach((t, i) => {
       const key = `x${i}`;
       if (t.role === 'user') { items.push({ type: 'user_bubble', id: key, text: t.text }); return; }
-      items.push(speechBubble(t, key));
+      items.push(speechBubble(t, key)); pushSkillLines(t, key);
     });
     pushOrphanLine(itemExchange);
   }
@@ -1866,7 +1911,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
       items.push({ type: 'event_line', id: key, text: t.text, ...(lineRefs.length ? { refs: lineRefs } : {}) });
       return;
     }
-    items.push(speechBubble(t, key));
+    items.push(speechBubble(t, key)); pushSkillLines(t, key);
   });
   if (!itemPage) pushOrphanLine(visibleTail);
 
@@ -1913,13 +1958,16 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
       <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
         <WorkerMentionInput
           frameless
-          onSubmit={(t, mentions) => {
+          onSubmit={(t, mentions, skills) => {
             const cw = mentions.find((m) => m.type === 'coworker');
             const hints = mentions.filter((m) => m.type !== 'coworker').map((m) => m.label);
             let out = cw ? `${cw.label.split(' ')[0]}, ${t}` : t;
             if (hints.length) out += ` (about: ${hints.join('; ')})`;
-            void send(out);
+            void send(out, undefined, skills);
           }}
+          // SKILLS IN CHAT (W21): the room speaks with the seat's voice — the chief's skills; the room has
+          // one chrome band (its frame's), so the "uses" line rides the composer's row.
+          skills={{ actor: 'chief', roomKey, usesInRow: true }}
           disabled={busy}
           placeholder="Ask, correct, or hand off…"
           prefill={composerPrefill}
@@ -1955,6 +2003,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
         items={items}
         composerNode={composerBlock}
       />
+      {skillDraft.node}
     </div>
   );
 }

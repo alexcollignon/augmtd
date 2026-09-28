@@ -2,13 +2,13 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  AcademicCapIcon, PlusIcon, PencilSquareIcon, TrashIcon, XMarkIcon,
+  AcademicCapIcon, PlusIcon, PencilSquareIcon, TrashIcon,
   ArrowUpTrayIcon, ArrowDownTrayIcon, CheckIcon,
 } from '@heroicons/react/24/outline';
-import { toast } from 'sonner';
 import { parseSkillMarkdown, skillToMarkdown, skillFilename } from '@/lib/skills/markdown';
-import { Button, IconButton, Input, Textarea, Card, EmptyState } from '@/components/ui';
+import { Button, IconButton, Card, EmptyState } from '@/components/ui';
 import { SkillInterviewModal, type InterviewDraft } from './skill-interview-modal';
+import { SkillEditorModal, EMPTY_SKILL_DRAFT, type SkillDraft } from '@/components/skills/skill-editor-modal';
 
 const ROLE_AVATARS: Record<string, string> = {
   personal_assistant: '/workers/clara.png',
@@ -34,9 +34,9 @@ interface SkillsLibraryViewProps {
   workers: RosterWorker[];
 }
 
-type Draft = { id: string | null; name: string; when_to_use: string; content: string; source?: string; kind?: string | null; assignWorkerIds?: string[] };
+type Draft = SkillDraft;
 
-const EMPTY_DRAFT: Draft = { id: null, name: '', when_to_use: '', content: '' };
+const EMPTY_DRAFT: Draft = EMPTY_SKILL_DRAFT;
 
 function WorkerDot({ w }: { w: SkillWorker }) {
   const src = w.worker_role ? ROLE_AVATARS[w.worker_role] : null;
@@ -52,7 +52,6 @@ export function SkillsLibraryView({ workers }: SkillsLibraryViewProps) {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [assignOpen, setAssignOpen] = useState<string | null>(null);
   const [interviewOpen, setInterviewOpen] = useState(false);
@@ -69,50 +68,6 @@ export function SkillsLibraryView({ workers }: SkillsLibraryViewProps) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
-
-  async function handleSave() {
-    if (!draft || isSaving) return;
-    const name = draft.name.trim();
-    const content = draft.content.trim();
-    if (!name || !content) return;
-    setIsSaving(true);
-    try {
-      // Voice lives in Memory, not the skills library. A new voice-kind draft (from the
-      // interview) routes to the user's durable voice profile instead of becoming a skill.
-      if (!draft.id && draft.kind === 'voice') {
-        await fetch('/api/context/voice', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }),
-        });
-        setDraft(null);
-        toast.success('Saved to your voice — Settings → Memory');
-        return;
-      }
-      const payload = { name, when_to_use: draft.when_to_use.trim() || null, content, source: draft.source ?? 'manual', kind: draft.kind ?? null };
-      if (draft.id) {
-        await fetch(`/api/skills/${draft.id}`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-        });
-      } else {
-        const res = await fetch('/api/skills', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-        });
-        // Assign the workers picked during the interview pre-qual to the new skill.
-        const created = await res.json().catch(() => null);
-        const newId = created?.skill?.id;
-        if (newId && draft.assignWorkerIds?.length) {
-          await Promise.all(draft.assignWorkerIds.map(agentId =>
-            fetch(`/api/skills/${newId}/assign`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ agent_id: agentId, assigned: true }),
-            }).catch(() => {})));
-        }
-      }
-      setDraft(null);
-      load();
-    } finally {
-      setIsSaving(false);
-    }
-  }
 
   async function handleDelete(id: string) {
     setConfirmDelete(null);
@@ -337,61 +292,14 @@ export function SkillsLibraryView({ workers }: SkillsLibraryViewProps) {
         )}
       </div>
 
-      {/* Editor modal */}
+      {/* Editor modal — THE ONE SKILL EDITOR (components/skills/skill-editor-modal.tsx), shared with
+          the chat's "Save as skill" door; it owns its own save. */}
       {draft && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => !isSaving && setDraft(null)}>
-          <div
-            className="w-full max-w-[560px] rounded-2xl bg-white shadow-xl overflow-hidden flex flex-col max-h-[90vh]"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-100">
-              <h2 className="text-[14px] font-semibold text-neutral-800">{draft.id ? 'Edit skill' : 'New skill'}</h2>
-              <IconButton onClick={() => setDraft(null)}>
-                <XMarkIcon className="w-5 h-5" />
-              </IconButton>
-            </div>
-
-            <div className="px-5 py-4 space-y-4 overflow-y-auto">
-              <div>
-                <label className="block text-[12px] font-medium text-neutral-600 mb-1.5">Name</label>
-                <Input
-                  value={draft.name}
-                  onChange={e => setDraft({ ...draft, name: e.target.value })}
-                  placeholder="e.g. Client report format"
-                />
-              </div>
-              <div>
-                <label className="block text-[12px] font-medium text-neutral-600 mb-1.5">
-                  Use when <span className="text-neutral-400 font-normal">— optional, helps the worker pick the right skill</span>
-                </label>
-                <Input
-                  value={draft.when_to_use}
-                  onChange={e => setDraft({ ...draft, when_to_use: e.target.value })}
-                  placeholder="e.g. When writing a client report"
-                />
-              </div>
-              <div>
-                <label className="block text-[12px] font-medium text-neutral-600 mb-1.5">Instructions</label>
-                <Textarea
-                  value={draft.content}
-                  onChange={e => setDraft({ ...draft, content: e.target.value })}
-                  rows={9}
-                  placeholder={`The rules the worker should follow when this applies. e.g.\n\n- Lead with the recommendation, then the rationale\n- One page max; cite every figure\n- UK English, metric units\n- No jargon or filler`}
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 px-5 py-3.5 border-t border-neutral-100 bg-neutral-50">
-              <Button variant="ghost" onClick={() => setDraft(null)}>Cancel</Button>
-              <Button
-                onClick={handleSave}
-                disabled={isSaving || !draft.name.trim() || !draft.content.trim()}
-              >
-                {isSaving ? 'Saving…' : draft.id ? 'Save changes' : 'Create skill'}
-              </Button>
-            </div>
-          </div>
-        </div>
+        <SkillEditorModal
+          initial={draft}
+          onClose={() => setDraft(null)}
+          onSaved={() => { setDraft(null); load(); }}
+        />
       )}
 
       {/* Interview builder — pre-qual → generated Q&A → hands a draft to the editor above */}
