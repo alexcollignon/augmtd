@@ -186,6 +186,18 @@ export async function readRoomTurns(
   } catch { return []; }
 }
 
+/** W23.B — A CHAT'S TITLE, the one reader: the user's rename or the generated title (both live in
+ *  item_plans kind 'room_title' — lib/converse/chat-title.ts writes the generated one ONCE, a rename
+ *  overwrites it). Null = no title yet (the surface keeps its first-ask fallback). Never throws. */
+export async function readChatTitle(client: SupabaseClient, userId: string, roomKey: string): Promise<string | null> {
+  try {
+    const { readPlan } = await import('@/lib/store/item-plans');
+    const row = await readPlan(client, userId, 'room_title', roomKey);
+    const title = (row?.tasks as { title?: string | null } | null)?.title;
+    return typeof title === 'string' && title.trim() ? title.trim() : null;
+  } catch { return null; }
+}
+
 /** ARCHIVE the live conversation ("Clear" = a session boundary, never a deletion). Pre-migration
  *  degrades to the old delete so Clear always works. */
 export async function archiveRoomTurns(client: SupabaseClient, userId: string, roomKey: string): Promise<void> {

@@ -720,9 +720,14 @@ console.log('\nT5 · THE LIVE CHAT SURFACE — the Home thread and the coworker 
 
   // THE TAKEOVER GEOMETRY stays the host's: the shell is bounded, so the thread scrolls INSIDE the
   // Home instead of the page scrolling under it, and the pin follows the kit's own scroller.
-  gate('T5.17 the takeover mounts the shell bounded, and the pin follows the kit’s scroller',
-    !!ask && /max-h-\[calc\(100vh-200px\)\]/.test(ask)
-    && /shellRef\.current\?\.querySelector<HTMLElement>\('\.overflow-y-auto'\)/.test(ask));
+  // ⟲ RE-POINTED (W23.A — ONE FULL-HEIGHT SCROLL, owner walk Sep 28): the bounded box WAS the second
+  // scrollbar and the clipped answer. The live Home chat takes the pane geometry (the kit's one
+  // scroller fills the content area) and the pin is THE ONE FOLLOW over the kit's scroller
+  // (components/home/use-follow-bottom.tsx — gated in scripts/smoke-chat-scroll.ts).
+  gate('T5.17 the takeover fills the pane (no bounded box), and the pin follows the kit’s scroller',
+    !!ask && !/max-h-\[calc\(100vh-200px\)\]/.test(ask)
+    && /useFollowBottom\(shellRef, showThread, dmPane\)/.test(ask)
+    && /host\?\.querySelector<HTMLElement>\('\.overflow-y-auto'\)/.test(read('components/home/use-follow-bottom.tsx') ?? ''));
 }
 
 // ── T6 · THE ROOM'S CONVERSATION (P2d) ──────────────────────────────────────────────────────────
@@ -1683,7 +1688,7 @@ console.log('\nT11 · THE READ MARKER — the project raising its hand');
     // ⟲ RE-POINTED (W13.6): the same turns are served through the ask truth net (a false ask speaks
     // its floor on this paint); readAt is still the pre-stamp marker.
     // ⟲ RE-POINTED (W14.2): the turns first pass the narration floor (servedNarrationTurns), then the ask net.
-    && /const served = await servedNarrationTurns\(supabase, user\.id, turns\);\s*return NextResponse\.json\(\{ turns: await truthfulAskTurns\(served as never\[\]\), readAt \}\)/.test(turnsRoute) /* ⟲ W14.2: the same turns pass the narration floor first */);
+    && /const served = await servedNarrationTurns\(supabase, user\.id, turns\);\s*return NextResponse\.json\(\{ turns: await truthfulAskTurns\(served as never\[\]\), readAt(?:, \.\.\.\(key\.startsWith\('chat:'\) \? \{ title \} : \{\}\))? \}\)/.test(turnsRoute) /* ⟲ W23.B: a Home chat's read also serves its title */ /* ⟲ W14.2: the same turns pass the narration floor first */);
 
   // 3 — THE UNREAD FACT: non-user live turns newer than the marker; ABSENT without a marker.
   gate('T11.6 unread counts LIVE, NON-USER turns newer than the marker',
@@ -1860,10 +1865,12 @@ console.log('\nT12 · THE COWORKER DM — the board’s pane, opening at once');
     !!ask && /presenceRoleLabel\(dmActor\.id\) \? \{ subtitle: presenceRoleLabel\(dmActor\.id\) \}/.test(ask)
     && /loadLS<PresenceMate\[\]>\('aug-team-presence-v1'\)/.test(ask)
     && !/fetch\('\/api\/workers\/presence'/.test(ask));
+  // ⟲ RE-POINTED (W23.A): the Home chat now takes the SAME pane (the host's 'dm' geometry) — one
+  // full-height scroll for every conversation; only the background differs.
   gate('T12.2 the DM takeover announces its MODE and the pane FILLS (no reading-column box, no max-height)',
-    !!ask && /detail: \{ active: showThread, mode: dmPane \? 'dm' : 'home' \}/.test(ask)
+    !!ask && /detail: \{ active: showThread, mode: showThread \? 'dm' : 'home' \}/.test(ask)
     && /const dmPane = showThread && !!dmActor;/.test(ask)
-    && /dmPane\s*\?\s*'min-h-0 flex-1'\s*:\s*'!bg-transparent max-h-\[calc\(100vh-200px\)\] min-h-\[46vh\]'/.test(ask));
+    && /dmPane\s*\?\s*'min-h-0 flex-1'\s*:\s*'min-h-0 flex-1 !bg-transparent'/.test(ask));
   gate('T12.3 the HOST stops docking the DM to the Home’s sticky floor (that mt-auto push WAS the dead zone)',
     !!home && /const dmPane = chatActive && chatDm;/.test(home)
     // RE-POINTED Sep 18 (the entrance): the same div now carries the entrance veil before its

@@ -431,7 +431,7 @@ console.log('\nC · the staged file shows as a chip, Send attaches exactly the c
       && /const reused = reusableAskText\(standing, labels, \{ tail: tail\.trim\(\), base: bases \}\);/.test(pass)
       && /select\('text, component, archived_at'\)/.test(pass) && !/priorText \|\| await composeAskSpeech/.test(pass));
     gate('G6 words already written are served TRUE on this paint (the floor) and re-spoken after it — the durable lie never paints',
-      /const served = await servedNarrationTurns\(supabase, user\.id, turns\);\s*return NextResponse\.json\(\{ turns: await truthfulAskTurns\(served as never\[\]\), readAt \}\)/.test(turnsRoute) /* ⟲ W14.2: the same turns pass the narration floor first */
+      /const served = await servedNarrationTurns\(supabase, user\.id, turns\);\s*return NextResponse\.json\(\{ turns: await truthfulAskTurns\(served as never\[\]\), readAt(?:, \.\.\.\(key\.startsWith\('chat:'\) \? \{ title \} : \{\}\))? \}\)/.test(turnsRoute) /* ⟲ W23.B: a Home chat's read also serves its title */ /* ⟲ W14.2: the same turns pass the narration floor first */
       && /export async function truthfulAskTurns</.test(legacy) && /isLegacyAskSpeech\(t\.text\) \|\| await askSpeechIsFalse\(t\.text\)/.test(legacy));
     gate('G7 the doc-send lane asks under the VERDICT\'s own labels (the generic label only for an inventory-less send)',
       JSON.stringify(docSendAskLabels({ requires: [{ label: LBL }] })) === JSON.stringify([LBL])

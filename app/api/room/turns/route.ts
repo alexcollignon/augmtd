@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { readRoomTurns, writeRoomTurn, archiveRoomTurns, archiveRoomChat, listRoomSessions, readRoomSession, restoreRoomSession, deleteRoomSession, listFiledChats } from '@/lib/room/turns';
+import { readRoomTurns, writeRoomTurn, archiveRoomTurns, archiveRoomChat, listRoomSessions, readRoomSession, restoreRoomSession, deleteRoomSession, listFiledChats, readChatTitle } from '@/lib/room/turns';
 import { readRoomMarker, stampRoomMarker } from '@/lib/room/read-marker';
 
 export const maxDuration = 15;
@@ -30,7 +30,13 @@ export async function GET(request: NextRequest) {
     }
     const session = request.nextUrl.searchParams.get('session');
     if (session) {
-      return NextResponse.json({ turns: await readRoomSession(supabase, user.id, key, session) });
+      // W23.B — a saved chat reopens with each answer's receipt ("Worked for 12s", stopped) too.
+      const { readAnswerMetaForRoom, withAnswerMeta } = await import('@/lib/converse/answer-meta');
+      const [sessionTurns, metas] = await Promise.all([
+        readRoomSession(supabase, user.id, key, session),
+        readAnswerMetaForRoom(supabase, user.id, key),
+      ]);
+      return NextResponse.json({ turns: withAnswerMeta(sessionTurns, metas) });
     }
     // THE READ MARKER — THE ONE WRITER (lib/room/read-marker.ts). This GET is the seam BOTH room
     // doors share (the rail hydrates every project/loose room from it; the Home chat panel reads
@@ -39,10 +45,17 @@ export async function GET(request: NextRequest) {
     // reopen delta ("Since you were here — …") is measured against. Only the room's OWNER writes:
     // the client is the caller's own RLS-scoped session. Fire-and-forget in after() — serving a
     // conversation never waits on bookkeeping, and a missed stamp costs one repeated line.
-    const [turns, readAt] = await Promise.all([
+    // W23.B — each answer's RECEIPT (activity + duration + stopped: lib/converse/answer-meta.ts) and, for
+    // a Home chat, its TITLE (lib/room/turns.ts readChatTitle — a rename or the generated one) ride the
+    // same parallel wave; both are enhancements that read as absent on any failure.
+    const { readAnswerMetaForRoom, withAnswerMeta } = await import('@/lib/converse/answer-meta');
+    const [rawTurns, readAt, metas, title] = await Promise.all([
       readRoomTurns(supabase, user.id, key),
       readRoomMarker(supabase, user.id, key),
+      readAnswerMetaForRoom(supabase, user.id, key),
+      key.startsWith('chat:') ? readChatTitle(supabase, user.id, key) : Promise.resolve(null),
     ]);
+    const turns = withAnswerMeta(rawTurns, metas);
     // A HOVER IS NOT A VISIT (Sep 8): `?peek=1` serves the same turns and stamps NOTHING. The room
     // warm pre-fills the conversation envelope on hover, and without this the warm would consume
     // the reader's "Since you were here" line for a room they never opened — a delta silently eaten
@@ -68,7 +81,7 @@ export async function GET(request: NextRequest) {
     // read time — the durable settle lands later, from the sweep). Decided before the paint; zero AI.
     const { servedNarrationTurns } = await import('@/lib/prepare/narration');
     const served = await servedNarrationTurns(supabase, user.id, turns);
-    return NextResponse.json({ turns: await truthfulAskTurns(served as never[]), readAt });
+    return NextResponse.json({ turns: await truthfulAskTurns(served as never[]), readAt, ...(key.startsWith('chat:') ? { title } : {}) });
   } catch (e) {
     console.error('[room/turns GET]', e);
     return NextResponse.json({ error: 'failed' }, { status: 500 });

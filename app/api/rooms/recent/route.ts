@@ -120,7 +120,9 @@ export async function GET(request: NextRequest) {
     // THE CHAT HISTORY (the durable Home chat's list): past `chat:` rooms, titled by their own
     // first user turn — unless the user RENAMED them (item_plans kind 'room_title' overrides).
     const chatKeys = keys.filter((k) => k.startsWith('chat:')).slice(0, all ? 40 : 8);
-    let chats: Array<{ key: string; label: string; at: string }> = [];
+    // W23.B: `title` = the chat's stored title (the user's rename or the generated one — ONE record,
+    // item_plans 'room_title'), null while it has none; `label` keeps the first-ask fallback under it.
+    let chats: Array<{ key: string; label: string; at: string; title: string | null }> = [];
     const projectOf = new Map<string, string>();
     const chatsP = (async () => { if (chatKeys.length) {
       const [{ data: chatTurns }, { data: titleRows }, { data: scopeRows }] = await Promise.all([
@@ -149,11 +151,11 @@ export async function GET(request: NextRequest) {
         }
       }
       chats = chatKeys
-        .map((k) => { const f = firstByKey.get(k); return f ? { key: k, label: customTitle.get(k) ?? f.label, at: f.at } : null; })
-        .filter((c): c is { key: string; label: string; at: string } => !!c);
+        .map((k) => { const f = firstByKey.get(k); return f ? { key: k, label: customTitle.get(k) ?? f.label, at: f.at, title: customTitle.get(k) ?? null } : null; })
+        .filter((c): c is { key: string; label: string; at: string; title: string | null } => !!c);
     } })();
 
-    let workerConvos: Array<{ key: string; kind: 'coworker'; label: string; href: null; at: string | null }> = [];
+    let workerConvos: Array<{ key: string; kind: 'coworker'; label: string; href: null; at: string | null; title: string | null }> = [];
     const workerConvosP = (async () => { try {
       const workers = await workersP;
       if (workers?.length) {
@@ -184,6 +186,8 @@ export async function GET(request: NextRequest) {
           .map((t) => ({
             key: `worker:${t.id}:${t.agent_id}`, kind: 'coworker' as const,
             label: String(t.title || `Chat with ${nameOf.get(t.agent_id) ?? 'a coworker'}`).slice(0, 60),
+            // W23.B: the thread's own title (generated after its first answer, or the user's rename).
+            title: t.title ? String(t.title) : null,
             href: null, at: t.updated_at ?? null,
             // THE HOVER EXPAND (owner, Aug 8): the row says WHO on approach.
             ...(nameOf.get(t.agent_id) ? { sub: `with ${nameOf.get(t.agent_id)}` } : {}),
@@ -262,7 +266,8 @@ export async function GET(request: NextRequest) {
     // global-recency order. Chats title by their first ask; rooms by their record; coworker
     // threads by their own title; unlabelable keys drop honestly.
     const chatLabel = new Map(chats.map((c) => [c.key, c.label]));
-    type Convo = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null; at: string | null; project?: string; sub?: string };
+    const chatTitle = new Map(chats.map((c) => [c.key, c.title]));
+    type Convo = { key: string; kind: 'room' | 'chat' | 'coworker'; label: string; href: string | null; at: string | null; project?: string; sub?: string; title?: string | null };
     // The room row's hover line — the CONCRETE kind, plus the PROJECT it belongs to when
     // tracked ("email · in Acme Corp"); an entity room's title IS the project, so just the word.
     const roomSub = (k: string) => {
@@ -276,7 +281,7 @@ export async function GET(request: NextRequest) {
         if (k.startsWith('chat:')) {
           const l = chatLabel.get(k);
           const proj = projectOf.get(k);
-          return l ? { key: k, kind: 'chat', label: l, href: null, at: lastAt.get(k) ?? null, ...(proj ? { project: proj, sub: `in ${proj}` } : {}) } : null;
+          return l ? { key: k, kind: 'chat', label: l, href: null, at: lastAt.get(k) ?? null, title: chatTitle.get(k) ?? null, ...(proj ? { project: proj, sub: `in ${proj}` } : {}) } : null;
         }
         const l = label.get(k);
         return l && hrefOf(k) ? { key: k, kind: 'room', label: l.slice(0, 60), href: hrefOf(k), at: lastAt.get(k) ?? null, ...(roomSub(k) ? { sub: roomSub(k) } : {}) } : null;

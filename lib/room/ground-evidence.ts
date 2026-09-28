@@ -60,7 +60,7 @@ export const GROUND_EVIDENCE_RULE =
   // (lib/inbox/thread-now.ts) clipped at 110 chars — so the marker arrives here, in quotation marks,
   // beside the words "sent the last message". Unexplained, that reads as "their message was cut off"
   // — the law's own failure mode. One rule, carried by the one constant every reasoner already imports.
-  + EXCERPT_RULE;
+  EXCERPT_RULE;
 
 /** How far around today the calendar is worth checking for a room's own people. */
 const CAL_BACK_DAYS = 14;

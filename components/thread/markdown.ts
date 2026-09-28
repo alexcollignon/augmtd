@@ -319,3 +319,42 @@ function blocksPlain(blocks: MdBlock[], depth = 0): string[] {
 export function markdownToPlain(src: string): string {
   return blocksPlain(parseMarkdown(src)).join('\n\n').trim();
 }
+
+// ── COPYABLE BLOCKS (W23.A — ChatGPT's "Writing" block) ─────────────────────────────────────────
+// A fenced block is something the reader TAKES AWAY: a prompt to paste elsewhere, an email to send,
+// a snippet of code. It renders as a bordered block with a small label, Copy and Expand. A block
+// whose info string names a piece of WRITING (prompt · email · text · draft · message) reads as
+// prose (wrapped, sans), and its bracketed placeholders ([CLIENT / AUDIENCE], [YEAR]) are marked so
+// the reader sees what to fill in. Everything else is code (monospace, scrolls sideways).
+
+const WRITING_LABELS: Record<string, string> = {
+  prompt: 'Prompt', email: 'Email', text: 'Text', draft: 'Draft', message: 'Message',
+};
+
+/** What a fenced block IS, from its info string. Pure. */
+export function codeBlockKind(lang: string): { writing: boolean; label: string } {
+  const l = String(lang ?? '').trim().toLowerCase();
+  if (WRITING_LABELS[l]) return { writing: true, label: WRITING_LABELS[l] };
+  return { writing: false, label: l ? l : 'Code' };
+}
+
+export type PlaceholderRun = { t: 'text' | 'ph'; v: string };
+
+/** A fill-in placeholder: brackets around an UPPERCASE phrase with at least two letters — `[YEAR]`,
+ *  `[CLIENT / AUDIENCE]`, `[FIRST_NAME]` — never a grounding tag (`[E1]`) or a lowercase aside. */
+const PLACEHOLDER_RE = /\[(?=[^\]\n]*[A-Z][^\]\n]*[A-Z])[A-Z0-9][A-Z0-9 /&_.,'’+-]{0,60}\]/g;
+
+/** Split plain text into text runs and placeholder runs — plain strings only (no HTML path). Pure. */
+export function splitPlaceholders(text: string): PlaceholderRun[] {
+  const s = String(text ?? '');
+  const out: PlaceholderRun[] = [];
+  let last = 0;
+  for (const m of s.matchAll(PLACEHOLDER_RE)) {
+    const at = m.index ?? 0;
+    if (at > last) out.push({ t: 'text', v: s.slice(last, at) });
+    out.push({ t: 'ph', v: m[0] });
+    last = at + m[0].length;
+  }
+  if (last < s.length) out.push({ t: 'text', v: s.slice(last) });
+  return out;
+}

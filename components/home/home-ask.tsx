@@ -54,7 +54,11 @@ import { projectHref } from '@/lib/room/project-href';
 // same letters through components/home/chat-flight.ts (`trimPartialTag`).
 import { Answer } from '@/components/home/ask-answer';
 import { AnswerActions } from '@/components/home/ask-answer';
-import { inFlightLine, failureLine, FAILURE_RETRY, trimPartialTag, STILL_WORKING_MS, ASK_TIMEOUT_MS, type FlightFailure } from '@/components/home/chat-flight';
+import { inFlightLine, failureLine, FAILURE_RETRY, trimPartialTag, STILL_WORKING_MS, ASK_TIMEOUT_MS, settleFlight, STOPPED_LABEL, type FlightFailure } from '@/components/home/chat-flight';
+// W23.A · THE CHAT SURFACE — one full-height scroll that follows the stream, Stop, "Worked for Xs ›".
+import { activityOf, durationOf, recordStep, type ActivityStep } from '@/components/home/chat-surface';
+import { useFollowBottom, JumpToLatest } from '@/components/home/use-follow-bottom';
+import { WorkedFor } from '@/components/home/worked-for';
 import { classifyPaste, pastedNote, pastedWire, pastedAsFileName, PASTE_LIMIT, type PastedPiece } from '@/components/home/paste-material';
 import { PastedChip } from '@/components/home/pasted-chip';
 import { SEAT_LABEL } from '@/lib/workers/roles';
@@ -181,7 +185,14 @@ type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
   skillPick?: SkillPick;
   /** W22.B · NEVER A SILENT RING — this answer failed (error or client timeout). The partial text,
    *  if any streamed, stays readable; a visible line with Retry follows it. */
-  failed?: FlightFailure };
+  failed?: FlightFailure;
+  /** W23.A · STOP — the reader stopped this answer; what had streamed stays, marked, with no
+   *  failure line (Retry stays in the answer's own actions). */
+  stopped?: true;
+  /** W23.A · "WORKED FOR Xs ›" — the progress steps the stream reported (the core's `activity` when
+   *  the done payload carries it, else this tab's own record) and how long the answer took. */
+  activity?: ActivityStep[];
+  durationMs?: number };
 
 // ── NEVER A TWIN (docs/attention-plan.md, law D2: "the new version lands on the SAME card") ─────
 // A revision is a NEW artifact id on the SAME chain, so a thread that has revised twice would
@@ -260,12 +271,19 @@ function useTypewriter(full: string, active: boolean): string {
 // Split answer text on [E#]/[C#]/[R#] tags → inline chips that open the referenced item.
 // W22.B · THE ANSWER'S ACTIONS ride a quiet hover row beneath it (Copy · Retry) — `group/answer` is
 // the hover scope, so the row reveals under the answer the pointer is on, not under every answer.
-function AnimatedAnswer({ text, refs, onOpen, animate, onRetry }: { text: string; refs: Ref[]; onOpen: (r: Ref) => void; animate: boolean; onRetry?: () => void }) {
+// W23.A · "Worked for Xs ›" rides ABOVE the answer; a stopped answer wears a quiet mark beneath; a
+// coworker's reply still streaming carries the soft caret at its end.
+function AnimatedAnswer({ text, refs, onOpen, animate, onRetry, cursor, stopped, activity, durationMs }: {
+  text: string; refs: Ref[]; onOpen: (r: Ref) => void; animate: boolean; onRetry?: () => void;
+  cursor?: boolean; stopped?: boolean; activity?: ActivityStep[]; durationMs?: number;
+}) {
   const shown = useTypewriter(text, animate);
   return (
     <div className="group/answer">
-      <Answer text={shown} refs={refs} onOpen={onOpen} />
-      {shown.length === text.length && text.trim() ? <AnswerActions text={text} refs={refs} onRetry={onRetry} /> : null}
+      {!cursor && <WorkedFor activity={activity} durationMs={durationMs} />}
+      <Answer text={shown} refs={refs} onOpen={onOpen} cursor={cursor} />
+      {stopped && <div className="mt-1 text-[12px] text-neutral-400">{STOPPED_LABEL}</div>}
+      {!cursor && shown.length === text.length && text.trim() ? <AnswerActions text={text} refs={refs} onRetry={onRetry} /> : null}
     </div>
   );
 }
@@ -522,6 +540,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // Load ANY chat room into the panel (mount rehydration + the History picker share this).
   const mapServerTurns = (raw: Array<{ id?: string; role: string; text: string; refs?: Array<{ label: string; href: string | null; tag?: string }>;
     author?: { kind?: string; id?: string; name?: string } | null;
+    /** W23.A · THE CONTRACT: an answer row may carry the core's own activity record. */
+    activity?: unknown; durationMs?: unknown; stopped?: unknown;
     component?: { key?: string; refId?: string; state?: Record<string, unknown> } | null }>): Turn[] =>
     raw.map((t) => ({
       role: t.role === 'user' ? 'user' as const : 'assistant' as const,
@@ -540,6 +560,11 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       ...chatCardsOfComponent(t.component),
       // THE RECEIPT SURVIVES THE RELOAD (W21): the same reader as the live answer.
       ...(t.role === 'user' ? {} : { ...skillTurnFields(t), ...(t.id ? { rowId: String(t.id) } : {}) }),
+      // W23.A · "Worked for Xs ›" survives the reload only when the core stored its record.
+      ...(t.role === 'user' ? {} : (() => {
+        const activity = activityOf(t.activity); const durationMs = durationOf(t.durationMs);
+        return { ...(activity ? { activity } : {}), ...(durationMs !== undefined ? { durationMs } : {}), ...(t.stopped === true ? { stopped: true as const } : {}) };
+      })()),
       // …and so does every card an addressed COWORKER produced — as POINTERS at their own homes
       // (hydrateCardRefs below re-reads them). Nothing about a card's mutable state is copied
       // here: send the draft, revise the document or confirm the task in the DM, and this room
@@ -737,6 +762,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         events?: Array<{ eventId?: string; id?: string; proposal?: EventProposal | null }>;
         changes?: Array<{ changeId?: string }>;
         trace?: unknown[];
+        activity?: unknown; durationMs?: unknown; stopped?: unknown;
       } }>)
         .filter((m) => (m.role === 'user' || m.role === 'assistant')
           && (String(m.content ?? '').trim() || m.metadata?.workflow_drafts?.length
@@ -749,6 +775,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
               role: 'assistant' as const, text: m.content, author: name.split(' ')[0], authorId: agentId,
               ...(m.created_at ? { at: m.created_at } : {}),
               ...skillTurnFields(m),
+              // W23.A · the DM message's own record of its work ("Worked for Xs ›") and its stop mark.
+              ...(activityOf(m.metadata?.activity) ? { activity: activityOf(m.metadata?.activity) } : {}),
+              ...(durationOf(m.metadata?.durationMs) !== undefined ? { durationMs: durationOf(m.metadata?.durationMs) } : {}),
+              ...(m.metadata?.stopped === true ? { stopped: true as const } : {}),
               ...(m.metadata?.workflow_drafts?.length ? { workflowDrafts: m.metadata.workflow_drafts } : {}),
               // THE TRACE SURVIVES THE RELOAD, FOLDED: the stored facts come back and the kit
               // re-composes the sentence from the ONE wording table. A malformed entry is dropped
@@ -974,6 +1004,13 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     } catch { /* persistence is an enhancement — the session still works */ }
   };
   const [busy, setBusy] = useState(false);
+  // ── STOP (W23.A) — while a turn is in flight the send button is Stop. `flightRef` is the live
+  // flight's abort (set by askChief / askWorker around their own AbortController); `stopAsked` catches
+  // a Stop pressed before the request left (an upload still running) — the flight aborts the moment
+  // it arms. The CONTRACT: the client aborts; the server treats the closed stream as a cancel.
+  const flightRef = useRef<(() => void) | null>(null);
+  const stopAsked = useRef(false);
+  const stopFlight = () => { stopAsked.current = true; flightRef.current?.(); };
   useEffect(() => {
     if (!busy) { setSlow(false); return; }
     const tm = window.setTimeout(() => setSlow(true), STILL_WORKING_MS);
@@ -1039,21 +1076,12 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   useEffect(() => {
     if (pendingAnimate.current !== null) { setAnimateIdx(pendingAnimate.current); pendingAnimate.current = null; }
   }, [turns.length]);
-  // Pin to the latest turn — CONTAINER-scoped (never scrolls the page), on new turns AND on open
-  // (the grid transition needs a beat before the height is real).
-  const pinToEnd = () => {
-    const el = shellRef.current?.querySelector<HTMLElement>('.overflow-y-auto');
-    if (el) el.scrollTop = el.scrollHeight;
-  };
-  useEffect(() => { pinToEnd(); const tm = window.setTimeout(pinToEnd, 320); return () => window.clearTimeout(tm); }, [turns.length, busy]);
-  // While the newest answer TYPES, keep the container pinned to the growing text.
-  useEffect(() => {
-    if (animateIdx === null) return;
-    let raf = 0; const start = performance.now();
-    const tick = (now: number) => { pinToEnd(); if (now - start < 6000) raf = requestAnimationFrame(tick); };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [animateIdx]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── FOLLOW THE STREAM (W23.A — components/home/use-follow-bottom.tsx) ─────────────────────────
+  // The old pin forced the scroller to the bottom on every new turn AND for six seconds of every
+  // typewriter — a reader who scrolled up to re-read was dragged back down. The ONE follow now
+  // decides: pinned while the reader is at (or near) the bottom, let go the moment they scroll up,
+  // a "↓" above the composer to come back. A send and an opening pin explicitly.
+  const pinToEnd = () => follow.pin();
 
   const openRef = (r: Ref) => { if ('href' in r && r.href) router.push(r.href); };
 
@@ -1150,10 +1178,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     // card the coworker produced died with it. The ask persists NOW, the answer when it lands.
     // A retry's question is already in the room — exactly once (W22.B).
     if (!extra?.retry) persistTurn('user', question + fileNote);
-    const patchLast = (text: string, failed?: FlightFailure) => setTurns((prev) => {
+    const patchLast = (text: string, failed?: FlightFailure, more?: Partial<Turn>) => setTurns((prev) => {
       const next = [...prev];
       const last = next[next.length - 1];
-      if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, text, ...(failed ? { failed } : {}) };
+      if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, text, ...(failed ? { failed } : {}), ...(more ?? {}) };
       return next;
     });
     // NEVER A SILENT RING (W22.B): the same client timeout as the chief door, aborted out loud.
@@ -1161,6 +1189,15 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     let timedOut = false;
     const timer = window.setTimeout(() => { timedOut = true; ctl.abort(); }, ASK_TIMEOUT_MS);
     let acc = '';
+    // W23.A · STOP reuses the same controller: the reader's Stop aborts the request (the server treats
+    // the closed stream as a cancel); the partial reply stays, marked stopped. The steps the stream
+    // reports are recorded for "Worked for Xs ›".
+    let stopped = false;
+    const t0 = performance.now();
+    let steps: ActivityStep[] = [];
+    const worked = (): Partial<Turn> => ({ ...(steps.length ? { activity: steps } : {}), durationMs: Math.round(performance.now() - t0) });
+    flightRef.current = () => { stopped = true; ctl.abort(); };
+    if (stopAsked.current) flightRef.current();
     try {
       const tid = await dmThread(w);
       if (!tid) throw new Error('no thread');
@@ -1252,6 +1289,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                 if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, ...sk };
                 return next;
               }); }
+            // W23.A · the work's steps, as they land (a progress label, or a tool's own words).
+            if (event.type === 'progress') steps = recordStep(steps, event.label, performance.now() - t0);
+            // (a tool's step records only the label the stream SENT — the host never composes trace words)
+            else if (event.type === 'tool_start') steps = recordStep(steps, event.label, performance.now() - t0);
             if (event.type === 'text') { acc += event.delta ?? ''; patchLast(acc); }
             else if (event.type === 'text_clear') { acc = ''; patchLast(acc); }
             // ── THE TRACE LINE (Sep 22) ─────────────────────────────────────────────────────
@@ -1344,7 +1385,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       }
       const made = cards.length || drafts.length || wfDrafts.length || invites.length || collections.length || events.length || changes.length;
       const said = acc.trim() || (made ? `${first} produced the work below.` : `${first} finished without a written reply.`);
-      patchLast(said);
+      patchLast(said, undefined, worked());
       if (made) setCards();
       // A CARD IS A TURN: the answer lands in the room WITH every card's pointer, so the next open
       // rebuilds them through the same hosts. Each pointer names the card's OWN home — the DM
@@ -1356,9 +1397,13 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         ...(refs.length ? { component: { key: 'worker_cards', refId: tid, state: { items: refs } } } : {}),
       });
     } catch {
-      // A visible failure with Retry (the failure line), the partial reply kept readable above it.
-      patchLast(trimPartialTag(acc).trim(), timedOut ? 'timeout' : 'error');
-    } finally { window.clearTimeout(timer); setBusy(false); }
+      // A visible failure with Retry (the failure line), the partial reply kept readable above it —
+      // unless the READER stopped it (W23.A): then the partial is the answer, marked, and no failure line.
+      const settled = settleFlight(stopped ? 'stopped' : timedOut ? 'timeout' : 'error', acc);
+      patchLast(settled.text, settled.failed, { ...(settled.stopped ? { stopped: true as const } : {}), ...worked() });
+      // A stopped reply's words were said — the room keeps them (the DM's own store is the server's).
+      if (settled.stopped && settled.text) persistTurn('system', settled.text, undefined, { authorAgentId: w.id });
+    } finally { window.clearTimeout(timer); flightRef.current = null; setBusy(false); }
   };
 
   // The browser's File.type is unreliable for dragged Office files (often empty) — the
@@ -1412,6 +1457,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     const files = pendingFiles;
     const pastes = pendingPastes;
     if ((!question && !files.length && !pastes.length) || busy) return;
+    stopAsked.current = false;
     if (temp && files.length) {
       setPendingFiles([]);
       setTurns((prev) => [...prev, { role: 'assistant', text: 'Attachments are off in a temporary chat (they would persist). Switch Temporary off to attach.' }]);
@@ -1431,6 +1477,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     // literal string the brain was given (the attachment note included), so history stays exact.
     const chips = [...files.map((f) => f.name), ...mentions.map((m) => m.label)];
     setTurns((prev) => [...prev, { role: 'user', text: said, sent: shown, ...(chips.length ? { chips } : {}), ...(pastes.length ? { pasted: pastes } : {}), ...(skills ? { skillPick: skills } : {}) }]);
+    // W23.A · a SEND always lands the reader on their own words (and follows the answer from there).
+    pinToEnd();
     setBusy(true);
     try {
       if (!temp) {
@@ -1529,15 +1577,23 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     let timedOut = false;
     const timer = window.setTimeout(() => { timedOut = true; ctl.abort(); }, ASK_TIMEOUT_MS);
     let st = initialAskStream;
+    // W23.A · STOP — the same controller; the reader's Stop wins over the failure reading.
+    let stopped = false;
+    flightRef.current = () => { stopped = true; ctl.abort(); };
+    if (stopAsked.current) flightRef.current();
+    // W23.A · "WORKED FOR Xs ›" — every progress label, with its moment (the core's record wins when sent).
+    const t0 = performance.now();
+    let steps: ActivityStep[] = [];
     const fail = (reason: FlightFailure) => {
-      const partial = trimPartialTag(liveTextRef.current || st.live).trim();
-      setTurns((prev) => { pendingAnimate.current = -1; return [...prev, { role: 'assistant', text: partial, failed: reason }]; });
+      const settled = settleFlight(stopped ? 'stopped' : reason, liveTextRef.current || st.live);
+      const worked = { ...(steps.length ? { activity: steps } : {}), durationMs: Math.round(performance.now() - t0) };
+      setTurns((prev) => { pendingAnimate.current = -1; return [...prev, { role: 'assistant', text: settled.text, ...(settled.failed ? { failed: settled.failed } : { stopped: true as const }), ...worked }]; });
     };
     try {
       // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
       // line speaks them), `done` carries the answer. A non-SSE response (error JSON) falls back.
       const res = await fetch('/api/home/ask', { method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(sentRoomKey ? { roomKey: sentRoomKey } : {}), ...(attachments.length ? { attachments } : {}), ...(wire.pasted ? { pasted: wire.pasted } : {}), ...(scope ? { entityId: scope.id } : {}), ...skillsBody(skills) }) });
-      let d: { answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string; type?: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string; type?: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike }; emailDraft?: { id: string; itemId?: string; draft?: StandaloneEmailDraft }; collection?: { id: string; spec: CollectionSpec }; event?: { id?: string; spec: EventSpec }; change?: { id: string; spec: ChangeSpec } } = {};
+      let d: { activity?: unknown; durationMs?: unknown; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string; type?: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string; type?: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike }; emailDraft?: { id: string; itemId?: string; draft?: StandaloneEmailDraft }; collection?: { id: string; spec: CollectionSpec }; event?: { id?: string; spec: EventSpec }; change?: { id: string; spec: ChangeSpec } } = {};
       // THE STREAM NEVER RETYPES: the reducer's own verdict decides whether the seated turn
       // animates — it must be the thing the component reads, not a parallel re-derivation.
       let gotDone = false;
@@ -1548,6 +1604,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           // PURE reducer's (components/home/ask-stream.ts) — this branch only moves its
           // output into React state. The `done` frame's authority is unchanged.
           st = askStreamReducer(st, ev as AskStreamEvent);
+          if (ev.type === 'progress') steps = recordStep(steps, ev.label, performance.now() - t0);
           if (st.stage !== null) setStage(st.stage);
           if (st.live !== liveTextRef.current) { liveTextRef.current = st.live; setLiveText(st.live); }
           if (ev.type === 'done') { d = ev as typeof d; gotDone = true; }
@@ -1586,13 +1643,17 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // A token-streamed answer already revealed itself — the typewriter must not re-type it
       // (the reducer decides; `animate:false` means the user has already read these words, so a
       // final text that differs only slightly settles in place instead of clearing and retyping).
-      setTurns((prev) => { pendingAnimate.current = st.animate ? prev.length : -1; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...chatCardsOfPayload(d as Record<string, unknown>), ...skillTurnFields(d), ...artCard }]; });
+      // W23.A · the answer's own record of its work: the core's (THE CONTRACT) when the done payload
+      // carries it, else what this tab saw arrive.
+      const activity = activityOf(d.activity) ?? (steps.length ? steps : undefined);
+      const durationMs = durationOf(d.durationMs) ?? Math.round(performance.now() - t0);
+      setTurns((prev) => { pendingAnimate.current = st.animate ? prev.length : -1; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(activity ? { activity } : {}), durationMs, ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...chatCardsOfPayload(d as Record<string, unknown>), ...skillTurnFields(d), ...artCard }]; });
       if (d.artifact) void openArtifact(d.artifact.threadId, d.artifact.id);
       if (d.answer && !sentRoomKey) persistTurn('system', d.answer, d.refs ?? []);
       if (d.focus && !scope && !temp) setScopeHint(d.focus);
     } catch {
       fail(timedOut ? 'timeout' : 'error');
-    } finally { window.clearTimeout(timer); setBusy(false); setStage(null); setLiveText(''); liveTextRef.current = ''; }
+    } finally { window.clearTimeout(timer); flightRef.current = null; setBusy(false); setStage(null); setLiveText(''); liveTextRef.current = ''; }
   };
   const ask = (q: string) => { void handleSubmit(q, []); };
 
@@ -1610,6 +1671,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     if (u < 0) return;
     const q = turns[u];
     setTurns((prev) => prev.slice(0, u + 1));
+    stopAsked.current = false;
     setBusy(true);
     if (t.author && t.authorId) {
       void askWorker(q.text, { id: t.authorId, name: t.author }, { echoed: true, retry: true, ...(q.skillPick ? { skills: q.skillPick } : {}) });
@@ -1740,10 +1802,15 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
 
       const cards: ThreadCard[] = [];
       const canRetry = !busy && i === lastIdx;
+      // Is THIS the turn in flight? (an addressed coworker's reply streams into its own turn)
+      const inFlight = busy && i === turns.length - 1;
       if (t.text) {
         cards.push({
-          kind: 'custom', id: `${key}-body`,
-          node: <AnimatedAnswer text={t.text} refs={t.refs ?? []} onOpen={openRef} animate={!t.author && i === animateIdx} onRetry={canRetry && !t.failed ? retryLast : undefined} />,
+          // W23.A · PROSE READS AT THE COLUMN'S WIDTH (`wide`) — cards keep the one card width.
+          kind: 'custom', id: `${key}-body`, wide: true,
+          node: <AnimatedAnswer text={t.text} refs={t.refs ?? []} onOpen={openRef} animate={!t.author && i === animateIdx}
+            onRetry={canRetry && !t.failed ? retryLast : undefined}
+            cursor={inFlight && !!t.author} stopped={!!t.stopped} activity={t.activity} durationMs={t.durationMs} />,
         });
       }
       // A produced document speaks the grammar's own card — a DOCUMENT opens the artifact panel
@@ -1807,7 +1874,6 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       if (t.options?.length) cards.push(optionChips(t, i, key));
       // THE ANSWER STREAMS INTO THE VISIBLE BUBBLE: an addressed coworker's reply is already its
       // own turn, patched as the tokens land — while it is in flight the AVATAR carries the state.
-      const inFlight = busy && i === turns.length - 1;
       // NEVER A SILENT RING (W22.B): an addressed coworker's reply with nothing written yet is the
       // thread's ONE working line — the face + the words of what is happening, "still working" past
       // the wait — never an empty bubble behind a ring.
@@ -1816,6 +1882,13 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         out.push({ type: 'working_line', id: `${key}-working`, actorId: t.authorId ?? t.author ?? seatId, actorName: t.author ?? seatName,
           line: inFlightLine(stage, slow, `${who} is replying…`) });
         if (t.trace?.length) t.trace.forEach((e, j) => out.push({ type: 'trace_line', id: `${key}-trace-${j}`, entries: [e] }));
+        return;
+      }
+      // W23.A · A STOPPED ANSWER with nothing written is one quiet mark — never the failure line; the
+      // Retry the answer's actions would carry rides it instead (there is no answer to hover).
+      if (t.stopped && !t.text && !cards.length) {
+        out.push({ type: 'event_line', id: `${key}-stopped`, text: STOPPED_LABEL,
+          refs: canRetry ? [{ label: FAILURE_RETRY, onClick: retryLast }] : [] });
         return;
       }
       // A FAILED ANSWER with nothing written is its failure line alone (below) — no empty bubble.
@@ -1887,7 +1960,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           type: 'actor_bubble', id: 'streaming', actorId: seatId, actorName: seatName,
           actorRoleLabel: seatLabel, status: 'working', statusHint: stage ?? 'Thinking…',
           cards: liveText ? [{
-            kind: 'custom', id: 'streaming-body',
+            kind: 'custom', wide: true, id: 'streaming-body',
             node: <Answer text={trimPartialTag(liveText)} refs={[]} onOpen={openRef} cursor />,
           }] : [],
         });
@@ -1951,13 +2024,20 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // THE PAGE TAKEOVER (owner, Aug 6 — "doesn't transition to a chat page"): a live conversation
   // OWNS the page — the host hides the deck behind it (Claude's arrival feel); closing hands the
   // dashboard back.
+  // ── ONE FULL-HEIGHT SCROLL (W23.A — owner walk, Sep 28: "compare ChatGPT") ───────────────────
+  // The Home chat sat in a bounded box (a viewport-minus-200px max height) on the page's own scroller: a
+  // second scrollbar at the column edge, a large empty band above it, and a long answer clipped at
+  // the top. A live Home chat now takes THE PANE geometry the DM already had — the thread fills the
+  // content area from the top chrome to the composer, the kit's one scroller is the only scroller,
+  // and the composer rests at the bottom. The host names that geometry 'dm' (home-view's pane mode).
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent('aug:chat-active', { detail: { active: showThread, mode: dmPane ? 'dm' : 'home' } }));
+    window.dispatchEvent(new CustomEvent('aug:chat-active', { detail: { active: showThread, mode: showThread ? 'dm' : 'home' } }));
   }, [showThread, dmPane]);
   // Unmount (a lens switch) hands the page back — a stale takeover must never hide the header.
   useEffect(() => () => { window.dispatchEvent(new CustomEvent('aug:chat-active', { detail: { active: false } })); }, []);
-  // Re-pin to the latest turn when the thread reveals (the grid transition needs a beat).
-  useEffect(() => { const tm = window.setTimeout(pinToEnd, 320); return () => window.clearTimeout(tm); }, [showThread]); // eslint-disable-line react-hooks/exhaustive-deps
+  // THE ONE SCROLL follows the stream (W23.A); an opened conversation lands on its newest words.
+  const follow = useFollowBottom(shellRef, showThread, dmPane);
+  useEffect(() => { if (showThread) follow.pin(); }, [showThread, chatRoom, dmActor?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // THE COMPOSER KEEPS ITS CARET ACROSS THE TAKEOVER: the box moves from the page into the kit's
   // composer seat the moment the first turn lands, which remounts it. The text is already sent (the
   // box cleared itself), so nothing is lost but the caret — and losing the caret mid-conversation
@@ -1975,7 +2055,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   // states (at rest on the Home, and in the seat once the thread takes the page) so a first
   // message never remounts the box under the reader's hands.
   const composerBlock = (
-    <>
+    <div className="relative">
+        {/* W23.A · FOLLOW THE STREAM — the "↓" stands above the composer once the reader scrolls up. */}
+        {showThread && <JumpToLatest show={follow.showJump} onClick={follow.jumpToLatest} />}
         {/* Suggestions ABOVE the input (the floor anatomy: nothing sits below the composer) +
             the quiet TEMPORARY toggle, armable only before the conversation starts.
             THE TOGGLE DOES NOT RIDE THE CHIPS (Sep 13): the warm Home's standing chips were
@@ -2076,13 +2158,15 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                 </AnchoredPopover>
               </span>
             ) : undefined}
+            // W23.A · STOP — while a turn is in flight the send button is Stop (the flight aborts).
+            onStop={busy ? stopFlight : undefined}
           />
         </div>
-    </>
+    </div>
   );
 
   return (
-    <section className={`w-full ${dmPane ? 'flex min-h-0 flex-1 flex-col' : 'transition-[margin] duration-300 ease-out'} ${artifactPanel ? 'lg:mr-[608px]' : ''}`}>
+    <section className={`w-full ${showThread ? 'flex min-h-0 flex-1 flex-col' : ''} transition-[margin] duration-300 ease-out motion-reduce:transition-none ${artifactPanel ? 'lg:mr-[608px]' : ''}`}>
       {/* PAGE MODE: a live conversation renders directly on the page in a centered reading
           column (Claude's anatomy) — never inside a floating card. With the artifact pane
           docked, the column keeps reading-width beside it (the section margin makes room).
@@ -2090,9 +2174,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           the top edge (no dead zone above it, no floating white card mid-page) and the shell's
           own thin scroller is the only scroller — the reading column stays the kit's 760px. */}
       <div ref={shellRef}
-        className={dmPane
-          ? 'flex min-h-0 flex-1 flex-col'
-          : `transition-all duration-300 ease-out ${showThread ? 'max-w-3xl mx-auto w-full' : ''}`}>
+        className={showThread ? 'flex min-h-0 flex-1 flex-col' : ''}>
         {/* THE TAKEOVER, THROUGH THE ONE THREAD COMPONENT: the conversation IS the page — the kit
             owns the reading column, the three grammars, the grouping and the internal scroll; the
             takeover geometry stays this host's (bounded height, so the thread scrolls inside the
@@ -2105,7 +2187,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         {showThread ? (
           <ThreadShell
             kind={dmActor ? 'dm' : 'home'}
-            className={dmPane ? 'min-h-0 flex-1' : '!bg-transparent max-h-[calc(100vh-200px)] min-h-[46vh]'}
+            className={dmPane ? 'min-h-0 flex-1' : 'min-h-0 flex-1 !bg-transparent'}
             header={dmHeader}
             beforeTimeline={openingSkeleton}
             items={items}

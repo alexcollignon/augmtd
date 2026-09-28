@@ -15,6 +15,7 @@ import { ChatBubbleLeftEllipsisIcon, UserCircleIcon, FolderIcon, PencilIcon, Tra
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { mergeKeyedListLanding } from '@/lib/home/thread-cache';
 import { prefetchChatTurns } from '@/components/home/chat-turns-warm';
+import { withConversationNames } from '@/components/one/conversation-title';
 
 /** W17 · the list's own warm paint (the instant-load doctrine: hydrate → paint → refresh → save). */
 const ALL_CONVERSATIONS_LS = 'aug-all-conversations-v1';
@@ -54,7 +55,8 @@ export function AllConversations({ onOpenChat }: { onOpenChat: (key: string) => 
     fetch('/api/rooms/recent?all=1').then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!Array.isArray(d?.conversations)) { setRows((cur) => cur ?? []); return; }
-        const fresh = d.conversations as Conversation[];
+        // W23.A · a chat's `title` (THE CONTRACT) is its name; the first-message fallback stands without one.
+        const fresh = withConversationNames(d.conversations as Conversation[]);
         saveLS(ALL_CONVERSATIONS_LS, fresh);
         setRows((cur) => mergeKeyedListLanding(cur, fresh));
       })

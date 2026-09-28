@@ -14,6 +14,13 @@ import InputCard from '@/components/home/input-card';
 // pieces that are not cards. It lives in its own file because a scenario walk and an exhaustive
 // index are two different documents, and the harness should stay readable as both.
 import { ThreadCatalogue } from './preview-catalogue';
+// W23.A · THE CHAT SURFACE — the answer's "Worked for Xs ›", the copyable Writing block with its
+// placeholders, and a stopped answer, drawn by the product's own pieces.
+import { Answer } from '@/components/home/ask-answer';
+import { WorkedFor } from '@/components/home/worked-for';
+import { STOPPED_LABEL } from '@/components/home/chat-flight';
+
+const W23_PROMPT_ANSWER = 'Here is a prompt you can reuse for the quarterly review:\n\n```prompt\nYou are preparing the [YEAR] review for [CLIENT / AUDIENCE]. Summarise the three decisions that moved revenue, in plain words, and end with one question for Sam.\n```\n\nAnd the command that rebuilds the numbers:\n\n```\nnpm run board\n```';
 
 /**
  * The three fixtures mirror the frozen canvas (docs/design/threads/*.dc.html): a PROJECT thread
@@ -608,6 +615,30 @@ const HOME_ITEMS: ThreadItem[] = [
     actions: [{ label: 'When you can · 6 →', onClick: noop, tone: 'link' }],
   },
   { type: 'divider', id: 'hm-morning', variant: 'day', label: 'This morning' },
+  {
+    type: 'actor_bubble', id: 'hm-w23', actorId: 'clara', actorName: 'Clara', actorRoleLabel: 'Personal Assistant',
+    cards: [{
+      kind: 'custom', wide: true, id: 'hm-w23-body',
+      node: (
+        <div>
+          <WorkedFor durationMs={8200} activity={[{ label: 'Looking at your calendar…', atMs: 0 }, { label: 'Reading the Acme thread…', atMs: 2400 }, { label: 'Writing the reply…', atMs: 6100 }]} />
+          <Answer text={W23_PROMPT_ANSWER} refs={[]} onOpen={noop} />
+        </div>
+      ),
+    }],
+  },
+  {
+    type: 'actor_bubble', id: 'hm-w23-stopped', actorId: 'clara', actorName: 'Clara', actorRoleLabel: 'Personal Assistant',
+    cards: [{
+      kind: 'custom', wide: true, id: 'hm-w23-stopped-body',
+      node: (
+        <div>
+          <Answer text={'The first two options are the strongest; the third'} refs={[]} onOpen={noop} />
+          <div className="mt-1 text-[12px] text-neutral-400">{STOPPED_LABEL}</div>
+        </div>
+      ),
+    }],
+  },
   {
     type: 'actor_bubble', id: 'hm1', actorId: 'max', actorName: 'Max', ts: '08:00 · weekly workflow',
     text: 'Your Monday tender briefing is ready — 14 in-window notices, two above your value floor.',

@@ -41,3 +41,22 @@ export const FAILURE_RETRY = 'Retry';
 export function trimPartialTag(text: string): string {
   return String(text ?? '').replace(new RegExp(`\\[[${ASK_TAG_LETTERS}]?\\d*(?:\\s*,\\s*[${ASK_TAG_LETTERS}]?\\d*)*$`), '');
 }
+
+// ── STOP (W23.A) ─────────────────────────────────────────────────────────────────────────────────
+// While a turn is in flight the send button is Stop. The client ABORTS the request (the same
+// AbortController the timeout uses — the server treats a closed stream as a cancel), and what had
+// streamed stays as the answer, marked stopped. A stop is the reader's own choice, so it is never
+// the failure line: Retry stays in the answer's own actions.
+
+/** The quiet mark under a stopped answer. */
+export const STOPPED_LABEL = 'Stopped';
+
+/** Why a flight ended without its `done` frame — the reader's Stop wins over everything else. */
+export type FlightEnd = 'stopped' | FlightFailure;
+
+/** How an unfinished flight settles: `stopped` keeps the partial as the answer (no failure line);
+ *  a timeout or an error keeps the partial and says so, with Retry. Pure. */
+export function settleFlight(end: FlightEnd, partial: string): { text: string; stopped?: true; failed?: FlightFailure } {
+  const text = trimPartialTag(partial).trim();
+  return end === 'stopped' ? { text, stopped: true } : { text, failed: end };
+}

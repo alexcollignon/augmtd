@@ -107,7 +107,8 @@ ok('O5.1 the transport takes a budget: per-attempt race, stream deadline, and a 
   && /if \(!retryFits\(budget, waitMs\)\) throw new AITimeoutError/.test(factory) && /export class AITimeoutError/.test(factory));
 ok('O5.2 every loop call runs under the call timeout and the turn deadline (stream and fallback), tools race the deadline',
   /withAttemptBudget\(/.test(core) && /streamWithDeadline\(/.test(core)
-  && /aiCreate\(ai, params, \{ timeoutMs: MODEL_CALL_TIMEOUT_MS, deadline: o\.deadline \}\)/.test(core)
+  // ⟲ W23.B: the fallback also carries the turn's stop signal (smoke-turn-receipt R2.1); the budget is unchanged.
+  && /aiCreate\(ai, params, \{ timeoutMs: MODEL_CALL_TIMEOUT_MS, deadline: o\.deadline(?:, signal: o\.signal)? \}\)/.test(core)
   && /withinDeadline\(dispatchCommand\(/.test(core));
 ok('O5.3 the budgets sit under the doors\' maxDuration', MODEL_CALL_TIMEOUT_MS <= 45_000 && TURN_BUDGET_MS < 120_000
   && /export const maxDuration = 180/.test(home) && /export const maxDuration = 120/.test(steer));

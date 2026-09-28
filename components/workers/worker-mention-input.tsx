@@ -90,9 +90,12 @@ interface Props {
   accessory?: React.ReactNode;
   /** SKILLS IN CHAT (W21) — present → the @ menu gains Skills, "/" opens it, picks ride the send. */
   skills?: ComposerSkills;
+  /** STOP (W23.A) — present while the host's turn is in flight: the send button becomes Stop (a
+      square) and clicking it calls this. The host owns the abort; the composer only offers the door. */
+  onStop?: () => void;
 }
 
-export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, onPrefillConsumed, onAttach, attachments = [], onRemoveAttachment, frameless, accessory, skills }: Props) {
+export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, onPrefillConsumed, onAttach, attachments = [], onRemoveAttachment, frameless, accessory, skills, onStop }: Props) {
   const [value, setValue] = useState('');
   const [mentions, setMentions] = useState<WorkerMention[]>([]);
   const [mq, setMq] = useState<string | null>(null);
@@ -501,10 +504,17 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
               <SkillsUsesView skills={skillMenu?.skills} onOpen={(id) => openSkillsAt(id)} className="mr-2 max-w-[45%]" />
             </>
           )}
-          <button onClick={submit} disabled={disabled || !value.trim()}
-            className="ml-auto flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-600 text-white disabled:opacity-40 hover:bg-indigo-700 transition-colors">
-            <PaperAirplaneIcon className="w-3.5 h-3.5" />
-          </button>
+          {onStop ? (
+            <button type="button" onClick={onStop} aria-label="Stop" title="Stop"
+              className="ml-auto flex items-center justify-center w-7 h-7 rounded-lg bg-neutral-900 text-white hover:bg-neutral-700 transition-colors">
+              <span aria-hidden className="block h-2.5 w-2.5 rounded-[2px] bg-current" />
+            </button>
+          ) : (
+            <button onClick={submit} disabled={disabled || !value.trim()}
+              className="ml-auto flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-600 text-white disabled:opacity-40 hover:bg-indigo-700 transition-colors">
+              <PaperAirplaneIcon className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
     </div>

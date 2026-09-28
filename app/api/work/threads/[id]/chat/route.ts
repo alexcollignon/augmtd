@@ -1,7 +1,12 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import type OpenAI from 'openai';
-import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { getAIClient } from '@/lib/ai/factory';
+// W23.B — THE TURN'S RECEIPT + THE STOP BUTTON + A CHAT NAMES ITSELF (the same contract as the Home and
+// item doors): the activity log's fold/bound rules, the stopped line, the stored meta shape, the one
+// per-turn abort, and the once-only title (lib/converse/chat-title.ts).
+import { pushActivity, answerMetaOf, STOPPED_LINE, type TurnActivity } from '@/lib/converse/conversation';
+import { turnAbortFor } from '@/lib/present/converse-stream';
 import { logAIUsage } from '@/lib/ai/log-usage';
 import { buildChatSystemPrompt, detectModelFamily } from '@/lib/work/chat-system-prompt'
 // Intent classifier removed — replaced by lightweight heuristic router below.
@@ -926,10 +931,27 @@ export async function POST(
     let usagePromptTokens = 0;
     let usageCompletionTokens = 0;
 
+    // W23.B — THE STOP BUTTON: one abort per turn, fed by the request's own signal and the stream's
+    // cancel. A stop aborts the in-flight model call, runs no further tool, and persists what was written
+    // so far ONCE (the finally below), marked `stopped` — never an error turn. `after()` holds the function
+    // open until that write lands, since nobody is listening any more.
+    const turnAbort = turnAbortFor(request);
+    let stopped = false;
+    /** The CURRENT round's words (reset when a round turns out to be a tool round) — what a stop keeps. */
+    let liveTurnText = '';
+    // W23.B — THE TURN'S RECEIPT: the step labels this turn showed (ms since start), and its duration.
+    const turnStartedAt = Date.now();
+    const activity: TurnActivity[] = [];
+    let settleTurn: () => void = () => {};
+    const turnSettled = new Promise<void>((r) => { settleTurn = r; });
+    after(() => turnSettled);
     const readable = new ReadableStream({
+      cancel() { turnAbort.abort(); },
       async start(controller) {
         const encoder = new TextEncoder();
         const send = (data: object) => {
+          const d = data as { type?: string; label?: unknown };
+          if (d.type === 'tool_start' && typeof d.label === 'string') pushActivity(activity, d.label, Date.now() - turnStartedAt);
           try { controller.enqueue(encoder.encode(SSE(data))); } catch { /* stream closed */ }
         };
         // W21: the live text never shows the SKILLS REPORT marker (held until it can be dropped).
@@ -1023,6 +1045,9 @@ export async function POST(
           const deedLedger: DeedRecord[] = [];
 
           while (continueLoop) {
+            // W23.B — a stopped turn makes no further model call.
+            if (turnAbort.signal.aborted) throw new Error('turn stopped');
+            liveTurnText = '';
             // Accumulate tool call fragments — OpenAI streams arguments in pieces
             const toolCallAccum = new Map<number, { id: string; name: string; args: string }>();
             let turnText = '';
@@ -1052,7 +1077,7 @@ export async function POST(
                   messages,
                   stream: true,
                   stream_options: { include_usage: true },
-                }) as AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
+                }, { signal: turnAbort.signal }) as AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
                 turnIndex++;
                 break;
               } catch (err: any) {
@@ -1069,6 +1094,7 @@ export async function POST(
             let sawFinish = false;
 
             for await (const chunk of stream) {
+              if (turnAbort.signal.aborted) throw new Error('turn stopped');
               // The include_usage:true final chunk carries usage with an empty choices array —
               // check it before the `!choice` skip below drops it.
               if (chunk.usage) {
@@ -1085,6 +1111,7 @@ export async function POST(
               // Stream text delta — suppress once XML tool call markers appear
               if (delta?.content) {
                 turnText += delta.content;
+                liveTurnText = turnText;
                 if (!xmlStreamSuppressed) {
                   const hasThink = turnText.includes('<think>');
                   const hasOtherXml = turnText.includes('<function_calls>') ||
@@ -1168,6 +1195,7 @@ export async function POST(
 
                   const toolResultMessages: OpenAI.Chat.ChatCompletionToolMessageParam[] = [];
                   for (const _tc of syntheticToolCalls) {
+                    if (turnAbort.signal.aborted) throw new Error('turn stopped');   // W23.B — no tool after the stop
                     const tc = _tc as { id: string; function: { name: string; arguments: string } };
                     let toolInput: Record<string, unknown> = {};
                     try { toolInput = JSON.parse(tc.function.arguments); } catch {}
@@ -1239,6 +1267,7 @@ export async function POST(
 
               } else if (finishReason === 'tool_calls') {
                 sawFinish = true;
+                liveTurnText = '';   // a tool round's words are narration, never the answer a stop keeps
                 if (inThinkBlock) { send({ type: 'thinking_done' }); inThinkBlock = false; }
                 const cleanTurnText = stripXmlToolCalls(turnText);
                 // Don't accumulate inter-turn narration into fullAssistantText — only the final
@@ -1270,6 +1299,8 @@ export async function POST(
                 const toolResultMessages: OpenAI.Chat.ChatCompletionToolMessageParam[] = [];
 
                 for (const _tc of toolCalls) {
+                  // W23.B — no tool starts after the stop.
+                  if (turnAbort.signal.aborted) throw new Error('turn stopped');
                   const tc = _tc as { id: string; function: { name: string; arguments: string } };
                   let toolInput: Record<string, unknown>;
                   try {
@@ -1380,7 +1411,7 @@ export async function POST(
           }
 
           // If tools ran but the model returned empty text, retry once with a nudge
-          if (!fullAssistantText.trim() && allToolCalls.length > 0) {
+          if (!fullAssistantText.trim() && allToolCalls.length > 0 && !turnAbort.signal.aborted) {
             messages.push({
               role: 'user',
               content: 'Please respond based on the tool results above. List specific items by name.',
@@ -1394,7 +1425,7 @@ export async function POST(
                 messages,
                 stream: true,
                 stream_options: { include_usage: true },
-              }) as AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
+              }, { signal: turnAbort.signal }) as AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
               let retrySuppressed = false;
               for await (const chunk of retryStream) {
                 if (chunk.usage) {
@@ -1432,13 +1463,6 @@ export async function POST(
             }
           }
 
-          // Auto-rename — fire and forget so it doesn't block the done event
-          if (isFirstMessage) {
-            generateAutoTitle(content, user.id, supabase, adminClient, threadId)
-              .then(title => { if (title) send({ type: 'title_update', title }); })
-              .catch(() => {});
-          }
-
           // Memory extraction — fire and forget after agent conversations
           if (runContext.agentId) {
             fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? ''}/api/agents/${runContext.agentId}/extract-memory`, {
@@ -1465,10 +1489,23 @@ export async function POST(
             type: 'done',
             ...(skillsFollowed.length ? { skillsFollowed } : {}),
             ...(skillOffer ? { skillOffer } : {}),
+            // W23.B — THE TURN'S RECEIPT: the step labels it showed (ms since start) and its duration.
+            ...(answerMetaOf({ activity, durationMs: Date.now() - turnStartedAt }) ?? {}),
           });
         } catch (err) {
-          console.error('[Chat] Stream error:', err);
-          send({ type: 'error', message: 'An error occurred. Please try again.' });
+          if (turnAbort.signal.aborted) {
+            // A STOP IS NOT A FAILURE (W23.B): keep what was written — the finished rounds' answer, else
+            // this round's words so far — and persist it once below, marked stopped. No error frame.
+            stopped = true;
+            if (!fullAssistantText.trim()) {
+              fullAssistantText = stripXmlToolCalls(liveTurnText).replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<think>[\s\S]*$/gi, '').trim();
+            }
+            skillsTextFilter.flush();
+            fullAssistantText = settleSkillsFollowed(fullAssistantText, turnSkills.offered).text;
+          } else {
+            console.error('[Chat] Stream error:', err);
+            send({ type: 'error', message: 'An error occurred. Please try again.' });
+          }
         } finally {
           clearInterval(heartbeat);
           // Save complete assistant message
@@ -1486,7 +1523,8 @@ export async function POST(
             // THE MARKERS NEVER REACH THE BUBBLE (Sep 22, WAVE 0) — the same stripper the AgentOS
             // lane mounts: a model that has seen `[[artifact:…]]` / `[[card:…]]` in its context
             // writes one back in its own prose, and machinery is never something a person reads.
-            const persistedAssistantText = stripChatMarkers(enforceWeekdayDatePairs(fullAssistantText, { userText: content }));
+            const persistedAssistantText = stripChatMarkers(enforceWeekdayDatePairs(fullAssistantText, { userText: content }))
+              || (stopped ? STOPPED_LINE : '');
             const trace = buildTrace(traceCalls);
             await adminClient.from('work_messages').insert({
               thread_id: threadId,
@@ -1515,8 +1553,20 @@ export async function POST(
                 ...(clarificationCall?.clarification ? { clarification: clarificationCall.clarification } : {}),
                 // W21 — A CLAIM RENDERS: the skills this answer followed (loaded AND reported).
                 ...(skillsFollowed.length > 0 ? { skillsFollowed } : {}),
+                // W23.B — THE TURN'S RECEIPT: activity + duration, and `stopped` when the user stopped it.
+                ...(answerMetaOf({ activity, durationMs: Date.now() - turnStartedAt, stopped }) ?? {}),
               },
             });
+            // W23.B — A CHAT NAMES ITSELF after its FIRST answer: one cheap call in after() (never delays
+            // the answer), compare-and-set against the title this request started with — a rename that
+            // landed meanwhile wins, and a retry writes nothing.
+            if (isFirstMessage && !stopped && persistedAssistantText.trim()) {
+              const titleAtStart = String((thread as { title?: string | null }).title ?? '');
+              after(async () => {
+                const { ensureThreadTitle } = await import('@/lib/converse/chat-title');
+                await ensureThreadTitle(supabase, user.id, threadId, titleAtStart, { question: content, answer: persistedAssistantText });
+              });
+            }
             await adminClient
               .from('work_threads')
               .update({ updated_at: new Date().toISOString() })
@@ -1534,7 +1584,8 @@ export async function POST(
             taskType: 'conversation',
             usage: { prompt_tokens: usagePromptTokens, completion_tokens: usageCompletionTokens },
           }).catch(() => {});
-          controller.close();
+          try { controller.close(); } catch { /* the reader cancelled (a stop) — already closed */ }
+          settleTurn();
         }
       },
     });
@@ -2307,36 +2358,6 @@ async function executeChatTool(
 }
 
 // ── Auto-rename ──────────────────────────────────────────────────────────────
-
-async function generateAutoTitle(
-  firstMessage: string,
-  userId: string,
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  adminClient: any,
-  threadId: string
-): Promise<string | undefined> {
-  try {
-    // Use summarization task — lighter model per tier, not the conversation model
-    const { client, model } = await getAIClient(userId, 'summarization', supabase);
-    const res = await aiCreate(client, {
-      model,
-      max_tokens: 20,
-      messages: [{
-        role: 'user',
-        content: `Generate a concise 3-5 word title for this chat. Return ONLY the title, no punctuation, no quotes.\n\nMessage: "${firstMessage.slice(0, 200)}"`,
-      }],
-    });
-    const title = (res.choices[0]?.message?.content ?? '').trim().replace(/^["']|["']$/g, '');
-    if (title) {
-      await adminClient.from('work_threads').update({ title }).eq('id', threadId);
-      return title;
-    }
-  } catch {
-    // Non-fatal — original title stays
-  }
-  return undefined;
-}
 
 // ── Mention context builder ──────────────────────────────────────────────────
 

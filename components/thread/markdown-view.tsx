@@ -15,16 +15,102 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import React from 'react';
-import { parseMarkdown, type MdBlock, type MdInline } from './markdown';
+import { createPortal } from 'react-dom';
+import { ArrowsPointingOutIcon, CheckIcon, ClipboardDocumentIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { codeBlockKind, parseMarkdown, splitPlaceholders, type MdBlock, type MdInline } from './markdown';
 
 export type MarkdownTextRenderer = (text: string, key: string) => React.ReactNode;
 
 const defaultText: MarkdownTextRenderer = (text) => text;
 
-/** The streaming caret — the same quiet bar the coworker chat always used. */
+/** The streaming indicator (W23.A) — a soft pulsing dot at the end of the growing text; static under
+ *  reduced motion. */
 export const StreamCaret = () => (
-  <span aria-hidden className="ml-0.5 inline-block h-3.5 w-0.5 animate-pulse bg-neutral-400 align-middle motion-reduce:animate-none" />
+  <span aria-hidden data-stream-caret className="ml-1 inline-block h-2 w-2 translate-y-[-1px] animate-pulse rounded-full bg-neutral-400 align-middle motion-reduce:animate-none" />
 );
+
+/** The block's text with its fill-in placeholders marked — plain strings in React spans, nothing
+ *  parsed as HTML. */
+function WithPlaceholders({ text }: { text: string }) {
+  return (
+    <>
+      {splitPlaceholders(text).map((r, i) => (r.t === 'ph'
+        ? <span key={i} data-placeholder className="rounded bg-amber-100/70 px-1 py-px text-amber-900">{r.v}</span>
+        : <React.Fragment key={i}>{r.v}</React.Fragment>))}
+    </>
+  );
+}
+
+/** ── A COPYABLE BLOCK (W23.A) — a fenced block renders bordered, with its label, Copy and Expand.
+ *  Writing (prompt · email · text · draft · message) reads as wrapped prose with its placeholders
+ *  marked; anything else is code. Expand opens the same text full-width in a dialog. */
+function CopyBlock({ lang, value, tail }: { lang: string; value: string; tail?: React.ReactNode }) {
+  const kind = codeBlockKind(lang);
+  const [copied, setCopied] = React.useState(false);
+  const [expanded, setExpanded] = React.useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch { /* clipboard refused — nothing claimed */ }
+  };
+  React.useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpanded(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expanded]);
+  const btn = 'inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11.5px] text-neutral-500 transition-colors hover:bg-neutral-200/60 hover:text-neutral-800 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-300';
+  const body = (big: boolean) => (kind.writing
+    ? <div className={`whitespace-pre-wrap break-words px-3.5 py-3 text-neutral-800 ${big ? 'text-[15px] leading-[1.7]' : 'text-[13.5px] leading-[1.65]'}`}><WithPlaceholders text={value} /></div>
+    : <pre className={`overflow-x-auto px-3.5 py-3 font-mono leading-[1.55] text-neutral-800 ${big ? 'text-[13.5px]' : 'text-[12.5px]'}`}><code>{value}</code></pre>);
+  const actions = (inDialog: boolean) => (
+    <span className="flex items-center gap-0.5">
+      <button type="button" onClick={() => void copy()} className={btn} aria-label={`Copy ${kind.label.toLowerCase()}`}>
+        {copied ? <CheckIcon className="h-3.5 w-3.5" /> : <ClipboardDocumentIcon className="h-3.5 w-3.5" />}
+        <span>{copied ? 'Copied' : 'Copy'}</span>
+      </button>
+      {inDialog ? (
+        <button type="button" onClick={() => setExpanded(false)} className={btn} aria-label="Close">
+          <XMarkIcon className="h-3.5 w-3.5" />
+        </button>
+      ) : (
+        <button type="button" onClick={() => setExpanded(true)} className={btn} aria-label={`Expand ${kind.label.toLowerCase()}`}>
+          <ArrowsPointingOutIcon className="h-3.5 w-3.5" />
+          <span>Expand</span>
+        </button>
+      )}
+    </span>
+  );
+  const head = (inDialog: boolean) => (
+    <div className="flex items-center justify-between border-b border-neutral-200 bg-neutral-50 py-1 pl-3.5 pr-1.5">
+      <span className="text-[11.5px] font-medium text-neutral-500">{kind.label}</span>
+      {actions(inDialog)}
+    </div>
+  );
+  return (
+    <div data-copy-block={kind.writing ? 'writing' : 'code'}>
+      <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+        {head(false)}
+        {body(false)}
+      </div>
+      {tail}
+      {expanded && typeof document !== 'undefined' && createPortal(
+        <div role="dialog" aria-modal="true" aria-label={kind.label}
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-neutral-900/30 p-4 sm:p-8"
+          onClick={() => setExpanded(false)}>
+          <div className="flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}>
+            {head(true)}
+            <div className="min-h-0 flex-1 overflow-y-auto">{body(true)}</div>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+}
 
 function Inlines({ nodes, k, renderText }: { nodes: MdInline[]; k: string; renderText: MarkdownTextRenderer }) {
   return (
@@ -73,12 +159,7 @@ function Block({ b, k, renderText, tail }: { b: MdBlock; k: string; renderText: 
     case 'hr':
       return <><hr className="border-neutral-200" />{tail}</>;
     case 'code':
-      return (
-        <div>
-          <pre className="overflow-x-auto rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2.5 font-mono text-[12.5px] leading-[1.55] text-neutral-800"><code>{b.v}</code></pre>
-          {tail}
-        </div>
-      );
+      return <CopyBlock lang={b.lang} value={b.v} tail={tail} />;
     case 'quote':
       return (
         <blockquote className="space-y-2 border-l-2 border-neutral-200 pl-3 text-neutral-600">

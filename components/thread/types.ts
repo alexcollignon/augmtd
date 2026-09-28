@@ -312,6 +312,9 @@ export interface ConfirmWidgetCard extends CardBase {
 export interface CustomCard extends CardBase {
   kind: 'custom';
   node: ReactNode;
+  /** W23.A · PROSE READS AT THE COLUMN'S WIDTH — an answer's text (never a card) may take the whole
+   *  track beside the face instead of the one card width. Cards keep THREAD_CARD_W. */
+  wide?: boolean;
 }
 
 /**
