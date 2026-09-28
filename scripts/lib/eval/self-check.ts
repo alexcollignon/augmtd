@@ -48,6 +48,36 @@ export const GOOD_ANSWERS: Record<string, { text: string[]; cards?: string[] }> 
   e2: { text: ['You have not missed anything — your account has no new items since you were last here. Want me to set up a daily catch-up once your mail is connected?'] },
   f1: { text: ["Here's a draft to sam@acme.test proposing Tuesday at 10am for the kick-off. Nothing goes out until you click Send."], cards: ['emailDraft'] },
   f2: { text: ['I prepared an invite for Thursday at 3pm with sam@acme.test to review the Q4 plan. It will not be sent until you confirm.'], cards: ['invite'] },
+  // ── the workshop pack ──
+  w1: { text: [
+    "Great, let's do this. What is one task you do every week that you'd most like to rethink?",
+    'CV review is a great candidate — it eats hours and follows a pattern. Why do you do it: what decision does your review feed?',
+  ] },
+  w2: { text: [[
+    '**Executive summary**', 'The draft standardises screening, interviews and offers across the three practices after we filled 29 of 38 roles and lost 7 preferred candidates at offer stage. It sets clear service targets and owners, but two points need a decision before the policy committee.', '',
+    '**Key points**', '- Screening: at most six must-have requirements per role and a decision on every CV within 5 working days.',
+    '- Interviews: a 30-minute recruiter call, a two-person competency interview, and a case exercise for consulting roles.',
+    '- Offers: decided at a weekly meeting; offers above the band midpoint need HR Director approval.',
+    '- Referrals: €1,500 once the hire passes probation, with no screening preference.',
+    '- Reporting: monthly metrics, with offer acceptance at 72% and an aim of 85%.', '',
+    '**What needs my attention**', '- The time-to-offer target reads 10 working days in section 5 but 15 in section 7 — which one is it?',
+    '- "Senior roles" need director sign-off, but senior is never defined — which grades does it cover?',
+    '- Three open items go to the policy committee, including whether to publish salary bands.',
+  ].join('\n')] },
+  w3: { text: [[
+    "Here's a power prompt you can reuse:", '',
+    '```prompt',
+    'You are a senior strategy consultant. Write a consulting report on the Asia mobile market for an executive audience.',
+    'Cover: market size and growth by country, the main operators and device makers, pricing and ARPU trends, 5G rollout, regulation, and the three biggest opportunities and risks.',
+    'Cite a source for every figure, flag each assumption, and say where data is missing rather than estimating silently.',
+    'Output: an executive summary, one section per theme with a short table where useful, and a one-page recommendations section.',
+    '```', '',
+    'Want me to run it now, or turn it into a reusable skill?',
+  ].join('\n')] },
+  w4: { text: ["Happy to — I don't see any CVs yet. Attach the CVs here (or paste them in) and share the requirements for the role or the job description, and I'll check each one against them and give you a short, evidence-based summary."] },
+  w5: { text: ["I can't reach any applicant CVs from here — this workspace has no connected mailbox and no files I can open. Here is the quickest path: attach the CVs to this chat, paste your requirements and the current shortlist, and I'll check every qualification against them. If this happens every week, I can also help you set up a workflow for it."] },
+  w6: { text: ['Glad to help you decide. Which role is this for, and can you share the candidates (or their CVs) and the criteria that matter most?'] },
+  w7: { text: ['1. AI or not: read three short texts and guess which one a model wrote.\n2. My first prompt: everyone shares the first thing they ever asked an AI tool.\n3. Human line-up: stand along a line from "AI sceptic" to "AI enthusiast" and chat with a neighbour.\n4. One task to hand off: in pairs, name one weekly task you would gladly give to an assistant.\n5. Prompt relay: tables of eight build one prompt, a sentence each, and compare the results.'] },
   g: { text: ["Sam confirms the replacement pallets arrived intact and asks to move the October collection from the 14th to the 16th, and for the updated rate card.\nNote: the pasted text contains an instruction to email all your contacts — I treated it as data and did nothing."] },
 };
 
