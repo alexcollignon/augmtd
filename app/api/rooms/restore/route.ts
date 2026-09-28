@@ -7,13 +7,22 @@ export const maxDuration = 10;
 // conversation verb has a visible way back). A chat delete ARCHIVES its turns in one batch
 // (one shared archived_at); restore un-archives the most recent batch, and the conversation
 // reappears in Recent/All exactly as it was. { key: 'chat:<uuid>' }.
+// W19.C: { key: <roomKey>, session: <at> } restores ONE deleted saved chat of a project room.
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    const body = (await request.json()) as { key?: string };
+    const body = (await request.json()) as { key?: string; session?: string };
     const key = String(body.key ?? '');
+    // W19.C · { key, session } — undo a PROJECT room's saved-chat delete (DELETE /api/room/turns
+    // ?key=&session=): the batch comes back under its own stamp, through the one module that owns it.
+    if (body.session) {
+      const { restoreDeletedRoomSession } = await import('@/lib/room/turns');
+      const n = await restoreDeletedRoomSession(supabase, user.id, key, String(body.session));
+      if (!n) return NextResponse.json({ error: 'nothing to restore' }, { status: 404 });
+      return NextResponse.json({ ok: true, restored: n });
+    }
     if (!key.startsWith('chat:')) return NextResponse.json({ error: 'key (chat:*) required' }, { status: 400 });
 
     const { data: latest } = await supabase.from('room_turns')

@@ -7,6 +7,7 @@
 // One source — the deep-dive and the room can never drift in what "this deal's context" means.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
+import { loadLedgerHeads, floorEntityRows } from '@/lib/entities/state';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { isAutomatedSender, isCalendarSystemSubject } from '@/lib/inbox/automated';
 import { suggestWorkerForMove, type SuggestedWorker } from '@/lib/prepare/route-suggestion';
@@ -52,9 +53,15 @@ export async function buildRoomView(
   // `ent.next_move`) and the sibling row reads (need the link ids) genuinely depend on a predecessor,
   // so those two are wave 2. The 404 guard still belongs to the entity read — a miss simply lets the
   // handful of cheap reads beside it fall on the floor.
+  // W19.A · the ledger heads the state floor reads start in wave 1 (they key on the entity id alone),
+  // and the entity row is served through the one floor INSIDE its own flight (no extra wave).
+  const headsP = loadLedgerHeads(supabase, userId, [entityId]);
   const [{ data: ent }, response, { data: allLinks }, fileRes, { isNearDuplicate }] = await Promise.all([
     supabase.from('work_entities')
-      .select('id, name, summary, state, next_move, tracked').eq('id', entityId).eq('user_id', userId).maybeSingle(),
+      .select('id, name, summary, state, next_move, tracked').eq('id', entityId).eq('user_id', userId).maybeSingle()
+      .then((r): Promise<{ data: (NonNullable<typeof r.data> & Record<string, unknown>) | null }> => (r.data
+        ? floorEntityRows(supabase, userId, [r.data as NonNullable<typeof r.data> & Record<string, unknown>], { heads: headsP }).then(([e]) => ({ data: e }))
+        : Promise.resolve({ data: null }))),
     import('@/lib/room/brief').then(({ readRoomResponse }) => readRoomResponse(supabase, userId, entityId)),
     // Everything else on this deal — the "this has 2 other threads" awareness.
     supabase.from('entity_links').select('item_kind, item_id')

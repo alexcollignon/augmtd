@@ -307,7 +307,10 @@ export async function POST(request: NextRequest) {
           const { data: ml } = await supabase.from('entity_links').select('entity_id')
             .eq('user_id', user.id).eq('item_kind', 'meeting').eq('item_id', meetingContext.transcriptId).not('entity_id', 'is', null).maybeSingle();
           if (ml?.entity_id) {
-            const { data: ent } = await supabase.from('work_entities').select('name, state, next_move').eq('id', ml.entity_id).eq('user_id', user.id).maybeSingle();
+            const { data: entRaw } = await supabase.from('work_entities').select('name, state, next_move').eq('id', ml.entity_id).eq('user_id', user.id).maybeSingle();
+            // W19.A · the stored state is served through the one floor (settled claims · time words).
+            const { floorEntityRows } = await import('@/lib/entities/state');
+            const [ent] = entRaw ? await floorEntityRows(supabase, user.id, [{ id: ml.entity_id as string, ...(entRaw as Record<string, unknown>) } as Record<string, unknown>]) : [null];
             const st = (ent?.state ?? null) as { summary?: string; momentum?: string; whoOwes?: { you?: string[]; them?: string[] } } | null;
             if (st?.summary) {
               lines.push(`The body of work this meeting belongs to: "${(ent as { name?: string })?.name}" — where it stands: ${st.summary}${st.momentum ? ` [${st.momentum}]` : ''}.`);

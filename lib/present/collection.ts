@@ -60,8 +60,6 @@ export type CollectionSpec = {
    *  rehydrate. A persisted card is a POINTER (kind + params), never a stale snapshot — the
    *  bulk-deed precedent: a reloaded card can never show a state that stopped being true. */
   params?: Record<string, string | number | boolean>;
-  /** Shown instead of rows when there are none ("No workflows yet."). */
-  emptyLine?: string;
 };
 
 /** Rows served inline before the card folds the rest behind "Show N more". */
@@ -77,6 +75,16 @@ export function isCollectionSpec(v: unknown): v is CollectionSpec {
   const s = v as CollectionSpec | null;
   return !!s && isCollectionKind(s.kind) && typeof s.framing === 'string' && Array.isArray(s.rows)
     && s.rows.every((r) => !!r && typeof r.id === 'string' && typeof r.title === 'string' && typeof r.state === 'string');
+}
+
+/** AN EMPTY SET IS NOT A CARD (W19.2a, owner walk Sep 28 — a room answered "Nothing recorded in the
+ *  last 7 days." and a box beneath it said the same sentence again). The turn's sentence carries the
+ *  empty fact; the card is absent. ONE predicate, read by the producer (lib/converse never emits a
+ *  set with nothing in it; the steer door never writes one) and the kit (renders nothing). A capped
+ *  remainder (`more`) still counts as something to show. Pure. */
+export function collectionHasRows(s: { rows: readonly unknown[]; more?: number | { count: number } | null }): boolean {
+  const more = typeof s.more === 'number' ? s.more : s.more?.count ?? 0;
+  return s.rows.length > 0 || more > 0;
 }
 
 /** "3 paused, 1 draft" — the counted tail of a framing sentence, in first-seen order. Pure. */

@@ -28,7 +28,8 @@ const src = (p: string) => readFileSync(p, 'utf8');
   // unchanged; only the literal anchor moved.
   check('B1a: the room renders the ONE shared Gantt over the served rows',
     room.includes("import GanttChart from '@/components/entities/gantt-chart'") &&
-    room.includes('<GanttChart') && room.includes('Schedule · ${scheduleRows.length}'));
+    // ⟲ RE-POINTED W19: the count rides the kit TabBar's inline `count` prop.
+    room.includes('<GanttChart') && room.includes("label: 'Schedule', count: scheduleRows.length"));
   const brief = src('lib/entities/status-brief.ts');
   check('B1b: the brief is PURE ASSEMBLY — zero AI in the module', !brief.includes('aiCall') && !brief.includes('getAIClient'));
   check('B1b: the detail route assembles + serves statusBrief (people via the registry, self excluded)',
@@ -41,7 +42,8 @@ const src = (p: string) => readFileSync(p, 'utf8');
   // during the P3 room collapse — the law (a produced deliverable links to its preview, never a
   // dead title) is unchanged; the anchor follows the component that renders it now.
   check('B1b: every brief line links to its source (deliverables → preview)',
-    room.includes('DeliverablesBlock') && room.includes('onPreviewDeliverable: (name: string, ref: string) => void'));
+    // ⟲ RE-POINTED W19: DeliverablesBlock became DeliverableRows (Conversations → Deliverables group).
+    room.includes('DeliverableRows') && room.includes('onPreviewDeliverable: (name: string, ref: string) => void'));
   check('B1b: the card never re-renders the pane\'s own inventory (no Key dates / People sections)',
     !room.includes('label="Key dates"') && !room.includes('label="People"'));
   check('B1b: evaluator objections feed Watch-outs', src('app/api/entities/[id]/detail/route.ts').includes('reviewNotes'));

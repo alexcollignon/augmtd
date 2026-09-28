@@ -32,6 +32,7 @@ import { mayReplaceInPlace, freezeRows, hasContent, type ArrivalReason } from '@
 import { useFeatures } from '@/context/workspace-context';
 import { useLiveRefresh } from '@/hooks/use-live-refresh';
 import { MOMENTUM as MOMENTUM_TOKENS } from '@/lib/work-items/states';
+import { refDoorHref } from '@/lib/room/presentation';
 
 type Entity = {
   id: string; name: string; tracked: boolean; status: string;
@@ -47,11 +48,8 @@ type Portfolio = { hasMemory: boolean; entities: Entity[] };
 
 // The ONE momentum vocabulary — lib/work-items/states.ts.
 const MOM: Record<string, { dot: string; label: string; text: string }> = MOMENTUM_TOKENS;
-const refHref = (ref: string | null): string | null => {
-  if (!ref) return null;
-  const [k, i] = ref.split(':');
-  return k === 'inbox' ? `/item/${i}?kind=email` : k === 'commit' ? `/item/${i}?kind=commitment` : k === 'meeting' ? `/item/${i}?kind=meeting` : null;
-};
+// THE ONE REF → DOOR producer (lib/room/presentation refDoorHref — the kind rides to the door).
+const refHref = (ref: string | null): string | null => refDoorHref(ref);
 
 function IntentList({ label, values, onCommit }: { label: string; values: string[]; onCommit: (next: string[]) => void }) {
   const [adding, setAdding] = useState(false);

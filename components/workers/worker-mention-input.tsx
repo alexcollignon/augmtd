@@ -31,6 +31,9 @@ const CHIP: Record<WorkerMention['type'], string> = {
 const ICON_BG: Record<WorkerMention['type'], string> = {
   coworker: 'bg-indigo-50 text-indigo-500', task: 'bg-amber-50 text-amber-500', document: 'bg-violet-50 text-violet-500',
 };
+// One stable empty list — an effect resetting the results must not mint a new array (a fresh [] is never
+// Object.is-equal, so React could never bail the update out).
+const NO_RESULTS: WorkerMention[] = [];
 const CATEGORIES: { type: WorkerMention['type']; label: string }[] = [
   { type: 'coworker', label: 'Coworkers' },
   { type: 'task', label: 'Tasks' },
@@ -63,8 +66,10 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
   const [value, setValue] = useState('');
   const [mentions, setMentions] = useState<WorkerMention[]>([]);
   const [mq, setMq] = useState<string | null>(null);
-  const [mode, setMode] = useState<'categories' | 'items'>('categories');
   const [cat, setCat] = useState<WorkerMention['type'] | null>(null);
+  // The menu's page is DERIVED, never state an effect keeps in step (it used to be a mode state set to 'items'
+  // on every keystroke of an @-query — a passive-effect setState per key; see THE DROPDOWN'S ANCHOR).
+  const mode: 'categories' | 'items' = mq === null || (mq === '' && cat === null) ? 'categories' : 'items';
   const [results, setResults] = useState<WorkerMention[]>([]);
   const [idx, setIdx] = useState(0);
   const [loadingItems, setLoadingItems] = useState(false);
@@ -88,7 +93,7 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
     const h = (e: MouseEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
         setValue(v => v.replace(/@[^@\s]*$/, ''));
-        setMq(null); setMode('categories'); setCat(null);
+        setMq(null); setCat(null);
       }
     };
     document.addEventListener('mousedown', h); return () => document.removeEventListener('mousedown', h);
@@ -127,9 +132,8 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
   }, [mq]);
 
   useEffect(() => {
-    if (mq === null) { setResults([]); setMode('categories'); setCat(null); return; }
-    if (mq === '' && cat === null) { setMode('categories'); setResults([]); return; }
-    setMode('items');
+    if (mq === null) { setResults(NO_RESULTS); setCat(null); return; }
+    if (mq === '' && cat === null) { setResults(NO_RESULTS); return; }
     // Cache hit for a category's default list → render instantly, refresh silently.
     const cached = cat && mq === '' ? cacheRef.current[cat] : undefined;
     if (cached) { setResults(cached); setIdx(0); }
@@ -148,7 +152,7 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
   function pick(m: WorkerMention) {
     const cursor = taRef.current?.selectionStart ?? value.length;
     setValue(value.slice(0, cursor).replace(/@\w*$/, '') + value.slice(cursor));
-    setMq(null); setResults([]); setCat(null); setMode('categories');
+    setMq(null); setResults([]); setCat(null);
     setMentions(prev => prev.find(x => x.id === m.id && x.type === m.type) ? prev : [...prev, m]);
     taRef.current?.focus();
   }
@@ -166,10 +170,10 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
       const list = mode === 'categories' ? CATEGORIES : results;
       if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => Math.min(i + 1, list.length - 1)); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setIdx(i => Math.max(i - 1, 0)); return; }
-      if (e.key === 'Escape') { e.preventDefault(); if (cat) { setCat(null); setMode('categories'); } else setMq(null); return; }
+      if (e.key === 'Escape') { e.preventDefault(); if (cat) { setCat(null); } else setMq(null); return; }
       if (e.key === 'Enter') {
         e.preventDefault();
-        if (mode === 'categories') { setCat(CATEGORIES[idx].type); setMode('items'); }
+        if (mode === 'categories') { setCat(CATEGORIES[idx].type); }
         else if (results.length) pick(results[idx]);
         return;
       }
@@ -177,9 +181,21 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
   }
 
+  // THE DROPDOWN'S ANCHOR — measured only while the menu is open, and set only when it MOVED.
+  // NO SETSTATE PER KEYSTROKE IN AN EFFECT (the fast-typing crash, Sep 28): this effect used to
+  // run `setRect(null)` on every keystroke with the menu closed. A passive-effect setState after a
+  // discrete (keystroke) commit lands in the DEFAULT lane; during a fast burst the browser runs input
+  // tasks ahead of React's scheduler task, so that Default update stays pending across every
+  // keystroke commit — and React counts each such commit as a nested update. ~50 keys later the next
+  // `setValue` threw "Maximum update depth exceeded" and that character was lost. The dropdown is
+  // gated on `mq !== null`, so a stale rect with the menu closed is never read; the open re-measures.
+  const rectRef = useRef(rect);
+  rectRef.current = rect;
   useEffect(() => {
-    if (mq === null || !wrapRef.current) { setRect(null); return; }
+    if (mq === null || !wrapRef.current) return;
     const r = wrapRef.current.getBoundingClientRect();
+    const prev = rectRef.current;
+    if (prev && prev.left === r.left && prev.right === r.right && prev.bottom === r.top) return;
     setRect({ left: r.left, right: r.right, bottom: r.top });
   }, [mq, value]);
 
@@ -195,7 +211,7 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
           {CATEGORIES.map((c, i) => {
             const Icon = ICONS[c.type];
             return (
-              <button key={c.type} onMouseDown={e => { e.preventDefault(); setCat(c.type); setMode('items'); }}
+              <button key={c.type} onMouseDown={e => { e.preventDefault(); setCat(c.type); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left ${i === idx ? 'bg-neutral-50' : 'hover:bg-neutral-50'}`}>
                 <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${ICON_BG[c.type]}`}><Icon className="w-3.5 h-3.5" /></div>
                 <span className="flex-1 text-[13px] font-medium text-neutral-700">{c.label}</span>
@@ -207,7 +223,7 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
       ) : (
         <div>
           {cat && (
-            <button onMouseDown={e => { e.preventDefault(); setCat(null); setMode('categories'); setResults([]); setIdx(0); }}
+            <button onMouseDown={e => { e.preventDefault(); setCat(null); setResults([]); setIdx(0); }}
               className="w-full flex items-center gap-2 px-3 py-2 border-b border-neutral-100 hover:bg-neutral-50 text-left">
               <ChevronLeftIcon className="w-3.5 h-3.5 text-neutral-400" />
               <span className="text-[12px] font-medium text-neutral-500">{CATEGORIES.find(c => c.type === cat)?.label}</span>
@@ -239,13 +255,13 @@ export function WorkerMentionInput({ onSubmit, disabled, placeholder, prefill, o
     // Clicking Mention again (dropdown open) closes it and strips the dangling @.
     if (mq !== null) {
       setValue(v => v.replace(/@[^@\s]*$/, ''));
-      setMq(null); setCat(null); setMode('categories');
+      setMq(null); setCat(null);
       return;
     }
     const el = taRef.current; if (!el) return;
     const pos = el.selectionStart ?? value.length;
     setValue(value.slice(0, pos) + '@' + value.slice(pos));
-    setMq(''); setCat(null); setMode('categories'); setIdx(0);
+    setMq(''); setCat(null); setIdx(0);
     setTimeout(() => { el.focus(); el.setSelectionRange(pos + 1, pos + 1); }, 0);
   }
 

@@ -940,8 +940,15 @@ const SECTIONS: Section[] = [
         }} />,
       },
       {
-        label: 'collection · empty',
-        node: <ThreadCardView card={{ kind: 'collection', id: 'cat-cl-6', rows: [], emptyLine: 'No workflows yet.' }} />,
+        // AN EMPTY SET IS NOT A CARD (W19.2a): the kit renders nothing — the answer's sentence
+        // carries the empty fact. The caption below is the catalogue's, not the card's.
+        label: 'collection · empty → no card',
+        node: (
+          <div className="flex flex-col gap-1">
+            <ThreadCardView card={{ kind: 'collection', id: 'cat-cl-6', rows: [] }} />
+            <span className="text-[11px] text-neutral-400">(renders nothing — the answer&apos;s sentence says it)</span>
+          </div>
+        ),
       },
     ],
   },

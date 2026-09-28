@@ -235,7 +235,8 @@ const src = (p: string) => readFileSync(p, 'utf8');
   // controls — so it is asserted across the room's SECTIONS plus the one pane that renders them.
   check('R5 inventory · the launcher renders every content section behind ONE tab bar (experience-spec seat: the right pane inventories, it never asks) + goals/rules + status controls',
     room2.includes('<FiledDrawer') && src('components/room/filed-drawer.tsx').includes('<TabBar') &&
-    ["'Tasks'", 'Schedule · ', 'Meetings · ', 'Conversations · ', 'Files · ', 'Activity · '].every((t) => room2.includes(t)) &&
+    // ⟲ RE-POINTED W19: counts ride the TabBar's inline `count` prop — the section names are the anchors.
+    ["label: 'Tasks'", "label: 'Schedule'", "label: 'Meetings'", "label: 'Conversations'", "label: 'Files'", "label: 'Activity'"].every((t) => room2.includes(t)) &&
     room2.includes('Goals') && room2.includes('Rules') && room2.includes('StatusUpdateModal'));
   // ⚠️ RE-POINTED (owner, Sep 14, twice): history no longer FOLDS in the stream — it LEAVES it for
   // the one drawer. The rest of the law (position+debts, the lifted ask, inline refs) is untouched.

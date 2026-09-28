@@ -12,10 +12,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { converse, type ConverseScope } from '@/lib/converse';
+import {
+  steerRoomKey, validAnswerKey, writeAskTurn, questionStillLive, writeAnswerTurn, answerTextOf, answerRefsOf,
+  type SteerKind,
+} from './answer-door';
+import { collectionHasRows } from '@/lib/present/collection';
 
 export const maxDuration = 120;
 
-type SteerKind = 'email' | 'followup' | 'commitment' | 'awareness' | 'meeting' | 'entity';
 const VALID: SteerKind[] = ['email', 'followup', 'commitment', 'awareness', 'meeting', 'entity'];
 
 export async function POST(request: NextRequest) {
@@ -35,6 +39,14 @@ export async function POST(request: NextRequest) {
        *  persistence — no version rows, no evaluator pass, no move of the serving pointer. This is
        *  the only door a surface may use to generate a direction the user has not picked. */
       preview?: boolean;
+      /** THE ANSWER IS SAVED (W19.B — ./answer-door.ts): a chat composer's per-question key. With it
+       *  the door writes the question (exactly once) and the answer (only by the request that claims
+       *  the question). Without it nothing new is persisted — the other callers are untouched. */
+      answerKey?: string;
+      /** "Ask again" on an orphan question: re-key THAT row (from `reaskKey`, or from no key for a
+       *  question written before W19) instead of writing the question a second time. */
+      reaskTurnId?: string;
+      reaskKey?: string;
     };
     const kind = body.kind && VALID.includes(body.kind) ? body.kind : null;
     const id = body.id?.trim();
@@ -65,7 +77,23 @@ export async function POST(request: NextRequest) {
     const scope: ConverseScope = kind === 'entity'
       ? { kind: 'entity', entityId: id }
       : { kind: 'item', itemKind: kind, itemId: id };
+    // THE QUESTION LANDS FIRST (W19.B): written at the door, before the reasoning — if the answer
+    // fails, what the reader said still exists (and the room shows it with its "Ask again" line).
+    // A decision pick carries its own contract and its own record (the card) — it never rides here.
+    // THE CLAIM (exactly-once): the question's own write — only the request that wins it may write the
+    // answer; a retry or a duplicate delivery collides and writes nothing.
+    const answerKey = !preview && !body.decision?.option ? validAnswerKey(body.answerKey) : null;
+    const chatRoomKey = answerKey ? steerRoomKey(kind, id) : null;
+    let claim: 'claimed' | 'exists' | 'failed' = 'failed';
+    if (answerKey && chatRoomKey) {
+      const reaskTurnId = typeof body.reaskTurnId === 'string' && /^[0-9a-f-]{36}$/i.test(body.reaskTurnId) ? body.reaskTurnId : null;
+      const reask = reaskTurnId ? { turnId: reaskTurnId, priorKey: validAnswerKey(body.reaskKey) } : null;
+      claim = await writeAskTurn(supabase, user.id, chatRoomKey, answerKey, text, reask);
+    }
     const turn = await converse(supabase, user.id, scope, text);
+    // …and THE RESET WINS: a question a New chat archived while the reasoning ran gets no answer.
+    const claimed = claim === 'claimed' && !!answerKey && !!chatRoomKey
+      && await questionStillLive(supabase, user.id, chatRoomKey, answerKey);
 
     // ── THE ROOM SHOWS WHAT IT READ (W4-C, Sep 22 — docs/component-map.md §6) ───────────────────
     // The one core already hands back the DATA half of a presenting read (`collection` / `event`).
@@ -75,20 +103,26 @@ export async function POST(request: NextRequest) {
     // finds it standing on the next open. POINTERS ONLY — the rows and the verbs are re-derived at
     // that open (`GET /api/collections`, `GET /api/events/[id]/card`), so a reloaded card can
     // never paint a set, or offer a verb, that stopped being true. Non-fatal by construction.
-    if (turn.collection || turn.event || turn.change) {
+    // Without a chat key the card still rides as before; with one, only the CLAIMING request writes it.
+    // AN EMPTY SET IS NOT A CARD (W19.2a): a zero-row collection is never written as a card turn —
+    // the answer's sentence carries the empty fact (the core no longer emits one; this is the floor).
+    if (turn.collection && !collectionHasRows(turn.collection.spec)) turn.collection = null;
+    if ((turn.collection || turn.event || turn.change) && (!answerKey || claimed)) {
       try {
-        const { writeRoomTurn, roomKeyForItem } = await import('@/lib/room/turns');
+        const { writeRoomTurn } = await import('@/lib/room/turns');
         const { collectionTurnComponent, eventTurnComponent } = await import('@/lib/present/pointer');
         const { changeTurnComponent } = await import('@/lib/present/change');
-        const roomKey = kind === 'entity'
-          ? id
-          : await roomKeyForItem(supabase, user.id,
-              kind === 'commitment' ? 'commitment' : kind === 'meeting' ? 'meeting' : 'inbox', id);
+        // ONE rule for where this door's turns land (the rail's own door rule — ./answer-door.ts).
+        const roomKey = steerRoomKey(kind, id);
         if (turn.collection) {
           await writeRoomTurn(supabase, user.id, roomKey, {
             role: 'system',
-            // The framing sentence is CODE's (arithmetic over the rows) — the card's own words.
-            text: turn.collection.spec.framing,
+            // THE ANSWER'S OWN WORDS (W19.2a): the stored turn is what the rail painted live — the
+            // answer's prose and its tagged refs (the SAME text `answerTextOf` gives the answer row).
+            // It used to store the card's framing instead, so a reload replaced the answer with a
+            // count ("Nothing recorded in the last 7 days."). On the fast path the say IS the framing.
+            text: turn.say?.trim() ? answerTextOf(turn.say) : turn.collection.spec.framing,
+            ...(answerRefsOf(turn.refs) ? { refs: answerRefsOf(turn.refs)! } : {}),
             dedupeKey: `collection:${turn.collection.id}`,
             component: collectionTurnComponent(turn.collection.id, turn.collection.spec),
           });
@@ -112,6 +146,11 @@ export async function POST(request: NextRequest) {
           });
         }
       } catch { /* the card is an enhancement — the answer stands without it */ }
+    } else if (claimed && chatRoomKey && answerKey) {
+      // THE ANSWER IS SAVED — the Home door's shape, no handle (the exchange boundary). A failed write
+      // leaves the question an orphan, which the room renders with its "Ask again" line.
+      const ok = await writeAnswerTurn(supabase, user.id, chatRoomKey, turn);
+      if (!ok) console.error('[items/steer] the answer could not be saved', chatRoomKey);
     }
 
     return NextResponse.json({

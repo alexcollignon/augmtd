@@ -539,7 +539,7 @@ function StageOverlay({ title, onClose, children }: { title: React.ReactNode; on
 /** A verb the room's ⋯ menu can fire — the item's own chrome verbs, one home. */
 type RoomVerb = { key: string; label: string; onClick: () => void; icon?: React.ReactNode; danger?: boolean };
 /** A drawer tab — the filed truth, summoned. Empty tabs are ABSENT, never scaffolded. */
-type RoomTab = { id: string; label: string; node: React.ReactNode };
+type RoomTab = { id: string; label: string; node: React.ReactNode; count?: number };
 
 /** The chrome the item room wears. Assembled by each kind from what it already serves. */
 type RoomChrome = {
@@ -1027,12 +1027,12 @@ function commonRoomTabs(
   // source IS ("Thread" for a mail conversation, "Source" for a meeting-extracted action item).
   if (extra?.thread) {
     const n = extra.threadCount ?? 0;
-    tabs.push({ id: 'thread', label: `${extra.threadLabel ?? 'Thread'}${n > 1 ? ` · ${n}` : ''}`, node: extra.thread });
+    tabs.push({ id: 'thread', label: extra.threadLabel ?? 'Thread', ...(n > 1 ? { count: n } : {}), node: extra.thread });
   }
   const sib = railView?.siblings;
   const related = sib ? (sib.threads.filter((t) => !t.current).length + sib.meetings.length + sib.commitments.length) : 0;
   if (railView && (related > 0 || railView.entity)) {
-    tabs.push({ id: 'related', label: `Related${related ? ` · ${related}` : ''}`, node: <RelatedRows view={railView} /> });
+    tabs.push({ id: 'related', label: 'Related', count: related, node: <RelatedRows view={railView} /> });
   }
   // FILES — the item's own attachments, then the work's filed documents. Counted, never subtracted,
   // and deduped by name so one document never wears two seats.
@@ -1042,19 +1042,19 @@ function commonRoomTabs(
   for (const f of extra?.files ?? []) add(f);
   for (const f of sib?.files ?? []) add({ name: f.filename, ref: { kind: 'kb', id: f.id }, note: 'Filed on this work' });
   if (files.length > 0) {
-    tabs.push({ id: 'files', label: `Files · ${files.length}`, node: <FilesRows files={files} /> });
+    tabs.push({ id: 'files', label: 'Files', count: files.length, node: <FilesRows files={files} /> });
   }
   // Q8 · a paste pack is prepared work too — it is counted here so the tab can never say "Prepared
   // · 0" over a staged pack (the one-claim law).
   const preparedCount = (view?.prepared ?? []).filter((p) => (p.kind === 'deliverable' || p.kind === 'paste_pack') && p.content && !p.decision).length;
   if (preparedCount > 0) {
-    tabs.push({ id: 'prepared', label: `Prepared · ${preparedCount}`, node: <PreparedLead prepared={view?.prepared ?? null} /> });
+    tabs.push({ id: 'prepared', label: 'Prepared', count: preparedCount, node: <PreparedLead prepared={view?.prepared ?? null} /> });
   }
   // HISTORY — last, because it is the oldest thing here. Counted, and absent when the room has no
   // past yet (an empty section is the drawer asking, and the drawer never asks).
   const hist = extra?.history ?? [];
   if (hist.length > 0) {
-    tabs.push({ id: 'record', label: `History · ${hist.length}`, node: <RoomHistorySection lines={hist} /> });
+    tabs.push({ id: 'record', label: 'History', count: hist.length, node: <RoomHistorySection lines={hist} /> });
   }
   return tabs;
 }

@@ -279,7 +279,8 @@ async function main() {
       && dealBlockOf(null) === '');
     const j = code('lib/work/judge.ts');
     gate('J5 source: the entity select drops `sig`; the dep is the rendered block, built before the sig; the prompt reuses the same block',
-      /select\('name, state, next_move, goals, rules'\)/.test(j) && !/next_move, goals, rules, sig'/.test(j)
+      // ⟲ RE-POINTED W19: `id` joined the select (the W19.A state floor keys its ledger heads on it); `sig` stays out.
+      /select\('id, name, state, next_move, goals, rules'\)/.test(j) && !/next_move, goals, rules, sig'/.test(j)
       && /entity: ent \? dealBlock : null/.test(j) && j.indexOf('const dealBlock = dealBlockOf(ent)') < j.indexOf('const sig = `${JUDGE_VERSION}')
       && /dealBlock \+ personBlock/.test(j) && !/let dealBlock/.test(j));
     gate('J6 no JUDGE_VERSION bump for this wave (a one-time format miss, not a corpus-wide re-judge; same-version priors keep anchoring)',

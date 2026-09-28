@@ -155,7 +155,9 @@ const WRITE_ALLOW: Record<string, string> = {
   // reads must not re-judge every member item. Same law (the entity the judge reads rides the sig,
   // read BEFORE the cache check), sharper dep. Outcome proof: scripts/smoke-projects-follow.ts J1–J4.
   check('S5.3 the entity the judge READS rides the sig as its rendered deal block (read BEFORE the cache check)',
-    /select\('name, state, next_move, goals, rules'\)/.test(j) && /entity: ent \? dealBlock : null/.test(j)
+    // ⟲ RE-POINTED W19: the select gained `id` (the W19.A state floor keys its ledger heads on it) and the
+    // row passes floorEntityRows before dealBlockOf — the same entity, read before the cache, served true.
+    /select\('id, name, state, next_move, goals, rules'\)/.test(j) && /floorEntityRows\(client, userId, \[entRaw/.test(j) && /entity: ent \? dealBlock : null/.test(j)
     && /const dealBlock = dealBlockOf\(ent\)/.test(j)
     && j.indexOf('const dealBlock = dealBlockOf(ent)') < j.indexOf('const sig = `${JUDGE_VERSION}'));
   check('S5.4 the commitment branch resolves its counterparty ADDRESS through the nominator',

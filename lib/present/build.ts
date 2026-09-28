@@ -305,7 +305,6 @@ async function buildWorkflows(client: SupabaseClient, userId: string, p: Params)
     rows: kept,
     ...(more ? { more } : {}),
     params: agentId ? { agentId } : { scope: 'all' },
-    emptyLine: 'No workflows set up yet.',
   };
 }
 
@@ -361,7 +360,6 @@ export function documentSpec(groups: DocumentRowSource[], query: string): Collec
     rows: kept,
     ...(more ? { more } : {}),
     params: { query },
-    emptyLine: `Nothing in your documents matches "${query}".`,
   };
 }
 
@@ -388,7 +386,6 @@ export function recordingSpec(
     rows: kept,
     ...(more ? { more } : {}),
     params: { since: opts.since, ...(opts.withPerson ? { query: opts.withPerson } : {}) },
-    emptyLine: `Nothing recorded in the last ${sinceLabel}.`,
   };
 }
 
@@ -418,6 +415,5 @@ export function calendarSpec(
     rows: kept,
     ...(more ? { more } : {}),
     params: { from: opts.from, to: opts.to },
-    emptyLine: opts.hasCalendar ? 'Nothing booked in that window.' : 'No calendar is connected here.',
   };
 }

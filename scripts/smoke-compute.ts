@@ -609,10 +609,13 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('app/api/rooms/recent/route.ts').includes("k.startsWith('commitment:') ? 'task'") &&
     src('components/one/all-conversations.tsx').includes('{c.sub}'));
   check('SH5: A CLICK OPENS THE CONVERSATION — the open/new intents OPEN the panel (event same-page, sessionStorage intent cross-page; turns never load into a closed card); suggestions sit ABOVE the floor input',
-    src('components/home/home-ask.tsx').includes("sessionStorage.getItem('aug-open-chat-intent')") &&
+    // ⟲ RE-POINTED W19.2 — a CROSS-PAGE open is an ADDRESS now (components/one/chat-address): the
+    // sidebar navigates to /home?chat=<key>, Home opens ?chat= on landing; the payload-less flag no
+    // longer restores "the last chat" (it opened the wrong conversation for a coworker click).
+    src('components/home/home-ask.tsx').includes("chatParam?.startsWith('chat:')") &&
     src('components/home/home-ask.tsx').includes('loadRoom(key); setOpen(true);') &&
-    src('components/one/one-sidebar.tsx').includes("sessionStorage.setItem('aug-open-chat-intent'") &&
-    src('components/home/home-view.tsx').includes("sessionStorage.setItem('aug-open-chat-intent'") &&
+    src('components/one/one-sidebar.tsx').includes('router.push(chatHref(key))') &&
+    src('components/home/home-view.tsx').includes("new CustomEvent('aug:open-chat'") &&
     src('components/home/home-ask.tsx').includes('Suggestions ABOVE the input'));
   check('SH2: NO PROSE ON THE HOME (owner law, twice) — the deck IS the day; no briefing render, no voice teaser, no orb; the composed briefing still powers ordering (sentencedIds)',
     src('components/home/home-view.tsx').includes('NO PROSE ON THE HOME') &&
@@ -1515,7 +1518,10 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     // append to an unseen old one). The deck + an empty chief chat are the default.
     src('components/home/home-ask.tsx').includes('THE FRESH FLOOR') &&
     src('components/home/home-ask.tsx').includes('localStorage.removeItem(CHAT_KEY_LS)') &&
-    src('components/home/home-ask.tsx').includes("sessionStorage.getItem('aug-open-chat-intent')") &&
+    // ⟲ RE-POINTED W19.2 — the stored key restores behind NO flag at all now: cross-page opens are
+    // addresses (?chat= / ?dm=), and a leftover flag is only eaten.
+    src('components/home/home-ask.tsx').includes("sessionStorage.removeItem('aug-open-chat-intent')") &&
+    src('components/home/home-ask.tsx').includes('dmParamOf(window.location.search)') &&
     // RE-POINTED (Aug 13, THE CONTAINERS LAW): a coworker DM is ONE CONTINUOUS THREAD (the
     // Slack model) — the history popover + New session died; date dividers are the separator.
     !src('components/home/home-ask.tsx').includes('toggleDmHistory') &&

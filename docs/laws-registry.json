@@ -296,7 +296,8 @@
     "lib/entities/state.ts",
     "lib/room/brief.ts",
     "lib/context/intake-memory.ts",
-    "lib/work/apply-verdict.ts"
+    "lib/work/apply-verdict.ts",
+    "lib/room/grounding.ts"
    ],
    "gates": [
     {
@@ -319,12 +320,22 @@
      "kind": "source",
      "cost": "zero-ai",
      "note": "landed W2.3 (uncommitted): M1 no writer inserts a new source='commitment' inbox row (the commitments sweep and every other file); M2 every listing reader of pending/resolved inbox_items excludes mirrors through the one predicate module; M3 the PATCH route/expiry/evidence-settle reach mirrors only via settleMirrorRows (archive-only, never delete); M4 the repair sweep is dry-run by default, --apply gated, archive-only; --census adds a read-only per-account proof that no open commitment's mirror disappears"
+    },
+    {
+     "suite": "smoke-rib-class",
+     "ids": [
+      "C1-C10",
+      "D1-D6"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W19.A THE SUMMARY IS NOT A SECOND TRUTH: the stored entity synthesis is served through one floor (lib/entities/state serveEntityState) — a claim naming a CLOSED ledger row as owed/blocking is dropped (acronym-aware, settled-distinctive tokens), open work is never silenced; the write path runs the same floor + the time belt and stamps composedAt; the one grounding leads with the ledger (settled rows → live board → the world's record) and the synthesis follows, so a head-clip keeps the rows; a state older than its ledger is marked for its one sig-gated recompose; an inverse gate requires EVERY reader of the stored prose to floor it (floored-only, no declared escape); a floored row drops the settled claim from summary · blocking · stage · whoOwes · next move"
     }
    ],
    "version_key": null,
    "status": "holding-uncommitted",
    "fixed_by": "W2.3, W2.4",
-   "note": "no new mirror can be written and every listing reader now excludes the historical ones structurally; the 931/195-row historical backlog itself is archived only when the owner runs the dry-run-by-default sweep with --apply — the invariant (one home, going forward) is fixed in code, the historical cleanup is a separate owner-gated repair",
+   "note": "no new mirror can be written and every listing reader now excludes the historical ones structurally; the 931/195-row historical backlog itself is archived only when the owner runs the dry-run-by-default sweep with --apply — the invariant (one home, going forward) is fixed in code, the historical cleanup is a separate owner-gated repair W19.A (Sep 28): work_entities.state contradicted the ledger (a handled RIB item served as blocking + 'nine days overdue') — the prompt rule had no code floor at the serve; fixed by W19.A (uncommitted): ALL 15 readers of the stored state prose (the grounding, the judge's deal block, the Home brief + timeline, the portfolio + project detail + status update, the chat, the user grounding, the prepare pass, brain context, the workflow entity edge, the room view, the merge reflection) serve it through the one floor (floorEntityRows over batched ledger heads, or serveEntityState over a held ledger) — smoke-rib-class D4 is floored-only, no declared escape.",
    "broken_by": null,
    "collides_with": [
     {
@@ -350,7 +361,10 @@
     "lib/inbox/reconcile-replied.ts",
     "lib/inbox/thread-resolution.ts",
     "lib/commitments/fulfillment.ts",
-    "lib/inbox/reactivate-on-reply.ts"
+    "lib/inbox/reactivate-on-reply.ts",
+    "lib/commitments/deliverable-ask.ts",
+    "lib/evidence/relevance.ts",
+    "lib/inbox/top-message.ts"
    ],
    "gates": [
     {
@@ -395,11 +409,22 @@
       "N1-N9"
      ],
      "note": "W8.1: the REAL resolvers + pool + reverse door over an in-memory double — a calendar meeting held with the counterparty nominates a 'call X' commitment; a bare-name meeting counterparty resolves through the meeting's own attendees; a teammate's delivery nominates (forward and reverse) with role teammate; a commit-door deed nominates"
+    },
+    {
+     "suite": "smoke-rib-class",
+     "ids": [
+      "A0-A8",
+      "B0-B6",
+      "E1-E3"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W19.A A REPLY IS NOT A DELIVERY + EVIDENCE IS ABOUT ITS OBJECT: the REAL reply resolver over an in-memory double with a stubbed judge — a promising reply keeps a deliverable item open and records a you-owe commitment through writeCommitments (stated date, verified quote, idempotent); a delivering reply closes; an answer-only item closes on the reply with no judgment; a read path never judges; ≤3 fresh judgments per call, the rest reported; a counterparty-owed commitment's person-keyed evidence excludes a message about a different matter (same conversation always stands); the dry-run repair's census filter; the ONE quoted-chain parser (lib/inbox/top-message) cuts the French Outlook header block, and relevance reads own words through it only"
     }
    ],
    "version_key": "FULFILLMENT_LAW_VERSION",
    "status": "holding-uncommitted",
-   "fixed_by": "W3.1",
+   "fixed_by": "W3.1, W19.A",
    "broken_by": null,
    "collides_with": [
     {
@@ -410,7 +435,8 @@
      "law": "fulfillment-law",
      "precedence": "evidence NOMINATES, the fulfillment judge DECIDES; unclear/failure changes nothing"
     }
-   ]
+   ],
+   "note": "W19.A (owner walk Sep 28): the reply resolver closed a DELIVERABLE inbox ask (send the RIB) on a reply that only promised it, and nothing tracked the promise; a counterparty-owed commitment's verdict read an unrelated same-person mail. Fixed by W19.A (uncommitted): deliverable asks close only on a judged delivery (one judge — lib/commitments/fulfillment), a promise is recorded as a you-owe commitment, person-keyed evidence must share the work's matter. The historical closes are listed by scripts/repair-reply-closed-deliverables.ts (dry-run; --apply owner-gated)."
   },
   {
    "id": "a-claim-renders",
@@ -440,7 +466,10 @@
     "lib/room/legacy-ask-speech.ts",
     "app/api/room/turns/route.ts",
     "lib/prepare/narration.ts",
-    "lib/room/ask-lifecycle.ts"
+    "lib/room/ask-lifecycle.ts",
+    "lib/converse/index.ts",
+    "components/thread/thread-cards.tsx",
+    "app/api/items/steer/route.ts"
    ],
    "gates": [
     {
@@ -564,6 +593,26 @@
      ],
      "kind": "pure",
      "cost": "zero-ai"
+    },
+    {
+     "suite": "smoke-project-room",
+     "ids": [
+      "K1-K3",
+      "B1-B3",
+      "N1-N2"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W19.C (uncommitted): the item KIND rides to every stage/open door (a commitment never opens as an email — refDoorHref/stageDoorHref); the sole-staged binder never re-binds a relevance-vetoed move and needs the move's words to name the entry; a waiting row's prepared work reads \"Nudge ready — waiting on <who>: …\" with the CTA \"Review nudge\" (read-time, from the served rows)"
+    },
+    {
+     "suite": "smoke-answer-shape",
+     "ids": [
+      "S1-S6"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W19.2a AN EMPTY SET IS NOT A CARD + A CATCH-UP GETS A REAL ANSWER (owner walk Sep 28: a room catch-up was served \"Nothing recorded in the last 7 days.\" over an empty card saying it again): a zero-row collection renders nothing in the kit (every host) and is never emitted — the contract carries no empty line, the core's fast path serves a set only with rows (else falls through to the answer path), the loop attaches only a set with rows, the steer door never writes a zero-row card turn and stores the ANSWER's prose + tagged refs on a card turn (never the framing in its place); the router judges `synthesis` and synthesisPrecedence drops a named read for a catch-up/status/what-changed/multi-part question (never a deed, a hand-off or a literal listing), which a project room answers through the Home answer path pinned to the room. tests/unit/answer-shape runs the ONE core end to end with the model stubbed"
     }
    ],
    "version_key": null,
@@ -580,7 +629,7 @@
      "precedence": "same chain: floor → ladder pick → single claim"
     }
    ],
-   "note": "W13.6 (owner walk after W13.5): the live engine ask said \"I have the details on slides 7&8 … ready to go\" over work nobody had started (the composer's words were never checked, and the doc-send lane re-posted an ARCHIVED ask's words); the ask did not render (the lane's generic label \"the document itself\" was mooted by the verdict-drift rule while the brief's grounding still read it as open); and \"Clara found the file and drafted the send\" stood live over a send already filed. Fixed by W13.6 (uncommitted)."
+   "note": "W13.6 (owner walk after W13.5): the live engine ask said \"I have the details on slides 7&8 … ready to go\" over work nobody had started (the composer's words were never checked, and the doc-send lane re-posted an ARCHIVED ask's words); the ask did not render (the lane's generic label \"the document itself\" was mooted by the verdict-drift rule while the brief's grounding still read it as open); and \"Clara found the file and drafted the send\" stood live over a send already filed. Fixed by W13.6 (uncommitted). W19.2a (owner walk Sep 28): a project-room catch-up was routed to a 7-day recordings read; its zero-row card stood under a framing sentence that replaced the answer on reload. Fixed by W19.2a (uncommitted)."
   },
   {
    "id": "exactly-once-deeds",
@@ -638,6 +687,16 @@
       "B10"
      ],
      "note": "W8.6: the paged bulk commit — first claim on committedAt null, resume by lease + cursor compare-and-set, per-page lease-guarded persist, pending-only per member, a complete/undone deed never acts again, the batch undo claims undoneAt exactly once"
+    },
+    {
+     "suite": "smoke-project-room",
+     "ids": [
+      "S3a-S3c",
+      "S4a-S4c"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W19.C (uncommitted): a project chat's delete / move-out is ONE conditional room_turns UPDATE (room key + stamp + claimed chat ids) — a second click moves nothing, the undo re-keys it back, and no other table is written (nothing a chat created cascades)"
     }
    ],
    "version_key": null,
@@ -791,7 +850,9 @@
     "lib/room/warm-client.ts",
     "components/home/item-open-frame.tsx",
     "app/(main)/@modal/(.)item/[id]/loading.tsx",
-    "lib/room/serve-truth.ts"
+    "lib/room/serve-truth.ts",
+    "lib/room/room-update.ts",
+    "components/one/chat-address.ts"
    ],
    "gates": [
     {
@@ -872,6 +933,28 @@
      "kind": "pure",
      "cost": "zero-ai",
      "note": "W13.5: the serve-time truth decides BEFORE the first paint (a withheld last-good paints the fallback and marks briefPending — the recompose, run AFTER the on-open re-prepare trip, lands as an APPEND, never a swap)"
+    },
+    {
+     "suite": "smoke-project-room",
+     "ids": [
+      "A1-A2",
+      "K1-K3"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W19.C (uncommitted): the sidebar derives its lit seat from the address (navActive over ?chat=, announced by the ONE writer writeChatAddress) — Home and an open chat are exclusive; a stage door's address carries the object's kind"
+    },
+    {
+     "suite": "smoke-room-updates",
+     "ids": [
+      "A1-A21",
+      "B1-B13",
+      "C1-C7",
+      "D1-D7"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W19.2b (uncommitted, owner walk Sep 28) AN UPDATE IS A NEW MESSAGE, NEVER A REWRITE: a room's opening the reader has met is pinned for the session (lib/room/room-update — read marker ≥ composition) and every serve paints it word for word; when the room's FACTS move (the sig — the chat tail is no longer in it, so a chat turn never recomposes) the ONE composition also states the delta, posted once below as the seat's own chat turn (at most one pending: an unseen update is superseded in place; empty, restating, duplicate and version-only updates post nothing; the update passes the brief's nets incl. TIME TRUTH); New chat releases the pin (a fresh session gets a fresh opening) and Resume / Move-out / Delete move the updates with their chat. ASK FOR WHAT ONLY THE USER HAS (lib/room/cta-law USER_INPUT_RULE + userOnlyInputOf): an offer needing the user's bank details / credential / document / signature / decision — or a live ask's required input — asks for it, at composition, at the render (cached offers) and on the chips. THE DM DOOR HAS AN ADDRESS (components/one/chat-address): off /home the sidebar navigates to /home?chat=worker:<tid>:<agent> (or ?dm=<agent>, resolved by Home and rewritten) and to /home?chat=<key>; no cross-page chat intent relies on an event or a payload-less flag"
     }
    ],
    "version_key": null,
@@ -1142,6 +1225,25 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "landed W18.D (uncommitted): cached prose served on a later day is TRUE or WITHHELD — the one read of a stored room brief (readRoomResponse) and the Home briefing/brief line pass the zero-AI serve floor (lib/core/relative-time serveTimeWords: exact relative words EN·PT·DE·FR rewritten to dates against the composition's own timestamp in the user's zone; vague ones or an unknown anchor withhold before the paint); the composers carry ABSOLUTE_DATES_RULE + the compose-time belt (absolutizeTimeWords); fixtures × 40 later days, fake-store reads, source checks of every serve path"
+    },
+    {
+     "suite": "smoke-time-words",
+     "ids": [
+      "A′1-A′6"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W19.A: an overdue COUNT ('nine days overdue', '9 dias de atraso', 'seit 5 Tagen überfällig', '4 jours de retard') served on a later day is rewritten to its deadline's date ('overdue since Sep 18') or withheld when vague/unanchored; the compose-time belt dates it before storing; the entity state summary passes the floor where W19.A serves it"
+    },
+    {
+     "suite": "smoke-rib-class",
+     "ids": [
+      "C2",
+      "C4"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W19.A: the entity summary's overdue count is withheld without a composition anchor and dated with one"
     }
    ],
    "version_key": "JUDGE_VERSION",
@@ -6378,20 +6480,71 @@
    "name": "THE ANSWER SURVIVES THE TAB",
    "aliases": [
     "EXACTLY ONE WRITER PER TURN",
-    "SERVER-SIDE PERSIST BEFORE done"
+    "SERVER-SIDE PERSIST BEFORE done",
+    "THE ROOM'S CONVERSATION IS A REAL CHAT",
+    "THE OPENER IS CHROME",
+    "NO ORPHAN QUESTION"
    ],
    "tier": 2,
    "domain": "chat",
-   "statement": "The Home-ask answer is persisted server-side before the stream's done frame under a shape-validated room key; the client never double-writes.",
+   "statement": "Every chat door saves both halves of an exchange server-side, exactly once: the Home ask persists its answer before the stream's done frame under a shape-validated room key; the room steer door writes the question keyed ask:<answerKey> (the insert IS the claim — a retry collides for ever) and only the claiming request writes the answer, only while its question is live, in the Home shape (prose + tagged refs, no key/author/component — the exchange boundary, so New chat/Resume move it with its question); the client never double-writes. An unhandled system turn is the seat's answer and renders as the seat's bubble through the ONE answer renderer (components/home/ask-answer.tsx) — never the narrator's event line; fold and render read one narration predicate, so an answer never folds under its question; the opener is chrome and is never persisted (pre-W19 rows are dropped at read); and an exchange that ends on the reader's words with nothing in flight renders 'No answer was saved · Ask again', which re-keys that question rather than writing it twice.",
    "homes": [
-    "app/api/home/ask/route.ts"
+    "app/api/home/ask/route.ts",
+    "app/api/items/steer/route.ts",
+    "app/api/items/steer/answer-door.ts",
+    "components/home/room-chat.ts",
+    "components/home/ask-answer.tsx",
+    "components/home/item-rail.tsx",
+    "components/home/home-ask.tsx"
    ],
-   "gates": [],
-   "fn": "room-key shape validator",
+   "gates": [
+    {
+     "suite": "smoke-room-chat",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "A1-A5",
+      "B1-B3",
+      "C1",
+      "D1",
+      "E1-E2"
+     ],
+     "note": "W19.B: a fake room_turns store with the real unique index — the question once, the answer exactly once across racing/late deliveries, nothing after a New chat, Ask again re-keys the orphan; answers vs narration; the Home renderer resolves tags into clean chips; opener shapes; orphan rule"
+    },
+    {
+     "suite": "smoke-room-chat",
+     "kind": "source",
+     "cost": "zero-ai",
+     "ids": [
+      "A6",
+      "B4-B5",
+      "C2-C4",
+      "D2-D3",
+      "E3-E5"
+     ],
+     "note": "W19.B: door wiring order; the rail writes neither half; one renderer imported by both chats; the read floor; one predicate for fold and render; the orphan line on both doors + Home"
+    }
+   ],
+   "fn": "writeAskTurn · questionStillLive · answerTurnRow · steerRoomKey · isAnswerTurn · isNarrationTurn · isPersistedOpener · orphanQuestion · refChipLabel",
    "version_key": null,
-   "status": "gateless",
+   "status": "holding-uncommitted",
    "broken_by": null,
-   "collides_with": []
+   "collides_with": [
+    {
+     "law": "exactly-once-deeds",
+     "precedence": "the question insert is the conditional claim; a re-ask is a conditional re-key — never a second row"
+    },
+    {
+     "law": "no-mutation-and-address",
+     "precedence": "the saved answer is what the next paint reads; the live turn and the stored row carry the same words (answerTextOf)"
+    },
+    {
+     "law": "a-claim-renders",
+     "precedence": "a question without an answer is never silently the last word — the orphan line claims only what is true (nothing was saved) and offers the one door"
+    }
+   ],
+   "fixed_by": "W19.B",
+   "note": "Sep 28 (owner walk): a project room served 'Catch me up on this client…' with nothing under it, twice — the room's steer door never persisted plain answers (only presented cards), the live answer drew in the grey event-line grammar with ledger-line refs ('(handled) — \"Bonjour…\"'), a card answer folded into History under its question (two hand-kept 'is a card' lists had drifted), and the opener 'What do you want to pick up?' was persisted as an authorless turn in every saved chat."
   },
   {
    "id": "tail-survives-truncation",

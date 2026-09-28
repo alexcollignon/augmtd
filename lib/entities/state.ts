@@ -14,6 +14,7 @@ import { readPlans, asRawResult } from '@/lib/store/item-plans';
 import { aiCall } from '@/lib/ai/call';
 import { isAutomatedSender } from '@/lib/inbox/automated';
 import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { serveTimeWords, absolutizeTimeWords } from '@/lib/core/relative-time';
 
 // VOICE (P5a): bump whenever the synthesis prompt/voice changes — threaded into the stored sig so every
 // cached state regenerates through the existing sig-gated paths (the alignment-cache lesson: a
@@ -37,6 +38,9 @@ export type EntityState = {
   whoOwes: { you: string[]; them: string[] };
   stage: string | null;
   blocking: string | null;
+  /** W19.A — when this prose was composed (the TIME TRUTH anchor every serve reads). Absent on
+   *  states composed before the stamp: their relative words are withheld at serve. */
+  composedAt?: string;
 };
 export type EntityNextMove = {
   kind: 'reply' | 'send' | 'followup' | 'none'; title: string; reason: string; entityRef: string | null;
@@ -90,6 +94,264 @@ export function restatesSettledWork(claim: string, ledger: LedgerLine[], generic
     else openBest = Math.max(openBest, s);
   }
   return settledBest >= 0.5 && settledBest > openBest;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// W19.A · THE SUMMARY IS NOT A SECOND TRUTH (invariant 6 ONE FACT, ONE HOME + 14 TIME TRUTH; owner
+// walk Sep 28). The synthesis v9 prompt forbids naming a (handled) line as owed and the write-time
+// arbiter above checks it — and a stored state still read "Your RIB stops the pilot payment … Nine
+// days overdue" beside a ledger whose RIB line was handled: the arbiter's 4-letter floor could not
+// see the acronym that WAS the matter, and an open line sharing the deal's generic words out-scored
+// the settled one. The stored prose is a DERIVED VIEW of the rows; where it disagrees with them the
+// rows win, at every serve. This floor is zero AI and pure:
+//   · SETTLED-DISTINCTIVE TOKENS — the words that name a settled line's matter and NO open line's
+//     (data-derived per ledger: what is shared with open work is not evidence either way; acronyms
+//     count however short). A blocking / whoOwes / next-move claim, or a summary clause spoken in
+//     owed grammar, that names settled matter more than open matter is DROPPED.
+//   · TIME — every sentence passes serveTimeWords against the state's own composition time; a
+//     sentence whose relative words cannot be proven true ("nine days overdue" with no known
+//     anchor) is WITHHELD, never served.
+// The write path runs the same floor before storing, so a recomposed state is clean at the source.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** A line whose ROW is closed — handled, dismissed or DONE. Deliberately NOT the watermark ("the user
+ *  spoke last"): since W19.A a reply that only PROMISES a deliverable leaves the item open, so the
+ *  last speaker is no longer proof of settlement at the serve floor — only the row's status is. */
+export function isClosedLedgerLine(text: string): boolean {
+  return /\(handled\)|\(dismissed[^)]*\)|^DONE — /.test(String(text ?? ''));
+}
+
+/** The line's MATTER — its title/description, without status marks, gists, watermarks or labels. */
+export function ledgerLineHead(text: string): string {
+  let s = String(text ?? '');
+  s = s.replace(/^DONE — [^:]*:\s*/, '').replace(/^(?:you owe|they owe|team prepared|Upcoming meeting|Meeting):\s*/i, '');
+  const cut = [' (handled)', ' (dismissed', ' — "', ' — NOW (', ' [attached', ' (was due ', ' (due '].map((m) => s.indexOf(m)).filter((i) => i > 0);
+  return (cut.length ? s.slice(0, Math.min(...cut)) : s).trim();
+}
+
+const MONTH_ABBR = new Set(['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']);
+const fold = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+/** The claim's content tokens: ≥4 letters, or a short ACRONYM as written (RIB, NDA, SOW). */
+export function floorTokens(text: string, skip: ReadonlySet<string> = new Set()): string[] {
+  const raw = String(text ?? '');
+  const acronyms = new Set((raw.match(/\b[A-Z]{2,5}\b/g) ?? []).map((a) => fold(a)));
+  return [...new Set(fold(raw).split(/[^\p{L}\p{N}]+/u)
+    .filter((t) => t && !/^\d+$/.test(t) && !skip.has(t) && !MONTH_ABBR.has(t) && (t.length >= 4 || acronyms.has(t))))];
+}
+
+/** The owed / blocking / overdue grammar a SUMMARY clause must speak before the floor may drop it
+ *  (a clause telling settled history — "they met Jul 28" — is history, and stays). EN · PT · DE · FR. */
+export const OWED_GRAMMAR = /(?<![\p{L}])(?:owe[sd]?|owing|promis|overdue|late|past due|deadline|due|block|unblock|stops?|holding up|holds up|waiting (?:on|for)|awaiting|needs? (?:you|your)|still (?:owe|need|to)|must|has to|have to|outstanding|pending|missing|deve[ms]?|devido|prometid|prometeu|atras|prazo|bloque|pendente|falta|aguard|schuld|versproch|[üu]berf[äa]llig|versp[äa]t|frist|f[äa]llig|blockier|ausstehend|fehlt|wartet|dois|doit|devez|promis|retard|[ée]ch[ée]ance|bloqu|en attente|attend|manque)/iu;
+
+export type SettledIndex = { settled: Set<string>; open: Set<string> };
+
+/** Per-ledger token index: words DISTINCTIVE to settled lines (in ≤2 settled heads and no open
+ *  head) vs words only open lines carry. Shared words belong to neither — they prove nothing. */
+export function settledIndexOf(ledger: ReadonlyArray<{ text: string }>, skip: ReadonlySet<string> = new Set()): SettledIndex {
+  const settledCount = new Map<string, number>();
+  const openAll = new Set<string>();
+  for (const l of ledger) {
+    const toks = floorTokens(ledgerLineHead(l.text), skip);
+    if (isClosedLedgerLine(l.text)) for (const t of toks) settledCount.set(t, (settledCount.get(t) ?? 0) + 1);
+    else for (const t of toks) openAll.add(t);
+  }
+  const settled = new Set([...settledCount].filter(([t, n]) => n <= 2 && !openAll.has(t)).map(([t]) => t));
+  const open = new Set([...openAll].filter((t) => !settledCount.has(t)));
+  return { settled, open };
+}
+
+/** Does this claim name SETTLED matter more than open matter? Pure. */
+export function namesSettledWork(claim: string, idx: SettledIndex, skip: ReadonlySet<string> = new Set()): boolean {
+  const toks = floorTokens(claim, skip);
+  const s = toks.filter((t) => idx.settled.has(t)).length;
+  const o = toks.filter((t) => idx.open.has(t)).length;
+  return s >= 1 && s > o;
+}
+
+const SUMMARY_CLAUSES = /(?<=[.,;:])\s+|\s+—\s+/;
+const SENTENCES = /(?<=[.!?])\s+/;
+
+/** THE TIME HALF, sentence-wise: every sentence served through serveTimeWords against the state's
+ *  own composition time; a sentence that cannot be proven true is withheld (the rest stands). */
+export function serveStateProse(text: string | null | undefined, anchor: { composedAt: string | null | undefined; now?: Date; tz?: string | null }): { text: string; withheld: string[] } {
+  const raw = String(text ?? '');
+  const withheld: string[] = [];
+  const kept: string[] = [];
+  let changed = false;
+  for (const s of raw.split(SENTENCES).filter((x) => x.trim())) {
+    const v = serveTimeWords(s, anchor);
+    if (v.withheld) { withheld.push(s); changed = true; } else { kept.push(v.text); if (v.text !== s) changed = true; }
+  }
+  // Nothing to floor → the stored text byte-identical (a cache sig that reads it never moves).
+  return { text: changed ? kept.join(' ').trim() : raw, withheld };
+}
+
+export type ServedEntityState = {
+  summary: string | null;
+  blocking: string | null;
+  whoOwesYou: string[];
+  whoOwesThem: string[];
+  nextMove: string | null;
+  /** The stage label (a short phrase — "payment blocked, awaiting the RIB" is a claim too). */
+  stage: string | null;
+  /** What the settled floor dropped (claims naming handled work as owed). */
+  dropped: string[];
+  /** What the time floor withheld (relative words that cannot be proven true today). */
+  withheld: string[];
+};
+
+/**
+ * THE SERVE FLOOR for a stored entity state (pure, zero AI). `ledger` = the live ledger (when the
+ * reader holds it — the settled half runs only then); `composedAt` = the state's own composition
+ * time (state.composedAt; unknown → relative words are withheld).
+ */
+export function serveEntityState(
+  state: { summary?: unknown; blocking?: unknown; stage?: unknown; whoOwes?: { you?: unknown; them?: unknown } | null; composedAt?: unknown } | null | undefined,
+  opts: { ledger?: ReadonlyArray<{ text: string }> | null; entityName?: string | null; generic?: ReadonlySet<string>; nextMove?: string | null; now?: Date; tz?: string | null } = {},
+): ServedEntityState {
+  const st = state ?? {};
+  const skip = new Set<string>([...(opts.generic ?? []), ...floorTokens(String(opts.entityName ?? ''))]);
+  const idx = opts.ledger?.length ? settledIndexOf(opts.ledger, skip) : null;
+  const dropped: string[] = [];
+  const withheld: string[] = [];
+  const anchor = { composedAt: typeof st.composedAt === 'string' ? st.composedAt : null, now: opts.now, tz: opts.tz };
+  const settledClaim = (c: string) => !!idx && namesSettledWork(c, idx, skip);
+  const claim = (c: unknown): string | null => {
+    const s = typeof c === 'string' ? c.trim() : '';
+    if (!s) return null;
+    if (settledClaim(s)) { dropped.push(s); return null; }
+    const t = serveStateProse(s, anchor);
+    withheld.push(...t.withheld);
+    return t.text || null;
+  };
+  const list = (xs: unknown): string[] => (Array.isArray(xs) ? xs : []).map(claim).filter((x): x is string => !!x);
+  // The summary: owed-grammar clauses naming settled matter drop; then the time half, sentence-wise.
+  let summary: string | null = null;
+  const raw = typeof st.summary === 'string' ? st.summary.trim() : '';
+  if (raw) {
+    // Clause-wise (the file's one CLAUSES split — the boundaries keep their punctuation), so a
+    // dropped or withheld clause leaves the rest of the position readable.
+    const parts = raw.split(SUMMARY_CLAUSES);
+    let changed = false;
+    const kept: string[] = [];
+    for (const c of parts) {
+      if (OWED_GRAMMAR.test(c) && settledClaim(c)) { dropped.push(c); changed = true; continue; }
+      const v = serveTimeWords(c, anchor);
+      if (v.withheld) { withheld.push(c); changed = true; continue; }
+      if (v.text !== c) changed = true;
+      kept.push(v.text);
+    }
+    let mended = !changed ? raw : kept.join(' ').replace(/\s+/g, ' ').replace(/[\s,;:—]+$/, '').trim();
+    if (mended && changed && !/[.!?]$/.test(mended)) mended = `${mended}.`;
+    summary = mended || null;
+  }
+  return {
+    summary,
+    blocking: claim(st.blocking),
+    whoOwesYou: list(st.whoOwes?.you),
+    whoOwesThem: list(st.whoOwes?.them),
+    nextMove: claim(opts.nextMove ?? null),
+    stage: claim(st.stage),
+    dropped, withheld,
+  };
+}
+
+/**
+ * W19.A · THE LEDGER HEADS — the light ledger the serve floor needs for MANY entities at once: each
+ * entity's linked inbox items + commitments as status-marked title lines (the same grammar
+ * assembleLedger writes — "(handled)", "(dismissed)", "DONE — …", "you owe: …"), without gists,
+ * watermarks, meetings or deliverables (the floor reads only a line's matter and whether its row is
+ * closed). Batched + paged (NO SILENT CAPS); a failed read yields no heads (the time half still runs).
+ */
+export async function loadLedgerHeads(client: SupabaseClient, userId: string, entityIds: string[]): Promise<Map<string, Array<{ text: string }>>> {
+  const out = new Map<string, Array<{ text: string }>>();
+  const ids = [...new Set(entityIds.filter(Boolean))];
+  if (!ids.length) return out;
+  try {
+    const { fetchAllRows } = await import('@/lib/utils/fetch-all');
+    const chunk = <T,>(xs: T[], n: number) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, (i + 1) * n));
+    type Link = { entity_id: string; item_kind: string; item_id: string };
+    const links = (await Promise.all(chunk(ids, 100).map((c) => fetchAllRows<Link>((from, to) => client.from('entity_links')
+      .select('entity_id, item_kind, item_id').eq('user_id', userId).in('entity_id', c).in('item_kind', ['inbox_item', 'commitment'])
+      .order('item_id', { ascending: true }).range(from, to) as unknown as PromiseLike<{ data: Link[] | null; error: unknown }>)))).flat();
+    const inboxIds = [...new Set(links.filter((l) => l.item_kind === 'inbox_item').map((l) => l.item_id))];
+    const commitIds = [...new Set(links.filter((l) => l.item_kind === 'commitment').map((l) => l.item_id))];
+    const line = new Map<string, string>();
+    await Promise.all([
+      ...chunk(inboxIds, 200).map(async (c) => {
+        const { data, error } = await client.from('inbox_items').select('id, work_title, status, subject:source_data->>subject').eq('user_id', userId).in('id', c);
+        if (error) return;
+        for (const it of (data ?? []) as Array<{ id: string; work_title: string | null; status: string; subject: string | null }>) {
+          const res = it.status === 'completed' ? ' (handled)' : it.status === 'dismissed' ? ' (dismissed)' : '';
+          line.set(`inbox_item:${it.id}`, `${String(it.work_title || it.subject || '')}${res}`);
+        }
+      }),
+      ...chunk(commitIds, 200).map(async (c) => {
+        const { data, error } = await client.from('commitments').select('id, description, direction, status').eq('user_id', userId).in('id', c);
+        if (error) return;
+        for (const r of (data ?? []) as Array<{ id: string; description: string | null; direction: string | null; status: string }>) {
+          const closed = r.status === 'done' || r.status === 'dismissed';
+          line.set(`commitment:${r.id}`, closed ? `DONE — handled: ${r.description ?? ''}` : `${r.direction === 'awaiting' ? 'they owe' : 'you owe'}: ${r.description ?? ''}`);
+        }
+      }),
+    ]);
+    for (const l of links) {
+      const t = line.get(`${l.item_kind}:${l.item_id}`);
+      if (!t) continue;
+      (out.get(l.entity_id) ?? out.set(l.entity_id, []).get(l.entity_id)!).push({ text: t });
+    }
+  } catch { /* the settled half needs the rows; without them only the time half runs */ }
+  return out;
+}
+
+/**
+ * W19.A · THE ONE SERVE DOOR for stored entity rows — every reader that surfaces a work_entities
+ * state's prose (summary · blocking · whoOwes · the next move's title) passes its rows through here.
+ * Returns the rows with `state` floored (serveEntityState over the entity's ledger heads + the time
+ * floor against state.composedAt) and `next_move` dropped when its title named settled work. The
+ * row's other fields are untouched. `heads` may be pre-loaded (a caller that starts the read in its
+ * first wave); otherwise it is loaded here in one batched pass.
+ */
+export async function floorEntityRows<T extends Record<string, unknown>>(
+  client: SupabaseClient, userId: string, rows: T[],
+  opts: { heads?: Map<string, Array<{ text: string }>> | Promise<Map<string, Array<{ text: string }>>>; tz?: string | null; now?: Date } = {},
+): Promise<T[]> {
+  if (!rows.length) return rows;
+  const [heads, generic] = await Promise.all([
+    opts.heads ?? loadLedgerHeads(client, userId, rows.map((r) => String(r.id ?? '')).filter(Boolean)),
+    import('@/lib/entities/recognize').then((m) => m.GENERIC_WORK_WORDS as ReadonlySet<string>).catch(() => new Set<string>() as ReadonlySet<string>),
+  ]);
+  return rows.map((r) => floorEntityRowWith(r, heads.get(String(r.id ?? '')) ?? null, generic, opts));
+}
+
+/** The sync half of floorEntityRows (heads already in hand). Pure. */
+export function floorEntityRowWith<T extends Record<string, unknown>>(
+  r: T, ledger: ReadonlyArray<{ text: string }> | null, generic: ReadonlySet<string> = new Set(), opts: { tz?: string | null; now?: Date } = {},
+): T {
+  const st = (r.state && typeof r.state === 'object' ? r.state : null) as Record<string, unknown> | null;
+  if (!st) return r;
+  const nm = (r.next_move && typeof r.next_move === 'object' ? r.next_move : null) as { title?: unknown } | null;
+  const s = serveEntityState(st as never, {
+    ledger, entityName: typeof r.name === 'string' ? r.name : null, generic,
+    nextMove: typeof nm?.title === 'string' ? nm.title : null, tz: opts.tz, now: opts.now,
+  });
+  const state = {
+    ...st,
+    summary: s.summary ?? undefined,
+    blocking: s.blocking,
+    ...('stage' in st ? { stage: s.stage } : {}),
+    whoOwes: { you: s.whoOwesYou, them: s.whoOwesThem },
+  };
+  const next = nm && typeof nm.title === 'string' ? (s.nextMove ? { ...nm, title: s.nextMove } : null) : r.next_move;
+  return { ...r, state, ...('next_move' in r ? { next_move: next } : {}) };
+}
+
+/** Is a stored state older than the ledger it summarises? (Its sig embeds the ledger sig it was
+ *  composed over — `v<N>:<ledgerSig>:ev…`.) Pure; an unknown sig is stale. */
+export function entityStateStale(stateSig: string | null | undefined, ledgerSig: string | null | undefined): boolean {
+  if (!ledgerSig) return false;
+  return !String(stateSig ?? '').includes(`:${ledgerSig}:`);
 }
 
 // The user's own name (so the synthesis says "you") — same memo pattern as the brains.
@@ -463,6 +725,24 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
         // team deliverable is context the move may cite, but nothing downstream folds it.
         .filter((r): r is string => !!r && (r.startsWith('inbox:') || r.startsWith('commit:'))).slice(0, 12);
       nextMove = { kind: nm.kind as EntityNextMove['kind'], title: String(nm.title).slice(0, 120), reason: String(nm.reason || '').slice(0, 140), entityRef: latestInbound, ...(covers.length ? { covers } : {}) };
+    }
+    // W19.A · THE SUMMARY IS NOT A SECOND TRUTH, at the source: the SAME serve floor runs over what
+    // is about to be stored (acronym-aware, settled-distinctive — the gap the arbiter above left), and
+    // the compose-time time belt writes exact relative words ("nine days overdue") as dates. The
+    // stored state is then as clean as the serve; readers outside the grounding inherit it on the
+    // next recompose (entityStateStale marks a state older than its ledger for exactly that).
+    {
+      const composedAt = new Date().toISOString();
+      // (composedAt = now: the time half is a no-op on the composition day — the belt below writes dates)
+      const floored = serveEntityState({ ...state, composedAt }, { ledger, entityName: String(ent.name ?? ''), generic: GENERIC_WORK_WORDS, nextMove: nextMove?.title ?? null });
+      const belt = (x: string | null) => (x ? absolutizeTimeWords(x, {}).text : x);
+      state.summary = belt(floored.summary) ?? state.summary;
+      state.blocking = belt(floored.blocking);
+      state.stage = floored.stage;
+      state.whoOwes = { you: floored.whoOwesYou.map((x) => belt(x) ?? x), them: floored.whoOwesThem.map((x) => belt(x) ?? x) };
+      if (nextMove && !floored.nextMove) nextMove = null;
+      state.composedAt = composedAt;
+      if (floored.dropped.length) console.log(`[state] W19.A floor dropped ${floored.dropped.length} settled claim(s) before storing (${entityId.slice(0, 8)})`);
     }
     const priority: EntityPriority = {
       weight: Math.max(0, Math.min(100, Math.round(Number(p.priority?.weight ?? 20)))),

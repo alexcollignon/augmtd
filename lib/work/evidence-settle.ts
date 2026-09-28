@@ -26,7 +26,7 @@ import { readPlan } from '@/lib/store/item-plans';
 import { getPersonEntities, type PersonEntity } from '@/lib/entities/people';
 import { settleMirrorRows } from '@/lib/inbox/commitment-mirrors';
 import {
-  loadEvidencePool, matchEvidence, resolveCommitmentKeys, inboxKeys, nominateForEvent, scopeOf, SETTLE_MATCH,
+  loadEvidencePool, matchEvidence, resolveCommitmentKeys, inboxKeys, nominateForEvent, scopeOf, SETTLE_MATCH, gateEvidenceAboutWork,
   type Evidence, type EvidencePool, type OpenWork, type NewEvidenceEvent, type WorkKeys,
 } from './evidence-nominator';
 import { evidenceSource } from '@/lib/evidence/sources';
@@ -60,12 +60,12 @@ async function schedulingSignalFor(client: SupabaseClient, userId: string, work:
 const otherSide = (role: string | null | undefined, fulfiller: 'user' | 'counterparty'): boolean =>
   fulfiller === 'user' ? role === 'counterparty' || role === 'unknown' : false;
 
-async function toCandidates(client: SupabaseClient, userId: string, evidence: Evidence[], fulfiller: 'user' | 'counterparty' = 'user'): Promise<FulfillmentCandidate[]> {
-  const bodies = new Map<string, string>();
+async function toCandidates(client: SupabaseClient, userId: string, evidence: Evidence[], fulfiller: 'user' | 'counterparty' = 'user', prefetched?: Map<string, string>): Promise<FulfillmentCandidate[]> {
+  const bodies = new Map<string, string>(prefetched ?? []);
   const bySource = new Map<string, string[]>();
   for (const e of evidence) {
     const wantsBody = e.loadBody || e.type === 'email';
-    if (!wantsBody) continue;
+    if (!wantsBody || bodies.has(`${e.source ?? e.type}:${e.id}`)) continue;
     const key = e.source ?? e.type;
     bySource.set(key, [...(bySource.get(key) ?? []), e.id]);
   }
@@ -108,7 +108,14 @@ export async function settleWorkByEvidence(
 ): Promise<SettleOutcome> {
   if (!evidence.length) return NONE;
   try {
-    const candidates = await toCandidates(client, userId, evidence, work.fulfiller);
+    // W19.A · EVIDENCE IS ABOUT ITS OBJECT: a person-keyed piece whose own words do not share the
+    // work's matter is not evidence about it (a counterparty's mail asking for a DIFFERENT thing never
+    // reaches the verdict on this one). Same-conversation pieces (the object key, W18) always stand.
+    const gated = await gateEvidenceAboutWork(client, userId, evidence, work.description);
+    if (gated.vetoed) console.log(`[evidence-settle] ${work.kind}:${work.id.slice(0, 8)} — ${gated.vetoed} person-keyed piece(s) not about this work, left out`);
+    evidence = gated.evidence;
+    if (!evidence.length) return NONE;
+    const candidates = await toCandidates(client, userId, evidence, work.fulfiller, gated.bodies);
     const schedulingSignal = await schedulingSignalFor(client, userId, work);
     const row = work.kind === 'commitment'
       ? (await client.from('commitments').select('id, description, due_date, created_at, status, thread_id').eq('id', work.id).eq('user_id', userId).maybeSingle()).data

@@ -24,6 +24,7 @@ import { dateStatedInText } from '@/lib/utils/user-time';
 import { topMessageOf } from '@/lib/inbox/top-message';
 import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import { openAgeDays } from '@/lib/commitments/expiry';
+import { quoteInText } from '@/lib/work/conversation-delta';
 
 // Bump on ANY change to the judging prompt/facts/scoping — a cached verdict from an older law
 // must never satisfy the current one (the prompt-version-in-cache-sig law, learned twice now).
@@ -37,12 +38,20 @@ import { openAgeDays } from '@/lib/commitments/expiry';
 //    (its ids were never in a law-5 set), so no cached verdict is ever served for a prompt it did not see.
 // W18 (THE CONVERSATION ANSWERS) likewise does NOT bump: the OTHER SIDE's same-conversation message and
 //    the confirmation clause render ONLY when such a candidate is in the set, and every such set is new.
+// W19.A (A REPLY IS NOT A DELIVERY) does NOT bump: the PROMISE-QUOTE clause asks for one more OUTPUT
+//    field (the promising sentence, verbatim) and renders ONLY when the resolver asks for it
+//    (`wantsPromiseQuote`); the delivered/promised/unclear law — the criteria — is byte-identical. A
+//    cached `promised` verdict WITHOUT a quote is never served to that lane (it re-judges once); a
+//    verdict made in it is the same verdict under the same law, so every other reader may serve it.
 export const FULFILLMENT_LAW_VERSION = 5;
 
 export type FulfillmentVerdict = {
   verdict: 'delivered' | 'promised' | 'unclear';
   /** Only on `promised`: a NEW deadline stated in the message itself (code-verified, future-only). */
   newDue?: string;
+  /** W19.A — only on `promised`, only when asked (`wantsPromiseQuote`): the promising sentence, VERBATIM
+   *  from the owing side's own words (code-verified with quoteInText — an unverifiable quote is dropped). */
+  quote?: string;
   reason: string;
   /** On `delivered`: WHICH candidate delivered (type + id + its own time) — the settle stamps from it.
    *  W8.1: `role`/`name`/`deed` say WHO did it (a teammate's delivery is attributed, never the user's). */
@@ -77,6 +86,9 @@ export type FulfillmentObligation = {
   /** A STRUCTURED scheduling signal from the item's own judgment record (work='schedule') — never
    *  a keyword read. When absent the evidence is passed as facts and the judge decides alone. */
   schedulingSignal?: boolean;
+  /** W19.A — the reply resolver records a PROMISE as a you-owe commitment (the quote floor needs the
+   *  promising words verbatim): ask the one judge for them on a `promised` verdict. */
+  wantsPromiseQuote?: boolean;
 };
 
 // item_plans kind: 'fulfillment' (the one verdict store both doors share)
@@ -154,7 +166,9 @@ export async function judgeFulfillmentFromEvidence(
     try {
       const data = await readPlan(client, userId, 'fulfillment', cacheKey.entity);
       const t = (data?.tasks ?? null) as { sig?: string; verdict?: FulfillmentVerdict } | null;
-      if (t?.sig === cacheKey.sig && t.verdict?.verdict) return { ...t.verdict, cached: true, fresh: false };
+      // (W19.A: the promise-quote lane never takes a quote-less `promised` from the store — it re-judges once.)
+      const quoteMissing = obligation.wantsPromiseQuote === true && t?.verdict?.verdict === 'promised' && !t.verdict.quote;
+      if (t?.sig === cacheKey.sig && t.verdict?.verdict && !quoteMissing) return { ...t.verdict, cached: true, fresh: false };
     } catch { /* cache is best-effort */ }
   }
   const who = fulfillerIsUser ? 'the user (who owes it)' : 'the counterparty (who owes it)';
@@ -203,9 +217,13 @@ export async function judgeFulfillmentFromEvidence(
   const teammateClause = candidates.some((c) => c.actor?.role === 'teammate')
     ? `THE TEAMMATE CLAUSE: the user and their TEAMMATES are one side — a teammate handing over the thing owed IS delivery of the user's obligation, judged by the same law from the teammate's own words (a teammate's promise or status update is not delivery). Name that piece in "by". `
     : '';
+  // W19.A · THE PROMISE-QUOTE CLAUSE — only in the reply resolver's lane (see the version note above).
+  const quoteClause = obligation.wantsPromiseQuote === true
+    ? `\nWhen your verdict is "promised", ALSO return "quote": the ONE sentence of the owing side's email in which it promises the thing, copied VERBATIM from its own words above (same language, no paraphrase, no translation) — or null when no single sentence promises it.`
+    : '';
   try {
-    const res = await aiCall<{ verdict?: string; by?: string | null; new_due?: string | null; reason?: string }>({
-      userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: 200,
+    const res = await aiCall<{ verdict?: string; by?: string | null; new_due?: string | null; reason?: string; quote?: string | null }>({
+      userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: quoteClause ? 320 : 200,
       source: 'brain_synthesis',
       prompt:
         `Was this obligation FULFILLED by any of the evidence below, or only acknowledged/promised?\n` +
@@ -231,7 +249,9 @@ export async function judgeFulfillmentFromEvidence(
         teammateClause +
         confirmationClause +
         `When you cannot tell, say "unclear" — wrongly closing live work costs trust; leaving it open costs nothing.\n` +
-        `JSON only: {"verdict":"delivered|promised|unclear","by":"the label of the piece that delivered (E1/C1/T1…) or null","new_due":"YYYY-MM-DD or null","reason":"<one sentence>"}`,
+        (quoteClause
+          ? `${quoteClause}\nJSON only: {"verdict":"delivered|promised|unclear","by":"the label of the piece that delivered (E1/C1/T1…) or null","new_due":"YYYY-MM-DD or null","quote":"the promising sentence, verbatim, or null","reason":"<one sentence>"}`
+          : `JSON only: {"verdict":"delivered|promised|unclear","by":"the label of the piece that delivered (E1/C1/T1…) or null","new_due":"YYYY-MM-DD or null","reason":"<one sentence>"}`),
     });
     const v = String(res.json?.verdict ?? '').toLowerCase();
     const reason = String(res.json?.reason ?? '').slice(0, 200);
@@ -254,6 +274,9 @@ export async function judgeFulfillmentFromEvidence(
       out = /^\d{4}-\d{2}-\d{2}$/.test(nd) && nd > todayStr && dateStatedInText(body, nd)
         ? { verdict: 'promised', newDue: nd, reason }
         : { verdict: 'promised', reason };
+      // W19.A — the quote is the model's pick; the CODE verifies it stands in the email's own words.
+      const q = typeof res.json?.quote === 'string' ? res.json.quote.trim().replace(/^["'“”«»]+|["'“”«»]+$/g, '').trim() : '';
+      if (quoteClause && q && quoteInText(q, body)) out = { ...out, quote: q.slice(0, 400) };
     } else out = { verdict: 'unclear', reason: reason || 'model returned no usable verdict' };
     if (cacheKey) {
       await upsertPlan(client, userId, 'fulfillment', cacheKey.entity, { sig: cacheKey.sig, verdict: out });

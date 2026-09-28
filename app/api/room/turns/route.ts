@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { readRoomTurns, writeRoomTurn, archiveRoomTurns, archiveRoomChat, listRoomSessions, readRoomSession, restoreRoomSession } from '@/lib/room/turns';
+import { readRoomTurns, writeRoomTurn, archiveRoomTurns, archiveRoomChat, listRoomSessions, readRoomSession, restoreRoomSession, deleteRoomSession, listFiledChats } from '@/lib/room/turns';
 import { readRoomMarker, stampRoomMarker } from '@/lib/room/read-marker';
 
 export const maxDuration = 15;
@@ -19,8 +19,14 @@ export async function GET(request: NextRequest) {
     const key = request.nextUrl.searchParams.get('key');
     if (!key) return NextResponse.json({ error: 'key required' }, { status: 400 });
     // History (Claude-style): ?sessions=1 lists archived sessions; ?session=<iso> reads one.
+    // W19.C: a PROJECT room's listing also carries the Home chats filed into it (`filed`) — the
+    // drawer's Chats group lists both; a `chat:*`/item key has none.
     if (request.nextUrl.searchParams.get('sessions')) {
-      return NextResponse.json({ sessions: await listRoomSessions(supabase, user.id, key) });
+      const [sessions, filed] = await Promise.all([
+        listRoomSessions(supabase, user.id, key),
+        key.includes(':') ? Promise.resolve([]) : listFiledChats(supabase, user.id, key),
+      ]);
+      return NextResponse.json({ sessions, filed });
     }
     const session = request.nextUrl.searchParams.get('session');
     if (session) {
@@ -82,6 +88,15 @@ export async function DELETE(request: NextRequest) {
     // ?scope=chat — THE PROJECT ROOM'S "New chat" (owner, Sep 14): archive the AD-HOC EXCHANGE and
     // leave the room's standing record (engine narrations, cards, attributed speech) untouched.
     // The structural boundary lives in ONE place, lib/room/turns.ts — never re-decided here.
+    // ?session=<at> — W19.C: DELETE ONE SAVED CHAT of a room (reversible — undo is POST
+    // /api/rooms/restore { key, session }). Only that batch's chat turns move; nothing the chat
+    // created (tasks, drafts, deliverables) is touched — lib/room/turns deleteRoomSession.
+    const session = request.nextUrl.searchParams.get('session');
+    if (session) {
+      const deleted = await deleteRoomSession(supabase, user.id, key, session);
+      if (!deleted) return NextResponse.json({ error: 'nothing to delete' }, { status: 404 });
+      return NextResponse.json({ ok: true, deleted });
+    }
     if (request.nextUrl.searchParams.get('scope') === 'chat') {
       const archived = await archiveRoomChat(supabase, user.id, key);
       return NextResponse.json({ ok: true, archived });

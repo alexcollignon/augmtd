@@ -38,7 +38,9 @@ const treeFiles = ['lib', 'app', 'components'].flatMap((d) => walk(join(ROOT, d)
   );
   check('UG2: the Home-ask snapshot reads the ONE user grounding (and still threads the focus through the room grounding)',
     ask.includes("import('@/lib/room/user-grounding')") && ask.includes('assembleUserGrounding(supabase, userId)')
-    && ask.includes('assembleRoomGrounding') && ask.includes('buildBrainSnapshot(supabase, userId, question)'));
+    // ⟲ RE-POINTED W19.2: the answer path now also takes a PINNED focus (a project room's synthesis
+    // question reuses it) — the question still threads through as the focus query.
+    && ask.includes('assembleRoomGrounding') && ask.includes('buildBrainSnapshot(supabase, userId, question, { focusEntityId: opts.focusEntityId ?? null })'));
 
   // Every user-scope world consumer imports the one door; the old private renderer is gone.
   const consumers = ['app/api/work/threads/[id]/chat/route.ts', 'lib/work/agentos-bridge.ts', 'lib/home/ask.ts'];

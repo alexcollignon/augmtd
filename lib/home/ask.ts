@@ -130,7 +130,12 @@ export function suggestFilingFocus(question: string, ents: FocusCandidate[]): { 
  *  entity, that entity's FULL room grounding — the same assembled page the room itself reads —
  *  is appended as the FOCUSED WORK block, so an answer from the Home and an answer from the
  *  room structurally cannot disagree. */
-export async function buildBrainSnapshot(supabase: SupabaseClient, userId: string, focusQuery?: string): Promise<{ text: string; refs: Map<string, AskRef> }> {
+export async function buildBrainSnapshot(
+  supabase: SupabaseClient, userId: string, focusQuery?: string,
+  /** THE PINNED FOCUS (W19.2a): asked from INSIDE a project room, the focus is that room — by scope,
+   *  never guessed from the words — so the room's catch-up and the Home's are one answer. */
+  opts: { focusEntityId?: string | null } = {},
+): Promise<{ text: string; refs: Map<string, AskRef> }> {
   const { assembleUserGrounding } = await import('@/lib/room/user-grounding');
   const world = await assembleUserGrounding(supabase, userId);
   const refs = new Map<string, AskRef>(world.refs);
@@ -144,19 +149,24 @@ export async function buildBrainSnapshot(supabase: SupabaseClient, userId: strin
   // same answer by construction. The block's own [L#]/[F#] tags are STRIPPED (they would collide
   // with the snapshot's tag space and mint wrong links); the entity's [E#] chip carries the link.
   // Non-fatal: a grounding failure serves the plain snapshot (the pre-unification status quo). ──
-  if (focusQuery?.trim()) {
+  if (focusQuery?.trim() || opts.focusEntityId) {
     try {
       // THE USER'S OWN WORDS (clause b): a pasted email repoints nothing — the grounding follows
       // what the user says this conversation is about, and degrades to the plain snapshot when the
-      // evidence is only transported text.
-      const focus = findEntityFocus(focusQuery, ents, { evidenceOnly: true });
+      // evidence is only transported text. A PINNED focus (the room the user is asking from) is
+      // not a claim read from words at all — it is where the question was asked.
+      const pinned = opts.focusEntityId
+        ? { id: opts.focusEntityId, name: ents.find((e) => e.id === opts.focusEntityId)?.name ?? '' }
+        : null;
+      const focus = pinned ?? (focusQuery?.trim() ? findEntityFocus(focusQuery, ents, { evidenceOnly: true }) : null);
       if (focus) {
         const { assembleRoomGrounding } = await import('@/lib/room/grounding');
         const g = await assembleRoomGrounding(supabase, userId, { kind: 'entity', entityId: focus.id });
+        if (!focus.name) focus.name = g.entity?.name ?? 'this project';
         const eTag = [...refs.entries()].find(([, r]) => r.kind === 'entity' && r.id === focus.id)?.[0];
         if (!eTag) refs.set('E0', { id: focus.id, kind: 'entity', label: focus.name, href: entHref(focus.id) });
         parts.push(
-          `THE FOCUSED WORK — the question names "${focus.name}"${eTag ? ` (reference as [${eTag}])` : ' (reference as [E0])'}. ` +
+          `THE FOCUSED WORK — ${pinned ? `the question is asked from inside "${focus.name}"` : `the question names "${focus.name}"`}${eTag ? ` (reference as [${eTag}])` : ' (reference as [E0])'}. ` +
           `This is its full current page — deeper and MORE CURRENT than its one-line summary above; ` +
           `prefer it for anything about this work:\n` +
           // THE CONTEXT BUDGET (W2.7): a declared cut with its rule, never a raw head-slice.
@@ -175,8 +185,10 @@ export async function buildBrainSnapshot(supabase: SupabaseClient, userId: strin
 
 export async function answerHomeQuestion(
   supabase: SupabaseClient, userId: string, question: string, history: AskTurn[] = [],
+  /** THE ONE ANSWER PATH, REUSED (W19.2a): a project room's synthesis question pins its own page. */
+  opts: { focusEntityId?: string | null } = {},
 ): Promise<AskAnswer> {
-  const { text: snapshot, refs } = await buildBrainSnapshot(supabase, userId, question);
+  const { text: snapshot, refs } = await buildBrainSnapshot(supabase, userId, question, { focusEntityId: opts.focusEntityId ?? null });
   // FILE LANE via THE ONE RESOLVER (single-source #2): question-driven retrieval across pool → KB →
   // connected drives, so "do we have the deck?" is answerable. Top hits ride as [F#] refs. Non-fatal.
   let fileBlock = '';

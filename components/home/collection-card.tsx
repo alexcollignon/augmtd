@@ -251,7 +251,6 @@ export default function CollectionCard({ spec: seed, pointer, onAsk }: {
     id: `collection-${spec.kind}`,
     rows,
     ...(spec.more && spec.more > 0 ? { more: { count: spec.more } } : {}),
-    ...(spec.emptyLine ? { emptyLine: spec.emptyLine } : {}),
   };
 
   return (

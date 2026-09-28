@@ -103,6 +103,52 @@ console.log('\nA · a stored sentence served N days later is true or withheld �
     && findRelativeTime(belt.text).every((s) => s.offset === 'vague'), belt.text);
 }
 
+// ═══ A′ · OVERDUE COUNTS (W19.A — owner walk Sep 28: "Nine days overdue" served ten days on) ═══
+console.log('\nA′ · a stored overdue COUNT is rewritten to its deadline\'s date or withheld — never served stale');
+{
+  // Each: the sentence as composed, and the DEADLINE its count denotes (composition day − N), in its
+  // own language's words; null = vague (no single date → withheld on any later day).
+  type Ox = { text: string; composed: string; due: string | null; words?: string; lead?: string };
+  const OX: Ox[] = [
+    { text: 'Your deposit is nine days overdue.', composed: '2026-09-27', due: '2026-09-18', words: 'Sep 18', lead: 'overdue since' },
+    { text: 'Nine days overdue.', composed: '2026-09-27', due: '2026-09-18', words: 'Sep 18', lead: 'Overdue since' },
+    { text: 'The report is 9 days late.', composed: '2026-09-27', due: '2026-09-18', words: 'Sep 18', lead: 'overdue since' },
+    { text: 'Sam\'s contract is overdue by 3 days.', composed: '2026-09-20', due: '2026-09-17', words: 'Sep 17', lead: 'overdue since' },
+    { text: 'The invoice is nine days past the deadline.', composed: '2026-09-27', due: '2026-09-18', words: 'Sep 18', lead: 'overdue since' },
+    { text: 'O relatório está com 9 dias de atraso.', composed: '2026-09-27', due: '2026-09-18', words: '18 de setembro', lead: 'em atraso desde' },
+    { text: 'A proposta tem 5 dias de atraso.', composed: '2026-09-27', due: '2026-09-22', words: '22 de setembro', lead: 'está em atraso desde' },
+    { text: 'Der Bericht ist seit 5 Tagen überfällig.', composed: '2026-09-27', due: '2026-09-22', words: '22. September', lead: 'überfällig seit dem' },
+    { text: 'Le rapport a 4 jours de retard et vous devez le livrer.', composed: '2026-09-27', due: '2026-09-23', words: '23 septembre', lead: 'est en retard depuis le' },
+    // Vague — no single deadline.
+    { text: 'The deposit is several days overdue.', composed: '2026-09-27', due: null },
+    { text: 'The deposit is about 9 days late.', composed: '2026-09-27', due: null },
+    { text: 'Two weeks overdue now.', composed: '2026-09-27', due: null },
+    { text: 'O pagamento está com vários dias de atraso.', composed: '2026-09-27', due: null },
+    { text: 'Le paiement a plusieurs jours de retard.', composed: '2026-09-27', due: null },
+  ];
+  let ok = true; const bad: string[] = [];
+  for (const f of OX) {
+    for (let n = 1; n <= 30; n++) {
+      const v = serveTimeWords(f.text, { composedAt: noonUtc(f.composed).toISOString(), now: noonUtc(addDays(f.composed, n)), tz: TZ });
+      if (!f.due) { if (!v.withheld) { ok = false; bad.push(`${f.text} +${n}: served a vague count`); } continue; }
+      if (v.withheld) { ok = false; bad.push(`${f.text} +${n}: withheld an exact count`); continue; }
+      if (hasRelativeTime(v.text) || !v.text.includes(`${f.lead} ${f.words}`)) { ok = false; bad.push(`${f.text} +${n} → ${v.text}`); }
+    }
+  }
+  gate(`A′1 ${OX.length} overdue counts (EN · PT · DE · FR) × 30 later days: dated to the deadline ("overdue since Sep 18") or WITHHELD (vague)`, ok, bad.slice(0, 3).join(' | '));
+  gate('A′2 the same day they were composed, the counts stand byte-identical (the count is true that day)',
+    OX.every((f) => serveTimeWords(f.text, { composedAt: noonUtc(f.composed).toISOString(), now: new Date(`${f.composed}T20:00:00Z`), tz: TZ }).text === f.text));
+  gate('A′3 an unknown composition time cannot prove a count true → withheld', serveTimeWords('Nine days overdue.', { composedAt: null, now: new Date('2026-09-28T10:00:00Z'), tz: TZ }).withheld);
+  gate('A′4 the compose-time belt writes an exact count as its deadline date before storing',
+    absolutizeTimeWords('The RIB is nine days overdue.', { now: new Date('2026-09-27T10:00:00Z'), tz: TZ }).text === 'The RIB is overdue since Sep 18.');
+  gate('A′5 not a count: "later", "some late notes", "a late reply" are not time words',
+    !hasRelativeTime('Sam sent some late notes.') && !hasRelativeTime('Nine days later the deck arrived.') && !hasRelativeTime('Sorry for the late reply.'));
+  const st = src('lib/entities/state.ts'); const g = src('lib/room/grounding.ts'); const j = src('lib/work/judge.ts');
+  gate('A′6 the entity state summary is served through the floor wherever this wave serves it (the grounding · the judge\'s deal block · the write path\'s belt)',
+    /const served = ent \? serveEntityState\(st, \{/.test(g) && /serveStateProse\(st\.summary, \{ composedAt: st\.composedAt \?\? null \}\)/.test(j)
+    && /const v = serveTimeWords\(s, anchor\);/.test(st) && /absolutizeTimeWords\(x, \{\}\)/.test(st));
+}
+
 // ═══ B · THE ONE READ OF A STORED BRIEF ═══
 console.log('\nB · readRoomResponse (the one read every door serves a stored brief through) passes the floor');
 // A fake store: item_plans returns the stored brief; calendar_events gives the user's zone.
@@ -171,7 +217,10 @@ function fakeClient(tasks: Record<string, unknown>) {
   // ═══ D · EVERY SERVE PATH PASSES THE FLOOR ═══
   console.log('\nD · every serve path of a cached sentence passes the floor');
   gate('D1 readRoomResponse floors the stored text against its own `at` in the user\'s zone before returning it',
-    /const time = serveTimeWords\(t\.text, \{ composedAt: typeof t\.at === 'string' \? t\.at : null, tz \}\);/.test(brief)
+    // ⟲ RE-POINTED W19.2 — the stored text served is THE OPENING (the pinned seen words, else the
+    // newest — lib/room/room-update openingToServe), floored against ITS own composition time.
+    /const opening = openingToServe\(t\);/.test(brief)
+    && /const time = serveTimeWords\(opening\.text, \{ composedAt: typeof opening\.at === 'string' \? opening\.at : null, tz \}\);/.test(brief)
     && /if \(time\.withheld\) \{/.test(brief) && /text: time\.text, move: t\.move/.test(brief));
   // THE ONE READ: nothing outside lib/room/brief.ts reads the room_brief store directly.
   const walk = (dir: string): string[] => readdirSync(join(ROOT, dir)).flatMap((f) => {
@@ -181,6 +230,10 @@ function fakeClient(tasks: Record<string, unknown>) {
   });
   const direct = ['app', 'lib', 'components'].flatMap(walk)
     .filter((p) => p !== join('lib', 'room', 'brief.ts') && p !== join('lib', 'store', 'item-plans.ts'))
+    // ⟲ RE-POINTED W19.2 — lib/room/turns.ts releaseOpeningPin reads the row only to WRITE it (New chat
+    // drops the session's pin); it serves nothing. Allowed only while that is its sole room_brief read.
+    .filter((p) => !(p === join('lib', 'room', 'turns.ts') && (src(p).match(/readPlans?\([^)]*'room_brief'/g) ?? []).length === 1
+      && /export async function releaseOpeningPin[\s\S]{0,400}readPlan\(client, userId, 'room_brief', roomKey\)/.test(src(p))))
     .filter((p) => /readPlans?\([^)]*'room_brief'/.test(src(p)));
   gate('D2 no door reads the room_brief store around the floor (THE ONE READ is readRoomResponse)', direct.length === 0, direct.join(', '));
   const view = src('app/api/items/view/route.ts');

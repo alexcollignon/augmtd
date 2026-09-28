@@ -1,3 +1,4 @@
+import { loadLedgerHeads, floorEntityRows } from '@/lib/entities/state';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { buildWorkItems } from '@/lib/work-items/model';
@@ -43,10 +44,16 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
     // ── STAGE 1 — the entity + its links. Both key on (user, entity id) alone, so they fly
     // together; the entity still owns the 404 guard. ──────────────────────────────────────────────
+    // W19.A · the ledger heads the state floor reads start with stage 1 (they key on the id alone), and
+    // the entity row is served through the one floor INSIDE its own flight (no extra stage).
+    const headsP = loadLedgerHeads(supabase, user.id, [id]);
     const [{ data: ent }, { data: links }] = await Promise.all([
       supabase.from('work_entities')
         .select('id, name, tracked, status, state, next_move, priority, last_event_at, goals, rules, people')
-        .eq('id', id).eq('user_id', user.id).eq('kind', 'initiative').maybeSingle(),
+        .eq('id', id).eq('user_id', user.id).eq('kind', 'initiative').maybeSingle()
+        .then((r): Promise<{ data: (NonNullable<typeof r.data> & Record<string, unknown>) | null }> => (r.data
+          ? floorEntityRows(supabase, user.id, [r.data as NonNullable<typeof r.data> & Record<string, unknown>], { heads: headsP }).then(([e]) => ({ data: e }))
+          : Promise.resolve({ data: null }))),
       // Member item ids (inbox + commitments) — the work; meetings surface separately as context.
       supabase.from('entity_links').select('item_kind, item_id')
         .eq('user_id', user.id).eq('entity_id', id).not('entity_id', 'is', null),

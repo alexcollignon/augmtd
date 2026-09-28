@@ -51,7 +51,9 @@ console.log('\nA · (a) the composed brief reaches the first paint (compose befo
     && /\.\.\.\(stale \? \{ staleVersion: true \} : \{\}\)/.test(brief)
     && /readRoomResponse\(client, userId, roomKey, \{ allowStaleVersion: true \}\)/.test(brief));
   gate('A3 the composer hands its composition back (no second read on the paint path) and ensure* return it',
-    /return \{ text, move, offers, at \};/.test(brief)
+    // ⟲ RE-POINTED W19.2 — the composition handed back is the OPENING the paint serves: the pinned
+    // seen opening when one stands (its news is the posted update), else the fresh words.
+    /return fields\.shown \? \{ text: fields\.shown\.text, move, offers, at: fields\.shown\.at \} : \{ text, move, offers, at \};/.test(brief)
     && /export async function ensureRoomBrief\([^)]*\): Promise<RoomResponse \| null>/.test(brief)
     && /export async function ensureLooseRoomBrief\([\s\S]*?\): Promise<RoomResponse \| null>/.test(brief));
 
@@ -172,11 +174,15 @@ console.log('\nC · (c) a ready artifact is never demoted to "say the word"');
     /offerLineFor\(resp\?\.move, \{ cardMounted: mountedCards\.length > 0 \|\| !!mergedArt \}\)/.test(rail)
     && !/resp\.move\.offerText \?\? shapingOffer\(resp\.move\.label\)/.test(rail));
   // pure
-  const mv = { label: 'Review and send reply', ref: null as string | null };
-  const bound = bindToSoleStaged(mv, [{ ref: 'inbox:a', prepared: true }, { ref: 'inbox:b', prepared: false }]);
-  const two = bindToSoleStaged(mv, [{ ref: 'inbox:a', prepared: true }, { ref: 'inbox:b', prepared: true }]);
+  // ⟲ RE-POINTED W19: the binder now needs POSITIVE evidence — the move's words must name the entry
+  // (a distinctive token of its title/counterparty) and the move must never have been vetoed by the
+  // relevance check. The fixture names its entry; the rest of the law (one → binds, two → never
+  // guesses, bound → untouched) is unchanged. The veto/names refusals are gated in smoke-project-room.
+  const mv = { label: 'Review and send the reply to Sam', ref: null as string | null };
+  const bound = bindToSoleStaged(mv, [{ ref: 'inbox:a', prepared: true, about: 'Pilot pricing question Sam' }, { ref: 'inbox:b', prepared: false }]);
+  const two = bindToSoleStaged(mv, [{ ref: 'inbox:a', prepared: true, about: 'Pilot pricing question Sam' }, { ref: 'inbox:b', prepared: true, about: 'Sam intro' }]);
   const kept = bindToSoleStaged({ label: 'x', ref: 'commit:z' }, [{ ref: 'inbox:a', prepared: true }]);
-  gate('C3 pure: one staged entry → the move binds to it; two → unbound (code never guesses); a bound move is untouched',
+  gate('C3 pure: one staged entry the move names → binds; two → unbound (code never guesses); a bound move is untouched',
     bound.ref === 'inbox:a' && two.ref === null && kept.ref === 'commit:z');
   const v1 = enforceCtaLaw(bound, { targetPrepared: true });
   const v2 = enforceCtaLaw(mv, { targetPrepared: false });
