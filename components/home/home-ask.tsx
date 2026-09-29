@@ -66,6 +66,9 @@ import { orphanQuestion, ORPHAN_LINE, ORPHAN_RETRY } from '@/components/home/roo
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { dmParamOf, dmThreadLsKey } from '@/components/one/chat-address';
 import { peekChatTurns, fetchChatTurns } from '@/components/home/chat-turns-warm';
+// W25 · THE HAND-OFF LANDS LIVE — the pending watch (pure) on the app's one polling primitive.
+import { useLiveRefresh } from '@/components/workflows/use-live-refresh';
+import { HANDOFF_BEAT, HANDOFF_LS, appendLiveTurns, handOffLine, handOffOf, handOffResultKey, readHandOffs, settleHandOffs, watching, type PendingHandOff } from '@/components/home/handoff-live';
 import { mergeThreadLanding, readThreadCache, threadCacheOf } from '@/lib/home/thread-cache';
 import { ROLE_LABELS, ROLE_SPECIALTIES, ROLE_STARTERS, GENERIC_STARTERS, INTAKE_STARTERS } from '@/lib/workers/roles';
 // SKILLS IN CHAT (W21): the send body's `skills`, the answer's receipt + offer, the header's "uses" line.
@@ -192,7 +195,11 @@ type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
   /** W23.A · "WORKED FOR Xs ›" — the progress steps the stream reported (the core's `activity` when
    *  the done payload carries it, else this tab's own record) and how long the answer took. */
   activity?: ActivityStep[];
-  durationMs?: number };
+  durationMs?: number;
+  /** W25 · the hand-off this answer announced ("Handed to Max — …") — its working line rides under it. */
+  handoffId?: string;
+  /** W25 · a served turn's dedupe key when it is a hand-off's result/failure (`handoff:<id>…`). */
+  handoffKey?: string };
 
 // ── NEVER A TWIN (docs/attention-plan.md, law D2: "the new version lands on the SAME card") ─────
 // A revision is a NEW artifact id on the SAME chain, so a thread that has revised twice would
@@ -541,9 +548,11 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   const mapServerTurns = (raw: Array<{ id?: string; role: string; text: string; refs?: Array<{ label: string; href: string | null; tag?: string }>;
     author?: { kind?: string; id?: string; name?: string } | null;
     /** W23.A · THE CONTRACT: an answer row may carry the core's own activity record. */
-    activity?: unknown; durationMs?: unknown; stopped?: unknown;
+    activity?: unknown; durationMs?: unknown; stopped?: unknown; key?: string | null;
     component?: { key?: string; refId?: string; state?: Record<string, unknown> } | null }>): Turn[] =>
     raw.map((t) => ({
+      // W25 · a hand-off's result/failure carries its key — the pending line knows it has landed.
+      ...(typeof t.key === 'string' && t.key.startsWith('handoff:') ? { handoffKey: t.key } : {}),
       role: t.role === 'user' ? 'user' as const : 'assistant' as const,
       text: t.text,
       // THE REF IS ITS TAG on the way back in: the stored grounding id rides through, so a
@@ -1004,6 +1013,46 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     } catch { /* persistence is an enhancement — the session still works */ }
   };
   const [busy, setBusy] = useState(false);
+  // ── W25 · THE HAND-OFF LANDS LIVE ────────────────────────────────────────────────────────────
+  // A background hand-off ("Handed to Max — I'll post here when it's ready.") posts its result into
+  // this room later, under `handoff:<id>`. While one is pending in the OPEN room, the app's one live
+  // beat re-reads the room (bounded: HANDOFF_BEAT — ~5 min, hidden tab skipped, busy turn skipped)
+  // and APPENDS the landed turn at the foot — painted turns never move (NO MUTATION AFTER PAINT).
+  // The pending record is this tab's own convenience (localStorage), so a reload keeps watching.
+  const [handOffs, setHandOffs] = useState<PendingHandOff[]>([]);
+  const handOffsRef = useRef<PendingHandOff[]>([]);
+  handOffsRef.current = handOffs;
+  useEffect(() => {
+    try { setHandOffs(readHandOffs(JSON.parse(localStorage.getItem(HANDOFF_LS) ?? '[]'), Date.now())); } catch { /* no LS */ }
+  }, []);
+  /** Every change goes through here: state + the tab's record together (idempotent — safe to re-run). */
+  const updateHandOffs = (fn: (prev: PendingHandOff[]) => PendingHandOff[]) => setHandOffs((prev) => {
+    const next = fn(prev);
+    try { localStorage.setItem(HANDOFF_LS, JSON.stringify(next)); } catch { /* no LS */ }
+    return next;
+  });
+  /** The room the panel is showing (a DM or a temporary chat watches nothing). */
+  const openRoomKey = (): string | null => {
+    if (workerRoomRef.current || dmActor) return null;
+    if (chatRoom) return chatRoom;
+    try { const k = localStorage.getItem(CHAT_KEY_LS); return k?.startsWith('chat:') ? k : null; } catch { return null; }
+  };
+  const liveRoom = openRoomKey();
+  useLiveRefresh(watching(handOffs, liveRoom), () => {
+    const key = openRoomKey();
+    if (!key || busy) return; // an answer in flight owns the foot of the thread — the next beat lands it
+    void fetchChatTurns(key, { peek: true }).then((raw) => {
+      if (openRoomKey() !== key) return; // the reader moved on — this landing is not theirs
+      const mine = handOffsRef.current.filter((h) => h.roomKey === key);
+      const { pending, landed } = settleHandOffs(mine, (raw ?? []) as Array<{ key?: string | null; id?: string | null }>, Date.now());
+      updateHandOffs((prev) => [...prev.filter((h) => h.roomKey !== key), ...pending]);
+      if (landed.length) setTurns((cur) => appendLiveTurns(cur, mapServerTurns(landed as never)));
+    });
+  }, HANDOFF_BEAT);
+  const retryHandOff = (h: PendingHandOff) => {
+    updateHandOffs((prev) => prev.filter((x) => x.id !== h.id));
+    if (!busy && h.ask.trim()) void handleSubmit(h.ask, []);
+  };
   // ── STOP (W23.A) — while a turn is in flight the send button is Stop. `flightRef` is the live
   // flight's abort (set by askChief / askWorker around their own AbortController); `stopAsked` catches
   // a Stop pressed before the request left (an upload still running) — the flight aborts the moment
@@ -1593,7 +1642,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
       // line speaks them), `done` carries the answer. A non-SSE response (error JSON) falls back.
       const res = await fetch('/api/home/ask', { method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(sentRoomKey ? { roomKey: sentRoomKey } : {}), ...(attachments.length ? { attachments } : {}), ...(wire.pasted ? { pasted: wire.pasted } : {}), ...(scope ? { entityId: scope.id } : {}), ...skillsBody(skills) }) });
-      let d: { activity?: unknown; durationMs?: unknown; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string; type?: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string; type?: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike }; emailDraft?: { id: string; itemId?: string; draft?: StandaloneEmailDraft }; collection?: { id: string; spec: CollectionSpec }; event?: { id?: string; spec: EventSpec }; change?: { id: string; spec: ChangeSpec } } = {};
+      let d: { delegated?: { agentName?: string; agentId?: string; background?: boolean; handoffId?: string } | null; activity?: unknown; durationMs?: unknown; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string; type?: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string; type?: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike }; emailDraft?: { id: string; itemId?: string; draft?: StandaloneEmailDraft }; collection?: { id: string; spec: CollectionSpec }; event?: { id?: string; spec: EventSpec }; change?: { id: string; spec: ChangeSpec } } = {};
       // THE STREAM NEVER RETYPES: the reducer's own verdict decides whether the seated turn
       // animates — it must be the thing the component reads, not a parallel re-derivation.
       let gotDone = false;
@@ -1647,7 +1696,11 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       // carries it, else what this tab saw arrive.
       const activity = activityOf(d.activity) ?? (steps.length ? steps : undefined);
       const durationMs = durationOf(d.durationMs) ?? Math.round(performance.now() - t0);
-      setTurns((prev) => { pendingAnimate.current = st.animate ? prev.length : -1; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(activity ? { activity } : {}), durationMs, ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...chatCardsOfPayload(d as Record<string, unknown>), ...skillTurnFields(d), ...artCard }]; });
+      // W25 · A BACKGROUND HAND-OFF IS WATCHED: its pending line rides under this answer until the
+      // result lands in the room (appended live), fails, or times out (each said, with Retry).
+      const handOff = handOffOf(d.delegated, sentRoomKey, shown, Date.now());
+      if (handOff) updateHandOffs((prev) => [...prev.filter((h) => h.id !== handOff.id), handOff]);
+      setTurns((prev) => { pendingAnimate.current = st.animate ? prev.length : -1; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(handOff ? { handoffId: handOff.id } : {}), ...(activity ? { activity } : {}), durationMs, ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...chatCardsOfPayload(d as Record<string, unknown>), ...skillTurnFields(d), ...artCard }]; });
       if (d.artifact) void openArtifact(d.artifact.threadId, d.artifact.id);
       if (d.answer && !sentRoomKey) persistTurn('system', d.answer, d.refs ?? []);
       if (d.focus && !scope && !temp) setScopeHint(d.focus);
@@ -1978,9 +2031,27 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           void handleSubmit(orphan.text, []);
         } }] });
     }
+    // W25 · THE HAND-OFF'S LINE — one quiet line UNDER the answer that announced it (at the foot when
+    // that answer is a reloaded row): the working face while pending, a failure/timeout line with
+    // Retry. A hand-off whose result is already in the thread shows nothing (the result IS the line).
+    if (!dm) {
+      const landedKeys = new Set(turns.map((t) => t.handoffKey).filter(Boolean) as string[]);
+      handOffs.filter((h) => h.roomKey === liveRoom && !landedKeys.has(handOffResultKey(h.id))).forEach((h) => {
+        const line = handOffLine(h);
+        const item: ThreadItem = line.kind === 'working'
+          ? { type: 'working_line', id: `handoff-${h.id}`, actorId: h.agentId ?? h.agentName, actorName: h.agentName, line: line.text }
+          : { type: 'event_line', id: `handoff-${h.id}`, text: line.text, refs: [{ label: FAILURE_RETRY, onClick: () => retryHandOff(h) }] };
+        const anchor = turns.findIndex((t) => t.handoffId === h.id);
+        if (anchor < 0) { out.push(item); return; }
+        const own = (id: string) => id === `t${anchor}` || id.startsWith(`t${anchor}-`);
+        let at = -1;
+        out.forEach((x, j) => { if (own(x.id)) at = j; });
+        if (at < 0) out.push(item); else out.splice(at + 1, 0, item);
+      });
+    }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turns, busy, stage, liveText, animateIdx, cosSeat, followedByTurn, slow]);
+  }, [turns, busy, stage, liveText, animateIdx, cosSeat, followedByTurn, slow, handOffs, liveRoom]);
 
   const hasThread = turns.length > 0;
   // THE DM'S HEADER, TAKEN FROM WHAT WE ALREADY KNOW: face · name · role. Recomputed only when the

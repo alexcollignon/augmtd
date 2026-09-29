@@ -8,6 +8,10 @@ import { TYPED_OUTPUT_RULE } from '@/lib/workflows/typed-output';
 import { EXCERPT_RULE, clipForPrompt, clipLabel } from '@/lib/utils/clip-for-prompt';
 import { clipWithRule } from '@/lib/utils/pack-context';
 import { readPool, writeDeliverable, renderPoolForContext, type Deliverable } from './deliverable-pool';
+// W25 · RECENT FACTS COME FROM SEARCH — the SAME rule the chief holds (W23.B), one constant, now on the
+// coworker's delegation path too (found live Sep 29: Max named two operators that merged years ago,
+// from training knowledge, with no search).
+import { RECENT_FACTS_RULE } from '@/lib/converse/conversation';
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // HOME ITEM DELEGATION (stage 3b) — hand a Home item, OR a single identified step, to a named coworker
@@ -33,6 +37,16 @@ export const DELEGATION_SAFETY_NOTE =
   'irreversible action from the Home. The coworker still holds send-capable tools; this is a prompt-' +
   'level guardrail, not a hard block. Sending stays an explicit, user-in-the-loop step.';
 
+/** W25 · THE COWORKER'S RECENT-FACTS RULE — the chief's RECENT_FACTS_RULE (W23.B, one constant) plus the
+ *  citation the hand-back owes: market facts, figures and "who leads" claims carry their source. Exported
+ *  for the gate (smoke-handoff-live). */
+export const DELEGATION_RECENT_FACTS_RULE =
+  `${RECENT_FACTS_RULE}\n` +
+  `- CITE WHAT YOU SEARCHED: research about the current market, companies, people, prices or figures comes ` +
+  `from web_search results in THIS task (companies merge, rename and change hands — your memory is stale) ` +
+  `and every such fact in your deliverable names its source (publisher + link, and the date when the ` +
+  `result gives one) in a short "Sources" list at the end.`;
+
 export interface DelegateWorker {
   id: string;
   name: string;
@@ -53,8 +67,12 @@ export function buildDelegationPrompt(args: {
   // Step 4 — grounded delegation: the person + initiative BRAIN for this item, so the coworker does the
   // work reasoning WITH the relationship + where the deal stands (not a cold prompt). Optional.
   brainContext?: string;
+  /** W25 — "today" for the recent-facts rule (defaults to now; the gates pass a fixed date). */
+  now?: Date;
 }): string {
   const { kind, itemContext, step, remainingSteps, brainContext } = args;
+  const today = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
+    .format(args.now ?? new Date());
 
   const job = step
     ? `You're being handed ONE specific piece of work to do for me:\n\n` +
@@ -67,6 +85,7 @@ export function buildDelegationPrompt(args: {
 
   return [
     `A colleague is handing you real work to do. Treat this like a task a coworker just dropped on your desk.`,
+    `TODAY is ${today}.`,
     ``,
     job,
     ``,
@@ -91,6 +110,9 @@ export function buildDelegationPrompt(args: {
     `- ${EXCERPT_RULE} Never claim an instruction or document "got cut off" unless the SOURCE ` +
       `itself shows it — our clip marker is a length budget, not evidence.`,
     `- Never invent facts to fill a gap — a named gap is honest; a fabricated fact is not.`,
+    DELEGATION_RECENT_FACTS_RULE,
+    `- THE DELIVERABLE IS THE ANSWER: when asked for a comparison, list, summary or analysis, your answer IS ` +
+      `that thing, written out in full (markdown: headings, tables, bullets) — never a note that you did it.`,
     `- INSIDE a deliverable (a filled-in form, questionnaire, or document), keep every original ` +
       `section/question and where only the user can supply or verify a fact, write ` +
       `"[CONFIRM: <what's needed>]" in its place — a marked slot beats a dropped question.`,
@@ -107,6 +129,9 @@ export interface DelegateResult {
   agentName: string;
   threadId: string | null;
   reportText: string;
+  /** W25 · A CLAIM RENDERS — the evaluator accepted `output` as THE deliverable (not an ask, not a
+   *  rejected attempt). The posting side shows `output` itself when no artifact carries it. */
+  delivered?: boolean;
   deliverable?: Deliverable;   // the coworker's output written to the per-item pool (S2)
   poolSize?: number;           // pool entries the coworker saw as context (for logging / smoke test)
   /** FIX 3 — the evaluator judged the output a genuine ASK for principal-only inputs; these are the
@@ -244,6 +269,8 @@ export async function runDelegation(args: {
     supabase,
     previousOutputs,
     workflowName: clipLabel(`Delegation: ${itemLabel}`, 120),
+    // W25 — the coworker HOLDS web search on the delegation path (native loop; gated by the feature map).
+    webResearch: true,
   });
   let output = produced.text.trim();
   // THE PRODUCER'S RECEIPT travels with the work (Sep 21): the evaluator's truncation floor is a
@@ -267,7 +294,7 @@ export async function runDelegation(args: {
     if (review.verdict === 'revise' && review.objection) {
       const second = await executeAgentStepDetailed(
         { ...step, prompt: `${prompt}\n\nA REVIEWER REJECTED YOUR FIRST ATTEMPT:\n"${review.objection}"\nProduce the actual finished deliverable now — the thing itself, not commentary about it.` },
-        { userId, supabase, previousOutputs, workflowName: clipLabel(`Delegation (retry): ${itemLabel}`, 120) },
+        { userId, supabase, previousOutputs, workflowName: clipLabel(`Delegation (retry): ${itemLabel}`, 120), webResearch: true },
       ).catch(() => ({ text: '' } as { text: string; complete?: boolean }));
       const retry = second.text.trim();
       if (retry) {
@@ -485,5 +512,5 @@ export async function runDelegation(args: {
     } catch { /* narration is an enhancement — the delegation already landed */ }
   }
 
-  return { output, agentName: worker.name, threadId, reportText, deliverable, poolSize: pool.length, artifact, ...(artifacts.length ? { artifacts } : {}), ...(needsInput?.length ? { needsInput } : {}) };
+  return { output, agentName: worker.name, threadId, reportText, delivered: deliverableOk && !!output, deliverable, poolSize: pool.length, artifact, ...(artifacts.length ? { artifacts } : {}), ...(needsInput?.length ? { needsInput } : {}) };
 }

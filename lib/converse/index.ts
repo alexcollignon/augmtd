@@ -35,6 +35,7 @@ import {
   TIMEOUT_LINE, ERROR_LINE, EMPTY_LINE, STOPPED_LINE, pushActivity, type TurnActivity,
 } from '@/lib/converse/conversation';
 import { clipForPrompt, clipLabel, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { handOffResultKey, handOffFailedKey } from '@/lib/converse/handoff-keys';
 import { clipWithRule, packContext } from '@/lib/utils/pack-context';
 import { GROUND_EVIDENCE_RULE } from '@/lib/room/ground-evidence';
 import { capabilitiesFor } from '@/lib/home/capability-map';
@@ -373,7 +374,10 @@ export type ConverseTurn = {
   entityName?: string | null;
   /** W22: `background` = the hand-off was ACCEPTED and runs behind the response; its result posts
    *  into this conversation later (no work exists yet at the time of this turn). */
-  delegated?: { agentName: string; agentId?: string; background?: boolean } | null;
+  delegated?: { agentName: string; agentId?: string; background?: boolean;
+    /** W25 · the background hand-off's id — its result posts under dedupe key `handoff:<id>` (a
+     *  failure under `handoff:<id>:failed`), so the open chat can watch for exactly that turn. */
+    handoffId?: string } | null;
   /** THE PARITY LAW (Aug 4): a chat-approved send — the CLIENT fires this through the one send
    *  door (/api/inbox/[id]/send-reply). Emitted ONLY behind the explicit-send floor. */
   commit?: { kind: 'send_reply'; itemId: string; body: string } | null;
@@ -1309,7 +1313,7 @@ async function runCoworkerDelegation(
   themeOverride: import('@/lib/documents/theme').DocTheme | null = null,
   attachments: ConverseAttachment[] = [],
   revisePrior: { id: string; threadId: string; title: string } | null = null,
-): Promise<ConverseTurn> {
+): Promise<ConverseTurn & { failure?: TurnFailure }> {
   try {
     // THE DATA-FACTS PASS (the data-by-code lane): tabular material gets its statistics computed
     // IN THE SANDBOX before the coworker writes — the facts ride the material as the
@@ -1402,14 +1406,38 @@ async function runCoworkerDelegation(
             ...(out.artifacts && out.artifacts.length > 1 ? { artifacts: out.artifacts.map((a) => ({ ...a, agentName: String(worker.name) })) } : {}),
           };
         }
-        const say = report
-          ? `${previewOf(report, 700)}\n\n(The full version is in your ${first} conversation.)`
-          : `${first} finished — the work is in your ${first} conversation.`;
+        // W25 · A CLAIM RENDERS — THE DELIVERABLE IS POSTED, NEVER A SUMMARY OF IT. With no artifact
+        // carrying the work, the coworker's accepted output IS what the chat shows (markdown): the
+        // walk found "Just wrapped up… let me know if you need me to dig deeper" standing where the
+        // asked-for comparison should have been. Only a rejected attempt (no deliverable) speaks the
+        // report, which then says honestly what went wrong.
+        const say = handOffSay(out, first);
         return { say, refs: [], delegated: { agentName: String(worker.name), agentId: String(worker.id) } };
       }
     }
-    return { say: "I couldn't find that coworker on your team.", refs: [] };
-  } catch { return { say: "The hand-off didn't go through — try again in a moment.", refs: [] }; }
+    return { say: "I couldn't find that coworker on your team.", refs: [], failure: { kind: 'error', retry: true } };
+  } catch { return { say: "The hand-off didn't go through — try again in a moment.", refs: [], failure: { kind: 'error', retry: true } }; }
+}
+
+/** W25 · the words a finished hand-off posts when NO artifact carries the work: the deliverable itself
+ *  (the coworker's accepted output, in full, markdown) — a summary only when there is no deliverable.
+ *  Pure; exported for the gate (smoke-handoff-live). */
+export const HANDOFF_TEXT_MAX = 16000;
+export function handOffSay(
+  out: { output?: string | null; reportText?: string | null; delivered?: boolean }, first: string,
+): string {
+  const output = String(out.output ?? '').trim();
+  const report = String(out.reportText ?? '').trim();
+  if (out.delivered && output) {
+    // A display bound, never a prompt clip: a very long body is cut at a boundary and SAYS where the
+    // rest is (the full text always lands in the coworker's own conversation).
+    return output.length <= HANDOFF_TEXT_MAX
+      ? output
+      : `${previewOf(output, HANDOFF_TEXT_MAX)}\n\n(The rest is in your ${first} conversation.)`;
+  }
+  return report
+    ? `${previewOf(report, 700)}\n\n(The full version is in your ${first} conversation.)`
+    : `${first} finished — the work is in your ${first} conversation.`;
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1451,6 +1479,21 @@ async function startHandOff(
   const name = String(worker.name);
   const first = name.split(' ')[0];
   const roomKey = ctx.postRoomKey ?? null;
+  // W25 · THE HAND-OFF HAS AN ID: its result (or its failure) posts under `handoff:<id>`, the key the
+  // open chat watches for — the live append finds exactly this turn, never guesses by author or time.
+  const handoffId = crypto.randomUUID();
+  const postFailure = async () => {
+    if (!roomKey) return;
+    try {
+      const { createClient: createAdmin } = await import('@supabase/supabase-js');
+      const admin = createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+      const { writeRoomTurn } = await import('@/lib/room/turns');
+      await writeRoomTurn(admin, userId, roomKey, {
+        role: 'system', text: `${first}'s hand-off didn't go through — ask again and I'll resend it.`,
+        dedupeKey: handOffFailedKey(handoffId),
+      });
+    } catch { /* the failure line is best-effort; the chat's own timeout still speaks */ }
+  };
   const work = async () => {
     try {
       const { createClient: createAdmin } = await import('@supabase/supabase-js');
@@ -1458,17 +1501,12 @@ async function startHandOff(
       const done = await runCoworkerDelegation(admin, userId, scope, coworkerWant, task, userText,
         ctx.transcript ?? '', ctx.material ?? '', ctx.themeOverride ?? null, ctx.attachments ?? [], ctx.revisePrior ?? null);
       if (!roomKey) return;
-      await postHandOffResult(admin, userId, roomKey, { id: String(worker.id), name, role: (worker.worker_role as string | null) ?? null }, done);
+      // A FAILED DELEGATION IS A FAILURE LINE, never the coworker "saying" the error in their own voice.
+      if (done.failure) { await postFailure(); return; }
+      await postHandOffResult(admin, userId, roomKey, { id: String(worker.id), name, role: (worker.worker_role as string | null) ?? null }, done, handoffId);
     } catch (e) {
       console.error('[converse] background hand-off failed', e);
-      if (roomKey) {
-        try {
-          const { createClient: createAdmin } = await import('@supabase/supabase-js');
-          const admin = createAdmin(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-          const { writeRoomTurn } = await import('@/lib/room/turns');
-          await writeRoomTurn(admin, userId, roomKey, { role: 'system', text: `${first}'s hand-off didn't go through — ask again and I'll resend it.` });
-        } catch { /* the failure line is best-effort */ }
-      }
+      await postFailure();
     }
   };
   if (ctx.defer) ctx.defer(work); else void work();
@@ -1477,26 +1515,42 @@ async function startHandOff(
       ? `Handed to ${first} — I'll post here when it's ready.`
       : `Handed to ${first} — it will land in your ${first} conversation when it's ready.`,
     refs: [],
-    delegated: { agentName: name, agentId: String(worker.id), background: true },
+    delegated: { agentName: name, agentId: String(worker.id), background: true, ...(roomKey ? { handoffId } : {}) },
   };
 }
 
+
 /** The hand-off's result, posted into the asking conversation as the coworker's own turn. Exported
- *  for the gates. The artifact rides as a POINTER component (the viewer re-reads the thread's row). */
+ *  for the gates. W25 · A CLAIM RENDERS: the produced files ride as the `worker_cards` POINTER
+ *  component — the one the Home chat already hydrates and renders (the document card, Review opens it
+ *  here) — never the old `handoff_result` key, which NO surface rendered (the walk's "wrapped up the
+ *  research" stood with no research). With no file, `done.say` IS the deliverable (handOffSay). */
 export async function postHandOffResult(
   admin: SupabaseClient, userId: string, roomKey: string,
   worker: { id: string; name: string; role: string | null },
   done: ConverseTurn,
+  handoffId?: string | null,
 ): Promise<void> {
   const { writeRoomTurn } = await import('@/lib/room/turns');
   const text = String(done.say ?? '').trim() || `${worker.name.split(' ')[0]} finished — the work is in your ${worker.name.split(' ')[0]} conversation.`;
+  const component = handOffComponent(done);
   await writeRoomTurn(admin, userId, roomKey, {
     role: 'system', text,
     author: { kind: 'coworker', id: worker.id, name: worker.name, role: worker.role },
-    ...(done.artifact ? { component: { key: 'handoff_result', refId: done.artifact.id, state: {
-      artifact: done.artifact, ...(done.artifacts?.length ? { artifacts: done.artifacts } : {}),
-    } } } : {}),
+    ...(component ? { component } : {}),
+    ...(handoffId ? { dedupeKey: handOffResultKey(handoffId) } : {}),
   });
+}
+
+/** W25 · the result turn's card pointers — every file the hand-off produced, as `worker_cards` document
+ *  refs (the chat's one card contract). Pure; exported for the gate. */
+export function handOffComponent(
+  done: Pick<ConverseTurn, 'artifact' | 'artifacts'>,
+): { key: 'worker_cards'; refId: string; state: { items: Array<{ kind: 'document'; tid: string; artifactId: string }> } } | null {
+  const list = done.artifacts?.length ? done.artifacts : done.artifact ? [done.artifact] : [];
+  const items = list.filter((a) => a?.id && a?.threadId).slice(0, 8)
+    .map((a) => ({ kind: 'document' as const, tid: String(a.threadId), artifactId: String(a.id) }));
+  return items.length ? { key: 'worker_cards', refId: items[0].tid, state: { items } } : null;
 }
 
 // ── The bounded AGENT LOOP (the 20%) — function-calling over the chief-of-staff toolset. ──

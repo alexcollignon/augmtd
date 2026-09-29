@@ -4543,9 +4543,22 @@ async function main() {
     const cfgR = await generateWorkflowConfig(RUBRIC, userId, admin as never);
     const stepsR = cfgR?.steps ?? [];
     const promptsR = stepsR.map((s) => String((s as { prompt?: string }).prompt ?? ''));
+    // ⟲ RE-POINTED W25 (a live 0/3 on Sep 29 — generate-config / author-doors unchanged since W16.4,
+    // so not a W19–W25 regression): this fixture DECLARES its inputs ("Inputs:" header), and THE
+    // DECLARED INPUTS law (same Aug 25 commit) homes each one — the station is THE DEFAULT home, and
+    // THE INCOHERENCE RULE says a workflow with a station suppresses the accept_material sheet, so
+    // `accept_material: true` beside stations is a door the user is never shown. The model now
+    // reliably takes the default: a station for the job description AND one for the resumes, no
+    // sheet. The law this line protects is the Aug 25 incident — a rubric authored a machine with
+    // NO way for its material to reach the run. That still fails here: a real door, the sheet, or a
+    // station for EVERY declared placeholder (both of them — one is not enough) must stand.
+    const stationAsksR = stepsR.filter((s) => s.type === 'input')
+      .map((s) => String((s as { ask?: string }).ask ?? ''));
+    const everyDeclaredStationed = stationAsksR.some((a) => /job description/i.test(a))
+      && stationAsksR.some((a) => /resume/i.test(a));
     ok('GR: A RUBRIC AUTHORS A MACHINE — at least one door for what arrives',
-      (cfgR?.triggers ?? []).length > 0 || cfgR?.inputs?.acceptMaterial === true,
-      JSON.stringify({ triggers: cfgR?.triggers, inputs: cfgR?.inputs }));
+      (cfgR?.triggers ?? []).length > 0 || cfgR?.inputs?.acceptMaterial === true || everyDeclaredStationed,
+      JSON.stringify({ triggers: cfgR?.triggers, inputs: cfgR?.inputs, stations: stationAsksR }));
     ok('…and the HUMAN GATE the rubric\'s own words demand ("a human recruiter decides")',
       stepsR.some((s) => s.type === 'approval' || s.type === 'handoff'),
       stepsR.map((s) => s.type).join(','));

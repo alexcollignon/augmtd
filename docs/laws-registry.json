@@ -1,7 +1,7 @@
 {
  "$schema_note": "THE LAWS REGISTRY (W1.4, Sep 22 2026). Machine-readable source of truth; docs/laws-registry.md is rendered from it; scripts/smoke-laws.ts is the meta-gate. Tier 1 = the 14 invariants of docs/stabilization-plan.md PART II (outcome or walk gate required); tier 2 = domain laws (a pure-function test required, named in `fn`); tier 3 = lessons (compact `lessons[]`, no gate obligation) and obsolete laws. Gate kinds: source (asserts source text) · pure (calls a pure function) · outcome (census on DB/probe data) · walk (browser journey). Gate cost: zero-ai · cached · live-ai. Status: holding · broken-live (a Sep 22 audit finding names it) · gateless · obsolete. A gate with status 'planned' must name its wave and does not count as live.",
  "version": 1,
- "generated": "2026-09-28",
+ "generated": "2026-09-29",
  "tiers": {
   "1": "invariant",
   "2": "domain",
@@ -6896,6 +6896,67 @@
      "precedence": "compatible: the date line is always stated (UTC fallback when the user's zone cannot be read) and recent facts come from a dated web result, never from training knowledge"
     }
    ]
+  },
+  {
+   "id": "the-hand-off-delivers",
+   "name": "THE HAND-OFF DELIVERS",
+   "aliases": [
+    "THE HAND-OFF LANDS LIVE",
+    "THE DELIVERABLE IS THE ANSWER",
+    "THE COWORKER SEARCHES"
+   ],
+   "tier": 2,
+   "domain": "chat",
+   "statement": "A background coworker hand-off from a chat carries an id; its result posts into the asking room under `handoff:<id>` (a failure under `handoff:<id>:failed`, never in the coworker's voice). While it is pending the open chat shows ONE quiet working line under the announcing answer, re-reads that room on the one polling primitive (bounded ~5 min, hidden tab and in-flight answer skipped) and APPENDS the landed turn at the foot — painted turns never move, nothing appends twice; a failure or a timeout is said, with Retry. The posted turn carries the deliverable: a produced file rides the chat's rendered `worker_cards` pointer (its card opens it in place), and with no file the coworker's accepted output itself is posted (markdown), never a summary of it. The delegation prompt states today's date and the chief's recent-facts rule plus a citation duty, and the native coworker step on the delegation path holds web_search + fetch_url (the one feature map, results as DATA, bounded loop).",
+   "homes": [
+    "components/home/home-ask.tsx",
+    "components/home/handoff-live.ts",
+    "lib/converse/index.ts",
+    "lib/converse/handoff-keys.ts",
+    "lib/home/delegate.ts",
+    "lib/workflows/execute-step.ts",
+    "lib/tools/research-tools.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-handoff-live",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "H1-H4"
+     ],
+     "note": "W25 (uncommitted): pending → the working line, the room watched on useLiveRefresh (HANDOFF_BEAT) only while a hand-off in the open room is pending, the landed turn appended through the pure merge (appendLiveTurns — no reshuffle, no twin), failure/timeout lines with Retry; the posted turn is the full accepted output or the worker_cards file pointer (handoff_result retired); the delegation prompt carries RECENT_FACTS_RULE + today + Sources, and executeAgentStepDetailed offers web_search/fetch_url only under ctx.webResearch. tests/unit/handoff-live drives the core, the step and the pure watch with the model stubbed",
+     "fn": "settleHandOffs · appendLiveTurns · handOffSay · handOffComponent · researchToolDefs"
+    }
+   ],
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W25.1",
+   "collides_with": [
+    {
+     "law": "a-claim-renders",
+     "precedence": "strengthened: \"handed back / wrapped up\" composes only with the work itself — the file's rendered card or the full text; a rejected attempt speaks the honest report"
+    },
+    {
+     "law": "no-mutation-and-address",
+     "precedence": "the live landing only APPENDS at the foot; the transient working line is chrome (not a turn) and is replaced by the landed turn; a reload of the same address keeps watching from this tab's own record"
+    },
+    {
+     "law": "tier-privacy",
+     "precedence": "the coworker's web_search is the same Tavily executor the chief and the coworker DM hold, gated by the same TOOL_FEATURE map; the search query is the only user content that leaves"
+    },
+    {
+     "law": "untrusted-input-is-data",
+     "precedence": "untrusted-input wins: search and page results reach the coworker as a marked DATA block; the research tools are reads only"
+    },
+    {
+     "law": "the-turn-keeps-its-receipt",
+     "precedence": "one rule, two seats: the coworker's recent-facts rule IS the chief's RECENT_FACTS_RULE constant plus a citation duty"
+    }
+   ],
+   "fn": "settleHandOffs · appendLiveTurns · handOffSay · handOffComponent · researchToolDefs · DELEGATION_RECENT_FACTS_RULE",
+   "note": "Sep 29 (owner walk): \"hand this to Max: find the top 3 mobile operators … and write a short comparison\" — Clara said \"Handed to Max — I'll post here when it's ready.\"; Max's result appeared only after a reload; it was a one-line summary (the file card rode an unrendered handoff_result component); and it named two operators that merged years ago (the native delegation step held no tools). AgentOS box prompts are owner-gated: the rule rides the delegation prompt text, so the box receives it too; the box's own tool list is unchanged."
   },
   {
    "id": "tail-survives-truncation",
