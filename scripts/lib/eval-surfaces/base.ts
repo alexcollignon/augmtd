@@ -16,11 +16,11 @@ import {
 import { ensureTeam, deleteThreads, threadsSince, type Team } from './team';
 
 /** What a unit wrote beyond the world (torn down with it). */
-export type Extras = { roomKeys: string[]; threadIds: string[]; team: Team | null; since: string; /** background work the unit started (awaited before teardown) */ pending: Promise<unknown>[] };
+export type Extras = { roomKeys: string[]; threadIds: string[]; team: Team | null; since: string; /** background work the unit started (awaited before teardown) */ pending: Promise<unknown>[]; /** generated artifacts the product indexed into the KB (removed with the unit) */ artifactIds: string[] };
 const extras = new WeakMap<SeededWorld, Extras>();
 export const extrasOf = (s: SeededWorld): Extras => {
   let e = extras.get(s);
-  if (!e) { e = { roomKeys: [], threadIds: [], team: null, since: s.seededAt, pending: [] }; extras.set(s, e); }
+  if (!e) { e = { roomKeys: [], threadIds: [], team: null, since: s.seededAt, pending: [], artifactIds: [] }; extras.set(s, e); }
   return e;
 };
 
@@ -92,6 +92,29 @@ export function makeSurface(def: SurfaceDef): SurfaceAdapter {
         const since = e.team ? await threadsSince(ctx.admin, ctx.userId, e.since, e.team.workers.map((w) => w.id)) : [];
         errors.push(...await deleteThreads(ctx.admin, ctx.userId, [...new Set([...e.threadIds, ...since])]));
       } catch (err) { errors.push((err as Error).message); }
+      // Generated artifacts the product indexed into the KB (the 'AUGMTD Files' source): their files + chunks,
+      // and the source row itself when this unit created it and nothing else is in it.
+      if (e.artifactIds.length) {
+        for (let i = 0; i < 10; i++) {
+          const { data } = await ctx.admin.from('knowledge_files').select('id').eq('user_id', ctx.userId).in('provider_file_id', e.artifactIds);
+          const ids = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+          if (ids.length || i === 9) {
+            if (ids.length) {
+              const ch = await ctx.admin.from('knowledge_chunks').delete().eq('user_id', ctx.userId).in('file_id', ids);
+              if (ch.error) errors.push(`knowledge_chunks: ${ch.error.message}`);
+              const kf = await ctx.admin.from('knowledge_files').delete().eq('user_id', ctx.userId).in('id', ids);
+              if (kf.error) errors.push(`knowledge_files: ${kf.error.message}`);
+            }
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        const { data: srcs } = await ctx.admin.from('knowledge_sources').select('id, created_at').eq('user_id', ctx.userId).eq('provider', 'augmtd').gte('created_at', e.since);
+        for (const src of (srcs ?? []) as Array<{ id: string }>) {
+          const { count } = await ctx.admin.from('knowledge_files').select('id', { count: 'exact', head: true }).eq('user_id', ctx.userId).eq('source_id', src.id);
+          if (!count) { const d = await ctx.admin.from('knowledge_sources').delete().eq('user_id', ctx.userId).eq('id', src.id); if (d.error) errors.push(`knowledge_sources: ${d.error.message}`); }
+        }
+      }
       for (const k of e.roomKeys) {
         const r = await ctx.admin.from('room_turns').delete().eq('user_id', ctx.userId).eq('room_key', k);
         if (r.error) errors.push(`room_turns(${k}): ${r.error.message}`);
@@ -101,7 +124,13 @@ export function makeSurface(def: SurfaceDef): SurfaceAdapter {
       if (errors.length) throw new Error(errors.join('; '));
     },
     async produce(ctx, c, seeded) {
+      const { quota, unitFailures } = await import('./failures');
+      if (ctx.tier === 'eu' && quota.euStopped) throw new Error(`EU QUOTA STOP — unrun (${quota.reason})`);
       const r = await def.produce(ctx, c, seeded);
+      // A model call that failed inside the producer is a RUN ERROR (never scored) — even when the product
+      // swallowed it and served something (an empty summary, an "unstated" field).
+      const failed = unitFailures();
+      if (failed.length) throw new Error(`model call failed during the producer (${failed.length}): ${failed[0]}`);
       return { text: r.turns[r.turns.length - 1] ?? '', turns: r.turns, value: null, ...(r.signals ? { signals: r.signals } : {}) };
     },
     plainPrompt: (c) => ({ user: plainTurnsFor(c, { preamble: def.plainPreamble?.(c) })[0] ?? '' }),

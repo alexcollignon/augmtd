@@ -150,7 +150,7 @@ async function runRejudge(file: string): Promise<void> {
   const liveMod = await import('./lib/eval/engine/live');
   liveMod.armMeter(false);
   const gate = makeProviderGate(DEFAULT_PROVIDER_CAPS);
-  setCallGate(gate.gate);
+  setCallGate((await import('./lib/eval-surfaces/failures')).failureGate(gate.gate));
   liveMod.assertPriced([liveMod.JUDGE_MODEL]);
   const judge = await liveMod.buildJudge();
   const { SURFACES } = await import('./lib/eval-surfaces/registry');
@@ -245,7 +245,7 @@ async function main() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? die('NEXT_PUBLIC_SUPABASE_URL missing');
   liveMod.armMeter(selfCheck);
   const gate = makeProviderGate(DEFAULT_PROVIDER_CAPS);
-  setCallGate(gate.gate);
+  setCallGate((await import('./lib/eval-surfaces/failures')).failureGate(gate.gate));
   if (selfCheck) await liveMod.installEgressFence(supabaseUrl);
   if (live) liveMod.assertPriced([...(columns.includes('sonnet55') ? [liveMod.SONNET55] : []), ...(columns.includes('gpt56') ? [liveMod.GPT56] : []), ...(useJudge ? [liveMod.JUDGE_MODEL] : []),
     ...tiers.map((t) => slotModel(t, 'conversation'))]);

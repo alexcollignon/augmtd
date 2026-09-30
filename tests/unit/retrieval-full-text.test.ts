@@ -88,3 +88,39 @@ describe('opening one meeting', () => {
     expect(r.text).toContain('Notes here.');
   });
 });
+
+describe('numeric rows are frame data', () => {
+  it('a short two-row comparison is not thin; a single fact is', async () => {
+    const { isThinFrameSource } = await import('@/lib/frames/generate-frame');
+    expect(isThinFrameSource({ content: 'FastFreight: 78% of volume, 90% on time, €2.10 per parcel.\nNorthline: 22% of volume, 96% on time, €2.45 per parcel.' })).toBe(false);
+    expect(isThinFrameSource({ content: 'We have 4 analysts.' })).toBe(true);
+  });
+});
+
+describe('the briefing calendar tells time in code', () => {
+  it('marks past / now / upcoming and names the real next meeting', async () => {
+    const { calendarLine } = await import('@/lib/briefing/compose');
+    const l = calendarLine([{ time: '10:00', title: 'Ops sync' }, { time: '15:00', title: 'Kickoff prep' }], '12:07');
+    expect(l).toContain('10:00 Ops sync (already happened)');
+    expect(l).toContain('NEXT — 15:00: Kickoff prep');
+    expect(calendarLine([{ time: '09:00', title: 'A' }], '18:00')).toContain('No meeting left today.');
+    expect(calendarLine([], '10:00')).toContain('no meetings');
+  });
+});
+
+describe('the spoken deadline rides beside the date', () => {
+  it('resolves one-day words against the meeting day and keeps span words', async () => {
+    const { resolveSpokenDue, withSpokenDue } = await import('@/lib/meetings/spoken-due');
+    // 2026-09-30 is a Wednesday
+    expect(resolveSpokenDue('today', '2026-09-30')).toBe('2026-09-30');
+    expect(resolveSpokenDue('by tomorrow', '2026-09-30')).toBe('2026-10-01');
+    expect(resolveSpokenDue('by Friday', '2026-09-30')).toBe('2026-10-02');
+    expect(resolveSpokenDue('Wednesday', '2026-09-30')).toBe('2026-10-07');
+    expect(resolveSpokenDue('next week', '2026-09-30')).toBeNull();
+    const kept = withSpokenDue({ action: 'Send the deck', dueText: 'next week' } as { action: string; dueText?: string; dueDate?: string }, '2026-09-30');
+    expect(kept.dueText).toBe('next week');
+    expect(kept.dueDate).toBeUndefined();
+    expect(withSpokenDue({ action: 'x', dueText: 'today' } as { action: string; dueText?: string; dueDate?: string }, '2026-09-30').dueDate).toBe('2026-09-30');
+    expect(withSpokenDue({ action: 'x', dueDate: '2026-10-09', dueText: 'Friday week' }, '2026-09-30').dueDate).toBe('2026-10-09');
+  });
+});

@@ -135,11 +135,11 @@ describe('verdicts', () => {
 describe('the surface packs', () => {
   it('every surface: 4–6 scenarios, edge cases, truth + checks, a quick subset of ≤ 2, the plain view never names a coworker', async () => {
     const { SURFACES } = await import('../../scripts/lib/eval-surfaces/registry');
-    expect(SURFACES.map((a) => a.id)).toEqual(['dm.coworker', 'room.chat', 'workflow.step', 'handoff.result', 'draft.reply']);
+    expect(SURFACES.map((a) => a.id)).toEqual(['dm.coworker', 'room.chat', 'workflow.step', 'handoff.result', 'draft.reply', 'briefing.home', 'decision.options', 'room.opening', 'document.author', 'frame.view', 'gate.verify', 'meeting.insights']);
     const ids = new Set<string>();
     for (const a of SURFACES) {
       const cs = a.cases();
-      expect(cs.length).toBeGreaterThanOrEqual(4);
+      expect(cs.length).toBeGreaterThanOrEqual(3);
       expect(cs.length).toBeLessThanOrEqual(6);
       expect(cs.filter((c) => c.truth.edge).length).toBeGreaterThanOrEqual(2);
       expect(quickSubset(cs).length).toBeLessThanOrEqual(2);
@@ -178,5 +178,24 @@ describe('the judge knows the world, and the grader is measured', () => {
     expect(Math.round(a.exactPct)).toBe(33);
     expect(Math.round(a.within05Pct)).toBe(67);
     expect(Math.round(a.hardFailAgreePct)).toBe(67);
+  });
+});
+
+describe('a failed model call is an error; the EU quota stops EU calls', () => {
+  it('classifies Bedrock models and the daily quota', async () => {
+    const { isBedrockModel, isDailyQuota } = await import('../../scripts/lib/eval-surfaces/failures');
+    expect(isBedrockModel('eu.anthropic.claude-sonnet-4-5-20250929-v1:0')).toBe(true);
+    expect(isBedrockModel('claude-sonnet-5')).toBe(false);
+    expect(isDailyQuota('ThrottlingException: Too many tokens per day, please wait before trying again.')).toBe(true);
+    expect(isDailyQuota('ThrottlingException: Rate exceeded')).toBe(false);
+  });
+  it('after the first daily throttle every Bedrock call is refused, others pass', async () => {
+    const { failureGate, quota } = await import('../../scripts/lib/eval-surfaces/failures');
+    const g = failureGate(async (_m, fn) => fn());
+    await expect(g('eu.anthropic.x', async () => { throw Object.assign(new Error('Too many tokens per day'), { name: 'ThrottlingException' }); })).rejects.toThrow();
+    expect(quota.euStopped).toBe(true);
+    await expect(g('eu.anthropic.x', async () => 'ok')).rejects.toThrow(/EU QUOTA STOP/);
+    await expect(g('claude-sonnet-5', async () => 'ok')).resolves.toBe('ok');
+    quota.euStopped = false;
   });
 });

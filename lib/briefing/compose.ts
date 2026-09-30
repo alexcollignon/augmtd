@@ -64,9 +64,22 @@ export type BriefingInputs = {
 
 // Bump whenever the PROMPT changes — folded into the daySig so a prompt edit recomposes existing briefs
 // (the cached-AI-output lesson: inputs changing must not be the only invalidator).
-export const BRIEFING_PROMPT_VERSION = 9; // 9: W18.D TIME TRUTH — ABSOLUTE_DATES_RULE rides the prompt (the briefing is served last-good across days); 8: P6d — grammar-safe refs law + displayWho ref handles
+export const BRIEFING_PROMPT_VERSION = 10; // 10: W29 TIME TRUTH — each meeting marked past/now/upcoming against the local clock, NEXT computed in code; // 9: W18.D TIME TRUTH — ABSOLUTE_DATES_RULE rides the prompt (the briefing is served last-good across days); 8: P6d — grammar-safe refs law + displayWho ref handles
 
 const sigOf = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0; return String(h); };
+
+/** W29 · the calendar line, in code: each meeting marked PAST / NOW / UPCOMING against the user's local
+ *  time, and NEXT = the first one still ahead (or none left today). Pure; exported for the gate. */
+export function calendarLine(schedule: Array<{ time: string; title: string }>, nowHHMM: string | null): string {
+  if (!schedule.length) return `\nTODAY'S CALENDAR: no meetings`;
+  const mins = (t: string) => { const m = /^(\d{1,2}):(\d{2})/.exec(t); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+  const now = nowHHMM ? mins(nowHHMM) : null;
+  const mark = (t: string) => { const x = mins(t); if (now == null || x == null) return ''; return x + 30 < now ? ' (already happened)' : x <= now ? ' (happening now)' : ' (upcoming)'; };
+  const next = now == null ? null : schedule.find((e) => { const x = mins(e.time); return x != null && x > now; }) ?? null;
+  // One meeting per line (never a joined blob the model could fuse into one invented event).
+  return `\nTODAY'S CALENDAR${nowHHMM ? ` (it is now ${nowHHMM} local)` : ''}:\n${schedule.map((e) => `  - ${e.time} ${e.title}${mark(e.time)}`).join('\n')}\n` +
+    (now == null ? '' : next ? `  NEXT — ${next.time}: ${next.title}` : '  No meeting left today.');
+}
 
 /** The day signature — compose only when the SHAPE of the day changed (inputs, not phrasing). */
 export function briefingDaySig(inp: BriefingInputs): string {
@@ -122,6 +135,12 @@ export async function composeBriefing(
   // the prose lead and the deck hero anchor on the same thing (Living-Home S1). No re-sort here; hard caps
   // only (law 2's structural half). ──
   const actions = inp.actions.slice(0, 10);
+  // The user's LOCAL clock (their zone) — the calendar line marks what already happened.
+  let nowHHMM: string | null = null;
+  try {
+    const { userTimezone, localNow } = await import('@/lib/utils/user-time');
+    nowHHMM = localNow(await userTimezone(supabase, userId)).hhmm;
+  } catch { /* no clock → the calendar line states no "next" */ }
   const watch = [...inp.watch].sort((a, b) => b.weight - a.weight).slice(0, 4);
 
   // GROUP refs — the body of work an action belongs to is a {G#} CHIP (resolved to the registry name at
@@ -153,9 +172,9 @@ export async function composeBriefing(
     `\nMOVING WITHOUT THEM: ${inp.moving.count} bodies of work${inp.moving.closest ? ` — closest to needing them: {P1} (${inp.moving.closest.summary.slice(0, 90)})` : ''}`,
     // Schedule: the NEXT meeting is given verbatim (one line) so the model can reference it EXACTLY; the
     // rest are only a count. Never a `·`-joined blob the model can fuse into an invented single event.
-    inp.schedule.length
-      ? `\nTODAY'S CALENDAR: ${inp.schedule.length} ${inp.schedule.length === 1 ? 'meeting' : 'meetings'}.  NEXT — ${inp.schedule[0].time}: ${inp.schedule[0].title}`
-      : `\nTODAY'S CALENDAR: no meetings`,
+    // W29 · TIME TRUTH: "NEXT" is the first meeting still AHEAD of the user's local time — computed in code,
+    // never the day's first entry (eval: a brief composed at 12:07 called the 10:00 sync "next").
+    calendarLine(inp.schedule, nowHHMM),
     `\nCOUNTS: ${inp.counts.needYou} need them · ${inp.counts.cleared} cleared today · ${inp.counts.fromTeam} from their team · ${inp.counts.followUps} to follow up`,
   ].filter(Boolean).join('\n');
 
@@ -205,7 +224,9 @@ export async function composeBriefing(
     `- ${ABSOLUTE_DATES_RULE}`;
 
   const res = await aiCall<{ lead?: string; action?: string; watchlist?: string | null; pulse?: string | null; sentenced?: string[] }>({
-    userId, supabase, shape: { output: 'json', reasoning: 'deep' }, prompt, maxTokens: 900, temperature: 0.15, source: 'brain_synthesis',
+    // W29 · 900 cut a busy day's JSON off mid-object (the eval saw runs end at exactly 900 tokens →
+    // parse fails → no briefing composed). The prompt still asks for a short brief; this is headroom.
+    userId, supabase, shape: { output: 'json', reasoning: 'deep' }, prompt, maxTokens: 2000, temperature: 0.15, source: 'brain_synthesis',
   });
   const j = res.json;
   if (!j?.lead || !j?.action) return null;

@@ -354,8 +354,10 @@ async function prepareDecisionBrief(
       if (c) body = [`THE COMMITMENT: ${String(c.description ?? '')}`, c.counterparty ? `Counterparty: ${String(c.counterparty)}` : null, c.due_date ? `Due: ${String(c.due_date)}` : null, c.source ? `Origin: ${String(c.source)}` : null].filter(Boolean).join('\n');
     } else {
       const { data: it } = await admin.from('inbox_items').select('source_data').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
-      const sd = (it?.source_data ?? {}) as { snippet?: string; body_text?: string; html_body?: string };
-      const raw = sd.body_text || (sd.html_body ? String(sd.html_body).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ') : '') || sd.snippet || '';
+      // W29 — the item's words live in `body` (what the sync stores; the eval found a vendor's two priced
+      // options invisible here, and the decision was laid out from the title alone — invented options).
+      const sd = (it?.source_data ?? {}) as { snippet?: string; body?: string; body_text?: string; html_body?: string };
+      const raw = sd.body || sd.body_text || (sd.html_body ? String(sd.html_body).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ') : '') || sd.snippet || '';
       const { clipForPrompt } = await import('@/lib/utils/clip-for-prompt');
       body = clipForPrompt(String(raw), 3500);
     }
