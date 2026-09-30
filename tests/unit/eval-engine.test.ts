@@ -611,13 +611,26 @@ describe('coverage gate', () => {
     expect(f).toMatch(/judgment\.orphan: registered but no call site/);
     expect(r.warnings.join('\n')).toMatch(/lib\/gone\.ts: no call site found/);
   });
-  it('the real repository is fully mapped', () => {
+  it('W30: an in-path file counts apart from measured, and its surfaces must be registered', () => {
+    const r = checkCoverage({
+      sites: [{ file: 'lib/a.ts', sites: 1, slots: [] }, { file: 'lib/b.ts', sites: 1, slots: [] }],
+      kinds: [], registered: ['judgment.a', 'surface.x'],
+      callMap: { 'lib/a.ts': { adapters: ['judgment.a'] }, 'lib/b.ts': { inPath: ['surface.x', 'surface.nope'] } },
+      kindMap: {},
+    });
+    expect(r.counts).toMatchObject({ measured: 1, inPath: 1 });
+    expect(r.failures.join('\n')).toMatch(/lib\/b\.ts: maps to unregistered adapter\(s\) surface\.nope/);
+    expect(r.failures.join('\n')).not.toMatch(/surface\.x: registered but no call site/);
+  });
+  it('the real repository is fully mapped (eval-outputs adapters + eval-surfaces surfaces)', async () => {
     const root = path.resolve(__dirname, '../..');
     const sites = scanCallSites(root);
     const kinds = scanCardKinds(readFileSync(path.join(root, 'components/thread/types.ts'), 'utf8'));
     expect(kinds).toContain('proposal');
-    const r = checkCoverage({ sites, kinds, registered: ADAPTERS.map((a) => a.id) });
+    const { SURFACES } = await import('../../scripts/lib/eval-surfaces/registry');
+    const r = checkCoverage({ sites, kinds, registered: [...ADAPTERS.map((a) => a.id), ...SURFACES.map((a) => a.id)] });
     expect(r.failures).toEqual([]);
+    expect(r.counts.measured).toBeGreaterThanOrEqual(28);
   });
 });
 

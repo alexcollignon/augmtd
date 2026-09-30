@@ -17,6 +17,7 @@ import { assembleLedger, serveEntityState, entityStateStale, isClosedLedgerLine,
 import { renderGroundEvidence } from '@/lib/room/ground-evidence';
 import { clipLedgerLine } from '@/lib/inbox/thread-now';
 import { clipForPrompt, clipLabel, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { figuresOnRecord, type FigureSource } from '@/lib/room/figures';
 
 /** W28 — how many live threads get their newest message in full, and its excerpt budget. */
 export const NEWEST_IN_FULL_THREADS = 4;
@@ -152,6 +153,18 @@ export type RoomGrounding = {
   /** THE rendered grounding block — the one page every reasoned call reads. */
   text: string;
 };
+
+/** W35 · FIGURES ON RECORD — the block (null when the messages state no two different amounts in one
+ *  currency). Each clause rides through the excerpt law. Exported for the gate. */
+export function figuresBlock(sources: FigureSource[]): string | null {
+  const figs = figuresOnRecord(sources);
+  if (figs.length < 2) return null;
+  return `FIGURES ON RECORD (code-read from the messages below — different amounts in the same currency; ` +
+    `a later message does NOT replace an earlier figure unless its own words say so. Where two are for the ` +
+    `same thing they CONFLICT: name both with who stated each and when, and settling which one holds is ` +
+    `the user's to do):\n` +
+    figs.map((f) => `- ${f.raw} — ${f.who}${f.at ? `, ${f.at}` : ''}: "${clipForPrompt(f.clause, 200)}"`).join('\n');
+}
 
 const hrefOfRef = (ref: string): string | null => {
   const [k, id] = ref.split(':');
@@ -445,6 +458,8 @@ export async function assembleRoomGrounding(
   // and the answer inverted and dropped facts). The NEWEST message of each live thread reaches the room
   // whole, through the excerpt law (a boundary cut + the declared mark); older messages stay as the
   // short ledger lines below. Explicit selects, errors surface as silence (an enhancement, never a blocker).
+  // W35 · FIGURES ON RECORD: the same messages' own words feed the code-read figure block below.
+  const figureSources: FigureSource[] = [];
   const newestInFull = await (async (): Promise<string[]> => {
     const ids = [...new Set(threadRefs.map((t) => t.threadId).filter((x): x is string => !!x))].slice(0, NEWEST_IN_FULL_THREADS);
     if (!ids.length) return [];
@@ -464,6 +479,7 @@ export async function assembleRoomGrounding(
           const words = topMessageOf(String(d.body ?? '')).trim();
           if (!words) return null;
           const who = d.is_from_user ? 'THE USER' : (d.from_name || d.from_address || 'the counterparty');
+          figureSources.push({ who, at: d.received_at ? String(d.received_at).slice(0, 10) : null, text: words });
           const newest = i === msgs.length - 1;
           return `${newest ? '[NEWEST] ' : ''}${who} · ${String(d.received_at ?? '').slice(0, 16).replace('T', ' ')}: ${clipForPrompt(words.replace(/\s+/g, ' '), newest ? NEWEST_IN_FULL_CHARS : EARLIER_MESSAGE_CHARS)}`;
         }).filter(Boolean);
@@ -638,6 +654,7 @@ export async function assembleRoomGrounding(
     // reader can consume the judged verbs without also reading what has actually happened since —
     // and so it survives every clip a consumer applies to the tail of this page.
     renderGroundEvidence(groundEvidence),
+    figuresBlock(figureSources),
     newestInFull.length ? `THE THREADS THEMSELVES (each thread's recent messages, oldest first — the NEWEST in full, earlier ones short; the lines above quote only first words, so read these before answering about a thread):\n${newestInFull.join('\n\n')}` : null,
     synthesis.length ? `THE SYNTHESIS (a derived summary of the rows above, composed earlier — where it disagrees with the ledger or the board, the rows win):\n${synthesis.join('\n')}` : null,
     entity?.goals.length ? `GOALS: ${entity.goals.join(' · ')}` : null,

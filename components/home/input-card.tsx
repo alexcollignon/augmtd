@@ -44,6 +44,9 @@ export type EngineAskSpec = {
   /** W13.6 · THE BASE IS OFFERED — the current version the new work goes into (never the answer):
    *  printed as the card's meta line, "Current version (to update): <file>". */
   base?: string[];
+  /** W35 · INPUTS HAVE A KIND — the rows the engine judged ANSWERS (facts only the reader holds, the
+   *  ask turn's `state.answer`): their type-it door leads. Absent → the label's own shape decides. */
+  answers?: string[];
   /** Whatever names the work, for the go-ahead test (lib/room/go-ahead.ts). */
   context: Array<string | null | undefined>;
   /** Already answered by a go-ahead somewhere else (the served `proceeded` stamp). */
@@ -220,7 +223,7 @@ export default function InputCard({ spec, open = true, onSettled, id, held = fal
     const offer = new Set(spec.recentUserText ? saidItLabels(spec.items, spec.recentUserText) : []);
     const said = String(spec.recentUserText ?? '').replace(/\s+/g, ' ').trim();
     const rowDoors: Array<AskRowDoors | null> = spec.items.map((label) => ({
-      lead: askItemShape(label),
+      lead: spec.answers?.includes(label) ? 'fact' : askItemShape(label),
       ...(spec.onAttach ? { onAttach: spec.onAttach } : {}),
       ...(spec.onPointToIt ? { onPointToIt: spec.onPointToIt } : {}),
       ...(turnId && !settled

@@ -117,7 +117,7 @@ describe('C · a secret is never an input', () => {
   it('the drafter is told a secret is never sent; the resolver never asks for one', () => {
     expect(buildTruth([], [], { secrets: ['the admin password'] })).toMatch(/NEVER SENT \(a secret[^)]*\): the admin password/);
     const r = src('lib/prepare/requirements.ts');
-    expect(r).toMatch(/const split = await attachableSplit\(admin, userId, requires\);/);
+    expect(r).toMatch(/const split = await attachableSplit\(admin, userId, requires, \{ thread, work: args\.work \?\? null \}\);/);
     expect(r).toMatch(/SECRETS: a password, login, PIN/);
     // The move floor already asks for a credential instead of offering to send it — the same class.
     expect(userOnlyInputOf('Share your login details with Sam')?.kind).toBe('credential');

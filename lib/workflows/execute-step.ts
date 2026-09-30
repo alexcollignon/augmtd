@@ -639,6 +639,42 @@ function mergeFindings(floor: GateFinding[], reported: GateFinding[]): GateFindi
   return merged;
 }
 
+/**
+ * W35 · THE LAST REVISION IS THE DELIVERABLE (pure). A model that wrote its draft, the sentinel and a
+ * verdict — then "reconsidered" and wrote a second draft and a second verdict — used to ship EVERYTHING
+ * before the last sentinel: the first draft, the first sentinel and its JSON, the reconsidering prose and
+ * the second draft (found in the EU eval: "===GATE_VERDICT===" inside the delivered text). The deliverable
+ * is the model's LAST draft: the text after the earlier verdict's JSON, minus a leading paragraph that
+ * only introduces it (ends with a colon). One sentinel → the body unchanged.
+ */
+export function lastRevision(beforeLastSentinel: string): string {
+  const body = String(beforeLastSentinel ?? '');
+  const prev = body.lastIndexOf(GATE_SENTINEL);
+  if (prev === -1) return body.trim();
+  let tail = body.slice(prev + GATE_SENTINEL.length).replace(/^\s+/, '');
+  // The earlier verdict's JSON — fenced, or a bare balanced object — is not part of the draft.
+  const fence = /^```[a-z]*\n[\s\S]*?\n```/i.exec(tail);
+  if (fence) tail = tail.slice(fence[0].length);
+  else if (tail.startsWith('{')) {
+    let depth = 0, end = -1, inStr = false;
+    for (let i = 0; i < tail.length; i++) {
+      const ch = tail[i];
+      if (inStr) { if (ch === '\\') i++; else if (ch === '"') inStr = false; continue; }
+      if (ch === '"') inStr = true;
+      else if (ch === '{') depth++;
+      else if (ch === '}' && --depth === 0) { end = i + 1; break; }
+    }
+    if (end > 0) tail = tail.slice(end);
+  }
+  const paras = tail.trim().split(/\n\s*\n/);
+  // The reconsidering preamble ("Wait, let me reconsider… / Let me provide the corrected version:")
+  // introduces the draft: everything up to its LAST introducing line (a paragraph ending in a colon)
+  // is the model talking to itself, never the deliverable.
+  const intro = paras.map((p, i) => (/:\s*$/.test(p.trim()) ? i : -1)).filter((i) => i >= 0 && i < paras.length - 1).pop();
+  const last = (intro == null ? paras : paras.slice(intro + 1)).join('\n\n').trim();
+  return last || body.slice(0, prev).trim();
+}
+
 async function executeVerifyStep(
   step: VerifyStep, ctx: StepContext,
 ): Promise<{ text: string; verdict: GateVerdict }> {
@@ -689,70 +725,98 @@ async function executeVerifyStep(
     }) + mismatchBlock,
   };
   const raw = await executeAIStep(gate, { ...ctx, sourceProvenance: hasToolSource });
-
-  // 3 — THE SENTINEL, parsed deterministically. FAILURE HONESTY: a missing or unparseable verdict
-  // degrades to the deterministic floor with reported:false — never a fabricated "passed".
-  const cut = raw.lastIndexOf(GATE_SENTINEL);
-  const degraded: GateVerdict = {
-    version: VERIFY_GATE_VERSION,
-    status: floorFindings.length ? 'corrected' : 'passed',
-    findings: floorFindings,
-    reported: false,
-  };
-  if (cut === -1) return { text: raw, verdict: degraded };
-
-  const body = raw.slice(0, cut).trim();
-  const parsed = parseModelJSON<{ status?: unknown; findings?: unknown } | null>(
-    raw.slice(cut + GATE_SENTINEL.length), null,
-  );
-  // Unparseable verdict JSON: the draft half is still the deliverable — never leak the sentinel
-  // and its debris into what gets delivered; only the report degrades.
-  // THE SENTINEL IS NEVER PART OF A DELIVERABLE (Sep 22, WAVE 0 — THE PRESENTATION LAW): `raw`
-  // still carries `===GATE_VERDICT===` and its JSON, and both fallbacks below used to ship it. The
-  // honest fallback is the PRE-GATE DRAFT — the deliverable as the producing step wrote it,
-  // uncorrected, which is exactly what a gate that told us nothing leaves standing. The verdict
-  // still degrades (reported:false), so the report never claims a pass it did not observe.
-  if (!parsed || typeof parsed !== 'object') return { text: body || draft, verdict: degraded };
-  // A model that emitted the verdict but no draft has told us nothing about the deliverable.
-  if (!body) return { text: draft, verdict: degraded };
-
-  const allowedStepLabels = new Set(
-    (ctx.stepChecks ?? []).map(c => clip(c?.stepLabel, 80)).filter(Boolean),
-  );
-  const findings = mergeFindings(floorFindings, sanitizeFindings(parsed.findings, allowedStepLabels));
-  // STRUCTURAL ATTRIBUTION FALLBACK: a rule finding whose text matches a step check points home
-  // even when the model forgot stepLabel — the attribution promise is code's, not the model's.
-  const checks = ctx.stepChecks ?? [];
-  if (checks.length) {
-    const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-    for (const f of findings) {
-      if (f.source !== 'rule' || f.stepLabel || !f.rule) continue;
-      const hit = checks.find(c => {
-        const a = norm(c.check); const b = norm(f.rule!);
-        return a === b || a.includes(b) || b.includes(a);
-      });
-      if (hit) f.stepLabel = hit.stepLabel.slice(0, 80);
+  const readGate = (raw: string): { text: string; verdict: GateVerdict } => {
+    // 3 — THE SENTINEL, parsed deterministically. FAILURE HONESTY: a missing or unparseable verdict
+    // degrades to the deterministic floor with reported:false — never a fabricated "passed".
+    const cut = raw.lastIndexOf(GATE_SENTINEL);
+    const degraded: GateVerdict = {
+      version: VERIFY_GATE_VERSION,
+      status: floorFindings.length ? 'corrected' : 'passed',
+      findings: floorFindings,
+      reported: false,
+    };
+    if (cut === -1) return { text: raw, verdict: degraded };
+  
+    const body = lastRevision(raw.slice(0, cut));
+    const parsed = parseModelJSON<{ status?: unknown; findings?: unknown } | null>(
+      raw.slice(cut + GATE_SENTINEL.length), null,
+    );
+    // Unparseable verdict JSON: the draft half is still the deliverable — never leak the sentinel
+    // and its debris into what gets delivered; only the report degrades.
+    // THE SENTINEL IS NEVER PART OF A DELIVERABLE (Sep 22, WAVE 0 — THE PRESENTATION LAW): `raw`
+    // still carries `===GATE_VERDICT===` and its JSON, and both fallbacks below used to ship it. The
+    // honest fallback is the PRE-GATE DRAFT — the deliverable as the producing step wrote it,
+    // uncorrected, which is exactly what a gate that told us nothing leaves standing. The verdict
+    // still degrades (reported:false), so the report never claims a pass it did not observe.
+    if (!parsed || typeof parsed !== 'object') return { text: body || draft, verdict: degraded };
+    // A model that emitted the verdict but no draft has told us nothing about the deliverable.
+    if (!body) return { text: draft, verdict: degraded };
+  
+    const allowedStepLabels = new Set(
+      (ctx.stepChecks ?? []).map(c => clip(c?.stepLabel, 80)).filter(Boolean),
+    );
+    const findings = mergeFindings(floorFindings, sanitizeFindings(parsed.findings, allowedStepLabels));
+    // STRUCTURAL ATTRIBUTION FALLBACK: a rule finding whose text matches a step check points home
+    // even when the model forgot stepLabel — the attribution promise is code's, not the model's.
+    const checks = ctx.stepChecks ?? [];
+    if (checks.length) {
+      const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+      for (const f of findings) {
+        if (f.source !== 'rule' || f.stepLabel || !f.rule) continue;
+        const hit = checks.find(c => {
+          const a = norm(c.check); const b = norm(f.rule!);
+          return a === b || a.includes(b) || b.includes(a);
+        });
+        if (hit) f.stepLabel = hit.stepLabel.slice(0, 80);
+      }
     }
+    let status: GateVerdict['status'] =
+      parsed.status === 'blocked' ? 'blocked' :
+      parsed.status === 'corrected' ? 'corrected' :
+      parsed.status === 'passed' ? 'passed' : (findings.length ? 'corrected' : 'passed');
+    // CODE-ENFORCED DOWNGRADE: a block is a claim about the USER'S OWN RULES. Without a rule finding
+    // behind it, it is the model's opinion — the run keeps moving.
+    if (status === 'blocked' && !findings.some(f => f.source === 'rule')) status = 'corrected';
+    if (status === 'passed' && findings.length) status = 'corrected';
+    // THE BLOCK-DEMANDING RULE IS CODE-ENFORCED (v5 — prompt language flip-flopped once, so the
+    // promise moved into code): a rule whose OWN TEXT demands block/hold/stop, backed by a rule
+    // finding, forces `blocked` — the gate "fixing" content the user said must STOP delivery is a
+    // silent override of their stated escalation, never a success. The retry loop still applies;
+    // a clean re-produced draft (no finding on that rule) passes normally.
+    const demandsBlock = (t?: string) => !!t && /\b(block|hold|stop)\b/i.test(t);
+    if (status !== 'blocked' && findings.some(f => f.source === 'rule' && demandsBlock(f.rule))) {
+      status = 'blocked';
+    }
+  
+    return { text: body, verdict: { version: VERIFY_GATE_VERSION, status, findings, reported: true } };
+  };
+  let result = readGate(raw);
+  // 4 — W35 · A CORRECTION THE VERDICT CLAIMS IS IN THE DRAFT (found in the EU eval: the verdict said the
+  // ungrounded promise was "corrected" while the delivered draft still carried it word for word). A
+  // corrected/removed finding whose quote still stands verbatim in the draft is incoherent: ONE corrective
+  // re-run, kept only when it applies more of its own corrections. Code decides, from the gate's own words.
+  const unapplied = result.verdict.reported ? unappliedCorrections(result.verdict.findings, result.text) : [];
+  if (unapplied.length) {
+    const again = await executeAIStep({
+      ...gate,
+      prompt: gate.prompt +
+        `\n\nYOUR PREVIOUS ANSWER WAS INCOHERENT: its verdict reported these as corrected or removed, but the ` +
+        `draft you returned still contains them word for word: ${unapplied.map((f) => `"${f.quote.slice(0, 100)}"`).join('; ')}. ` +
+        `Decide every correction FIRST, then write the corrected draft with each one applied, then the verdict — once.`,
+    }, { ...ctx, sourceProvenance: hasToolSource }).catch(() => null);
+    const second = again ? readGate(again) : null;
+    if (second?.verdict.reported && unappliedCorrections(second.verdict.findings, second.text).length < unapplied.length) result = second;
   }
-  let status: GateVerdict['status'] =
-    parsed.status === 'blocked' ? 'blocked' :
-    parsed.status === 'corrected' ? 'corrected' :
-    parsed.status === 'passed' ? 'passed' : (findings.length ? 'corrected' : 'passed');
-  // CODE-ENFORCED DOWNGRADE: a block is a claim about the USER'S OWN RULES. Without a rule finding
-  // behind it, it is the model's opinion — the run keeps moving.
-  if (status === 'blocked' && !findings.some(f => f.source === 'rule')) status = 'corrected';
-  if (status === 'passed' && findings.length) status = 'corrected';
-  // THE BLOCK-DEMANDING RULE IS CODE-ENFORCED (v5 — prompt language flip-flopped once, so the
-  // promise moved into code): a rule whose OWN TEXT demands block/hold/stop, backed by a rule
-  // finding, forces `blocked` — the gate "fixing" content the user said must STOP delivery is a
-  // silent override of their stated escalation, never a success. The retry loop still applies;
-  // a clean re-produced draft (no finding on that rule) passes normally.
-  const demandsBlock = (t?: string) => !!t && /\b(block|hold|stop)\b/i.test(t);
-  if (status !== 'blocked' && findings.some(f => f.source === 'rule' && demandsBlock(f.rule))) {
-    status = 'blocked';
-  }
+  return result;
+}
 
-  return { text: body, verdict: { version: VERIFY_GATE_VERSION, status, findings, reported: true } };
+/** W35 (pure): the gate's corrected/removed findings whose own quote still stands verbatim in the draft it
+ *  returned — a claimed correction that was never applied. Short quotes (< 8 chars) prove nothing. */
+export function unappliedCorrections(findings: GateFinding[], draft: string): GateFinding[] {
+  const norm = (x: string) => x.replace(/\s+/g, ' ').trim().toLowerCase();
+  const d = norm(String(draft ?? ''));
+  return findings.filter((f) => (f.action === 'corrected' || f.action === 'removed')
+    && norm(f.quote).length >= 8 && d.includes(norm(f.quote)));
 }
 
 /** THE RETRY'S BRIEF (guardrails arc): a blocked gate hands its findings back to the step that

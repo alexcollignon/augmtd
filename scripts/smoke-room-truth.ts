@@ -173,7 +173,8 @@ function fakeTurns(seed: Turn[]) {
   gate('D5 an unstaged new-work requirement still posts its ask through the ONE turn writer (the resolver\'s missing branch + the lane\'s base offer)',
     // ⟲ RE-POINTED (W13.6): the ask's state also carries the base it offers; the lane asks under the
     // verdict's labels with the base named.
-    /component: \{ key: 'input_checklist', state: \{ items: uncovered\.map\(\(m2\) => m2\.label\), taskId: null, \.\.\.\(baseFiles\.length \? \{ base: baseFiles \} : \{\}\) \} \}/.test(reqSrc)
+    // ⟲ RE-POINTED (W35 · INPUTS HAVE A KIND): the same state also marks its ANSWER rows (state.answer).
+    /component: \{ key: 'input_checklist', state: \{ items: uncovered\.map\(\(m2\) => m2\.label\), taskId: null, \.\.\.\(baseFiles\.length \? \{ base: baseFiles \} : \{\}\),\s*\.\.\.\(uncovered\.some\(\(m2\) => m2\.input === 'answer'\)/.test(reqSrc)
     && /await askForFile\(admin, userId, w, labels, \[file\.filename\]\);\s*\n\s*return \{ did: 'none', reason: 'the file found is the version to update/.test(passSrc));
 
   // ═══ E · W13.6 THE LIVE ASK RENDERS + THE NARRATION FOLLOWS ITS ARTIFACT (owner live walk after

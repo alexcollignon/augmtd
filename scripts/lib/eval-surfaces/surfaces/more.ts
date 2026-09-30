@@ -309,8 +309,11 @@ export const gateSurface = makeSurface({
       previousOutputs: [{ step_id: 'src', step_type: 'tool', label: 'Source material', output: p.source }, { step_id: 'draft', step_type: 'ai', label: 'Draft', output: p.draft }],
     } as never);
     if (out.error) throw new Error(`verify: ${out.error}`);
-    const v = out.verdict as { status?: string; findings?: Array<{ claim?: string; issue?: string; fix?: string; rule?: string }> } | undefined;
-    const findings = (v?.findings ?? []).map((f) => `- ${[f.claim, f.issue, f.fix, f.rule ? `(rule: ${f.rule})` : ''].filter(Boolean).join(' — ')}`).join('\n');
+    // W35 · the finding as the product SERVES it (lib/workflows/types.ts GateFinding: quote · action · note ·
+    // rule) — the W28 adapter read claim/issue/fix, fields the gate never emits, so every finding rendered
+    // as an empty "- " and the judge scored a gate that had named its correction as one that had not.
+    const v = out.verdict as { status?: string; findings?: Array<{ source?: string; quote?: string; action?: string; note?: string; rule?: string }> } | undefined;
+    const findings = (v?.findings ?? []).map((f) => `- ${[f.quote ? `"${f.quote}"` : '', f.action ?? '', f.note ?? '', f.rule ? `(rule: ${f.rule})` : ''].filter(Boolean).join(' — ')}`).join('\n');
     return { turns: [`VERDICT: ${T(v?.status) || 'unknown'}\n${findings ? `FINDINGS:\n${findings}\n` : 'FINDINGS: none\n'}\nDRAFT AS IT GOES OUT:\n${T(out.output)}`] };
   },
 });

@@ -5,7 +5,7 @@ import type { TaskType, TierType, ModelEndpoint, TenantConfig, ResolvedClient } 
 import { TIER_DEFAULTS } from './defaults'
 import { createBedrockAdapter } from './bedrock-adapter'
 import {
-  CLAUDE_NO_SAMPLING_RE, applyEffort, callerStatedEffort, effortOf, slotEffort, stampUsageEffort, producerEffort, type AIEffort,
+  CLAUDE_NO_SAMPLING_RE, OPENAI_REASONING_RE, OPENAI_NO_MINIMAL_RE, openaiReasoningFloor, openaiReasoningValue, applyEffort, callerStatedEffort, effortOf, slotEffort, stampUsageEffort, producerEffort, type AIEffort,
   type EffortProducer,
 } from './effort'
 
@@ -103,7 +103,8 @@ export function boundEffortOf(client: unknown): AIEffort | undefined {
 // invoke chat.completions.create directly (streaming included) — so the rewrite lives
 // on the client itself, not in aiCreate: one transport-layer fix for every site, the
 // same pattern as the response_format strip. Two families, proven live:
-//  • gpt-5 family: `max_tokens` must be `max_completion_tokens`; `temperature`/`top_p`
+//  • gpt-5 / gpt-6 family (W30 adds gpt-6: 'minimal' → 'none', sampling kept only at 'none'):
+//    `max_tokens` must be `max_completion_tokens`; `temperature`/`top_p`
 //    are fixed (400 on any non-default); reasons by default — on JSON-shaped prompts
 //    with small budgets the reasoning channel eats the tokens and content comes back
 //    empty (the Kimi lesson, lib/ai/call.ts), so `reasoning_effort` defaults to
@@ -120,15 +121,22 @@ function withModelParamFloor(client: OpenAI): OpenAI {
   const orig = completions.create.bind(completions)
   ;(completions as { create: unknown }).create = (params: { model?: unknown; [k: string]: unknown }, opts?: unknown) => {
     const model = typeof params?.model === 'string' ? params.model : ''
-    if (model.startsWith('gpt-5')) {
+    if (OPENAI_REASONING_RE.test(model)) {
       const p = { ...params }
       if (p.max_tokens != null && p.max_completion_tokens == null) {
         p.max_completion_tokens = p.max_tokens
-        delete p.max_tokens
       }
-      delete p.temperature
-      delete p.top_p
-      if (p.reasoning_effort == null) p.reasoning_effort = 'minimal'
+      delete p.max_tokens
+      if (p.reasoning_effort == null) p.reasoning_effort = openaiReasoningFloor(model)
+      // W30 — REJECT-SAFE on gpt-6 (live Sep 30, gpt-6-luna): 'minimal' is a 400 there, so a caller's
+      // 'minimal' becomes 'none' (the same intent); and sampling is accepted ONLY at 'none', so it is
+      // kept there (the determinism judgments are tuned on) and dropped at any other effort. gpt-5
+      // keeps its behaviour byte-for-byte: sampling always dropped.
+      if (typeof p.reasoning_effort === 'string') p.reasoning_effort = openaiReasoningValue(model, p.reasoning_effort)
+      if (!(OPENAI_NO_MINIMAL_RE.test(model) && p.reasoning_effort === 'none')) {
+        delete p.temperature
+        delete p.top_p
+      }
       return (orig as (p: unknown, o?: unknown) => unknown)(p, opts)
     }
     if (CLAUDE_NO_SAMPLING_RE.test(model)) {

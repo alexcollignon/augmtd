@@ -29,6 +29,7 @@ import LinkedWorkPanel from '@/components/meetings/linked-work-panel';
 import ProcessingPipeline from '@/components/meetings/processing-pipeline';
 import MeetingDocument from '@/components/meetings/meeting-document';
 import MeetingProjectControl from '@/components/meetings/meeting-project-control';
+import { insightsStatusOf, insightsFailedWords, type InsightsStatus } from '@/lib/meetings/insights-retry';
 
 interface TranscriptSegment {
   speaker: string;
@@ -66,6 +67,8 @@ interface ActionItem {
 interface NotesStructured {
   document?: string;
   live_notes?: string;
+  /** W35 · the insights call failed (lib/meetings/insights-retry) — said on the page, retried. */
+  insights_status?: InsightsStatus | null;
 }
 
 interface MeetingTranscript {
@@ -657,8 +660,9 @@ const handleRetry = async () => {
       await fetch(`/api/meetings/${id}/re-enhance`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ templateId: 'default' }),
+        body: JSON.stringify({ templateId: transcript.templateId ?? 'default' }),
       });
+      // A failed re-run is recorded on the transcript — the refetch shows it (never a silent no-op).
       await fetchData();
     } catch {} finally { setReanalyzing(false); }
   };
@@ -744,9 +748,12 @@ const handleRetry = async () => {
   transcript?.keyMoments?.forEach((km) => keyMomentMap.set(km.segmentIndex, km));
   const risks = transcript?.risks ?? [];
 
+  // W35 · the insights call failed for this transcript (the stamp is cleared by a successful re-run).
+  const insightsFailed = insightsStatusOf(transcript?.notesStructured ?? null);
+
   // Draft text note: saved to DB but AI hasn't run yet — show full active-phase UI
   const isDraftNote = !!transcript && transcript.source === 'text' &&
-    transcript.processed && !transcript.notesStructured?.document && !transcript.summary;
+    transcript.processed && !transcript.notesStructured?.document && !transcript.summary && !insightsFailed;
 
   // True when the active in-person recording belongs to THIS note/event specifically.
   // Gates recording/upload/processing bars so they don't bleed into unrelated open notes.
@@ -1413,6 +1420,30 @@ const handleRetry = async () => {
 
       {/* ── ZONE D — Post-capture content ── */}
 
+      {/* W35 · NOTES THAT FAILED ARE SAID — the insights call failed; the audio + transcript are kept, the
+          notes retry automatically on a bounded backoff, and the owner can retry now. */}
+      {transcript?.processed && insightsFailed && (
+        <div className="mb-6">
+          <div className="flex items-center justify-between gap-4 px-4 py-3 bg-amber-50 rounded-lg">
+            <div>
+              <p className="text-[13px] font-medium text-amber-800">{insightsFailedWords(insightsFailed, new Date()).title}</p>
+              <p className="text-[12px] text-amber-700 mt-0.5">{insightsFailedWords(insightsFailed, new Date()).line}</p>
+            </div>
+            {isOwner && (
+              <Button
+                onClick={handleReanalyze}
+                disabled={reanalyzing}
+                variant="secondary"
+                size="sm"
+                className="flex-shrink-0"
+              >
+                {reanalyzing ? 'Retrying…' : 'Retry'}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Meeting document — primary note view (hidden for draft text notes not yet AI-processed) */}
       {transcript?.processed && !isDraftNote && (
         <section className="mb-6">
@@ -1421,7 +1452,7 @@ const handleRetry = async () => {
             eventId={eventId ?? null}
             editable={isOwner}
           />
-          {!transcript.notesStructured?.document && !transcript.summary && (
+          {!transcript.notesStructured?.document && !transcript.summary && !insightsFailed && (
             <button
               onClick={handleReanalyze}
               disabled={reanalyzing}

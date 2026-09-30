@@ -64,7 +64,7 @@ export const inputAskAdapter: SurfaceAdapter = {
     { group: 'file-not-anywhere', count: 5, note: 'the asked-for file exists nowhere → ask for it' },
     { group: 'answer-not-artifact', count: 3, note: '"confirm the Thursday time" — an answer, not a thing to attach → no_ask' },
     { group: 'our-own-artifact', count: 3, note: 'the "missing" thing is ours to produce (a summary, a deck draft) → no_ask' },
-    { group: 'only-user-knows', count: 4, note: 'bank details / a signature / a decision only the user holds → ask' },
+    { group: 'only-user-knows', count: 4, note: 'bank details / a signature / a decision only the user holds → ask (W35: a fact rides the SAME ask card as an ANSWER row, typed — scored like an attach row)' },
     { group: 'partially-available', count: 3, note: 'two of three documents in the KB → ask for exactly the third' },
     { group: 'project-linked', count: 2, note: 'the file lives with the same project (world.projects) → no_ask' },
     { group: 'answer-in-thread', count: 4, note: 'the fact was already given earlier in the same thread → no_ask (asking again is wrong)' },
@@ -107,15 +107,18 @@ export const inputAskAdapter: SurfaceAdapter = {
     const r = await resolveRequirements(ctx.admin, ctx.userId, {
       itemKind: isCommit ? 'commitment' : 'inbox', itemId: s.ids[key], itemTitle: t?.subject ?? key,
       entityId: (link as { entity_id?: string } | null)?.entity_id ?? null,
-      requires: requires.map((q) => ({ label: q.label, kind: q.kind ?? null })), work: v.work,
+      requires: requires.map((q) => ({ label: q.label, kind: q.kind ?? null, input: q.input ?? null })), work: v.work,
     });
+    // W35 · INPUTS HAVE A KIND: an ANSWER row (a fact only the user holds — typed on the SAME ask card) is
+    // part of the served ask exactly like an attach row; the text marks which is which for the report.
     const missing = r.missing.map((m) => m.label);
+    const kindOf = (m: { label: string; input?: string }) => (m.input === 'answer' ? `${m.label} [answer]` : m.label);
     // W26 LOSS DIAGNOSIS (H · served output): the SERVED ask is the room's input_checklist turn — it
     // names unstageable-but-plausible KB hits ("I did find "X" (maybe the …)"). Captured so the report
     // tells a blind ask from a confirm-this-file ask (scored the same: both ask the user).
     const suggested = await servedSuggestions(ctx, s.ids[key]);
     return {
-      text: `${v.work} · requires ${requires.map((q) => q.label).join('; ')} · have ${r.have.map((h) => h.label).join('; ') || '—'} · missing ${missing.join('; ') || '—'}${suggested.length ? ` · suggested ${suggested.join('; ')}` : ''}`,
+      text: `${v.work} · requires ${requires.map((q) => (q.input === 'answer' ? `${q.label} [answer]` : q.label)).join('; ')} · have ${r.have.map((h) => h.label).join('; ') || '—'} · missing ${r.missing.map(kindOf).join('; ') || '—'}${suggested.length ? ` · suggested ${suggested.join('; ')}` : ''}`,
       value: inputAskAdapter.servedView!({ ask: missing.length ? 'ask' : 'no_ask', missing, work: v.work, suggested }, c, ctx.now),
     };
   },

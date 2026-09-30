@@ -198,7 +198,9 @@ export const CASES: EvalCase[] = [
       threads: [{ key: 't1', subject: 'Invoice 2214 — reminder', messages: [{ key: 'm1', from: 'billing', at: '-3h', body: 'Dear Taylor,\n\nOur records show that invoice 2214 was due on {{-12d|dm}} and remains unpaid. Please arrange payment of the invoice at your earliest convenience.\n\nUmbrella Billing' }] }],
     },
     params: { message: 'm1' },
-    truth: { obligations: [{ direction: 'i_owe', keywords: ['invoice', 'pay|payment|settle'], due: '-12d' }] },
+    // W35 · OWNER DECISION (THE BILL HAS ONE PAYER): a payment request addressed to the user, unpaid and
+    // not auto-collected, IS the user's debt — overdue, still owed. (The branches where it is not: cx-36…38.)
+    truth: { obligations: [{ direction: 'i_owe', keywords: ['invoice', 'pay|payment|settle'], due: '-12d' }], note: 'Owner decision (W35): the user is the one asked to pay — addressed, unpaid, not auto-pay, not CC-only — so the bill is their debt; a past due date keeps it owed.' },
   },
 
   // ── self-party-trap (3) ───────────────────────────────────────────────────────────────────────
@@ -417,6 +419,37 @@ export const CASES: EvalCase[] = [
     },
     params: { message: 'm1' },
     truth: { obligations: [{ direction: 'i_owe', keywords: ['report'], who: 'zoe', due: '+3d' }] },
+  },
+
+  // ── payment-request (3) — W35 · THE BILL HAS ONE PAYER (owner decision) ──────────────────────────
+  {
+    id: 'cx-36', group: 'payment-request', title: 'A supplier invoice that names the user\'s finance team as the payer → not the user\'s debt',
+    world: {
+      people: [tom],
+      threads: [{ key: 't1', subject: 'Invoice 3307 — September workshop', messages: [{ key: 'm1', from: 'tom', at: '-3h', body: 'Hi Taylor,\n\nAttached is invoice 3307 for the September workshop, €4,500, payable by {{+14d|dm}}. As usual your finance department will process the payment on your side.\n\nThanks again for a great session,\nTom', attachments: ['Invoice 3307.pdf'] }] }],
+    },
+    params: { message: 'm1' },
+    truth: { obligations: [], note: 'Owner decision (W35): the mail names someone else (the finance department) as the one who pays — not the user\'s debt; the user\'s move is to pass it on (the judge\'s forward).' },
+  },
+  {
+    id: 'cx-37', group: 'payment-request', title: 'FR: an invoice collected by direct debit, "aucune action requise" → nothing owed',
+    world: {
+      people: [{ key: 'fact', name: 'Initech Billing', email: 'facturation@initech.test', org: 'Initech' }],
+      tz: 'Europe/Paris',
+      threads: [{ key: 't1', subject: 'Votre facture F-5581 est disponible', messages: [{ key: 'm1', from: 'fact', at: '-5h', body: 'Bonjour Taylor,\n\nVotre facture F-5581 du mois d\'octobre (180,00 €) est disponible dans votre espace client. Le montant sera prélevé automatiquement le {{+5d|iso}} sur le compte se terminant par 0912. Aucune action n\'est requise de votre part.\n\nInitech Facturation' }] }],
+    },
+    params: { message: 'm1' },
+    truth: { obligations: [], note: 'Owner decision (W35): collected automatically — nothing for the user to pay; awareness only.' },
+  },
+  {
+    id: 'cx-38', group: 'payment-request', title: 'PT: a person asks the user to pay an overdue invoice → the user\'s debt',
+    world: {
+      people: [ana],
+      tz: 'Europe/Lisbon',
+      threads: [{ key: 't1', subject: 'Fatura 2231 em atraso', messages: [{ key: 'm1', from: 'ana', at: '-2h', body: 'Olá Taylor,\n\nA fatura 2231, no valor de 3.480 €, venceu no dia {{-6d|iso}} e ainda não recebemos o pagamento. Pode, por favor, efetuar a transferência até {{+4d|iso}}?\n\nObrigada,\nAna' }] }],
+    },
+    params: { message: 'm1' },
+    truth: { obligations: [{ direction: 'i_owe', keywords: ['2231|fatura|invoice', 'pay|pag|transfer|settle'], due: '+4d' }], note: 'Owner decision (W35): addressed to the user, unpaid, a new stated date — the user\'s debt.' },
   },
 
   // ── edge-ambiguous (2) → [] ───────────────────────────────────────────────────────────────────

@@ -100,7 +100,7 @@ export const CASES: EvalCase[] = [
       people: [sam], threads: [one('sam', 'References', 'Taylor, procurement asks for three client references with a contact person and a phone number for each. Can you send those today?\n\nSam')],
       kb: [BROCHURE, doc('k2', 'Northwind case study logistics.pdf', 'CASE STUDY. A logistics group reduced delivery delays by 22% after a six-month assurance programme. Client name withheld under NDA. No contact persons listed.')],
     },
-    params: { item: 't1' }, truth: { ask: 'ask', missing: [{ keywords: ['reference|contact'] }] },
+    params: { item: 't1' }, truth: { ask: 'ask', missing: [{ keywords: ['reference|contact'] }], note: 'W35 · INPUTS HAVE A KIND: references with contact details are facts only the user holds — an ANSWER row on the ask card (typed) or an attach row both count as the ask.' },
   }),
   c({
     id: 'ia-08', group: 'file-not-anywhere', title: 'KYC identity document requested by a bank — only the user has it',
@@ -199,7 +199,7 @@ export const CASES: EvalCase[] = [
       people: [billing], threads: [one('bill', 'Refund of your deposit', 'Hello Taylor,\n\nWe are refunding your deposit. Please reply with the IBAN and BIC of the account that should receive it.\n\nAcme Billing')],
       kb: [PRICING, BROCHURE],
     },
-    params: { item: 't1' }, truth: { ask: 'ask', missing: [{ keywords: ['IBAN|bank details|BIC|account'] }] },
+    params: { item: 't1' }, truth: { ask: 'ask', missing: [{ keywords: ['IBAN|bank details|BIC|account'] }], note: 'W35 · INPUTS HAVE A KIND: the IBAN/BIC for a refund TO the user is an ANSWER (typed on the ask card) — never a secret, never searched for.' },
   }),
   c({
     id: 'ia-18', group: 'only-user-knows', title: 'Signed order form requested — the attachment is unsigned',
@@ -224,7 +224,7 @@ export const CASES: EvalCase[] = [
       people: [sam], threads: [one('sam', 'Phase 2 scoping', 'Taylor, before we scope phase 2, what is the maximum budget you are prepared to commit? Even a range helps us size the team.\n\nSam')],
       kb: [PRICING],
     },
-    params: { item: 't1' }, truth: { ask: 'ask', missing: [{ keywords: ['budget'] }] },
+    params: { item: 't1' }, truth: { ask: 'ask', missing: [{ keywords: ['budget'] }], note: 'W35 · INPUTS HAVE A KIND: a figure only the user holds — an ANSWER row on the ask card (typed).' },
   }),
 
   // ── partially-available: ask for exactly what is not there ───────────────────────────────────────

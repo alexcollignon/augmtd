@@ -97,6 +97,7 @@ export const commitmentExtractionAdapter: SurfaceAdapter = {
     { group: 'year-omitted-past', count: 3, note: 'a deadline with the year omitted that is already past' },
     { group: 'self-party-trap', count: 3, note: 'the user named in the third person' },
     { group: 'newsletter-imperatives', count: 4, note: 'imperative verbs in a newsletter → []' },
+    { group: 'payment-request', count: 3, note: 'W35 · THE BILL HAS ONE PAYER: the user asked to pay → i_owe; another payer named (finance) or auto-collected → []' },
     { group: 'duplicate-of-open', count: 3, note: 'restates an open commitment already on the list (world.commitments)' },
     { group: 'meeting-transcript', count: 6, note: 'PENDING: the meeting path (writeMeetingCommitments) needs a transcript world kind — not wired yet' },
     { group: 'edge-missing', count: 2, note: 'an email that is only a signature / a bare attachment', edge: 'missing' },

@@ -111,6 +111,24 @@ export function parsePoolSpec(spec: string | null | undefined): PoolSpec | null 
 
 export const poolLabel = (tier: Tier, k: number) => `${tier === 'standard' ? 'std' : 'eu'}#${k}`;
 
+/** W30 — `--probe-host std=4,eu=3`: ONE named pool account per tier for the single-host harnesses
+ *  (eval-surfaces, eval-home-chat), e.g. an account carrying a candidate model override. A bare `4`
+ *  means std=4. Absent tier = account #1 (the default). Unknown keys / out-of-range refused. Pure. */
+export function parseProbeHostSpec(spec: string | null | undefined): Partial<Record<Tier, number>> {
+  const out: Partial<Record<Tier, number>> = {};
+  if (spec == null || !spec.trim()) return out;
+  for (const kv of spec.split(',').map((x) => x.trim()).filter(Boolean)) {
+    const [rawK, rawV] = kv.includes('=') ? kv.split('=') : ['std', kv];
+    const tier: Tier | null = ['std', 'standard'].includes(rawK.trim()) ? 'standard' : rawK.trim() === 'eu' ? 'eu' : null;
+    if (!tier) throw new Error(`--probe-host: unknown tier "${rawK}" (use std=k, eu=k)`);
+    const k = Number(String(rawV ?? '').trim());
+    if (!Number.isInteger(k) || k < 1 || k > POOL_MAX) throw new Error(`--probe-host: ${rawK}=${rawV} must be an account number 1..${POOL_MAX}`);
+    if (out[tier] != null) throw new Error(`--probe-host: ${rawK} named twice`);
+    out[tier] = k;
+  }
+  return out;
+}
+
 /** Profile columns that are CONFIG (what a producer may read about the user), compared across a tier's
  *  pool and copied from #1 onto #k. Caches (home_brief, outbound/calendar caches) are not config. */
 export const PROFILE_CONFIG_FIELDS = ['role', 'full_name', 'settings', 'email_settings', 'attendee_enabled', 'is_super_admin', 'needs_join', 'slack_dm_reports', 'team_briefing', 'company_id'] as const;

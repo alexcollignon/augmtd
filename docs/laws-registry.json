@@ -1199,7 +1199,9 @@
     "lib/ai/defaults.ts",
     "lib/ai/bedrock-adapter.ts",
     "lib/ai/bedrock-embeddings.ts",
-    "lib/ai/call.ts"
+    "lib/ai/call.ts",
+    "lib/ai/bedrock-converse.ts",
+    "lib/ai/bedrock-residency.ts"
    ],
    "gates": [
     {
@@ -1224,6 +1226,17 @@
      "suite": "smoke-ai-routing",
      "kind": "outcome",
      "cost": "live-ai"
+    },
+    {
+     "suite": "smoke-bedrock-residency",
+     "ids": [
+      "R1",
+      "R2",
+      "R3"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W31 EU residency floor: bedrock tier defaults + documented override targets are in-region or eu. (never global./us.); an EU-region adapter refuses a non-EU profile before sending"
     }
    ],
    "version_key": null,
@@ -9347,6 +9360,190 @@
     {
      "law": "one-coherent-item",
      "precedence": "the doer-based direction floor (directionFloor) runs first; a clear quote actor overrides it and rewrites the doer so the write door reads the same answer"
+    }
+   ]
+  },
+  {
+   "id": "bill-has-one-payer",
+   "name": "THE BILL HAS ONE PAYER",
+   "aliases": [
+    "PAYMENT_REQUEST_RULE",
+    "addressedNoticeDebt",
+    "THE PAYMENT-REQUEST LAW"
+   ],
+   "tier": 2,
+   "domain": "judge-prepare-deck",
+   "statement": "A payment request (an invoice, a payment reminder, a dunning notice, in any language) is the user's commitment ONLY when it asks the user to pay: addressed to them, not yet paid, not collected automatically, not CC-only — then exactly one you_owe \"Pay invoice …\" with its stated due (an overdue bill stays owed). Paid, a receipt, or auto-collected (direct debit, auto-pay, the card on file) → nothing owed, awareness (work none). When the message's own words name SOMEONE ELSE as the one who pays or processes it (a colleague, their finance or accounts team), it is not the user's debt: the work is the heads-up/forward to that person (the judge's forward verb), prepared for the user to send. The extraction gate lets a NOTICE the understanding reads as the user's own move (you_owe, addressed, not CC-only, never an unsolicited kind, never a broadcast footer) reach the extraction, whose prompt carries the ONE rule text; the judge states the same law in verbs.",
+   "homes": [
+    "lib/commitments/extract.ts",
+    "lib/work/judge.ts",
+    "lib/work/surface-registry.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w35-floors",
+     "ids": [
+      "V1",
+      "V2a",
+      "V2b"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W35 (uncommitted): tests/unit/w35-bill-inputs-figures — the gate's exception and its refusals (unsolicited kinds, a notice nobody owes, CC-only, footer, no understanding); the rule names every branch; the judge's clause + forward meaning. scripts/smoke-conversation-delta K5/K5b. Measured by the eval (extraction.commitments cx-15/36/37/38, judgment.work-verdict wv-45/46)."
+    }
+   ],
+   "fn": "addressedNoticeDebt · PAYMENT_REQUEST_RULE",
+   "version_key": "COMMITMENT_EXTRACTION_VERSION",
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W35.1",
+   "collides_with": [
+    {
+     "law": "notice-law",
+     "precedence": "the notice law keeps an automated sender from earning a reply; a notice the user owes (you_owe, addressed) now also mints the debt — the kind floor's NOTICE_KINDS exception, mirrored"
+    },
+    {
+     "law": "seat-law",
+     "precedence": "CC-only never mints a bill; the seat law runs first and this law never re-opens it"
+    }
+   ]
+  },
+  {
+   "id": "inputs-have-a-kind",
+   "name": "INPUTS HAVE A KIND",
+   "aliases": [
+    "settleInputKind",
+    "THE ANSWER ROW",
+    "answer vs attach"
+   ],
+   "tier": 2,
+   "domain": "judge-prepare-deck",
+   "statement": "Every requirement the judge lists names what it is: \"attach\" (a THING that can be retrieved and attached) or \"answer\" (a specific fact only the user holds, which the work must state and no message or file already states — a figure, the price to quote, their account details for a payment to them, contacts). The resolver's check VERIFIES the kind with the item's thread in view: a verified fact is an answer (never searched for; a fact the user already typed is in hand); a sign-off (a confirmation, approval, availability, a status) is nobody's input — the go-ahead carries it; a fact the thread already states is given; a secret is refused before any of this. On produce, a fact-shaped requirement is the work to write, never an ask. Both kinds flow into the SAME ask card (the input_checklist turn, answers marked in state.answer — existing JSON, no migration), whose answer rows lead with the type-it door; the drafter is told an answer still to come is never guessed.",
+   "homes": [
+    "lib/prepare/input-kind.ts",
+    "lib/prepare/requirements.ts",
+    "lib/work/judge.ts",
+    "components/home/input-card.tsx",
+    "components/home/item-rail.tsx"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w35-floors",
+     "ids": [
+      "V1",
+      "V2b",
+      "V2c",
+      "V2d"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W35 (uncommitted): tests/unit/w35-bill-inputs-figures — the judge keeps the stated kind; settleInputKind; applyAttachVerdict sorts attach/answer/sign-off and never keeps a secret; the ask speaks the right door; ARTIFACT TRUTH never guesses an answer. Measured by the eval (judgment.input-ask ia-07/17/20 answers scored)."
+    }
+   ],
+   "fn": "settleInputKind · applyAttachVerdict · typedSupplyRows",
+   "version_key": "JUDGE_VERSION",
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W35.2",
+   "collides_with": [
+    {
+     "law": "ask-direction-floor",
+     "precedence": "an answer row is still OUR ask to the user, answered by their typing or go-ahead — never the counterparty's debt"
+    },
+    {
+     "law": "asks-live-and-die-with-their-work",
+     "precedence": "an answer row lives and dies with its work exactly like an attach row; a typed supply settles it through the same door"
+    }
+   ]
+  },
+  {
+   "id": "meeting-notes-retry",
+   "name": "NOTES THAT FAILED ARE SAID, AND RETRIED",
+   "aliases": [
+    "insights_status",
+    "retryFailedMeetingInsights",
+    "THE BOUNDED NOTES RETRY"
+   ],
+   "tier": 2,
+   "domain": "meetings",
+   "statement": "When a meeting's insights call fails, the empty fallback is MARKED (never a judged \"nothing happened\"): the transcript records the failure in notes_structured.insights_status (existing JSON, no migration), a bounded sweep (10 min · 1 h · 6 h, then it stops; 2 per run, reported) re-runs the ONE existing re-run path, a failed re-run never overwrites the notes that stand, a success clears the stamp, and the meeting page says \"Notes couldn't be generated\" with a Retry. The audio (meeting-recordings bucket) and the transcript are never deleted or rewritten by any of it.",
+   "homes": [
+    "lib/meetings/insights-retry.ts",
+    "lib/integrations/meeting-bot/bot-manager.ts",
+    "app/api/cron/sync-calendar/route.ts",
+    "app/api/meetings/[id]/re-enhance/route.ts",
+    "app/api/meetings/notes/[id]/process/route.ts",
+    "components/meetings/inline-note-view.tsx"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w35-floors",
+     "ids": [
+      "V1",
+      "V2e"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W35 (uncommitted): tests/unit/w35-meeting-notes-retry — the stamp and its bounded backoff, due-ness, the page's words, the sweep's selection/bound/report with a fake client that proves no delete/storage call, and the seats."
+    }
+   ],
+   "fn": "insightsFailedStatus · insightsRetryDue · retryFailedMeetingInsights",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W35.3",
+   "collides_with": [
+    {
+     "law": "failure-honesty",
+     "precedence": "this is failure honesty on the meeting lane: a failed call is recorded and retried, never cached as an empty answer"
+    },
+    {
+     "law": "no-silent-caps",
+     "precedence": "the sweep's per-run bound stands; what it leaves is counted and logged"
+    }
+   ]
+  },
+  {
+   "id": "figures-on-record",
+   "name": "FIGURES ON RECORD",
+   "aliases": [
+    "figuresOnRecord",
+    "figuresBlock",
+    "TWO ASKS, BOTH NAMED",
+    "lastRevision"
+   ],
+   "tier": 2,
+   "domain": "rooms",
+   "statement": "Two values for one thing are a FACT before they are a rule: the room grounding carries the money amounts its messages state (code-read — currency symbols/ISO codes, any digit grouping, never vocabulary), with who stated each and when, whenever one currency holds two different amounts; a later message never replaces an earlier figure unless its own words say so, and the room's move never adopts one of two conflicting figures (settling which holds is the user's). The Home briefing composes the ONE conduct rule text (CONDUCT_RULES.conflicting_values) and marks, in code, a candidate from the same person as an earlier one, so two asks that pull different ways are named together. And the verify gate's deliverable is the model's LAST revision — a draft revised after a first verdict never ships the first verdict or its sentinel.",
+   "homes": [
+    "lib/room/figures.ts",
+    "lib/room/grounding.ts",
+    "lib/room/brief.ts",
+    "lib/briefing/compose.ts",
+    "lib/workflows/execute-step.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w35-floors",
+     "ids": [
+      "V1",
+      "V2f",
+      "V2g"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W35 (uncommitted): tests/unit/w35-bill-inputs-figures — amountOf/figuresOnRecord/figuresBlock, sameWhoAs, the briefing's conduct rule, lastRevision. Measured by eval-surfaces (room.opening open-conflict, briefing.home brief-conflict, gate.verify)."
+    }
+   ],
+   "fn": "figuresOnRecord · figuresBlock · sameWhoAs · lastRevision",
+   "version_key": "ROOM_BRIEF_VERSION",
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W35.4",
+   "collides_with": [
+    {
+     "law": "one-conduct-every-producer",
+     "precedence": "the conduct rule is the one wording; this law adds the code-read facts and the briefing's same-person mark beside it, never a second wording"
     }
    ]
   }

@@ -18,12 +18,17 @@
 //
 // THE MAPPING (a FACT per model family; the transport applies it, callers only name an effort):
 //   gpt-5*                        → `reasoning_effort: <effort>` (minimal|low|medium|high)
+//   gpt-6* (W30)                  → the same, except 'minimal' → 'none' (gpt-6 has no 'minimal')
 //   Claude 5 family (compat API)  → `reasoning_effort: <effort>` ('minimal' → 'none', the floor's hint)
 //   Claude 4.5/4.6 (Haiku 4.5 on Bedrock EU and on the Anthropic compat endpoint; Sonnet 4.5/4.6) —
 //     the OLDER thinking API: `thinking: { type: 'enabled', budget_tokens }` with
 //     low → 1024 (the API minimum) · medium → 4096 · high → 8192; 'minimal' → thinking stays off.
 //     Thinking forbids sampling params (temperature/top_p/top_k are dropped) and a forced tool_choice
 //     (the effort is then NOT applied, and says so), and max_tokens must exceed the budget.
+//   gpt-oss on Bedrock (W31, `openai.gpt-oss-*` in-region) → `reasoning_effort: low|medium|high`, sent by
+//     the Bedrock adapter's Converse path as `additionalModelRequestFields.reasoning_effort`. It has NO
+//     'minimal' (and no 'none'): it always reasons, so 'minimal' → 'low' and even the floor gets
+//     GPT_OSS_HEADROOM (the adapter applies the floor: 'low' + headroom when nothing states an effort).
 //   every other model (gpt-4o-mini, llama, …) → nothing is sent (no reasoning channel to steer).
 //
 // THE HEADROOM (the Kimi lesson, made structural): reasoning/thinking tokens count against the output
@@ -109,10 +114,42 @@ export const CLAUDE_NO_SAMPLING_RE = /^claude-(sonnet-5|opus-5|opus-4-[78]|fable
 /** Claude 4.5/4.6 — extended thinking via `thinking.budget_tokens` (bare ids and Bedrock `eu.anthropic.` ids). */
 const CLAUDE_THINKING_RE = /(^|\.)claude-(haiku-4-5|sonnet-4-5|sonnet-4-6|opus-4-5|opus-4-6)/
 
-export type EffortFamily = 'openai-reasoning' | 'claude-effort' | 'claude-thinking' | 'none'
+/** OpenAI reasoning models (gpt-5 family, gpt-6 family): `reasoning_effort`, `max_completion_tokens`. */
+export const OPENAI_REASONING_RE = /^gpt-[56](?![0-9])/
+/** W30 — the gpt-6 family (proven live Sep 30 on gpt-6-luna): `reasoning_effort` accepts
+ *  none|low|medium|high|xhigh — 'minimal' is a 400 — and sampling params (temperature/top_p) are
+ *  accepted ONLY at 'none' (any non-default value at 'low'+ is a 400). */
+export const OPENAI_NO_MINIMAL_RE = /^gpt-6(?![0-9])/
+
+/** The `reasoning_effort` value an OpenAI reasoning model receives for an effort: 'minimal' becomes
+ *  'none' on a model that has no 'minimal' (gpt-6); every other value passes through. Pure. */
+export function openaiReasoningValue(model: string, effort: string): string {
+  return effort === 'minimal' && OPENAI_NO_MINIMAL_RE.test(model) ? 'none' : effort
+}
+
+/** The floor an OpenAI reasoning model gets when nothing states an effort: 'minimal' on gpt-5 (our
+ *  prompts were written for non-reasoning models), 'none' on gpt-6 (its equivalent). Pure. */
+export function openaiReasoningFloor(model: string): 'minimal' | 'none' {
+  return OPENAI_NO_MINIMAL_RE.test(model) ? 'none' : 'minimal'
+}
+
+/** W31 — OpenAI's open-weight gpt-oss family, served IN-REGION by Bedrock (`openai.gpt-oss-120b-1:0`
+ *  in eu-central-1). Always reasons (a reasoning block precedes the answer); effort low|medium|high. */
+export const GPT_OSS_RE = /(^|\.)(openai\.)?gpt-oss-/
+/** Output-budget headroom for gpt-oss per effort. 'minimal' is not a gpt-oss effort (it runs at 'low'),
+ *  so even the floor reserves room: the reasoning block counts against maxTokens, and a 200-token
+ *  judgment budget would otherwise come back EMPTY (the Kimi lesson). */
+export const GPT_OSS_HEADROOM: Readonly<Record<AIEffort, number>> = Object.freeze({ minimal: 1024, low: 1024, medium: 4096, high: 8192 })
+/** The `reasoning_effort` gpt-oss receives for an effort ('minimal' → 'low'; it has no lighter mode). */
+export function gptOssReasoningValue(effort: string): 'low' | 'medium' | 'high' {
+  return effort === 'medium' || effort === 'high' ? effort : 'low'
+}
+
+export type EffortFamily = 'openai-reasoning' | 'claude-effort' | 'claude-thinking' | 'gpt-oss' | 'none'
 
 export function effortFamily(model: string): EffortFamily {
-  if (/^gpt-5/.test(model)) return 'openai-reasoning'
+  if (OPENAI_REASONING_RE.test(model)) return 'openai-reasoning'
+  if (GPT_OSS_RE.test(model)) return 'gpt-oss'
   if (CLAUDE_NO_SAMPLING_RE.test(model)) return 'claude-effort'
   if (CLAUDE_THINKING_RE.test(model)) return 'claude-thinking'
   return 'none'
@@ -216,12 +253,21 @@ export function applyEffort<P extends object>(params: P, effort: AIEffort): { pa
     return { params: p as unknown as P, applied, family }
   }
   if (family === 'openai-reasoning' || family === 'claude-effort') {
-    p.reasoning_effort = family === 'claude-effort' && effort === 'minimal' ? 'none' : effort
+    p.reasoning_effort = family === 'claude-effort' && effort === 'minimal' ? 'none' : openaiReasoningValue(model, effort)
     const room = EFFORT_HEADROOM[effort]
     if (room) {
       if (p.max_completion_tokens != null) p.max_completion_tokens = bump(p.max_completion_tokens, room)
       else if (p.max_tokens != null) p.max_tokens = bump(p.max_tokens, room)
     }
+    return done(effort)
+  }
+  if (family === 'gpt-oss') {
+    // W31 — the effort rides as `reasoning_effort`; the Bedrock Converse path moves it into
+    // additionalModelRequestFields. The headroom always applies (gpt-oss reasons even at 'minimal').
+    p.reasoning_effort = gptOssReasoningValue(effort)
+    const room = GPT_OSS_HEADROOM[effort]
+    if (p.max_completion_tokens != null) p.max_completion_tokens = bump(p.max_completion_tokens, room)
+    else if (p.max_tokens != null) p.max_tokens = bump(p.max_tokens, room)
     return done(effort)
   }
   if (family === 'claude-thinking') {

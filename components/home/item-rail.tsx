@@ -50,6 +50,7 @@ import { roomKeyForDoor, targetOwnedByDoor, cardMayBindTarget, objectIdForDoor, 
 // brief obeys (ONE copy of each law; a hand-written second version is how the excerpt law rotted).
 import { collapseSelfVoice } from '@/lib/room/self-voice';
 import { askBaseOf } from '@/lib/room/ask-base';
+import { askAnswersOf } from '@/lib/prepare/input-kind';
 import { nameOncePerSentence } from '@/lib/room/opening-discipline';
 import { fallbackOpeningLine, prepareNoneLine, type FallbackOrigin } from '@/lib/room/opening-fallback';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
@@ -168,6 +169,8 @@ type Turn =
       /** W13.6 · THE BASE IS OFFERED — the current version the missing new work goes into (the ask
        *  turn's `component.state.base`); the ask card prints it as its meta line. */
       base?: string[];
+      /** W35 · the checklist rows the engine judged ANSWERS (`component.state.answer`) — typed, not attached. */
+      answers?: string[];
       /** W3 — the durable turn's id (the ask-lifecycle actions key on it) + the proceeded stamp
        *  (the user already said "go ahead" — the button hides, the checklist stays as record). */
       turnId?: string; proceeded?: boolean;
@@ -337,6 +340,7 @@ function mapServerTurns(rows: ServerTurnRow[]): Turn[] {
     if (turn.role === 'system' && t.component?.key === 'input_checklist' && Array.isArray(t.component.state?.items)) {
       turn.checklist = t.component.state.items.map((m) => String(m)).filter(Boolean);
       { const b = askBaseOf(t.component.state); if (b.length) turn.base = b; }
+      { const ans = askAnswersOf(t.component.state); if (ans.length) turn.answers = ans; }
       turn.turnId = t.id;
       turn.proceeded = !!t.component.state?.proceeded;
     }
@@ -1200,7 +1204,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     return null;
   })();
   const askCard = (
-    a: Pick<Extract<Turn, { role: 'system' }>, 'turnId' | 'checklist' | 'proceeded' | 'author' | 'refs' | 'base'> & { text?: string },
+    a: Pick<Extract<Turn, { role: 'system' }>, 'turnId' | 'checklist' | 'proceeded' | 'author' | 'refs' | 'base' | 'answers'> & { text?: string },
     key: string,
   ) => (
     <div className="mt-1.5">
@@ -1213,6 +1217,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
           ask: a.text ?? '',
           items: a.checklist ?? [],
           ...(a.base?.length ? { base: a.base } : {}),
+          ...(a.answers?.length ? { answers: a.answers } : {}),
           context: askContext(a),
           ...(a.proceeded ? { proceeded: true } : {}),
           onAttach: () => fileRef.current?.click(),

@@ -11,7 +11,9 @@ import {
   applyEffort, effortOverride, effortOverrideArmed, parseEffortOverride, slotEffort, effortFamily, effortOf,
   EFFORT_KEY, EFFORT_HEADROOM, THINKING_BUDGET, SLOT_EFFORT,
   PRODUCER_EFFORT, producerEffort, producerEffortOverride, EFFORT_PRODUCERS,
+  openaiReasoningFloor, openaiReasoningValue,
 } from '../../lib/ai/effort';
+import { MODEL_PRICING } from '../../lib/ai/pricing';
 import { aiCreate, getAIClient, getEndpointClient, unboundClient, boundEffortOf, invalidateTenantConfig } from '../../lib/ai/factory';
 import { aiCall } from '../../lib/ai/call';
 import { logAIUsage, taskTypeWithEffort } from '../../lib/ai/log-usage';
@@ -236,5 +238,66 @@ describe('W28 · THE PRODUCER EFFORT — a producer names itself, the config dec
     expect(r.json).toEqual({ ok: true });
     const want = producerEffort('room.brief', r.model, {});
     expect(sent[0].reasoning_effort).toBe(want ?? 'minimal');
+  });
+});
+
+// W30 — gpt-6 is first-class (live Sep 30, gpt-6-luna): `max_completion_tokens` only; reasoning_effort
+// none|low|medium|high|xhigh ('minimal' is a 400); sampling accepted ONLY at 'none'.
+describe('W30 · the gpt-6 family in the param floor and the effort lever', () => {
+  const luna = () => getEndpointClient({ provider: 'openai', model: 'gpt-6-luna' });
+  it('family + value mapping: gpt-6 is openai-reasoning, minimal → none, the rest pass through', () => {
+    for (const m of ['gpt-6-luna', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-5-mini', 'gpt-5.6-terra']) expect(effortFamily(m)).toBe('openai-reasoning');
+    expect(effortFamily('gpt-60')).toBe('none');
+    expect(openaiReasoningFloor('gpt-6-luna')).toBe('none');
+    expect(openaiReasoningFloor('gpt-5-mini')).toBe('minimal');
+    expect(openaiReasoningValue('gpt-6-luna', 'minimal')).toBe('none');
+    expect(openaiReasoningValue('gpt-6-luna', 'low')).toBe('low');
+    expect(openaiReasoningValue('gpt-5-mini', 'minimal')).toBe('minimal');
+  });
+  it("the floor: max_tokens → max_completion_tokens, 'none' by default, sampling KEPT at 'none'", async () => {
+    await aiCreate(luna(), { model: 'gpt-6-luna', max_tokens: 350, temperature: 0, messages: msgs });
+    const p = sent[0];
+    expect(p.max_completion_tokens).toBe(350);
+    expect(p.max_tokens).toBeUndefined();
+    expect(p.reasoning_effort).toBe('none');
+    expect(p.temperature).toBe(0);
+    expect(EFFORT_KEY in p).toBe(false);
+  });
+  it("reject-safe: a caller's own 'minimal' is sent as 'none'; sampling dropped above 'none'", async () => {
+    await luna().chat.completions.create({ model: 'gpt-6-luna', max_tokens: 100, reasoning_effort: 'minimal' as never, temperature: 0.2, messages: msgs });
+    expect(sent[0]).toMatchObject({ reasoning_effort: 'none', max_completion_tokens: 100, temperature: 0.2 });
+    await luna().chat.completions.create({ model: 'gpt-6-luna', max_tokens: 100, reasoning_effort: 'low', temperature: 0.2, top_p: 0.9, messages: msgs });
+    expect(sent[1].reasoning_effort).toBe('low');
+    expect(sent[1].temperature).toBeUndefined();
+    expect(sent[1].top_p).toBeUndefined();
+    expect(sent[1].max_tokens).toBeUndefined();
+  });
+  it('the effort lever: low keeps low (+ headroom, sampling dropped); minimal lands as none', async () => {
+    await aiCreate(luna(), { model: 'gpt-6-luna', max_tokens: 200, temperature: 0, messages: msgs }, { effort: 'low' });
+    expect(sent[0]).toMatchObject({ reasoning_effort: 'low', max_completion_tokens: 200 + EFFORT_HEADROOM.low });
+    expect(sent[0].temperature).toBeUndefined();
+    const r = applyEffort({ model: 'gpt-6-luna', max_tokens: 200 }, 'minimal');
+    expect(r.applied).toBe('minimal');
+    expect(r.params).toMatchObject({ reasoning_effort: 'none', max_tokens: 200 });
+  });
+  it('the measured producers keep their low on gpt-6 (same family)', async () => {
+    expect(producerEffort('work.judge', 'gpt-6-luna', {})).toBe('low');
+    await aiCreate(luna(), { model: 'gpt-6-luna', max_tokens: 350, temperature: 0, messages: msgs }, { producer: 'inbox.understanding' });
+    expect(sent[0]).toMatchObject({ reasoning_effort: 'low', max_completion_tokens: 350 + EFFORT_HEADROOM.low });
+  });
+  it("aiCall's empty-content retry (run at 'minimal') lands on gpt-6 as 'none', never a 400", () => {
+    expect((applyEffort({ model: 'gpt-6-luna', max_tokens: 350 }, 'minimal').params as Sent).reasoning_effort).toBe('none');
+  });
+  it('gpt-5 is unchanged: minimal floor, sampling always dropped', async () => {
+    await gpt5().chat.completions.create({ model: 'gpt-5-mini', max_tokens: 100, reasoning_effort: 'none' as never, temperature: 0, messages: msgs });
+    expect(sent[0].temperature).toBeUndefined();
+    expect(sent[0].reasoning_effort).toBe('none');
+  });
+  it('the three W30 candidates are priced (no fallback rate)', () => {
+    for (const m of ['gpt-6-luna', 'claude-sonnet-5-5', 'eu.anthropic.claude-sonnet-4-6']) expect(MODEL_PRICING[m]).toBeDefined();
+  });
+  it('the Claude candidates already sit in the right families', () => {
+    expect(effortFamily('claude-sonnet-5-5')).toBe('claude-effort');
+    expect(effortFamily('eu.anthropic.claude-sonnet-4-6')).toBe('claude-thinking');
   });
 });

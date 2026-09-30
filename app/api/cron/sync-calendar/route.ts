@@ -5,6 +5,7 @@ import { processMeetingsForUser } from '@/lib/calendar/meeting-processor';
 import { analyzeCalendarPatterns } from '@/lib/calendar/pattern-analyzer';
 import { hasBearer } from '@/lib/utils/bearer-auth';
 import { fetchAllRows } from '@/lib/utils/fetch-all';
+import { retryFailedMeetingInsights } from '@/lib/integrations/meeting-bot/bot-manager';
 
 export const maxDuration = 300; // 5 minutes
 
@@ -32,6 +33,16 @@ export async function GET(request: NextRequest) {
         },
       },
     );
+
+    // ── W35 · NOTES THAT FAILED ARE RETRIED (lib/meetings/insights-retry): recordings whose insights call
+    // failed get one more run each, on a bounded backoff (10 min · 1 h · 6 h), through the ONE re-run path.
+    // User-independent (a no-OAuth workspace records meetings too), bounded (2 per run, a 90 s budget),
+    // and what it leaves is reported. Audio and transcripts are never touched. Non-fatal by construction.
+    let insightsRetry: Awaited<ReturnType<typeof retryFailedMeetingInsights>> | null = null;
+    try {
+      insightsRetry = await retryFailedMeetingInsights(supabase, { max: 2, deadlineMs: Date.now() + 90_000 });
+      if (insightsRetry.due) console.log(`[SyncCalendar] meeting insights retry: ${insightsRetry.retried} run, ${insightsRetry.recovered} recovered, ${insightsRetry.leftBehind} left for the next run`);
+    } catch (e) { console.error('[SyncCalendar] meeting insights retry failed (non-fatal):', e); }
 
     // THE COVERAGE REPAIR, applied here too (stabilization W4.3): a paged, ORDERED read (no silent
     // PostgREST 1000-row cap — invariant 10) instead of a bare `.select('*')`.
@@ -129,6 +140,7 @@ export async function GET(request: NextRequest) {
       eventsSynced: totalEventsSynced,
       meetingPrepItems: totalMeetingPrep,
       connectionsLeftBehind,
+      ...(insightsRetry?.due ? { meetingInsightsRetry: insightsRetry } : {}),
       errors: errors.length > 0 ? errors : undefined,
     });
   } catch (error) {

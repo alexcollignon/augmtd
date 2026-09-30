@@ -17,6 +17,7 @@ import { resolveDeixisInDescriptions } from '@/lib/inbox/deixis';
 import { userTimezone, localNow } from '@/lib/utils/user-time';
 import { anchorDueDate } from '@/lib/commitments/extraction-truth';
 import { withSpokenDue } from '@/lib/meetings/spoken-due';
+import { insightsFailedStatus, insightsStatusOf, insightsRetryDue } from '@/lib/meetings/insights-retry';
 
 // ── THE CLOCK REACHES THE MEETING LANE (W3.4 · invariant 14 TIME TRUTH — executeAIStep's idiom) ──
 // Meeting extraction ran dateless: a spoken "the 27th of August" landed as 2024, on the inbox_item
@@ -112,6 +113,10 @@ interface MeetingInsights {
   risks: MeetingRisk[];
   suggested_next_step: string | null;
   generatedTitle?: string | null;
+  /** W35 · the insights call FAILED — the fields above are the empty fallback (action items may still
+   *  come from the cheaper extraction), never a judged "nothing happened". */
+  failed?: true;
+  failureReason?: string;
 }
 
 const GENERIC_TITLES = new Set([
@@ -319,6 +324,10 @@ export async function storeTranscriptAndGenerateWork(
     notes_structured: {
       document: insights.document || '',
       live_notes: liveNotes || '',
+      // W35 · a failed insights call is a recorded fact (the retry sweep and the page read it).
+      ...(insights.failed
+        ? { insights_status: insightsFailedStatus(insightsStatusOf(transcriptRecord?.notes_structured), new Date(), insights.failureReason) }
+        : {}),
     },
     // The deal this meeting belongs to (grounded from attendees) — the magnet associates the transcript to
     // its project by this, so the notes become first-class project context. null = loose (safe default).
@@ -661,7 +670,11 @@ Rules for other fields:
   } catch (error) {
     console.error('[MeetingBot] Error extracting meeting insights:', error);
     const actionItems = await extractActionItemsWithAI(userId, meetingTitle, segments, supabase, meetingDate);
-    return { document: '', decisions: [], actionItems, risks: [], keyMoments: [], suggested_next_step: null };
+    // W35 · FAILURE HONESTY: the empty fallback is MARKED — the caller records it and the retry runs.
+    return {
+      document: '', decisions: [], actionItems, risks: [], keyMoments: [], suggested_next_step: null,
+      failed: true, failureReason: error instanceof Error ? error.name || 'Error' : 'Error',
+    };
   }
 }
 
@@ -698,7 +711,19 @@ export async function reEnhanceTranscript(
   }
 
   if (!transcript) throw new Error('Transcript not found');
+  return reEnhanceTranscriptRow(userId, transcript, templateId, supabase);
+}
 
+/** The re-run on a transcript row already in hand (the retry sweep reads rows itself). W35: a FAILED
+ *  re-run never overwrites the notes that stand — it only records the failure (and the next backoff);
+ *  a successful one clears the failure stamp. Audio and transcript are never touched. */
+export async function reEnhanceTranscriptRow(
+  userId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  transcript: any,
+  templateId: string,
+  supabase: SupabaseClient,
+): Promise<MeetingInsights> {
   const segments = transcript.transcript_segments ?? [];
   const liveNotes = transcript.notes_structured?.live_notes || '';
 
@@ -714,6 +739,18 @@ export async function reEnhanceTranscript(
 
   const combinedNotes = [liveNotes, templateHint].filter(Boolean).join('\n');
   const insights = await extractMeetingInsights(userId, transcript.title, segments, supabase, combinedNotes || undefined, transcript.start_time ?? null);
+
+  if (insights.failed) {
+    // W35 · the standing notes stay exactly as they are; only the failure is recorded.
+    const { error: stampErr } = await supabase.from('meeting_transcripts').update({
+      notes_structured: {
+        ...(transcript.notes_structured ?? {}),
+        insights_status: insightsFailedStatus(insightsStatusOf(transcript.notes_structured), new Date(), insights.failureReason),
+      },
+    }).eq('id', transcript.id).eq('user_id', userId);
+    if (stampErr) console.error('[MeetingBot] Failed to record the insights failure:', stampErr);
+    return insights;
+  }
 
   // Update transcript
   const update: Record<string, any> = {
@@ -735,6 +772,44 @@ export async function reEnhanceTranscript(
     .eq('id', transcript.id);
 
   return insights;
+}
+
+/**
+ * W35 · THE BOUNDED RETRY — the transcripts whose insights failed and whose backoff has elapsed get ONE
+ * more run through the same re-run path (`reEnhanceTranscriptRow`). Bounded per call (`max`), stops
+ * starting new runs past `deadlineMs`, and REPORTS what it left behind (no silent caps). The failure stamp
+ * lives in `notes_structured` (JSON path filter — no migration); audio and transcript are never touched.
+ */
+export async function retryFailedMeetingInsights(
+  admin: SupabaseClient,
+  opts: { now?: Date; max?: number; deadlineMs?: number; rerun?: typeof reEnhanceTranscriptRow } = {},
+): Promise<{ retried: number; recovered: number; stillFailed: number; due: number; leftBehind: number; errors: string[] }> {
+  const now = opts.now ?? new Date();
+  const max = Math.max(0, opts.max ?? 2);
+  const rerun = opts.rerun ?? reEnhanceTranscriptRow;
+  const out = { retried: 0, recovered: 0, stillFailed: 0, due: 0, leftBehind: 0, errors: [] as string[] };
+  const { data, error } = await admin.from('meeting_transcripts')
+    .select('id, user_id, title, transcript_segments, notes_structured, calendar_event_id, start_time, template_id')
+    .eq('notes_structured->insights_status->>state', 'failed')
+    .order('created_at', { ascending: true })
+    .limit(50);
+  if (error) { out.errors.push(`read failed transcripts: ${error.message}`); return out; }
+  const due = ((data ?? []) as Array<Record<string, unknown>>)
+    .filter((t) => insightsRetryDue(insightsStatusOf(t.notes_structured), now));
+  out.due = due.length;
+  for (const t of due) {
+    if (out.retried >= max || (opts.deadlineMs != null && Date.now() > opts.deadlineMs)) { out.leftBehind++; continue; }
+    out.retried++;
+    try {
+      const r = await rerun(String(t.user_id), t, String(t.template_id ?? 'default'), admin);
+      if (r.failed) out.stillFailed++; else out.recovered++;
+    } catch (e) {
+      out.stillFailed++;
+      out.errors.push(`${String(t.id).slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  if (out.leftBehind) console.warn(`[MeetingBot] insights retry: ${out.leftBehind} due transcript(s) left for the next run`);
+  return out;
 }
 
 /**

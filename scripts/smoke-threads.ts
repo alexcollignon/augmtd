@@ -1786,7 +1786,8 @@ console.log('\nT13 · THE ASK SPEAKS CONSEQUENCE — one accent, named faces');
   gate('T13.9 the LABEL still renders VERBATIM in its row (the judged inventory is never rewritten by the speech)',
     // ⟲ RE-POINTED (W13.6): the state also carries the offered base (`base: baseFiles`) — the labels
     // themselves are still written verbatim.
-    !!req && /state: \{ items: uncovered\.map\(\(m2\) => m2\.label\), taskId: null, \.\.\.\(baseFiles\.length \? \{ base: baseFiles \} : \{\}\) \}/.test(req));
+    // ⟲ RE-POINTED (W35 · INPUTS HAVE A KIND): …and marks its ANSWER rows (state.answer), labels verbatim.
+    !!req && /state: \{ items: uncovered\.map\(\(m2\) => m2\.label\), taskId: null, \.\.\.\(baseFiles\.length \? \{ base: baseFiles \} : \{\}\),/.test(req));
 
   // 2 — THE CHAT FEEL: one accent per room, the kit's own input-card grammar.
   gate('T13.10 NO amber/orange anywhere in the rail’s markup (the ask was a second focus point)',
@@ -7008,7 +7009,8 @@ console.log('\nT39 · THE TYPE-IT DOOR — an ask answered by saying the fact');
     && /<AskRows rows=\{card\.items\} \{\.\.\.\(card\.rowDoors \? \{ doors: card\.rowDoors \} : \{\}\)\} \/>/.test(cards)
     && /spec\.items\.length\s*\?\s*\{ rowDoors \}/.test(host)
     // the host still hands a shaped lead per row, from the ONE predicate
-    && /lead: askItemShape\(label\)/.test(host));
+    // ⟲ RE-POINTED (W35): an engine-judged ANSWER row leads with the type-it door; every other row by the ONE predicate
+    && /lead: spec\.answers\?\.includes\(label\) \? 'fact' : askItemShape\(label\)/.test(host));
 
   gate('T39.12 THE ROWS LEAF STAYS PRESENTATIONAL — a field and a callback, never a fetch, a router or a client of its own',
     !/fetch\(|supabase|useRouter|next\/navigation/.test(rows)

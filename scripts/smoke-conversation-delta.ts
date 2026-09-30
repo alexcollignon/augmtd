@@ -256,10 +256,17 @@ const deps = (verdict: FulfillmentJudgment['verdict'] | 'throw'): ApplyDeps & { 
       ['a deadline', { role: 'addressed', relevance: 'awareness', deadline: '2026-10-01' }],
     ];
     ok('K4 the understanding (ownership · relevance · ask · deadline) opens extraction', obligations.every(([, u]) => { const g = G({ source: 'email', text: long, isFromUser: false, understanding: u as never }); return g.extract && g.basis === 'understanding'; }));
-    const noise = [...NOISE_MAIL_KINDS].map((k) => G({ source: 'email', text: long, isFromUser: false, understanding: { role: 'addressed', relevance: 'action', ownership: 'you_owe', mailKind: k as never } }));
+    // W35 · THE BILL HAS ONE PAYER (owner decision): a NOTICE the understanding reads as the user's own
+    // move (you_owe, addressed) — an unpaid invoice addressed to them — reaches the extraction; an
+    // unsolicited kind never does, and a notice without that reading stays noise.
+    const unsolicited = ['newsletter', 'cold_outreach'].map((k) => G({ source: 'email', text: long, isFromUser: false, understanding: { role: 'addressed', relevance: 'action', ownership: 'you_owe', mailKind: k as never } }));
+    const plainNotices = [...NOISE_MAIL_KINDS].map((k) => G({ source: 'email', text: long, isFromUser: false, understanding: { role: 'addressed', relevance: 'awareness', ownership: 'none', mailKind: k as never } }));
     const bulk = G({ source: 'email', text: long, isFromUser: false, understanding: { role: 'addressed', relevance: 'action', bulk: true } });
-    const footer = G({ source: 'email', text: long, isFromUser: false, bulkFooter: true });
-    ok('K5 the kind floor: newsletter · receipt · notification · cold outreach · bulk · a broadcast footer never mint (the delta still reads them)', [...noise, bulk, footer].every((g) => !g.extract && g.delta && g.basis === 'noise-kind'));
+    const footer = G({ source: 'email', text: long, isFromUser: false, bulkFooter: true, understanding: { role: 'addressed', ownership: 'you_owe', mailKind: 'notification' } });
+    const ccBill = G({ source: 'email', text: long, isFromUser: false, ccOnly: true, understanding: { role: 'addressed', ownership: 'you_owe', mailKind: 'notification' } });
+    ok('K5 the kind floor: newsletter · cold outreach (even "you owe") · a notice nobody owes · bulk · a broadcast footer · a CC-only bill never mint (the delta still reads them)', [...unsolicited, ...plainNotices, bulk, footer, ccBill].every((g) => !g.extract && g.delta && g.basis === 'noise-kind'));
+    const bills = ['receipt', 'notification'].map((k) => G({ source: 'email', text: long, isFromUser: false, understanding: { role: 'addressed', relevance: 'action', ownership: 'you_owe', mailKind: k as never, bulk: true } }));
+    ok('K5b THE BILL HAS ONE PAYER: a notice read as the user\'s own debt, addressed to them, reaches the extraction', bills.every((g) => g.extract && g.basis === 'addressed-notice-debt'));
     ok('K6 a meeting always extracts; a user-authored message extracts with no keyword', G({ source: 'meeting', text: 'Kickoff summary', isFromUser: false }).extract && G({ source: 'email', text: 'Merci Sam, c’est noté de mon côté pour la suite.', isFromUser: true }).basis === 'user-authored');
     ok('K7 our own coworker\'s mail neither mints nor settles', (() => { const g = G({ source: 'email', text: long, isFromUser: false, coworkerSender: true }); return !g.delta && !g.extract; })());
     ok('K8 a campaign echo never mints, but still reaches the delta', (() => { const g = G({ source: 'email', text: long, isFromUser: false, campaignEcho: true }); return g.delta && !g.extract; })());

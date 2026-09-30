@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { extractMeetingInsights, textToSegments } from '@/lib/integrations/meeting-bot/bot-manager';
+import { insightsFailedStatus } from '@/lib/meetings/insights-retry';
 
 /**
  * POST /api/meetings/notes/[id]/process
@@ -67,6 +68,8 @@ export async function POST(
     notes_structured: {
       document: insights.document || '',
       live_notes: '',
+      // W35 · a failed insights call is recorded (the page says so; the bounded retry re-runs it).
+      ...(insights.failed ? { insights_status: insightsFailedStatus(null, new Date(), insights.failureReason) } : {}),
     },
   };
 

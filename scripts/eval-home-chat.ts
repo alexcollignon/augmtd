@@ -49,6 +49,8 @@
 //               actually used are printed. Judge ground truth = that user's inbox/commitment/calendar
 //               COUNTS. A loud banner prints first.
 //        --no-persist — the same write guard on the probe host (implied by --user).
+//        --probe-host std=k | eu=k (W30) — run on that provisioned pool account instead of probe #1 (e.g.
+//               one carrying a candidate model override); the models actually used are printed.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { config } from 'dotenv';
 config({ path: '.env.local' });
@@ -66,6 +68,7 @@ import { installMeter, metered, orphanCalls, meterAdapterClient, currentBucket, 
 import { installNoPersistGuard } from './lib/eval/no-persist';
 import { runSelfCheck } from './lib/eval/self-check';
 import { signalsOf } from './lib/eval/home-chat-signals';
+import { parseProbeHostSpec } from './lib/eval/engine/probes';
 
 // ── args ─────────────────────────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -92,6 +95,16 @@ const packName = opt('pack') ?? 'core';
 if (!PACKS[packName]) { console.error(`--pack must be one of: ${Object.keys(PACKS).join(', ')}`); process.exit(2); }
 const pack = PACKS[packName];
 const realUser = opt('user');
+// W30 — --probe-host std=k | eu=k: run on ONE named, provisioned pool account instead of probe #1.
+const probeHost = (() => { try { return probeHostOf(); } catch (e) { console.error((e as Error).message); process.exit(2); } })();
+function probeHostOf(): { tier: 'standard' | 'eu'; k: number } | null {
+  const spec = parseProbeHostSpec(opt('probe-host'));
+  const named = Object.entries(spec) as Array<['standard' | 'eu', number]>;
+  if (!named.length) return null;
+  if (named.length > 1) throw new Error('--probe-host: the Home-chat eval runs on ONE host — name one tier (std=k or eu=k)');
+  if (realUser) throw new Error('--probe-host and --user are exclusive');
+  return { tier: named[0][0], k: named[0][1] };
+}
 if (argv.includes('--user') && !realUser) { console.error('--user needs a user id'); process.exit(2); }
 if (realUser && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(realUser)) { console.error('--user must be a user uuid'); process.exit(2); }
 if (realUser && opt('client') === 'rls') { console.error('--user never mints a session for a real user: --client rls is refused (admin is implied)'); process.exit(2); }
@@ -458,11 +471,21 @@ async function main() {
     userId = realUser;
     session = { client: admin!, mode: 'admin', note: 'REAL USER — service-role, no session minted, no-persist guard armed' };
   } else {
-    const { resolveProbeUser, PROBE_EMAIL } = await import('./probe-user');
-    userId = await resolveProbeUser(admin!);
-    session = clientMode === 'rls' ? await probeRlsClient(admin!, PROBE_EMAIL) : { client: admin!, mode: 'admin' as const, note: 'requested' };
+    let email: string;
+    if (probeHost) {
+      // W30 — a NAMED pool account (e.g. one carrying a candidate model's tenant_configs override).
+      const { resolveProbePool } = await import('./lib/eval/engine/probes');
+      const r = await resolveProbePool(admin!, { spec: { [probeHost.tier]: [probeHost.k] }, create: false });
+      const acct = r.accounts[0];
+      if (r.problems.length || r.missing.length || !acct) throw new Error(`probe host ${probeHost.tier}#${probeHost.k} not ready: ${[...r.problems, ...r.missing].join('; ') || 'not found'} (provision with scripts/probe-pool.ts --create)`);
+      userId = acct.userId; email = acct.email;
+    } else {
+      const { resolveProbeUser, PROBE_EMAIL } = await import('./probe-user');
+      userId = await resolveProbeUser(admin!); email = PROBE_EMAIL;
+    }
+    session = clientMode === 'rls' ? await probeRlsClient(admin!, email) : { client: admin!, mode: 'admin' as const, note: 'requested' };
   }
-  console.log(`\n${realUser ? `REAL USER ${userId.slice(0, 8)}` : `probe host ${userId.slice(0, 8)}`} · converse client: ${session.mode}${session.note ? ` (${session.note})` : ''}${noPersist ? ' · no-persist' : ''}${wire ? ' · MODEL STUBBED at the transport (zero AI)' : ''}`);
+  console.log(`\n${realUser ? `REAL USER ${userId.slice(0, 8)}` : `probe host ${probeHost ? `${probeHost.tier}#${probeHost.k} ` : ''}${userId.slice(0, 8)}`} · converse client: ${session.mode}${session.note ? ` (${session.note})` : ''}${noPersist ? ' · no-persist' : ''}${wire ? ' · MODEL STUBBED at the transport (zero AI)' : ''}`);
 
   const systems: SystemAdapter[] = [];
   if (systemIds.includes('augmtd')) systems.push(await augmtdSystem(session.client, userId));

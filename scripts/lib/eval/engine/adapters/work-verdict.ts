@@ -63,6 +63,7 @@ export const workVerdictAdapter: SurfaceAdapter = {
     { group: 'expired', count: 2, note: 'yesterday’s RSVP → none' },
     { group: 'research', count: 2, note: 'research asks → produce' },
     { group: 'project-linked', count: 4, note: 'the same shapes with the item linked to a project (world.projects.links)' },
+    { group: 'payment-request', count: 2, note: 'W35 · THE BILL HAS ONE PAYER: another payer named → forward; auto-collected → none' },
     { group: 'edge-missing', count: 2, note: 'a commitment with no thread and no counterparty', edge: 'missing' },
     { group: 'edge-irrelevant', count: 2, note: 'a thread whose newest message is off-topic chatter after the real ask', edge: 'irrelevant' },
     { group: 'edge-long', count: 2, note: 'a 25-message thread where the live ask is in the last 3', edge: 'long' },

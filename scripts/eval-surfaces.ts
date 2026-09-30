@@ -11,8 +11,9 @@
 // (reason first, then 1-5), pricing, metering and report (scripts/lib/eval/engine, imported unchanged).
 // Verdict per surface AND per scenario: AUGMTD ≥ each plain column.
 //
-// PROBE HOSTS: ONLY account #1 of each tier — smoke-probe@ (standard) and smoke-probe-eu@ (EU). The pool
-// accounts #2+ belong to scripts/eval-outputs.ts and are never touched here.
+// PROBE HOSTS: account #1 of each tier by default — smoke-probe@ (standard) and smoke-probe-eu@ (EU). The pool
+// accounts #2+ belong to scripts/eval-outputs.ts and are touched here ONLY when named with --probe-host
+// std=k,eu=k (W30 — e.g. the account carrying a candidate model's tenant_configs override).
 //
 //   npx tsx scripts/eval-surfaces.ts --quick                 # DRY RUN: plan + estimate (spends nothing)
 //   npx tsx scripts/eval-surfaces.ts --quick --yes           # QUICK: 1 repeat, ≤2 scenarios/surface, all four columns
@@ -21,7 +22,7 @@
 // Flags: --surfaces dm,room,… · --tier standard|eu|both (default both) · --repeat n · --columns a,b ·
 //   --cases id,id · --max-eur n (hard stop; quick default 3, full default 30; the run refuses to start when
 //   the estimate exceeds it unless --allow-over-estimate) · --concurrency n (units in flight, default 4) ·
-//   --no-judge · --out <path.md>
+//   --no-judge · --out <path.md> · --probe-host std=k,eu=k (a named, provisioned pool account per tier)
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { config } from 'dotenv';
 process.env.TZ = 'UTC';
@@ -42,6 +43,7 @@ import { setCallGate } from './lib/eval/meter';
 import { priceCalls } from './lib/eval/engine/pricing';
 import { snapshotCounts, diffCounts, probePoolEmail, probeHostOf } from './lib/eval/engine/world';
 import { COLUMN_IDS, type AnyAdapter, type ColumnId, type EvalCase, type Tier } from './lib/eval/engine/types';
+import { parseProbeHostSpec } from './lib/eval/engine/probes';
 
 const argv = process.argv.slice(2);
 const flag = (n: string) => argv.includes(`--${n}`);
@@ -62,6 +64,8 @@ const maxEur = Number(opt('max-eur') ?? (selfCheck ? '1' : quick ? '5' : '30'));
 const useJudge = !flag('no-judge');
 const caseIds = list('cases');
 const concurrency = Math.max(1, Math.floor(Number(opt('concurrency') ?? '4')));
+// W30 — --probe-host std=k,eu=k: run on a NAMED pool account instead of #1 (default #1 per tier).
+const probeHostSpec = (() => { try { return parseProbeHostSpec(opt('probe-host')); } catch (e) { return die((e as Error).message); } })();
 const adapters: AnyAdapter[] = selectSurfaces(list('surfaces'));
 if (!adapters.length) die('no surface matches --surfaces');
 const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -103,21 +107,29 @@ function outPath(name: string): string {
   return out;
 }
 
-/** The probe hosts this harness may touch: account #1 of each requested tier (verified by address). */
+/** The probe hosts this harness may touch: account #1 of each requested tier (verified by address) —
+ *  or, with --probe-host std=k,eu=k (W30), the NAMED pool account of that tier (e.g. one carrying a
+ *  candidate model override). A named #k ≥ 2 must already be provisioned (scripts/probe-pool.ts). */
 async function probeHosts(admin: import('@supabase/supabase-js').SupabaseClient): Promise<Array<{ tier: Tier; userId: string; email: string; label: string }>> {
   const hosts: Array<{ tier: Tier; userId: string; email: string; label: string }> = [];
   for (const tier of tiers) {
-    const email = probePoolEmail(tier, 1);
+    const k = probeHostSpec[tier] ?? 1;
+    const email = probePoolEmail(tier, k);
     let userId: string | null = null;
-    if (tier === 'standard') userId = await (await import('./probe-user')).resolveProbeUser(admin);
+    if (k > 1) {
+      const { resolveProbePool } = await import('./lib/eval/engine/probes');
+      const r = await resolveProbePool(admin, { spec: { [tier]: [k] }, create: false });
+      if (r.problems.length || r.missing.length || !r.accounts[0]) die(`probe host ${tier}#${k} not ready: ${[...r.problems, ...r.missing].join('; ') || 'not found'} (provision with scripts/probe-pool.ts --create)`);
+      userId = r.accounts[0].userId;
+    } else if (tier === 'standard') userId = await (await import('./probe-user')).resolveProbeUser(admin);
     else {
       const st = await (await import('./lib/eval/engine/probes')).resolveEuProbeUser(admin, { create: false });
       if (!st.userId || st.problems.length || st.tier !== 'bedrock_optimised') die(`EU probe host not ready: ${st.problems.join('; ') || st.tier}`);
       userId = st.userId;
     }
     const { data, error } = await admin.auth.admin.getUserById(userId!);
-    if (error || probeHostOf(data?.user?.email)?.k !== 1 || probeHostOf(data?.user?.email)?.tier !== tier) die(`REFUSED: ${userId} is not the ${tier} probe host #1`);
-    hosts.push({ tier, userId: userId!, email, label: `${tier === 'standard' ? 'std' : 'eu'}#1` });
+    if (error || probeHostOf(data?.user?.email)?.k !== k || probeHostOf(data?.user?.email)?.tier !== tier) die(`REFUSED: ${userId} is not the ${tier} probe host #${k}`);
+    hosts.push({ tier, userId: userId!, email, label: `${tier === 'standard' ? 'std' : 'eu'}#${k}` });
   }
   return hosts;
 }
@@ -137,7 +149,7 @@ async function runSweep(): Promise<void> {
     console.log(`${h.label} ${h.userId.slice(0, 8)}: worlds → ${describeSweep(w)} · team → ${t.workers} coworker row(s), ${t.threads} thread(s)${t.errors.length ? ` · ERRORS ${t.errors.join('; ')}` : ''}`);
     if (w.errors.length || t.errors.length) process.exitCode = 1;
   }
-  if (!flag('apply')) console.log('DRY RUN — nothing deleted. Add --apply to delete (probe hosts #1 only).');
+  if (!flag('apply')) console.log('DRY RUN — nothing deleted. Add --apply to delete (the probe hosts above only).');
 }
 
 /** --rejudge <run.json> [--twice N]: score a saved run again with the CURRENT blind judge prompt (no
@@ -250,7 +262,7 @@ async function main() {
   if (live) liveMod.assertPriced([...(columns.includes('sonnet55') ? [liveMod.SONNET55] : []), ...(columns.includes('gpt56') ? [liveMod.GPT56] : []), ...(useJudge ? [liveMod.JUDGE_MODEL] : []),
     ...tiers.map((t) => slotModel(t, 'conversation'))]);
 
-  // 2 · THE PROBE HOSTS — account #1 of each tier only.
+  // 2 · THE PROBE HOSTS — account #1 of each tier, or the pool account named with --probe-host.
   const admin = liveMod.adminClient();
   const hosts = await probeHosts(admin);
   const blocked: string[] = [];
@@ -258,6 +270,18 @@ async function main() {
   const { sweepProbe, describeSweep, fixtureIdentity } = await import('./lib/eval/engine/sweep');
   const fixture = fixtureIdentity(adapters);
   const notes: string[] = [];
+  // W30 — the models each host ACTUALLY resolves (tier default merged with its tenant_configs
+  // model_overrides), so a candidate-model run says what it measured.
+  {
+    const { getAIClient } = await import('../lib/ai/factory');
+    for (const h of hosts) {
+      const slots = ['conversation', 'generation', 'classification', 'summarization', 'planning'] as const;
+      const got = await Promise.all(slots.map(async (t) => `${t}=${(await getAIClient(h.userId, t, admin)).model}`));
+      const line = `Models on ${h.label}: ${got.join(' · ')}`;
+      console.log(`  ${line}`);
+      notes.push(line);
+    }
+  }
   const countExtra = async (uid: string) => {
     const out: Record<string, number> = {};
     for (const t of ['custom_agents', 'work_threads', 'room_turns']) {
@@ -315,7 +339,7 @@ async function main() {
   const late = liveMod.lateSpend();
   result.totalCostEur += late.eur + late.orphanEur;
   result.notes.push(...notes);
-  result.notes.push(`Probe hosts: ${hosts.map((h) => `${h.label} ${h.userId.slice(0, 8)}`).join(' · ')} (account #1 of each tier only). Worlds seeded per unit with fresh ids and torn down; the coworker team was seeded through lib/workers/seed.ts ensureWorkers and removed after the run.`);
+  result.notes.push(`Probe hosts: ${hosts.map((h) => `${h.label} ${h.userId.slice(0, 8)}`).join(' · ')} (${Object.keys(probeHostSpec).length ? 'named with --probe-host' : 'account #1 of each tier only'}). Worlds seeded per unit with fresh ids and torn down; the coworker team was seeded through lib/workers/seed.ts ensureWorkers and removed after the run.`);
   result.notes.push(`Plain columns: "You are a helpful assistant." + the same request, preceded by the neutral rendering of the same records (scripts/lib/eval/engine/neutral.ts); hand-offs drop only the routing preface ("Ask Max to"); workflow steps add the same upstream outputs and declared format line. Efforts: same = the producer's own (param floor) · sonnet55/gpt56 = medium.`);
   result.notes.push(`Background calls billed after their run: ${late.calls} (€${late.eur.toFixed(4)}); calls outside any run: ${late.orphans} (€${late.orphanEur.toFixed(4)}). Wall ${wallS.toFixed(0)} s, concurrency ${concurrency} (peak ${result.concurrency?.peakUnits ?? '?'}).`);
   if (blocked.length) result.notes.push(`**PROBE FENCE refused ${blocked.length} write(s)**: ${[...new Set(blocked)].join('; ')}`);

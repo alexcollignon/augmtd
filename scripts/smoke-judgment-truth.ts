@@ -44,7 +44,7 @@ ok('J2a the invite grounding converts through the ONE slot conversion (main + al
   && !/new Date\(startISO\)\.toISOString\(\)/.test(pa) && /wallClockToInstant\(raw\.local, ctx\.timezone, zone\)/.test(pa));
 const rq = code('lib/prepare/requirements.ts');
 ok('J2b the resolver budgets its requires (reported), floors secrets before any model, and stages company documents through the same pick',
-  /budgetRequires\(\(args\.requires \?\? \[\]\)/.test(rq) && /const split = await attachableSplit\(admin, userId, requires\);/.test(rq)
+  /budgetRequires\(\(args\.requires \?\? \[\]\)/.test(rq) && /const split = await attachableSplit\(admin, userId, requires, \{ thread, work: args\.work \?\? null \}\);/.test(rq)
   && /const floored = splitSecrets\(requires\);/.test(rq) && /if \(isCompanyDocument\(c\)\) return c\.score >= STAGE_SCORE;/.test(rq)
   && !/\.slice\(0, 5\);\n/.test(rq.slice(rq.indexOf('export async function resolveRequirements'), rq.indexOf('export async function resolveRequirements') + 800)));
 const j = code('lib/work/judge.ts');

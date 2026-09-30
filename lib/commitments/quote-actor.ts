@@ -182,7 +182,10 @@ export function quoteActor(
     for (const sentence of text.split(/[.;:!?\n]+/)) {
       // A VOCATIVE naming someone other than the user, followed by a request: the ask is THEIRS.
       const voc = /^\s*(?:[-*•·]\s*)?(\p{Lu}[\p{L}'’-]+)\s*,\s*(.+)$/u.exec(sentence);
-      if (voc && !NOT_VOCATIVE.has(low(voc[1])) && segmentActor(voc[2].split(/,(?=\s)/)[0], segCtx) === 'addressee') {
+      // W35: a word that itself OPENS a request ("Pode, por favor, …", "Could, …", "Bitte, …") is the
+      // request's own verb/marker, never a vocative name (a PT/ES/DE ask was read as addressed to "Pode").
+      if (voc && !NOT_VOCATIVE.has(low(voc[1])) && !REQUEST_OPEN.some((re) => re.test(low(voc[1])))
+        && segmentActor(voc[2].split(/,(?=\s)/)[0], segCtx) === 'addressee') {
         seen.add(denotesUser(voc[1], ctx.user) ? 'addressee' : 'named-addressee');
         continue;
       }

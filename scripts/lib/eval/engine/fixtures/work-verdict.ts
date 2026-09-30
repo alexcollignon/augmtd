@@ -520,6 +520,25 @@ export const CASES: EvalCase[] = [
     params: { item: 't1' },
     truth: { work: 'reply', accept: { work: ['schedule', 'none'] } },
   },
+  // ── payment-request (2) — W35 · THE BILL HAS ONE PAYER (owner decision) ──────────────────────────
+  {
+    id: 'wv-45', group: 'payment-request', title: 'Supplier invoice that names the user\'s finance team as the payer → forward',
+    world: {
+      people: [{ key: 'tom', name: 'Tom', email: 'tom@umbrella.test', org: 'Umbrella', role: 'account manager' }],
+      threads: [{ key: 't1', subject: 'Invoice 3307 — September workshop', messages: [{ from: 'tom', at: '-3h', body: 'Hi Taylor,\n\nAttached is invoice 3307 for the September workshop, €4,500, payable by {{+14d|dm}}. As usual your finance department will process the payment on your side.\n\nThanks again for a great session,\nTom', attachments: ['Invoice 3307.pdf'] }] }],
+    },
+    params: { item: 't1' },
+    truth: { work: 'forward', note: 'Owner decision (W35): someone else (finance) pays — the user owes no payment; the move is the heads-up/forward to that person, prepared for the user to send.' },
+  },
+  {
+    id: 'wv-46', group: 'payment-request', title: 'DE: invoice collected by direct debit, "kein Handlungsbedarf" → none',
+    world: {
+      people: [{ key: 'b', name: 'Globex Billing', email: 'abrechnung@globex.test', org: 'Globex' }],
+      threads: [{ key: 't1', subject: 'Ihre Rechnung R-7710', signals: { isAutomatedSender: true }, messages: [{ from: 'b', at: '-4h', body: 'Guten Tag Taylor,\n\nIhre Rechnung R-7710 über 240,00 € steht im Kundenportal bereit. Der Betrag wird am {{+6d|iso}} per SEPA-Lastschrift von Ihrem Konto abgebucht. Es besteht kein Handlungsbedarf.\n\nGlobex Abrechnung' }] }],
+    },
+    params: { item: 't1' },
+    truth: { work: 'none', note: 'Owner decision (W35): auto-collected — nothing owed; awareness.' },
+  },
   {
     id: 'wv-44', group: 'edge-ambiguous', title: 'Client "let\'s talk about the renewal" after a long silence',
     world: {

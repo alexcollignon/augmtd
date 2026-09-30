@@ -11,6 +11,7 @@ import { seatStripsObligation, type SeatFacts } from '@/lib/inbox/recipient-role
 import { dueDateFromSource, repairSelfParty, denotesUser, isOpenDuplicate, isAttendanceObligation, dateStatedExplicitly, anchorMs, localDayAnchor, type UserForms } from '@/lib/commitments/extraction-truth';
 import { directionFloor } from '@/lib/commitments/direction';
 import { coerceUnderstanding, type ItemUnderstanding } from '@/lib/inbox/item-understanding';
+import { UNSOLICITED_KINDS } from '@/lib/work/kind-floor';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DBClient = any;
@@ -117,7 +118,16 @@ export function dueFloorAgainstSource(
 // 4 (W28): the code floors after the model — THE QUOTE NAMES ITS ACTOR (direction from the verified
 //    quote's grammar; a first-person-plural suggestion mints nothing; a CC'd sender's promise to the To:
 //    party is nobody's) and THE QUOTE SEPARATES (a mail's asks in different sentences never merge).
-export const COMMITMENT_EXTRACTION_VERSION = 4;
+// 5 (W35): THE BILL HAS ONE PAYER — a payment request mints the user's debt ONLY when it asks the user
+//    to pay (addressed, unpaid, not auto-collected, not CC-only); a bill whose own words name someone
+//    else as its payer/processor is theirs (the judge's `forward`). The gate lets an addressed notice the
+//    understanding reads as you_owe reach extraction (`addressedNoticeDebt`, the kind floor's mirror).
+export const COMMITMENT_EXTRACTION_VERSION = 5;
+
+/** THE BILL HAS ONE PAYER (W35, owner decision) — ONE wording, read by the extraction prompt; the work
+ *  judge states the same law in its own verb terms. Multilingual by construction (no vocabulary). */
+export const PAYMENT_REQUEST_RULE = (who: string): string =>
+  `A BILL OR PAYMENT REQUEST (an invoice, a payment reminder, a dunning or overdue notice — in any language) is ${who}'s commitment ONLY when it asks ${who} to pay: addressed to ${who}, not yet paid, and not collected automatically. Then extract exactly ONE "you_owe" — "Pay invoice <its number or what it is for>" — with its stated due date (a due date already past stays: an overdue bill is still owed) and the party to be paid as counterparty. It is NOT ${who}'s commitment — extract nothing for it — when the payment is already made or confirmed (a receipt, "payment received"), when it is collected automatically (direct debit, auto-pay, the card on file, "no action needed"), when ${who} is only copied, or when the message's own words name SOMEONE ELSE as the one who pays or processes it ("your finance team will process it", "accounts payable handles this") — passing it on to them is ${who}'s move, not ${who}'s debt.`;
 /** The longest quote the store keeps (quoteInText refuses a longer one anyway). */
 export const QUOTE_MAX_CHARS = 400;
 export type QuoteFloorReason = 'no-quote' | 'quote-not-in-own-words' | 'not-first-person' | 'addressed-to-machine';
@@ -867,6 +877,18 @@ export function understandingIndicatesObligation(u: Partial<GateUnderstanding> |
   return !!(u.ask && String(u.ask).trim()) || !!(u.deadline && String(u.deadline).trim());
 }
 
+/** W35 · THE BILL HAS ONE PAYER — the gate's one exception to the noise-kind floor (pure): a received
+ *  NOTICE (a notification/receipt kind, or mail the understanding calls bulk) that the understanding reads
+ *  as the user's own move — ownership you_owe, the user ADDRESSED, not CC-only — may carry the user's
+ *  debt (an unpaid invoice addressed to them). Never an unsolicited kind (newsletter, cold outreach),
+ *  never a structural broadcast footer, never without the reasoned understanding. */
+export function addressedNoticeDebt(f: Pick<ExtractionFacts, 'isFromUser' | 'understanding' | 'ccOnly' | 'bulkFooter'>): boolean {
+  const u = f.understanding ?? null;
+  if (f.isFromUser || !u || f.bulkFooter || f.ccOnly === true) return false;
+  if (u.mailKind && UNSOLICITED_KINDS.has(u.mailKind)) return false;
+  return u.ownership === 'you_owe' && u.role === 'addressed';
+}
+
 /** THE GATE (pure, zero AI): does this message reach the conversation delta, and does it get a NEW
  *  extraction call? Order = precedence; the first floor that answers wins. */
 export function extractionGate(f: ExtractionFacts): ExtractionGate {
@@ -880,6 +902,10 @@ export function extractionGate(f: ExtractionFacts): ExtractionGate {
   if (!f.isFromUser && (f.triage === 'noise' || f.triage === 'fyi_only')) return { delta, extract: false, basis: 'triage-noise' };
   const u = f.understanding ?? null;
   if (!f.isFromUser && (f.bulkFooter || u?.bulk === true || (u?.mailKind && NOISE_MAIL_KINDS.has(u.mailKind)))) {
+    // W35 · THE BILL HAS ONE PAYER: a notice the reasoned understanding reads as the user's OWN move
+    // (you_owe, addressed to them) — a payment request, a dunning notice — reaches the extraction, whose
+    // prompt decides whether it is a debt (the kind floor's mirror: lib/work/kind-floor.ts NOTICE_KINDS).
+    if (addressedNoticeDebt(f)) return { delta, extract: true, basis: 'addressed-notice-debt' };
     return { delta, extract: false, basis: 'noise-kind' };
   }
   if (!f.isFromUser && f.campaignEcho) return { delta, extract: false, basis: 'campaign-echo' };
@@ -1038,7 +1064,8 @@ What counts:
 - A clear obligation with an owner. Ideas, asides, suggestions, sub-steps mentioned in passing, vague intentions ("let's catch up sometime") and anything already done are not commitments.
 - An explicit request stays a request when its timing is soft ("please share your risk register when you can", "at your convenience"). Conditional or optional OFFERS ("reply if you need…", "let me know if you'd like…", "feel free to…", "happy to … if useful") are invitations, not commitments.
 - Asks between other people inside <thread> or a forwarded block belong to them — this message only relays them — unless the message's own words hand one to ${who}.
-- Mass mail carries none: for a newsletter, promotion, receipt, invoice notice, calendar notification ("add this event to your calendar") or any automated notification return an empty list. Their calls to action ("reply with Q2", "submit your story", "subscribe", "share your feedback") are addressed to a list, and a bill to pay is handled as an inbox action, not a commitment between people — a PERSON asking ${who} to send them an invoice is still a commitment.
+- Mass mail carries none: for a newsletter, promotion, receipt, calendar notification ("add this event to your calendar") or any automated notification return an empty list. Their calls to action ("reply with Q2", "submit your story", "subscribe", "share your feedback", "review your invoice in the portal") are addressed to a list — a PERSON asking ${who} to send them an invoice is still a commitment.
+- ${PAYMENT_REQUEST_RULE(who)}
 - A meeting or call BOTH parties will attend ("Attend the call on Oct 12", "Join the meeting") is a CALENDAR EVENT, not a commitment — leave it out (arranging it, preparing for it or delivering something at it can still be one).
 
 Fields for each commitment:
@@ -1055,6 +1082,8 @@ ${initiativeGrounding}${instructions?.trim() ? `\nThe user added this guidance �
 <example>Sent by ${who}: "Thanks for the call. I'll send the revised deck by Friday." → {"commitments":[{"direction":"you_owe","doer":"user","quote":"I'll send the revised deck by Friday","explicit_promise":true,"description":"Send the revised deck","due_date":"<that Friday, YYYY-MM-DD>","counterparty":"<the recipient>","initiative":null,"steps":[]}]}</example>
 <example>Received from Sam: "Could you share the pilot proposal with 7-8 seat pricing and an answer on the data sources before our review?" → one commitment: direction "you_owe", doer "user", description "Send Sam the pilot proposal", steps ["include 7-8 seat pricing","answer the data-source question"]</example>
 <example>Sent by ${who}: "Happy to show you how the platform works whenever suits." → {"commitments":[]} (an offer, not a promise)</example>
+<example>Received from a supplier: "Invoice 2214 is overdue — please arrange payment by Friday." → one commitment: direction "you_owe", doer "user", description "Pay invoice 2214", due_date "<that Friday, YYYY-MM-DD>"</example>
+<example>Received from a supplier: "Attached is invoice 88 for the workshop. Your accounts team will process the payment as usual." → {"commitments":[]} (someone else pays it — passing it on is the user's move, not a debt)</example>
 </examples>
 
 Return ONLY JSON — {"commitments":[]} when there are no real commitments:

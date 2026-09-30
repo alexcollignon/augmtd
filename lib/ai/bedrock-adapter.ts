@@ -1,5 +1,7 @@
 /**
  * Bedrock Adapter — duck-types as OpenAI client for AWS Bedrock + Claude.
+ * (W31: non-Anthropic model ids — gpt-oss in-region, Nova/Qwen by config — dispatch to the
+ * Converse path in ./bedrock-converse.ts; the Claude path below is unchanged.)
  *
  * Translates OpenAI chat.completions.create() calls to Anthropic Messages API
  * format, using @anthropic-ai/bedrock-sdk for AWS SigV4 authentication.
@@ -10,7 +12,10 @@
 
 import AnthropicBedrock from '@anthropic-ai/bedrock-sdk'
 import type OpenAI from 'openai'
+import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime'
 import { createBedrockEmbeddings } from './bedrock-embeddings'
+import { isConverseModel, converseNonStreaming, converseStreaming, type ConverseSender } from './bedrock-converse'
+import { assertBedrockResidency } from './bedrock-residency'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -23,17 +28,38 @@ interface BedrockConfig {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-export function createBedrockAdapter(config: BedrockConfig): OpenAI {
+/** Test seam (W31): inject the transports. Absent = the real SDK clients (production). */
+export interface BedrockAdapterDeps {
+  anthropic?: AnthropicBedrock
+  converse?: ConverseSender
+}
+
+export function createBedrockAdapter(config: BedrockConfig, deps: BedrockAdapterDeps = {}): OpenAI {
   const opts: Record<string, any> = { awsRegion: config.awsRegion }
   if (config.awsAccessKey) opts.awsAccessKey = config.awsAccessKey
   if (config.awsSecretKey) opts.awsSecretKey = config.awsSecretKey
   if (config.awsSessionToken) opts.awsSessionToken = config.awsSessionToken
-  const bedrock = new AnthropicBedrock(opts as any)
+  const bedrock = deps.anthropic ?? new AnthropicBedrock(opts as any)
+
+  // W31 — THE CONVERSE PATH: non-Anthropic Bedrock models (gpt-oss in-region first; Nova/Qwen by
+  // config in bedrock-converse.ts). Built lazily, same region + credentials as the Claude client.
+  let converse: ConverseSender | undefined = deps.converse
+  const converseClient = (): ConverseSender => (converse ??= new BedrockRuntimeClient({
+    region: config.awsRegion,
+    ...(config.awsAccessKey && config.awsSecretKey
+      ? { credentials: { accessKeyId: config.awsAccessKey, secretAccessKey: config.awsSecretKey, ...(config.awsSessionToken ? { sessionToken: config.awsSessionToken } : {}) } }
+      : {}),
+  }) as unknown as ConverseSender)
 
   const adapter = {
     chat: {
       completions: {
-        create: (params: any) => {
+        create: (params: any, reqOpts?: { signal?: AbortSignal }) => {
+          // TIER PRIVACY (W31): an EU-region endpoint never addresses a non-EU inference profile.
+          try { assertBedrockResidency(String(params?.model ?? ''), config.awsRegion) } catch (e) { return Promise.reject(e) }
+          if (isConverseModel(params?.model)) {
+            return params.stream ? converseStreaming(converseClient(), params, reqOpts) : converseNonStreaming(converseClient(), params, reqOpts)
+          }
           if (params.stream) {
             return handleStreaming(bedrock, params)
           }
