@@ -166,7 +166,7 @@ export function personMatchesFingerprint(who: string | null, people: string[]): 
   return people.some((p) => {
     if (p.startsWith('@')) return w.includes(p); // corporate-domain token
     if (p.includes('@')) return w.includes(p);   // full email
-    // name form: token-subset ("jean-marie" ⊆ "jean-marie lambert")
+    // name form: token-subset ("pat" ⊆ "pat martin")
     const pt = p.split(/\s+/).filter(Boolean); const wt = new Set(w.split(/\s+/));
     return pt.length > 0 && pt.every((t) => wt.has(t));
   });

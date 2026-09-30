@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// THE EXCERPT-LAW FLOOR (permanent, Aug 17 — the Rene incident): the excerpt-honesty law (Aug 4)
+// THE EXCERPT-LAW FLOOR (permanent, Aug 17 — the Sam incident): the excerpt-honesty law (Aug 4)
 // was applied as a LIST OF SITES and decayed one arc later — lib/converse was built after the law
 // and hard-cut transcript lines mid-word ("…move forward after qu"), so a delegated coworker read
 // OUR budget cut as "the task description got cut off", confabulated the quote ("5 wo..."), and
@@ -26,7 +26,7 @@ ok('clip-for-prompt exports the mark, the rule, and the clipper',
 ok('the marker text is stable (prompts and rules reference it verbatim)',
   clip.includes('[…clipped for length — the original continues]'), '');
 
-console.log('\nTHE CONVERSE SEAMS (the Rene incident class):');
+console.log('\nTHE CONVERSE SEAMS (the Sam incident class):');
 ok('converse imports the primitive', conv.includes("from '@/lib/utils/clip-for-prompt'"), '');
 ok('NO raw transcript-line clip survives (the mid-word idiom is dead)',
   !conv.includes(".replace(/\\s+/g, ' ').slice(0,"), 'a raw slice on a normalized transcript line is back');
@@ -69,11 +69,14 @@ const CLIP_WITHOUT_RULE: Record<string, string> = {
     'A HAND-OFF SEAM, not an assembler: it clips into ReactionEvent.gist/material and assembles no '
     + 'prompt — triggerBlock (lib/workflows/reactions.ts) declares the cut where the prompt is built.',
 
+  'lib/utils/inbound-data.ts':
+    'THE SECOND PRIMITIVE (W27) — the two-ended clip + the inbound DATA block; it cuts only through '
+    + 'clipForPrompt and the house mark, and every assembler that calls it carries EXCERPT_RULE.',
+
   // ── HAND-OFF SEAMS (the clipped text is assembled into a prompt that declares the rule) ────────
-  'lib/inbox/refresh-understanding.ts':
-    'A HAND-OFF SEAM, not an assembler: it clips the message\'s OWN words (topMessageOf) into the '
-    + '`body` field of computeUnderstanding — lib/ai/email-processor.ts builds that prompt and carries '
-    + 'EXCERPT_RULE above the Body line, where the body\'s own tail cannot strip it.',
+  // ⟲ RE-POINTED W27: lib/inbox/refresh-understanding.ts no longer clips at all — it hands the
+  // message's OWN words whole and the one assembler (computeUnderstanding) clips them two-ended under
+  // EXCERPT_RULE — so it leaves this list (a ghost here would be a hole).
   'lib/inbox/thread-now.ts':
     'A HAND-OFF SEAM, not an assembler: THE WATERMARK READ clips only ThreadNow.gist, which two '
     + 'assemblers consume and both declare — lib/entities/state.ts (the entity ledger\'s NOW clause) '
@@ -104,7 +107,9 @@ function walk(dir: string, out: string[] = []): string[] {
 console.log('\nTHE STRUCTURAL SWEEP (every clipping assembler declares its cuts):');
 {
   const files = [...walk('lib'), ...walk('app')];
-  const clippers = files.filter((f) => /\bclipForPrompt\s*\(/.test(readFileSync(f, 'utf8')));
+  // ⟲ RE-POINTED W27: the census counts EVERY clipper — the two-ended clip and the inbound DATA block
+  // clip too, so a caller of either is held to carrying the rule (a new helper must not hide a clip).
+  const clippers = files.filter((f) => /\b(clipForPrompt|clipEndsForPrompt|inboundBlock)\s*\(/.test(readFileSync(f, 'utf8')));
   ok('the sweep actually finds the clipping sites (a silent zero would pass forever)',
     clippers.length >= 8, `${clippers.length} found`);
   const naked = clippers.filter((f) =>
@@ -274,9 +279,27 @@ const ASSEMBLERS = [
   'lib/work/agentos-bridge.ts',
   'lib/home/delegate.ts',
   'lib/knowledge/build-kb-context.ts',
+  // W27 — the understanding / extraction / fulfillment assemblers join the floor (their prompt-bound
+  // cuts go through clipEndsForPrompt / inboundBlock / clipForPrompt now).
+  'lib/commitments/extract.ts',
+  'lib/commitments/fulfillment.ts',
 ];
 /** file → the exact source fragment of a raw slice that is NOT prompt-bound, and why. */
 const RAW_SLICE_OK: Array<{ file: string; fragment: string; reason: string }> = [
+  { file: 'lib/commitments/fulfillment.ts', fragment: "String(res.json?.reason ?? '').slice(0, 200)",
+    reason: 'a STORED model output (the verdict\'s one-sentence reason) capped for the verdict store — it never '
+      + 'reaches a prompt.' },
+  { file: 'lib/commitments/fulfillment.ts', fragment: 'quote: q.slice(0, 400)',
+    reason: 'a STORED, code-verified promise quote capped at the store\'s column budget (QUOTE_MAX_CHARS twin) — '
+      + 'written to the verdict, never assembled into a prompt.' },
+  { file: 'lib/commitments/extract.ts', fragment: '.toString().slice(0, 200)',
+    reason: 'the counterparty string capped for the commitments row / identity resolution — a DB field, never '
+      + 'prompt-bound text.' },
+  { file: 'lib/commitments/extract.ts', fragment: 'c.description.trim().slice(0, 500)',
+    reason: 'the commitment title capped at the row\'s column budget (insert + the id lookup that must match '
+      + 'it) — a stored field, not a prompt excerpt.' },
+  { file: 'lib/commitments/extract.ts', fragment: 'String(s).slice(0, 120)',
+    reason: 'a step\'s text capped for the item_plans row (the stored checklist) — never assembled into a prompt.' },
   { file: 'lib/converse/index.ts', fragment: '`${task} ${userText.slice(0, 400)}`',
     reason: 'resolveTemplateFile\'s INPUT is a regex test ("follow this template") and a filename-token '
       + 'match — the string never reaches a model.' },

@@ -7,7 +7,7 @@
 // was written keeps one row), and the STUCK-ROW heal (text but zero chunks — the budget-kill class
 // that both dedupe doors would otherwise skip forever).
 //
-// Lifted verbatim out of scripts/ahk-member-sync.ts when the enrichment pass became a second
+// Lifted verbatim out of scripts/chamber-member-sync.ts when the enrichment pass became a second
 // caller. Nothing about the behaviour moved.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { createHash, randomUUID } from 'crypto';

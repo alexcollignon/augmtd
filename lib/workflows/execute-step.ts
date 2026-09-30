@@ -8,6 +8,7 @@ import { getAIClient, aiCreate, getSystemClient } from '@/lib/ai/factory';
 import { logAIUsage } from '@/lib/ai/log-usage';
 import { isAgentOSEnabled, runWorkerStepViaAgentOS } from '@/lib/work/agentos-bridge';
 import { buildChatSystemPrompt, detectModelFamily } from '@/lib/work/chat-system-prompt';
+import { conductBlock } from '@/lib/ai/conduct';
 import { buildUserContextBlock } from '@/lib/context/build-user-context';
 import { getCalendarContext } from '@/lib/calendar/calendar-context';
 import { formatCalendarContextForChat } from '@/lib/calendar/format-calendar-context';
@@ -898,6 +899,18 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
     systemPrompt += `\n\n${ctx.projectGrounding}`;
   }
 
+  // W28 — ONE CONDUCT, EVERY PRODUCER (lib/ai/conduct.ts `workflow_step`): a prose step gets the shared
+  // conduct — the step's instruction and declared format are the contract, endings stay short, supplied
+  // material is cross-checked. Never on a JSON step (its schema is the whole contract) and never on the
+  // verify gate (use_worker_identity === false — it judges the draft and must stay persona-free).
+  if (step.output_format !== 'json' && step.use_worker_identity !== false) {
+    systemPrompt += `\n\n${conductBlock('workflow_step')}`;
+  } else if (step.output_format === 'json' && step.use_worker_identity !== false) {
+    // W28.3 — a JSON step keeps its schema as the whole shape contract, but the VALUES still obey the
+    // faithful-facts rule (eval: "next Friday" stored as "Friday", a deadline's anchor dropped).
+    systemPrompt += `\n\n${conductBlock('json_step')}`;
+  }
+
   const userPrompt = [
     ctx.triggerEvent ? `<triggering_event>\n${ctx.triggerEvent}\n</triggering_event>` : null,
     previousBlock,
@@ -945,10 +958,19 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
     }).catch(() => {});
 
     text = res.choices[0]?.message?.content?.trim() ?? '';
+    // W28.2 · A DECLARED JSON OUTPUT IS JSON: a model that wraps the object in a code fence hands the next
+    // station a string that does not parse. The fence is unwrapped here (deterministic; nothing else is touched).
+    if (text && step.output_format === 'json') text = unwrapJsonFence(text);
     if (text) return text;
     console.warn(`[executeAIStep] empty completion from ${resolved.model} (attempt ${attempt + 1}/2, finish=${res.choices[0]?.finish_reason ?? '?'}) — ${attempt === 0 ? 'retrying once' : 'failing honestly'}`);
   }
   throw new Error(`AI step "${step.label ?? step.id}" returned an empty completion twice (${resolved.model})`);
+}
+
+/** A reply that is exactly one fenced block (```json … ``` or ``` … ```) → its body; anything else as is. Pure. */
+export function unwrapJsonFence(text: string): string {
+  const m = /^```[a-zA-Z]*\s*\n([\s\S]*?)\n?```\s*$/.exec(text.trim());
+  return m ? m[1].trim() : text;
 }
 
 // ── Language helper ───────────────────────────────────────────────────────────
@@ -1053,7 +1075,8 @@ export async function executeAgentStepDetailed(step: AgentStep, ctx: StepContext
     systemParts.push(`[MEMORY — things you've learned about this user from past conversations]\n${agentRow.memory_text.trim()}`);
   }
 
-  systemParts.push(buildChatSystemPrompt(modelFamily));
+  // W28 — the agent (and hand-off) step composes the `workflow_step` conduct, not the DM's interview rules.
+  systemParts.push(buildChatSystemPrompt(modelFamily, 'workflow_step'));
 
   const userContextBlock = await buildUserContextBlock(ctx.userId, ctx.supabase).catch(() => null);
   if (userContextBlock) systemParts.push(userContextBlock);

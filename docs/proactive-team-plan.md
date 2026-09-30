@@ -382,7 +382,7 @@ the PROMISE on served accounts, never plumbing, never weakened.
 
 - **NEXT ARCS (user-directed, July 28):**
   - **Who-asks-whom grounding** (from screenshot 3): quoted headers inside forwarded bodies invert
-    the counterparty ("Madalena is asking you" when Isabel asked Madalena); ground ask-extraction
+    the counterparty ("Maya is asking you" when Isabel asked Maya); ground ask-extraction
     on the latest real inbound sender, exclude quoted-header text, person-brain sanity check on
     direction. Slots into the understanding layer.
   - **The work-surface UX pass** — what lives in the LEFT (conversation) panel vs the RIGHT

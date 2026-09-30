@@ -17,7 +17,7 @@ import { capabilitiesFor } from '../lib/home/capability-map';
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 const A = '08fe4449-e5eb-431d-9156-02e9324e5903';
 const B = 'c723c2f2-e069-4ab8-980e-ac3585028fec';
-const RENE_PREFIX = 'ae306f38';
+const PILOT_PREFIX = 'ae306f38';
 let PERSONAL = ''; // the PROBE HOST — resolved at start (scripts/probe-user.ts)
 const out: Array<[string, boolean, string]> = [];
 const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
@@ -66,12 +66,12 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
     else if (ex.status !== 'active') await sb.from('work_entities')
       .update({ status: 'active', last_event_at: new Date().toISOString() }).eq('id', ex.id);
   }
-  // Resolve Rene's full uid from the prefix (never hardcode a guessed uuid — the earlier lesson).
+  // Resolve Sam's full uid from the prefix (never hardcode a guessed uuid — the earlier lesson).
   const { data: uidRows } = await sb.from('work_entities').select('user_id').eq('kind', 'initiative').limit(1000);
-  const RENE = [...new Set((uidRows ?? []).map((r) => r.user_id as string))].find((u) => u.startsWith(RENE_PREFIX))!;
+  const SAM = [...new Set((uidRows ?? []).map((r) => r.user_id as string))].find((u) => u.startsWith(PILOT_PREFIX))!;
 
   // ── THE LOOP, live across ALL FOUR users — deal-heavy, meeting-heavy, and errand-only accounts. ──
-  for (const [uid, label] of [[A, 'user A'], [B, 'user B'], [RENE, 'Rene'], [PERSONAL, 'personal user']] as const) {
+  for (const [uid, label] of [[A, 'user A'], [B, 'user B'], [SAM, 'Sam'], [PERSONAL, 'personal user']] as const) {
     const { data: ent } = await sb.from('work_entities').select('id, name').eq('user_id', uid)
       .eq('kind', 'initiative').eq('status', 'active').not('state', 'is', null)
       .order('last_event_at', { ascending: false }).limit(1).maybeSingle();
@@ -79,7 +79,7 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
 
     // 1 — create via the CHAT (entity scope = the room's composer; no project name needed).
     // FIXTURE ROBUSTNESS (Aug 4): the title law may legitimately strip the "ZZ-smoke" namespace
-    // token from the created description (Rene's tier does), so the lookup is TIME-SCOPED to this
+    // token from the created description (Sam's tier does), so the lookup is TIME-SCOPED to this
     // run (created after t0, distinctive tail) — same outcomes asserted, never marker-dependent.
     const t0 = new Date(Date.now() - 5_000).toISOString();
     const t1 = await converse(sb, uid, { kind: 'entity', entityId: eid }, `add a task: ${MARKER}`);
@@ -161,7 +161,7 @@ async function fetchStatus(sbc: SupabaseClient, uid: string, ent: { id: string; 
   check('R2 · artifacts render EMBEDDED (room provides shell + rail)',
     idt.includes('embedded?: boolean') && er.includes('<ItemDetail key=') && er.includes('embedded'));
   check('R2 · room-internal navigation stays in-shell (focus, not route)',
-    er.includes('focusFromHref') && er.includes('setFocused({ kind: ') && er.includes('onOpen={openHref}'));
+    er.includes('focusFromHref') && er.includes('seNorthwinded({ kind: ') && er.includes('onOpen={openHref}'));
   {
     const { focusFromHref } = await import('../components/entities/entity-room');
     check('R2 · href→focus parsing (email default, awareness→email, non-item passthrough)',

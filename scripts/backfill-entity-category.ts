@@ -1,5 +1,5 @@
 // ONE BRAIN — GROUNDED category (client|internal|personal|admin). The earlier name-only pass mislabeled
-// (Soboplac client → admin, personal home services → client, external contacts → internal). Root cause:
+// (Acme Plastics client → admin, personal home services → client, external contacts → internal). Root cause:
 // reasoned BLIND. This grounds the classifier in WHO is involved (the entity's real people, external vs
 // internal by corporate domain) + the summary. Reuses the same identity signal recognition now uses.
 // Usage: npx tsx scripts/backfill-entity-category.ts [--apply]

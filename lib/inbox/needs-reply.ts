@@ -16,11 +16,26 @@ export type SignalItem = { work_state?: string | null; source?: string | null; s
 // The decisive signal in practice: a real human sender. The classifier happily files
 // "no-reply@booking.com" / "do-not-reply@binance.com" as work_prepared, but you can't reply to
 // those. The local-part is a near-perfect tell for transactional/automated mail.
-const AUTOMATED_SENDER = /^(no-?reply|do-?not-?reply|donotreply|noreply|notifications?|notify|mailer-?daemon|bounce|postmaster|automated|alerts?|newsletter|updates?|mailer|payments?|billing|receipts?|invoices?)([.\-_+]|@|$)/i;
+//
+// W27 · A ROLE MAILBOX IS NOT A MACHINE (the loss diagnosis): `billing@`, `invoices@`, `payments@`,
+// `receipts@` are ROLE mailboxes — a person staffs many of them, and "reply with your IBAN and BIC"
+// from billing@ is a real ask. The local-part gate now names only the UNREACHABLE family (nobody reads
+// what you send to no-reply@ or mailer-daemon@); a role mailbox is judged by the stronger signals
+// below — the ingest's reasoned `isAutomatedSender` / `isNotification`, and the understanding.
+const AUTOMATED_SENDER = /^(no-?reply|do-?not-?reply|donotreply|noreply|notifications?|notify|mailer-?daemon|bounce|postmaster|automated|alerts?|newsletter|updates?|mailer)([.\-_+]|@|$)/i;
 
 function fromAddress(item: SignalItem): string {
   const sd = item.source_data ?? {};
   return String(sd.from || sd.from_address || sd.fromEmail || '').toLowerCase();
+}
+
+/** W27 · THE GROUP ASK: a one_of_many item is the user's to answer when the producer judged a reply
+ *  (or an action) owed by the group — and it is not a list broadcast (bulk mail greets a list, it never
+ *  waits on one member's answer). Pure. */
+function groupAskIsYours(u: { relevance?: string | null; bulk?: boolean | null; ownership?: string | null }): boolean {
+  if (u.bulk === true) return false;
+  if (u.ownership === 'none' || u.ownership === 'awaiting') return false;
+  return u.relevance === 'reply' || u.relevance === 'action';
 }
 
 // You're a bystander on this thread — not the one expected to answer. The PRIMARY signal is the
@@ -32,9 +47,13 @@ function fromAddress(item: SignalItem): string {
 export function isCcOnlyBystander(item: SignalItem): boolean {
   const u = getUnderstanding(item);
   if (u) {
-    // Reasoned judgment wins. `addressed` + `reply` is genuinely yours; anything else is awareness.
-    if (u.role === 'bystander' || u.role === 'one_of_many') return true;
+    // Reasoned judgment wins. A bystander, or anything judged awareness, is not the user's to answer.
+    // W27 · A GROUP ASK IS STILL YOURS: `one_of_many` + reply/action means the producer judged the ask
+    // aimed at the group the user is in ("could each of you reply…" — computeUnderstanding's own
+    // contract: one_of_many with NO ask aimed at the user is awareness). The consumer honours it.
+    if (u.role === 'bystander') return true;
     if (u.relevance === 'awareness') return true;
+    if (u.role === 'one_of_many') return !groupAskIsYours(u);
     return false;
   }
   // Fallback (no understanding): the legacy header-math input.
@@ -64,8 +83,10 @@ export function isNeedsReply(item: SignalItem): boolean {
   // in the To but one of many) to awareness, and correctly keeps a directly-addressed ask as a reply.
   const u = getUnderstanding(item);
   if (u) {
-    // A bystander / one_of_many / awareness item is not your reply (visible as FYI, never hidden).
-    if (u.role === 'bystander' || u.role === 'one_of_many' || u.relevance === 'awareness') return false;
+    // A bystander / awareness item is not your reply (visible as FYI, never hidden).
+    if (u.role === 'bystander' || u.relevance === 'awareness') return false;
+    // W27 · one_of_many is yours only when the group ask is (see groupAskIsYours); a broadcast is not.
+    if (u.role === 'one_of_many') return groupAskIsYours(u);
     // Addressed + expecting a reply (or an action that lands via email) → your move.
     return u.relevance === 'reply' || u.relevance === 'action';
   }

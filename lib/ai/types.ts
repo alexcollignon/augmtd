@@ -67,4 +67,7 @@ export interface ResolvedClient {
   /** The company's resolved billing tier (e.g. 'standard', 'bedrock_optimised') — distinct
    *  from TaskType (e.g. 'conversation', 'summarization'). Used for cost attribution. */
   tier: TierType
+  /** W27.C — the slot effort this client view applies to requests that state none (lib/ai/effort.ts).
+   *  Absent = the param floor (the default for every slot). */
+  effort?: import('./effort').AIEffort
 }

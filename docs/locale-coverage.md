@@ -4,7 +4,7 @@ Stabilization plan W4.4, PART IV (THE AGNOSTIC CLAUSE). This is an inventory, no
 names every place in the codebase where a deterministic (zero-AI) floor recognizes text by a
 hand-authored word/phrase table in a specific set of languages, states what happens when the real
 text is in a language the table doesn't know, and proposes a priority order for closing the two
-gaps the business actually needs next: **Arabic** (the Egypt / iScore-class prospect) and
+gaps the business actually needs next: **Arabic** (the Egypt / Bureau-class prospect) and
 **Spanish** (already partly present — see below).
 
 The house rule that governs all of this already exists and is enforced in two places: THE
@@ -54,8 +54,8 @@ deterministic backstop (the pattern `user-time.ts` already uses).
    speaking matching client is real (agnostic clause: don't pre-build vocabulary no client needs
    yet, but the table shape already supports adding `es` as a third `VocabLanguage` member).
 
-**Arabic** is the larger lift, and matters because of the Egypt/iScore-class prospect
-(`project_iscore_prospect.md` / `project_sovereignty_compliance.md`):
+**Arabic** is the larger lift, and matters because of the Egypt/Bureau-class prospect
+(`project_bureau_prospect.md` / `project_sovereignty_compliance.md`):
 1. **RTL is not a floor concern here** — none of these tables render UI; they parse/emit plain
    text. The concern is purely lexicon coverage plus one structural question: several tables
    (`weekday-floor.ts` `MONTHS`, `deixis.ts` weekday/relative words) are written against Latin
@@ -91,5 +91,5 @@ No code changed for locale coverage in this wave (per the assignment: this is a 
 implementation). The one thing this wave DID touch that's locale-adjacent is unrelated to any
 floor above: `lib/tenders/member-directory.ts`'s folder name / doc source-attribution string
 became configurable (THE AGNOSTIC CLAUSE, folder-config item) — that's a client-identity fix, not
-a language fix; the profile documents it renders are still German-language by design (the AHK
+a language fix; the profile documents it renders are still German-language by design (the Chamber
 Portugal engagement is German-speaking) and out of scope for this locale doc.

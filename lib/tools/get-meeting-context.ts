@@ -5,6 +5,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { userTimezone } from '@/lib/calendar/schedule-window';
 import { clipWithRule } from '@/lib/utils/pack-context';
+import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+
+/** W28 — the budgets of a single-meeting open read (the listing keeps its short clips). */
+export const MEETING_OPEN_SUMMARY_CHARS = 8000;
+export const MEETING_OPEN_NOTES_CHARS = 8000;
 
 export interface GetMeetingContextConfig {
   /** Lookback window. Default: '30d' */
@@ -29,6 +34,7 @@ export const getMeetingContextDefinition = {
       include: { type: 'string', enum: ['summaries', 'notes', 'both'], description: "What to include per meeting. 'summaries' = AI summary, 'notes' = live notes + action items, 'both' = everything. Default: both." },
       with_person: { type: 'string', description: 'Filter to meetings involving this person (name or email).' },
       include_upcoming: { type: 'boolean', description: 'Also include upcoming calendar events for the next 7 days. Default: true.' },
+      meeting_id: { type: 'string', description: 'OPEN one recorded meeting in full: its id from a previous listing. Returns the whole summary, every action item and decision, and the notes.' },
     },
     required: [],
   },
@@ -78,6 +84,28 @@ export async function readMeetingContext(
   userId: string,
   supabase: SupabaseClient,
 ): Promise<{ text: string; meetings: MeetingRow[]; upcoming: UpcomingEventRow[]; tz: string; blocks: MeetingReadBlock[] }> {
+  // W28 · OPEN ONE MEETING IN FULL (the listing shows a 500-char summary and 300-char notes; a question about
+  // one meeting needs the whole of it). Through the excerpt law; scoped to the user; explicit columns.
+  if (typeof config.meeting_id === 'string' && config.meeting_id.trim()) {
+    const tz0 = await userTimezone(supabase, userId);
+    const { data: m, error } = await supabase.from('meeting_transcripts')
+      .select('id, title, start_time, duration_minutes, summary, notes_structured, attendees')
+      .eq('id', config.meeting_id.trim()).eq('user_id', userId).maybeSingle();
+    if (error || !m) return { text: `Meeting not found: ${config.meeting_id}`, meetings: [], upcoming: [], tz: tz0, blocks: [] };
+    const row = m as { id: string; title: string; start_time: string; duration_minutes?: number | null; summary?: string | null; notes_structured?: Record<string, unknown> | null; attendees?: Array<{ email: string; name?: string }> | null };
+    const ns = (row.notes_structured ?? {}) as Record<string, unknown>;
+    const listOf = (v: unknown) => (Array.isArray(v) ? v.map((a) => (typeof a === 'string' ? a : (a as { text?: string })?.text ?? JSON.stringify(a))).filter(Boolean) : []);
+    const lines = [
+      `**${row.title}** — ${new Date(row.start_time).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: tz0 })}${row.duration_minutes ? ` · ${row.duration_minutes} min` : ''} [id: ${row.id}]`,
+      (row.attendees ?? []).length ? `Attendees: ${(row.attendees ?? []).map((a) => (a.name ? `${a.name} (${a.email})` : a.email)).join(', ')}` : '',
+      row.summary?.trim() ? `Summary:\n${clipForPrompt(row.summary.trim(), MEETING_OPEN_SUMMARY_CHARS)}` : '',
+      listOf(ns.decisions).length ? `Decisions:\n- ${listOf(ns.decisions).join('\n- ')}` : '',
+      listOf(ns.action_items).length ? `Action items:\n- ${listOf(ns.action_items).join('\n- ')}` : '',
+      typeof ns.live_notes === 'string' && ns.live_notes.trim() ? `Notes:\n${clipForPrompt(ns.live_notes.trim(), MEETING_OPEN_NOTES_CHARS)}` : '',
+    ].filter(Boolean);
+    const text = `${lines.join('\n\n')}\n\n(${EXCERPT_RULE})`;
+    return { text, meetings: [], upcoming: [], tz: tz0, blocks: [{ kind: 'meeting', id: row.id, text }] };
+  }
   const since          = parseSince((config.since as string) || '30d');
   const include        = (config.include as string) || 'summaries';
   const withPerson     = typeof config.with_person === 'string' ? config.with_person.toLowerCase().trim() : null;
@@ -145,7 +173,7 @@ export async function readMeetingContext(
         .map(a => a.name ? `${a.name} (${a.email})` : a.email)
         .join(', ');
 
-      const lines: string[] = [`**${m.title}** — ${date}${dur}`];
+      const lines: string[] = [`**${m.title}** — ${date}${dur} [id: ${m.id}]`];
       if (attendeeNames) lines.push(`Attendees: ${attendeeNames}`);
 
       const wantSummary = include === 'summaries' || include === 'both';

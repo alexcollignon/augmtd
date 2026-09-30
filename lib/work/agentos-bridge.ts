@@ -11,6 +11,7 @@
 // delta (data.reasoning_content is thinking). We translate those into the
 // client's existing event shape ({type:'text'|'thinking_delta'|'done'}).
 
+import { withConduct } from '@/lib/ai/conduct'
 import { buildUserContextBlock } from '@/lib/context/build-user-context'
 import { extractAgentMemory } from '@/lib/agents/extract-memory'
 import { buildSkillsBlock } from '@/lib/work/worker-skills-context'
@@ -271,7 +272,8 @@ export async function runWorkerStepViaAgentOS(args: {
 
   let userContext = ''
   try {
-    userContext = await buildWorkerRunContext(args.adminClient, args.userId, args.agentId, args.message)
+    // W28 — the step lane composes the `workflow_step` conduct (lib/ai/conduct.ts), the DM lane `coworker_chat`.
+    userContext = withConduct(await buildWorkerRunContext(args.adminClient, args.userId, args.agentId, args.message), 'workflow_step')
   } catch { /* best-effort */ }
 
   const form = new URLSearchParams()
@@ -354,7 +356,9 @@ export async function streamWorkerViaAgentOS({
   // — a failure here must not block the chat, so fall back to no extra context.
   let userContext = ''
   try {
-    userContext = await buildWorkerRunContext(adminClient, userId, agentId, message)
+    // W28 — ONE CONDUCT, EVERY PRODUCER: the box's static prompts (infra/agentos/workers.py) carry the persona;
+    // the shared conduct rides THIS per-run context, so it is live without a box redeploy and has one home.
+    userContext = withConduct(await buildWorkerRunContext(adminClient, userId, agentId, message), 'coworker_chat')
   } catch (err) {
     console.error('[AgentOS bridge] context build failed (continuing):', err)
   }

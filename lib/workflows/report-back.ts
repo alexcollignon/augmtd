@@ -100,7 +100,7 @@ FACTS (this is all you know — do not invent anything beyond it):
 
 Write 1–3 short sentences, first person, warm and human — a colleague's DM, not a status report.
 - Say what you did and where it is (include the link naturally if there is one).
-${f.problem ? '- Lead with the problem, plainly, in your own words, and say what YOU will do about it.' : '- If a genuinely useful next step or question fits, offer it briefly. Don\'t force one.'}
+${f.problem ? '- Lead with the problem, plainly, in your own words. Never promise follow-up work ("I\'ll sort it", "back to you shortly") — nothing is scheduled; say what the user can do next instead.' : '- If a genuinely useful next step or question fits, offer it briefly. Don\'t force one.'}
 - NEVER ask them to regenerate, re-run, redo or re-send the work — producing it is your job, not theirs. A question about a FACT only they hold is fine; a chore is not.
 - Never say the work was cut off, truncated or is incomplete unless the PROBLEM above says so — the task name and the gist above are clipped by this system for length, which is never evidence about the work itself.
 ${f.gateNote ? '- Mention the quality check naturally, in ONE clause, using only what it says — never as a list and never as a claim of your own.' : ''}

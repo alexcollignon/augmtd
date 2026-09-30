@@ -13,7 +13,7 @@ import { resolveProbeUser } from './probe-user';
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 const A = '08fe4449-e5eb-431d-9156-02e9324e5903';
 const B = 'c723c2f2-e069-4ab8-980e-ac3585028fec';
-const RENE_PREFIX = 'ae306f38';
+const PILOT_PREFIX = 'ae306f38';
 let PERSONAL = ''; // the PROBE HOST — resolved at start (scripts/probe-user.ts)
 const out: Array<[string, boolean, string]> = [];
 const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
@@ -94,9 +94,9 @@ const src = (p: string) => readFileSync(p, 'utf8');
 
   // ── W1 LIVE — zero waiting-on-self rows on every user's spine ──
   const { data: uidRows } = await sb.from('work_entities').select('user_id').eq('kind', 'initiative');
-  const rene = [...new Set((uidRows ?? []).map((r) => r.user_id as string))].find((u) => u.startsWith(RENE_PREFIX));
+  const sam = [...new Set((uidRows ?? []).map((r) => r.user_id as string))].find((u) => u.startsWith(PILOT_PREFIX));
   const users: Array<[string, string]> = [[A, 'user A'], [B, 'user B'], [PERSONAL, 'personal']];
-  if (rene) users.push([rene, 'user C']);
+  if (sam) users.push([sam, 'user C']);
   const todayStr = new Date().toISOString().slice(0, 10);
   for (const [uid, label] of users) {
     const [{ data: prof }, { data: conns }] = await Promise.all([

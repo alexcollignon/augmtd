@@ -1,5 +1,5 @@
 // TEMPORARY (untracked): reproduce the sovereign-Home redirect loop.
-// Mints a real session for an AHK (features.email=false) TEST member, injects cookies
+// Mints a real session for an Chamber (features.email=false) TEST member, injects cookies
 // into headless Chrome, loads /home, and counts document/RSC requests.
 import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
@@ -11,7 +11,7 @@ const sb = createClient(URL, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 const projectRef = URL.replace('https://', '').split('.')[0];
 
 (async () => {
-  const { data: co } = await sb.from('companies').select('id,name,features').eq('slug', 'ahk-portugal').single();
+  const { data: co } = await sb.from('companies').select('id,name,features').eq('slug', 'chamber-portugal').single();
   console.log('workspace:', co!.name, JSON.stringify((co as any).features));
 
   const { data: members } = await sb.from('company_members').select('user_id,role,status').eq('company_id', co!.id);
@@ -20,8 +20,8 @@ const projectRef = URL.replace('https://', '').split('.')[0];
   console.log('members:');
   for (const p of profs || []) console.log('  ', p.email, '|', p.full_name);
 
-  // TEST accounts only — the workshop seeded users are user.ahk@... style.
-  const target = (profs || []).find((p) => /user\.ahk@|@company\.com|test/i.test(p.email || ''));
+  // TEST accounts only — the workshop seeded users are user.chamber@... style.
+  const target = (profs || []).find((p) => /user\.chamber@|@company\.com|test/i.test(p.email || ''));
   if (!target) { console.log('NO TEST MEMBER FOUND — aborting'); return; }
   console.log('using TEST member:', target.email);
 

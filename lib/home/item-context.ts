@@ -1,3 +1,7 @@
+import { clipForPrompt, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+
+/** W28 — a clipped context declares itself (the excerpt law): the rule rides the text when a clip happened. */
+const declared = (t: string) => (t.includes(EXCERPT_MARK) ? `${t}\n(${EXCERPT_RULE})` : t);
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ItemPlanKind } from './item-plan';
 import { firstEmailTrimmed } from '@/lib/core/email';
@@ -96,11 +100,11 @@ export async function buildItemContext(
       const text = [
         `Meeting: ${title}`,
         attendeeNames.length ? `Attendees: ${attendeeNames.join(', ')}` : '',
-        (tr.summary as string) ? `Summary:\n${(tr.summary as string).slice(0, 2000)}` : '',
+        (tr.summary as string) ? `Summary:\n${clipForPrompt(tr.summary as string, 4000)}` : '',
         (tr.suggested_next_step as string) ? `Suggested next step: ${tr.suggested_next_step}` : '',
         decisions.length ? `Decisions:\n- ${decisions.join('\n- ')}` : '',
       ].filter(Boolean).join('\n\n') + await initiativeStateBlock(supabase, userId, tr.initiative as string, { kind: 'meeting', id: entityId });
-      return { text, participants, itemDateISO };
+      return { text: declared(text), participants, itemDateISO };
     }
 
     if (kind === 'commitment') {
@@ -120,7 +124,7 @@ export async function buildItemContext(
           .from('emails').select('subject, body, from_name, from_address, received_at').eq('id', c.source_id).eq('user_id', userId).maybeSingle();
         if (e) {
           sourceSubject = (e.subject as string) || null;
-          sourceBody = typeof e.body === 'string' ? (e.body as string).replace(/\s+/g, ' ').trim().slice(0, 1500) : null;
+          sourceBody = typeof e.body === 'string' ? clipForPrompt((e.body as string).replace(/\s+/g, ' ').trim(), 3000) : null;
           if (!itemDateISO && e.received_at) itemDateISO = e.received_at as string;
           const em = extractEmail(e.from_address as string | null);
           if (em && !participants.some((p) => p.email === em)) participants.push({ email: em, name: (e.from_name as string) || null });
@@ -130,7 +134,7 @@ export async function buildItemContext(
           .from('meeting_transcripts').select('title, summary').eq('id', c.source_id).eq('user_id', userId).maybeSingle();
         if (m) {
           sourceSubject = (m.title as string) || null;
-          sourceBody = typeof m.summary === 'string' ? (m.summary as string).replace(/\s+/g, ' ').trim().slice(0, 1500) : null;
+          sourceBody = typeof m.summary === 'string' ? clipForPrompt((m.summary as string).replace(/\s+/g, ' ').trim(), 3000) : null;
         }
       }
       const text = [
@@ -141,7 +145,7 @@ export async function buildItemContext(
         sourceSubject ? `From: ${sourceSubject}` : '',
         sourceBody ? `Original context:\n${sourceBody}` : '',
       ].filter(Boolean).join('\n\n') + await initiativeStateBlock(supabase, userId, c.initiative as string, { kind: 'commitment', id: entityId });
-      return { text, participants, itemDateISO };
+      return { text: declared(text), participants, itemDateISO };
     }
 
     // email | awareness | followup — the entity is an inbox item; ground on subject/sender/body.
@@ -173,10 +177,10 @@ export async function buildItemContext(
     const text = [
       subj ? `Subject: ${subj}` : '',
       (fromName || fromRaw) ? `From: ${fromName || fromRaw}` : '',
-      typeof sd.body === 'string' ? `Message:\n${(sd.body as string).slice(0, 2500)}` : '',
+      typeof sd.body === 'string' ? `Message:\n${clipForPrompt(sd.body as string, 6000)}` : '',
       contextFacts.length ? `Grounded context:\n- ${contextFacts.join('\n- ')}` : '',
     ].filter(Boolean).join('\n\n') + await initiativeStateBlock(supabase, userId, typeof understanding.initiative === 'string' ? understanding.initiative as string : null, { kind: 'inbox_item', id: entityId });
-    return { text, participants, itemDateISO: receivedAt };
+    return { text: declared(text), participants, itemDateISO: receivedAt };
   } catch (e) {
     console.error('[item-context] build failed:', e);
     return null;

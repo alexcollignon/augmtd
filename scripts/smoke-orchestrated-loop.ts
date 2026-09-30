@@ -15,7 +15,7 @@ import { resolveProbeUser } from './probe-user';
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 const A = '08fe4449-e5eb-431d-9156-02e9324e5903';
 const B = 'c723c2f2-e069-4ab8-980e-ac3585028fec';
-const RENE_PREFIX = 'ae306f38';
+const PILOT_PREFIX = 'ae306f38';
 let PERSONAL = ''; // the PROBE HOST — resolved at start (scripts/probe-user.ts)
 const out: Array<[string, boolean, string]> = [];
 const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
@@ -88,9 +88,9 @@ const MARKER = 'ZZ-smoke self-resolution probe';
 
   // ── O1 LIVE — all four users ──
   const { data: uidRows } = await sb.from('work_entities').select('user_id').eq('kind', 'initiative');
-  const rene = [...new Set((uidRows ?? []).map((r) => r.user_id as string))].find((u) => u.startsWith(RENE_PREFIX));
+  const sam = [...new Set((uidRows ?? []).map((r) => r.user_id as string))].find((u) => u.startsWith(PILOT_PREFIX));
   const users: Array<[string, string]> = [[A, 'user A'], [B, 'user B'], [PERSONAL, 'personal']];
-  if (rene) users.push([rene, 'user C']);
+  if (sam) users.push([sam, 'user C']);
   const todayStr = new Date().toISOString().slice(0, 10);
 
   for (const [uid, label] of users) {
@@ -112,19 +112,19 @@ const MARKER = 'ZZ-smoke self-resolution probe';
     check(`${label} · zero waiting rows resolve to self on the spine`, selfWaiting.length === 0);
   }
 
-  // ── O1 LIVE — the nickname fixture (user A): "Alex Collignon" IS Alexandre, because his own sent
+  // ── O1 LIVE — the nickname fixture (user A): "Alex Morgan" IS Alexander, because his own sent
   // mail proves it — a registry fact, not a heuristic. ──
   const personsA = await getPersonEntities(sb, A);
-  const alex = resolveIdentity(personsA, 'Alex Collignon');
-  check('user A · "Alex Collignon" resolves to SELF via the sent-mail alias', alex.isSelf,
+  const alex = resolveIdentity(personsA, 'Alex Morgan');
+  check('user A · "Alex Morgan" resolves to SELF via the sent-mail alias', alex.isSelf,
     alex.person ? `→ "${alex.person.name}"` : 'unresolved');
   check('user A · a real counterparty does NOT resolve to self',
     !resolveIdentity(personsA, 'Sam Rivera <sam.rivera@example.com>').isSelf);
 
-  // ── O1 LIVE — write-time resolution through the REAL writer: a synthetic "awaiting Alex Collignon"
+  // ── O1 LIVE — write-time resolution through the REAL writer: a synthetic "awaiting Alex Morgan"
   // lands as you_owe with a null counterparty (you cannot wait on yourself). Cleaned up after. ──
   await writeCommitments(A, [
-    { direction: 'awaiting', description: `${MARKER} — send the follow-up`, counterparty: 'Alex Collignon', quote: 'please send the follow-up today' } as never,
+    { direction: 'awaiting', description: `${MARKER} — send the follow-up`, counterparty: 'Alex Morgan', quote: 'please send the follow-up today' } as never,
     // ⟲ W15.4: a commitment is written only with a quote found in the message's own words.
   ], { source: 'email', sourceId: `smoke-${MARKER}`, message: { text: 'Hi, please send the follow-up today.', authoredByUser: false } }, sb as never);
   const { data: probe } = await sb.from('commitments').select('id, direction, counterparty')
@@ -202,7 +202,7 @@ const MARKER = 'ZZ-smoke self-resolution probe';
   const { evaluateDeliverable } = await import('../lib/prepare/evaluate');
   const selfNudge = await evaluateDeliverable(sb, A, {
     content: 'Boa tarde Alex,\n\nJá teve oportunidade de partilhar o onboarding kit?\n\nObrigado',
-    task: 'Share onboarding kit', recipient: 'Alex Collignon', kind: 'nudge',
+    task: 'Share onboarding kit', recipient: 'Alex Morgan', kind: 'nudge',
   });
   check('O4 live · the self-addressed nudge is CAUGHT (structural, pre-AI)',
     selfNudge.verdict === 'revise' && !!selfNudge.objection && /themself|counterparty/i.test(selfNudge.objection),

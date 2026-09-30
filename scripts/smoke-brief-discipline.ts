@@ -88,8 +88,8 @@ async function buildInputs(uid: string): Promise<{ inp: BriefingInputs; identity
 }
 
 const stripRefs = (s: string) => s.replace(/\{[AWPG]\d+\}/g, ' ');
-// The disaster pattern was NAMING the grouping mechanic ("X/Y/Z are all one Jean-Marie conversation",
-// "both are the same Galp setup") — not legitimate synthesis ("both feed the same design"). Target the
+// The disaster pattern was NAMING the grouping mechanic ("X/Y/Z are all one Pat conversation",
+// "both are the same Acme Oil setup") — not legitimate synthesis ("both feed the same design"). Target the
 // bookkeeping-exposure phrasing precisely, so real chief-of-staff connective reasoning still passes.
 const GROUPING = /\b(are all one|is all one|all one \w+|are the same (deal|project|conversation|thread|matter|engagement|account|client|initiative|thing|item)|both are the same|belong to the same (deal|project|conversation|thread|matter|engagement|initiative))\b/i;
 const ESCALATE = /\b(escalat|will chase|keeps? chasing|hound|before .* (chases|escalates|follows up))\b/i;

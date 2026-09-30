@@ -219,8 +219,12 @@ console.log('\nF · W5c: hidden artifacts re-prepare, leave the brief, and never
   // which the real clock passed on Sep 23 — it then read EXPIRED (a different non-live class) instead
   // of WITHDRAWN-for-the-window, and F5 went red with no code change. It now sits AFTER the stated
   // window (still outside it, never in the past), so F1/F5 keep asserting the window law itself.
-  const outside = stampTruth(poolRowsToArtifacts([inviteRow('2026-10-15T09:00:00Z')], 'commitment'), facts);
-  const liveInv = stampTruth(poolRowsToArtifacts([inviteRow('2026-09-30T09:00:00Z')], 'commitment'), facts);
+  // ⟲ RE-POINTED (W28, Sep 30 — the same rot, cured at the root): the live invite on Sep 30 passed
+  // the real clock too. The scene now runs on a PINNED clock (the day the ask was made), so no date
+  // here can rot again; the fixture dates and every assertion are unchanged.
+  const sceneNow = Date.parse('2026-09-22T18:00:00Z');
+  const outside = stampTruth(poolRowsToArtifacts([inviteRow('2026-10-15T09:00:00Z')], 'commitment', sceneNow), facts);
+  const liveInv = stampTruth(poolRowsToArtifacts([inviteRow('2026-09-30T09:00:00Z')], 'commitment', sceneNow), facts);
   const st = (arts: typeof outside) => ({ all: arts, live: arts.filter(isLiveArtifact), expired: arts.filter((a) => a.expired), badge: badgeOf(arts) });
   gate('F1 pure: THE RE-PREPARE KEY — an out-of-window (or expired) invite is a NON-LIVE kind; a live one is not',
     [...nonLiveKindsOf(st(outside))].join() === 'invite' && nonLiveKindsOf(st(liveInv)).size === 0

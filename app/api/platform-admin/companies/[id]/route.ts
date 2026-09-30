@@ -36,7 +36,7 @@ export async function PATCH(
   const updates: Record<string, any> = {};
 
   if (body.name?.trim()) updates.name = body.name.trim();
-  // BRANDED JOIN CODES (Aug 10, owner): the superadmin can set a memorable code (ISCORE26-style)
+  // BRANDED JOIN CODES (Aug 10, owner): the superadmin can set a memorable code (BUREAU26-style)
   // instead of a random one. Uppercase alphanumeric, 4-20 chars, unique across workspaces.
   if (body.join_code !== undefined) {
     const code = String(body.join_code ?? '').trim().toUpperCase();

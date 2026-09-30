@@ -1,4 +1,5 @@
 import { runFullPipeline } from '@/lib/work/generate-pipeline';
+import { conductBlock } from '@/lib/ai/conduct';
 import { buildToolRegistry } from '@/lib/mcp/registry';
 import { indexArtifact } from '@/lib/knowledge/indexer';
 import { getFileExt, getMimeType } from '@/lib/artifacts/builders';
@@ -142,6 +143,9 @@ export async function generateThreadDocument(
       role: 'user',
       content: `Write the complete deliverable described below. Output the deliverable ITSELF — no meta-commentary, no preamble.\n` +
         `${kindLine}\n${TYPED_OUTPUT_RULE}\n` +
+        // W28 — ONE CONDUCT (lib/ai/conduct.ts `document`): the requested structure is the contract and the
+        // source material is cross-checked before it is trusted.
+        `${conductBlock('document')}\n` +
         (userContext ? `\nCONTEXT ABOUT THE USER:\n${userContext.slice(0, 2000)}\n` : '') +
         (groundingContext ? `\nSOURCE MATERIAL (the primary source — ground every fact here):\n${groundingContext.slice(0, 14000)}\n` : '') +
         (revise ? `\nTHIS REVISES the existing document "${revise.title ?? 'the current version'}" — produce the FULL revised text: apply the requested changes, keep everything else.\n` +

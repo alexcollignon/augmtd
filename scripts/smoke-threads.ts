@@ -2439,7 +2439,9 @@ console.log('\nT16 · THE INVITE CARD — filled, selectable in-card, committed 
     && /dateStatedInText\(text, parts\.dateStr\) && timesInText\(text\)\.includes\(parts\.hhmm\)/.test(preparer)
     // The check moved INSIDE the one grounding (`groundInviteFromText`) when the chat lane joined
     // it — same strictness, one seat: whatever the source text is, every candidate passes it.
-    && /if \(!statedSlot\(sourceText, s, timezone\)\) continue;/.test(preparer));
+    // ⟲ RE-POINTED W27: the check now reads the words in the zone the slot was STATED in (the user's
+    // zone unless the source names another — W27.B wall-clock conversion); same strictness, one seat.
+    && /if \(!statedSlot\(sourceText, s, slotZone\)\) continue;/.test(preparer));
   gate('T16.10 the alternatives ride the preparer’s OUTPUT (its judgment is one pass, unchanged) and survive the stored artifact round-trip',
     !!preparer && /alternatives\?: InviteSlot\[\]/.test(preparer)
     && /Array\.isArray\(stored\.alternatives\)/.test(preparer));
@@ -4337,7 +4339,7 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
 
   gate('T27.11 THE AGNOSTIC CLAUSE — the lane names no sender, token, vendor or language',
     !!exp && !/augmtd|gmail|outlook|@[a-z0-9-]+\.(com|pt|de)/i.test(exp.replace(/@\/lib\/[a-z-/]+/g, ''))
-    && !/\b(condominium|invoice number|AHK|iScore)\b/i.test(exp));
+    && !/\b(condominium|invoice number|Chamber|Bureau)\b/i.test(exp));
 
   gate('T27.12 RETRO-REPAIR BY LAW — the same lane over the backlog, dry-run by default, guarded',
     (() => {
@@ -4523,7 +4525,7 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
       const i = rail!.indexOf('const focusCard = (key: string) => {');
       const seg = rail!.slice(i, i + 460);
       return /setPulseCard\(key\)/.test(seg) && /scrollIntoView/.test(seg)
-        && !/setFocus|onStage|router\.push/.test(seg);
+        && !/seNorthwind|onStage|router\.push/.test(seg);
     })());
 
   // 3 — THE ROOM SPEAKS ONCE (the retirements, asserted from the room's side too)
@@ -4626,7 +4628,7 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     && /if \(stage === 'reply' \|\| !href\.includes\('kind=email'\)\) return true;/.test(room)
     && /THE ROOM NEVER RAISES A REPLY COMPOSER/.test(room)
     // …and the only remaining stage intents are the two whose cards are not in the thread yet
-    && /setFocusStage\(stage === 'forward' \? 'forward' : 'invite'\)/.test(room));
+    && /seNorthwindStage\(stage === 'forward' \? 'forward' : 'invite'\)/.test(room));
   gate('T28.31 THE SHAPE RIDES THE KEY — a room payload’s shape change invalidates every cached envelope (no stale-shape first open)',
     (() => {
       const warm = read('lib/room/warm-room.ts') ?? '';

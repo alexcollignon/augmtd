@@ -464,7 +464,7 @@ export async function buildWorkItems(
   try {
     // IDENTITY (orchestrated-loop O1c): "is this the user?" is answered by the PERSON REGISTRY —
     // the self entity carries every form the user provably appears as (incl. nickname from-forms on
-    // their own sent mail, e.g. "Alex" for "Alexandre"). The structural floor underneath is EXACT
+    // their own sent mail, e.g. "Alex" for "Alexander"). The structural floor underneath is EXACT
     // equality with the login/mailbox addresses + profile name (facts that need no registry). The
     // old name-substring lens is gone — it both missed nickname forms and could over-match.
     const { getPersonEntities, resolveIdentity, parseWho } = await import('@/lib/entities/people');

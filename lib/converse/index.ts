@@ -480,7 +480,7 @@ async function dialogueContext(
         : t.component?.key === 'input_checklist'
           ? ` [OPEN ASK — waiting on: ${((t.component.state?.items as string[] | undefined) ?? []).join('; ')}]`
           : '';
-      // THE EXCERPT-HONESTY LAW (the Rene incident, Aug 17): a raw mid-word slice here made a
+      // THE EXCERPT-HONESTY LAW (the Sam incident, Aug 17): a raw mid-word slice here made a
       // coworker read OUR budget cut as "the task description got cut off" and report itself
       // blocked. Every prompt-bound clip ends at a boundary and declares itself.
       return `[${who}] ${clipForPrompt(t.text.replace(/\s+/g, ' '), 220)}${comp}`;
@@ -507,7 +507,7 @@ async function dialogueContext(
 /** MEMORY MATCHES — names in the user's words resolved against the WHOLE registry. THE
  *  DISTINCTIVE-TOKEN LAW (the same one the recognition veto learned): generic work-words
  *  ("assessment", "project", …) match every engagement in a specialist portfolio and prove
- *  nothing — asked about "the STC Bahrain assessment", the generic token once filled the cap
+ *  nothing — asked about "the Globex Telecom assessment", the generic token once filled the cap
  *  with three OTHER assessments before "bahrain" was ever reached. Only distinctive tokens
  *  count; matches rank by how many they hit. */
 async function registryMatches(client: SupabaseClient, userId: string, text: string, excludeEntityId: string | null): Promise<string> {
@@ -1183,6 +1183,11 @@ async function dispatchCommand(
     };
   }
   if (tool === 'get_emails') {
+    // W28 — opening ONE email returns its thread (newest whole, excerpt-law cut): no listing pack on it.
+    if (typeof args.email_id === 'string' && args.email_id.trim()) {
+      const opened = await executeGetEmails({ email_id: args.email_id }, userId, client).catch(() => '');
+      return { modelText: opened || 'Email not found.' };
+    }
     const text = await executeGetEmails({ filter: args.filter, from: args.from, since: args.since ?? '30d', mode: 'search' }, userId, client).catch(() => '');
     // THE READ BUDGET (W2.7): packed by email, cuts declared — never a raw slice mid-message.
     const { packEmailsRead } = await import('@/lib/converse/read-budget');
@@ -1191,6 +1196,11 @@ async function dispatchCommand(
   if (tool === 'get_meeting_context') {
     // ONE READ, TWO RENDERINGS: `readMeetingContext` returns the model's block AND the typed rows.
     const since = String(args.since ?? '30d');
+    // W28 — opening ONE meeting returns it whole (excerpt-law cut): no listing pack on it.
+    if (typeof args.meeting_id === 'string' && args.meeting_id.trim()) {
+      const opened = await readMeetingContext({ meeting_id: args.meeting_id }, userId, client).catch(() => null);
+      return { modelText: opened?.text || 'Meeting not found.' };
+    }
     const read = await readMeetingContext({ since, include: args.include ?? 'summaries', filter: args.filter }, userId, client)
       .catch(() => null);
     // THE READ BUDGET (W2.7): packed BY MEETING, cuts declared — and the card shows exactly the
@@ -1371,8 +1381,10 @@ async function runCoworkerDelegation(
           // …and the user's attached material rides WHOLE — the work is usually ON these files.
           (material ? `\n\nTHE ATTACHED MATERIAL (the user attached these files with the request — work on their actual content):\n${clipForPrompt(material, 18000)}` : '') },
       });
+      const { needsWebResearch } = await import('@/lib/home/delegate');
       const out = await runDelegation({
         supabase: admin, userId, worker: { id: worker.id as string, name: String(worker.name), worker_role: (worker.worker_role as string) ?? null, is_worker: true },
+        webResearch: needsWebResearch(userText, material),
         // A LABEL IS NOT AN EXCERPT: this raw slice cut the classifier's task mid-word
         // ("…'Last Week's Highlights' s") and the hand-back quoted OUR cut back at the user.
         prompt, itemLabel: clipLabel(task, 80),
@@ -1397,9 +1409,16 @@ async function runCoworkerDelegation(
         const first = String(worker.name).split(' ')[0];
         const report = String(out.reportText || '').trim();
         if (out.artifact) {
-          const say = report
-            ? `${previewOf(report, 700)}`
-            : `${first} finished — the document is ready.`;
+          // W28.2 · THE HAND-BACK POSTS THE WORK (eval: "both variants are done — want me to drop them here?"
+          // stood where the variants should have been). When the accepted output is prose, the chat shows the
+          // deliverable itself and the document card rides beside it; only a typed file (a deck or a sheet,
+          // whose text is a machine fence) is announced by the report.
+          const typedOut = out.output ? (await import('@/lib/workflows/typed-output')).parseTypedDeliverable(String(out.output)) : null;
+          const say = out.delivered && String(out.output ?? '').trim() && !typedOut
+            ? handOffSay(out, first)
+            : report
+              ? `${previewOf(report, 700)}`
+              : `${first} finished — the document is ready.`;
           return {
             say, refs: [], delegated: { agentName: String(worker.name), agentId: String(worker.id) },
             artifact: { ...out.artifact, agentName: String(worker.name) },
@@ -1424,16 +1443,19 @@ async function runCoworkerDelegation(
  *  Pure; exported for the gate (smoke-handoff-live). */
 export const HANDOFF_TEXT_MAX = 16000;
 export function handOffSay(
-  out: { output?: string | null; reportText?: string | null; delivered?: boolean }, first: string,
+  out: { output?: string | null; reportText?: string | null; delivered?: boolean; caution?: string | null }, first: string,
 ): string {
   const output = String(out.output ?? '').trim();
   const report = String(out.reportText ?? '').trim();
   if (out.delivered && output) {
     // A display bound, never a prompt clip: a very long body is cut at a boundary and SAYS where the
     // rest is (the full text always lands in the coworker's own conversation).
-    return output.length <= HANDOFF_TEXT_MAX
+    const body = output.length <= HANDOFF_TEXT_MAX
       ? output
       : `${previewOf(output, HANDOFF_TEXT_MAX)}\n\n(The rest is in your ${first} conversation.)`;
+    // W28.4 — a reviewer's remaining objection rides BESIDE the work, in one line.
+    const caution = String(out.caution ?? '').trim();
+    return caution ? `${body}\n\n_Worth a check before you use it: ${previewOf(caution.replace(/\s+/g, ' '), 300)}_` : body;
   }
   return report
     ? `${previewOf(report, 700)}\n\n(The full version is in your ${first} conversation.)`
@@ -1863,7 +1885,7 @@ async function viewingExcerpt(client: SupabaseClient, userId: string, scope: Con
  *  reformatting. Assistant turns keep more length — they're what follow-ups operate ON. */
 function panelTranscript(history: ConverseHistoryTurn[] | undefined): string {
   if (!history?.length) return '';
-  // THE EXCERPT-HONESTY LAW (the Rene incident, Aug 17): the assistant-line hard cut at 900 chars
+  // THE EXCERPT-HONESTY LAW (the Sam incident, Aug 17): the assistant-line hard cut at 900 chars
   // broke mid-word ("…move forward after qu"), and the delegated coworker read OUR cut as a
   // truncated task — then confabulated the quote. Boundary clips + a declared marker, and the
   // rule rides the header so a tail-clip of the whole block can never strip it.

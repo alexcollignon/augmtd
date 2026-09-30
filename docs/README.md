@@ -27,8 +27,8 @@ four rows.
 | `guardrails-plan.md` | The guardrails arc (Aug 14) — the structured verify gate, rules, receipts. |
 | `technical-security-overview.md` | Client-facing technical and data-processing sheet. **Live but stale** (v1.2, June — predates the Aug 19 removal of the third-party OSS host and the standard-tier model swap); refresh before the next send. |
 | `claims-inventory.md` | Code-audited marketing claims (Sep 1). **Live but stale** on the same model facts; refresh with the trust page. |
-| `ahk-briefing-v2-plan.md` | The chamber-of-commerce client's briefing editorial law (Sep 1) — live for that engagement. |
-| `ahk-tender-matching-plan.md` | The chamber-of-commerce client's tender matching plan (Sep 1) — the generic matching capability's constitution. |
+| `chamber-briefing-v2-plan.md` | The chamber-of-commerce client's briefing editorial law (Sep 1) — live for that engagement. |
+| `chamber-tender-matching-plan.md` | The chamber-of-commerce client's tender matching plan (Sep 1) — the generic matching capability's constitution. |
 | `design/threads/` | Threads design canvases (HTML mockups + scenario walk) referenced by `threads-plan.md`. |
 
 ## REFERENCE (still accurate as background, not an active plan)

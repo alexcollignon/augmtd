@@ -115,7 +115,7 @@ All fire-and-forget, degrade to no-op pre-migration (wrapped in try/catch like t
 
 ## Backfill — `scripts/backfill-person-state.ts` (dry-run default, `--apply`)
 
-Iterate `relationship_graph` contacts per user (skip `isAutomatedSender`), `assemblePersonLedger` + `synthesizePerson`, upsert. Bounded + staggered (Haiku cost). Mirrors `scripts/backfill-initiative-canonical.ts`. Run per test user (Alexandre, Rene) after the migration.
+Iterate `relationship_graph` contacts per user (skip `isAutomatedSender`), `assemblePersonLedger` + `synthesizePerson`, upsert. Bounded + staggered (Haiku cost). Mirrors `scripts/backfill-initiative-canonical.ts`. Run per test user (Alexander, Sam) after the migration.
 
 ## Smoke — `scripts/smoke-person-brain.ts` (READ-ONLY, cross-user)
 

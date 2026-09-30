@@ -58,13 +58,14 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { PACKS, selectScenarios } from './eval-home-chat.fixtures';
 import { readFileSync } from 'fs';
 import {
-  type Scenario, type SystemAdapter, type JudgeAdapter, type ChatTurn, type TurnOutput, type TurnSignals, type SystemId,
+  type Scenario, type SystemAdapter, type JudgeAdapter, type ChatTurn, type TurnOutput, type SystemId,
   type EstimateRates, type EvalResult, DEFAULT_RATES, SYSTEM_IDS, estimateCost, runEval, renderReport, buildJudgePrompt, parseJudge,
   mergeResults, parityVerdict, statsFor, recheckResult,
 } from './lib/eval/home-chat-harness';
 import { installMeter, metered, orphanCalls, meterAdapterClient, currentBucket, EVAL_PRICING, type MeterBucket, type StubFn } from './lib/eval/meter';
 import { installNoPersistGuard } from './lib/eval/no-persist';
 import { runSelfCheck } from './lib/eval/self-check';
+import { signalsOf } from './lib/eval/home-chat-signals';
 
 // ── args ─────────────────────────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -240,21 +241,9 @@ async function price(bucket: MeterBucket, from = 0): Promise<Priced> {
 /** Every bucket a turn used, so calls that land AFTER the turn returned are still billed at the end. */
 const buckets: Array<{ label: string; bucket: MeterBucket; counted: number }> = [];
 
-const CARD_KEYS = ['invite', 'emailDraft', 'bulkDeed', 'collection', 'event', 'change', 'workflowDraft', 'artifact', 'artifacts', 'files', 'options'];
-/** What rode beside the answer — read loosely, so the rebuilt core's shape changes do not break the eval. */
-export function signalsOf(turn: Record<string, unknown>): TurnSignals {
-  const present = (v: unknown) => (Array.isArray(v) ? v.length > 0 : !!v);
-  const cards = CARD_KEYS.filter((k) => present(turn[k]));
-  const stage = turn.openStage as { stage?: string } | null | undefined;
-  if (stage?.stage) cards.push(`openStage:${stage.stage}`);
-  const sideEffects: string[] = [];
-  const commit = turn.commit as { kind?: string } | null | undefined;
-  if (commit) sideEffects.push(`commit:${commit.kind ?? 'unknown'}`);
-  for (const a of (Array.isArray(turn.applied) ? turn.applied : []) as Array<{ tool?: string }>) sideEffects.push(`applied:${a?.tool ?? 'unknown'}`);
-  const del = turn.delegated as { agentName?: string } | null | undefined;
-  if (del) sideEffects.push(`delegated:${del.agentName ?? 'coworker'}`);
-  return { cards, sideEffects };
-}
+// W26 — the signal reader moved to scripts/lib/eval/home-chat-signals.ts (shared with the engine's
+// conversation.home-chat adapter); re-exported here so nothing that imported it breaks.
+export { signalsOf } from './lib/eval/home-chat-signals';
 
 // ── the systems ──────────────────────────────────────────────────────────────────────────────────
 type LooseConverse = (client: SupabaseClient, userId: string, scope: { kind: 'global' }, text: string,

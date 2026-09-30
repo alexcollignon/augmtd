@@ -57,7 +57,7 @@ entity_links (
 ```
 
 - **People are entities too** — same registry, `kind='person'`, `aliases` holding every address/name form.
-  This structurally kills the alias-dup bug (Joyce×2, René/Rene, Nevine×2 at the top of the deck): one
+  This structurally kills the alias-dup bug (Joyce×2, Sam/Sam, Noor×2 at the top of the deck): one
   entity, many aliases, recognition links to the entity.
 - **Projects collapse into entities**: a "project" = an entity with `tracked=true` (+ goals/rules moved onto
   it). `initiative_state` and `person_state` become the `state` of entities. One table where three overlapping

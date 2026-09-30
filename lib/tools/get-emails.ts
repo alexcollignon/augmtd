@@ -4,6 +4,40 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { clipWithRule } from '@/lib/utils/pack-context';
+import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+
+/** W28 · RETRIEVAL THAT CAN READ THE WHOLE THING. A listing carries short snippets (400) and each
+ *  email's id; opening ONE email (`email_id`) returns its thread oldest-first with the NEWEST message
+ *  whole — through the excerpt law (boundary cut + declared mark), never a raw slice. Found by the W28
+ *  eval: a 300-char snippet was all a coworker could ever see, and it told the user "the email got cut
+ *  off" while the answer (a deadline in the second paragraph) sat unread. */
+export const EMAIL_LIST_SNIPPET_CHARS = 400;
+export const EMAIL_OPEN_NEWEST_CHARS = 8000;
+export const EMAIL_OPEN_EARLIER_CHARS = 1500;
+export const EMAIL_OPEN_THREAD_MESSAGES = 8;
+
+/** Open one inbox email by its item id: the whole thread (bounded), newest message in full. */
+export async function readEmailThread(supabase: SupabaseClient, userId: string, itemId: string): Promise<string | null> {
+  const { data: item, error } = await supabase.from('inbox_items').select('id, created_at, source_data->subject, source_data->from_name, source_data->from_address, source_data->thread_id, source_data->body')
+    .eq('id', itemId).eq('user_id', userId).maybeSingle();
+  if (error || !item) return null;
+  const it = item as { created_at?: string; subject?: string; from_name?: string; from_address?: string; thread_id?: string; body?: string };
+  const { topMessageOf } = await import('@/lib/inbox/top-message');
+  let msgs: Array<{ from_name?: string | null; from_address?: string | null; is_from_user?: boolean | null; body?: string | null; received_at?: string | null }> = [];
+  if (it.thread_id) {
+    const { data, error: tErr } = await supabase.from('emails').select('from_name, from_address, is_from_user, body, received_at')
+      .eq('user_id', userId).eq('thread_id', it.thread_id).order('received_at', { ascending: false }).limit(EMAIL_OPEN_THREAD_MESSAGES);
+    if (!tErr && data?.length) msgs = [...data].reverse();
+  }
+  if (!msgs.length) msgs = [{ from_name: it.from_name, from_address: it.from_address, is_from_user: false, body: it.body, received_at: it.created_at }];
+  const lines = msgs.map((m, i) => {
+    const newest = i === msgs.length - 1;
+    const who = m.is_from_user ? 'the user' : `${m.from_name || ''} <${m.from_address || ''}>`.trim();
+    const words = (newest ? String(m.body ?? '') : topMessageOf(String(m.body ?? ''))).trim();
+    return `--- ${newest ? 'NEWEST · ' : ''}From: ${who} · ${String(m.received_at ?? '').slice(0, 16).replace('T', ' ')} ---\n${clipForPrompt(words, newest ? EMAIL_OPEN_NEWEST_CHARS : EMAIL_OPEN_EARLIER_CHARS)}`;
+  });
+  return `Email thread "${it.subject || '(no subject)'}" (id ${itemId}, oldest first — ${EXCERPT_RULE}):\n\n${lines.join('\n\n')}`;
+}
 
 export interface GetEmailsConfig {
   /** 'urgent' = unread only · 'recent' = time-filtered · 'all' = no time filter */
@@ -33,6 +67,7 @@ export const getEmailsDefinition = {
       since: { type: 'string', enum: ['24h', '7d', '30d'], description: 'How far back to look. Default: 7d.' },
       unread_only: { type: 'boolean', description: 'Only return unread emails.' },
       limit: { type: 'number', description: 'Max results to return. Default 15.' },
+      email_id: { type: 'string', description: 'OPEN one email in full: its id from a previous get_emails listing. Returns the whole thread (newest message in full). Use it whenever the snippet is not enough to answer.' },
     },
     required: [],
   },
@@ -53,6 +88,9 @@ export async function executeGetEmails(
   userId: string,
   supabase: SupabaseClient,
 ): Promise<string> {
+  if (typeof config.email_id === 'string' && config.email_id.trim()) {
+    return (await readEmailThread(supabase, userId, config.email_id.trim())) ?? `Email not found: ${config.email_id}`;
+  }
   const mode       = (config.mode as string)      || 'recent';
   const sinceRaw   = (config.since as string)     || '7d';
   const unreadOnly = config.unread_only === true || mode === 'urgent';
@@ -64,8 +102,9 @@ export async function executeGetEmails(
   if (Array.isArray(config.keywords)) {
     keywordList.push(...(config.keywords as string[]).map(k => k.toLowerCase().trim()).filter(Boolean));
   }
-  if (typeof config.topic === 'string' && config.topic.trim()) {
-    keywordList.push(...config.topic.toLowerCase().trim().split(/\s+/).filter(k => k.length > 2));
+  // `filter` is the AI schema's name for the topic (the chief passed it and it was silently ignored).
+  for (const t of [config.topic, config.filter]) {
+    if (typeof t === 'string' && t.trim()) keywordList.push(...t.toLowerCase().trim().split(/\s+/).filter(k => k.length > 2));
   }
 
   // ── DB query ────────────────────────────────────────────────────────────────
@@ -99,7 +138,9 @@ export async function executeGetEmails(
     // the model reading a mid-word cut as "the email got cut off" is the law's own founding
     // incident. `clipWithRule` ends at a boundary and carries EXCERPT_RULE inline (this tool
     // result is a standalone message back to the model, so the rule can't ride on a caller).
-    snippet:   clipWithRule((item.source_data?.snippet || item.source_data?.body || '') as string, 300),
+    snippet:   clipWithRule((item.source_data?.snippet || item.source_data?.body || '') as string, EMAIL_LIST_SNIPPET_CHARS),
+    // The whole body is SEARCHED (never shown here — opening the email shows it).
+    haystack:  `${item.source_data?.subject ?? ''} ${item.source_data?.body ?? item.source_data?.snippet ?? ''}`.toLowerCase(),
     createdAt: item.created_at as string,
     isRead:    item.is_read !== false,
     section:   (item.visual_section || 'noted') as string,
@@ -116,7 +157,7 @@ export async function executeGetEmails(
   // Keyword / topic filter (OR logic)
   if (keywordList.length > 0) {
     items = items.filter(e => {
-      const hay = `${e.subject} ${e.snippet}`.toLowerCase();
+      const hay = e.haystack;
       return keywordList.some(k => hay.includes(k));
     });
   }
@@ -130,9 +171,9 @@ export async function executeGetEmails(
     const date = new Date(e.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
     const readFlag = e.isRead ? '' : ' [unread]';
     const from = e.fromEmail ? `${e.fromName} <${e.fromEmail}>` : e.fromName;
-    return `• ${date}${readFlag} — From: ${from}\n  Subject: ${e.subject}${e.snippet ? `\n  "${e.snippet}"` : ''}`;
+    return `• ${date}${readFlag} — From: ${from} [id: ${e.id}]\n  Subject: ${e.subject}${e.snippet ? `\n  "${e.snippet}"` : ''}`;
   });
 
   const header = `${subset.length} email${subset.length !== 1 ? 's' : ''} (${mode}${fromFilter ? `, from: ${fromFilter}` : ''}${keywordList.length ? `, keywords: ${keywordList.slice(0, 3).join(', ')}` : ''}):`;
-  return `${header}\n\n${lines.join('\n\n')}`;
+  return `${header}\n\n${lines.join('\n\n')}\n\n(Snippets are the first lines only — open an email with get_emails { email_id } to read it whole.)`;
 }

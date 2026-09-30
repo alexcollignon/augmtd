@@ -2,7 +2,7 @@
 // The single structured read of the Portal Base APIBase2 announcement/contract lanes.
 // Both the briefing formatter (`lib/tools/pt-tenders.ts`) and the member matcher consume THESE
 // rows, so what the briefing prints and what the matcher saw can never drift
-// (docs/ahk-tender-matching-plan.md, law 5).
+// (docs/chamber-tender-matching-plan.md, law 5).
 //
 // Pure fetch + shape: no AI, no database, no side effects. Presentation decisions (stripping the
 // NIF for display, sector wording, item caps) belong to the consumer, never here.

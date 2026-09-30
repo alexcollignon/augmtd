@@ -255,7 +255,7 @@ def update_task(
             "digest", or "silent".
         output_slack_announcement: For a document that also posts to Slack — an
             instruction for how to announce it in the channel (you write the message
-            from this + the document, e.g. "2-line summary, tag <@Rene>").
+            from this + the document, e.g. "2-line summary, tag <@Sam>").
         output_email_to: When destination is email — comma-separated recipient
             address(es) to send the deliverable to (any address). Empty clears it (→ the user).
         output_email_as_attachment: When destination is email — True to send the

@@ -1,7 +1,7 @@
 // ── Context-grounded initiative labeling (the "reason once, but SEE the world" fix).
 // The email `understanding` pass and the commitment extractor each labeled an item's initiative from ONE
-// item's text, in isolation — so the same deal got two labels (a client's calendar thread → "Jean-Marie
-// pilot", their pricing thread → "Soboplac AI Agent System"), and deterministic grouping (distinct labels
+// item's text, in isolation — so the same deal got two labels (a client's calendar thread → "Pat
+// pilot", their pricing thread → "Acme Plastics AI Agent System"), and deterministic grouping (distinct labels
 // never merge) can't reconcile them. This provider hands the labeler the initiatives THIS sender / thread
 // is ALREADY associated with, so the model can REUSE an existing label instead of minting a synonym. The
 // decision stays reasoned (reuse-or-mint is the model's call), it just isn't blind anymore.
@@ -88,8 +88,8 @@ export async function getInitiativeCandidates(
     const emails = new Set(externalEmails);
     const namesAllowed = allEmails.length === 0 || externalEmails.length > 0;
     const nameTokenSets = (namesAllowed ? (opts.personNames ?? []) : []).map(nameKey).filter((n) => n.length > 2).map((n) => new Set(n.split(' ').filter((t) => t.length > 2)));
-    // Link a person across email + name forms: a commitment's counterparty "Jean-Marie" and an email's
-    // sender "Jean-Marie LAMBERT" are the same person, so both draw from ONE candidate pool → ONE canonical.
+    // Link a person across email + name forms: a commitment's counterparty "Pat" and an email's
+    // sender "Pat MARTIN" are the same person, so both draw from ONE candidate pool → ONE canonical.
     const nameMatches = (raw?: string | null): boolean => {
       const t = new Set(nameKey(raw).split(' ').filter((x) => x.length > 2));
       if (!t.size) return false;

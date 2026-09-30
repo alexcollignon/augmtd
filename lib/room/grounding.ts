@@ -17,6 +17,13 @@ import { assembleLedger, serveEntityState, entityStateStale, isClosedLedgerLine,
 import { renderGroundEvidence } from '@/lib/room/ground-evidence';
 import { clipLedgerLine } from '@/lib/inbox/thread-now';
 import { clipForPrompt, clipLabel, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+
+/** W28 — how many live threads get their newest message in full, and its excerpt budget. */
+export const NEWEST_IN_FULL_THREADS = 4;
+export const NEWEST_IN_FULL_CHARS = 1500;
+/** …and the earlier messages of the same thread that ride beside it, short. */
+export const THREAD_MESSAGES_IN_ROOM = 5;
+export const EARLIER_MESSAGE_CHARS = 400;
 import { loadEvidencePool, matchEvidence, resolveCommitmentAddresses, SETTLE_MATCH, type Evidence, type EvidencePool } from '@/lib/work/evidence-nominator';
 import { actorLabel } from '@/lib/evidence/actor';
 import { deedWords } from '@/lib/evidence/sources';
@@ -60,6 +67,10 @@ export type BoardEntry = {
    *  the same address-keyed nominator the judge reads (W2.5). The brief composer can never assert
    *  "missed / not done" against a deed the calendar holds. */
   evidence: string[];
+  /** W27e · WHO OWES: a commitment's direction ('you_owe' | 'awaiting'), or an inbox item's understood
+   *  ownership — the move floor's "others owe and their date has not passed" fact (lib/room/cta-law
+   *  moveNotYetDue). Absent = unknown (the floor then never fires). */
+  direction?: string | null;
 };
 
 // ── THE ROOM'S EVIDENCE POOL (W5a): ONE bounded pool per user, memoized briefly — the grounding is
@@ -388,6 +399,7 @@ export async function assembleRoomGrounding(
       title: clipLabel(String(it.work_title || sd.subject || 'Email'), 90),
       who: (sd.from_name as string) || (sd.from_address as string) || null,
       due: ((sd.understanding as { deadline?: string } | undefined)?.deadline) ?? null,
+      direction: ((sd.understanding as { ownership?: string } | undefined)?.ownership) ?? null,
       judgedWork: j?.work ?? null, judgedReason: j?.reason ? clipLabel(j.reason, 120) : null,
       prepared: prep.list, expired: prep.expired, withdrawn: prep.withdrawn, preparedBy: prep.by, attachments,
       evidence: evidenceByRef.get(`inbox:${String(it.id)}`) ?? [],
@@ -403,6 +415,7 @@ export async function assembleRoomGrounding(
       title: clipLabel(String(c.description ?? ''), 90),
       who: (c.counterparty as string) ?? null,
       due: (c.due_date as string) ?? null,
+      direction: (c.direction as string | null) ?? null,
       judgedWork: j?.work ?? null, judgedReason: j?.reason ? clipLabel(j.reason, 120) : null,
       prepared: cprep.list, expired: cprep.expired, withdrawn: cprep.withdrawn, preparedBy: cprep.by, attachments: [],
       evidence: evidenceByRef.get(`commit:${String(c.id)}`) ?? [],
@@ -424,6 +437,40 @@ export async function assembleRoomGrounding(
         participants: [...participants, ...entPeople].slice(0, 40),
       });
     } catch { return [] as string[]; }
+  })();
+
+  // ── W28 · THE NEWEST WORD, IN FULL (the W28 surfaces eval: every thread line above quotes a ~110-char
+  // gist, so a room asked "status in three sections" never saw "warehouse 2 still has no training date",
+  // the reprint station, or the cause of a miss — they sat in the second sentence of the newest message,
+  // and the answer inverted and dropped facts). The NEWEST message of each live thread reaches the room
+  // whole, through the excerpt law (a boundary cut + the declared mark); older messages stay as the
+  // short ledger lines below. Explicit selects, errors surface as silence (an enhancement, never a blocker).
+  const newestInFull = await (async (): Promise<string[]> => {
+    const ids = [...new Set(threadRefs.map((t) => t.threadId).filter((x): x is string => !!x))].slice(0, NEWEST_IN_FULL_THREADS);
+    if (!ids.length) return [];
+    try {
+      const { topMessageOf } = await import('@/lib/inbox/top-message');
+      const rows = await Promise.all(ids.map(async (tid) => {
+        // The thread's last few messages, oldest first: the NEWEST whole, the earlier ones short — an item's
+        // envelope follows its newest message, so an earlier figure or promise on the same thread (eval: a
+        // €40,000 approval five days before a €45,000 request) was invisible to the room ("the only number
+        // on record").
+        const { data, error } = await client.from('emails').select('from_name, from_address, is_from_user, body, received_at, subject')
+          .eq('user_id', userId).eq('thread_id', tid).order('received_at', { ascending: false }).limit(THREAD_MESSAGES_IN_ROOM);
+        if (error || !data?.length) return null;
+        const msgs = (data as Array<{ from_name?: string | null; from_address?: string | null; is_from_user?: boolean | null; body?: string | null; received_at?: string | null; subject?: string | null }>).reverse();
+        const title = threadRefs.find((t) => t.threadId === tid)?.title ?? clipLabel(String(msgs[msgs.length - 1].subject ?? 'this thread'), 70);
+        const lines = msgs.map((d, i) => {
+          const words = topMessageOf(String(d.body ?? '')).trim();
+          if (!words) return null;
+          const who = d.is_from_user ? 'THE USER' : (d.from_name || d.from_address || 'the counterparty');
+          const newest = i === msgs.length - 1;
+          return `${newest ? '[NEWEST] ' : ''}${who} · ${String(d.received_at ?? '').slice(0, 16).replace('T', ' ')}: ${clipForPrompt(words.replace(/\s+/g, ' '), newest ? NEWEST_IN_FULL_CHARS : EARLIER_MESSAGE_CHARS)}`;
+        }).filter(Boolean);
+        return lines.length ? `--- "${title}" (oldest first) ---\n${lines.join('\n')}` : null;
+      }));
+      return rows.filter((r): r is string => !!r);
+    } catch { return []; }
   })();
 
   // ── Live asks + the transcript (the dialogue read, one renderer). ──
@@ -591,6 +638,7 @@ export async function assembleRoomGrounding(
     // reader can consume the judged verbs without also reading what has actually happened since —
     // and so it survives every clip a consumer applies to the tail of this page.
     renderGroundEvidence(groundEvidence),
+    newestInFull.length ? `THE THREADS THEMSELVES (each thread's recent messages, oldest first — the NEWEST in full, earlier ones short; the lines above quote only first words, so read these before answering about a thread):\n${newestInFull.join('\n\n')}` : null,
     synthesis.length ? `THE SYNTHESIS (a derived summary of the rows above, composed earlier — where it disagrees with the ledger or the board, the rows win):\n${synthesis.join('\n')}` : null,
     entity?.goals.length ? `GOALS: ${entity.goals.join(' · ')}` : null,
     entity?.rules.length ? `RULES: ${entity.rules.join(' · ')}` : null,

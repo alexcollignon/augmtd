@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// THE WEBSITE ENRICHMENT PASS — the enrichment ladder's v1 rung (docs/ahk-tender-matching-plan.md,
+// THE WEBSITE ENRICHMENT PASS — the enrichment ladder's v1 rung (docs/chamber-tender-matching-plan.md,
 // law 4: THE PROFILE IS THE PRODUCT).
 //
 // WHY THIS IS THE SUBSTANTIVE FIX. The evidence law is absolute: a member is only ever matched on a

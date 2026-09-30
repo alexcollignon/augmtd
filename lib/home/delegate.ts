@@ -42,10 +42,62 @@ export const DELEGATION_SAFETY_NOTE =
  *  for the gate (smoke-handoff-live). */
 export const DELEGATION_RECENT_FACTS_RULE =
   `${RECENT_FACTS_RULE}\n` +
+  // W28.3 (eval: a comparison asked "from these notes" came back padded with outside prices and a Sources
+  // list — facts the user never gave, judged invented). Supplied material bounds the deliverable.
+  `- THE MATERIAL YOU WERE HANDED BOUNDS THE WORK: when the request supplies what to work from (pasted ` +
+  `notes, a case study, attached files), build the deliverable from THAT material only — no outside facts, ` +
+  `prices, competitors or sources added unless the request asks for research beyond it. A cell or point the ` +
+  `material does not cover says so ("not in the notes") instead of being filled in.\n` +
   `- CITE WHAT YOU SEARCHED: research about the current market, companies, people, prices or figures comes ` +
   `from web_search results in THIS task (companies merge, rename and change hands — your memory is stale) ` +
   `and every such fact in your deliverable names its source (publisher + link, and the date when the ` +
   `result gives one) in a short "Sources" list at the end.`;
+
+/** W28.6 · THE HAND-BACK OPENS WITH THE WORK (eval: "I'll draft two LinkedIn post variants…" stood
+ *  above the finished variants). A first paragraph that only ANNOUNCES the work ("I'll…", "I will…",
+ *  "Let me…") and is followed by the work itself is dropped. Pure; anything else is left untouched. */
+export function stripAnnouncement(text: string): string {
+  const t = String(text ?? '').trim();
+  const m = /^((?:I'?ll|I will|Let me|I'm going to|I am going to|I need to)\b[^\n]{0,240})\n+(?:-{2,}\s*\n+)?([\s\S]+)$/.exec(t);
+  if (!m) return t;
+  const rest = m[2].trim();
+  return rest.length >= 60 ? rest : t;
+}
+
+/** W28 · THE MATERIAL BOUNDS THE TOOLS (eval: a comparison asked "from these notes" still ran web_search
+ *  and came back with outside prices, "the search results don't contain…" preambles and a Sources list —
+ *  a prompt rule alone lost to the tool being there). Research tools ride a hand-off only when the ask is
+ *  research, or when no material came with it. Pure. */
+const RESEARCH_ASK = /\b(research|look (it |this |them )?up|search|find out|latest|recent|current(ly)?|news|market|online|web|competitor|benchmark|who (is|are|leads)|what'?s happening|trends?)\b/i;
+export function needsWebResearch(request: string, material = ''): boolean {
+  const req = String(request ?? '');
+  // Material = attached files, or pasted text well beyond the ask itself (several lines of notes).
+  const pasted = req.split('\n').filter((l) => l.trim()).length >= 4 && req.length >= 200;
+  const hasMaterial = !!String(material ?? '').trim() || pasted;
+  if (!hasMaterial) return true;
+  // The ask is the request's opening line(s), before the pasted material.
+  const ask = req.split(/\n\s*\n/)[0] ?? req;
+  return RESEARCH_ASK.test(ask);
+}
+
+/** An objection that says the output is not a deliverable at all (deliberation, an ask, process talk). */
+export const NOT_A_DELIVERABLE = /\b(not a deliverable|deliberat|meta-?commentary|monologue|thinking out loud|process narration|planning talk|no deliverable|instead of (the|a) deliverable)\b/i;
+
+/** The review's truncation-heuristic objection (lib/prepare/evaluate looksMechanicallyTruncated). */
+export const TRUNCATION_OBJECTION = /\b(cut off|truncat)/i;
+
+/** A structural read (zero AI): real work has body — a table, headings, a list, or several paragraphs. */
+export function looksLikeDeliverable(text: string): boolean {
+  const t = String(text ?? '').trim();
+  // A list of questions is an ask, not work: most of its lines end in '?'.
+  const lines = t.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (lines.filter((l) => /\?\s*\**$/.test(l)).length * 3 >= lines.length) return false;
+  // A short deliverable is still one when it is the asked-for list (eval: three hook lines were withheld
+  // as "not a deliverable" because they were short).
+  const items = (t.match(/(^|\n)\s*([-*•]|\d+\.)\s/g) ?? []).length;
+  if (t.length < 400) return t.length >= 60 && items >= 3;
+  return /\n\|.*\|/.test(t) || /(^|\n)#{1,4}\s/.test(t) || (t.match(/(^|\n)\s*([-*•]|\d+\.)\s/g) ?? []).length >= 3 || t.split(/\n\s*\n/).length >= 3;
+}
 
 export interface DelegateWorker {
   id: string;
@@ -98,14 +150,21 @@ export function buildDelegationPrompt(args: {
     `- PREPARE the deliverable and hand it back for review — do NOT send an email, post to Slack, or ` +
       `send a calendar invite on your own here. If the natural next step is a message, DRAFT it (in ` +
       `your voice / the right voice) and include the draft in your answer; the user sends it themselves.`,
+    `- NEVER WITHHOLD THE WORK FOR A CONFIRMATION: whether material is approved, accurate or cleared to ` +
+      `publish is the user's call when they review your draft — never a reason to hand back questions ` +
+      `instead of the deliverable, and never ask to confirm what the material already states.`,
     `- WORK WITH WHAT YOU HAVE: if some inputs are missing but the work can meaningfully proceed on ` +
       `what's available, DO IT and note the gaps honestly in your hand-back ("built from X; still ` +
       `needs Y for the final version"). Only stop and ask when the work is genuinely impossible or ` +
       `meaningless without the missing pieces — a partial deliverable with honest gaps beats a request list.`,
-    `- Report back plainly: what you did, what you're handing over, and anything you couldn't do.`,
-    `- If you PRODUCED the deliverable, your report speaks the deliverable — what it is and what's ` +
-      `in it. A question about a detail rides BESIDE the finished work ("here it is; one thing to ` +
-      `confirm: …"), never instead of it. Never report yourself blocked while handing back ` +
+    // W28 — ONE CONDUCT: the old "report back: what you did, what you're handing over" invited the recap the
+    // shared conduct's ENDINGS rule forbids (lib/ai/conduct.ts, composed by the agent step this prompt runs
+    // in). The hand-back IS the deliverable; what's left rides beside it in one line.
+    `- WHEN THE ASK FIXES THE OUTPUT EXACTLY ("only the three lines", "just the post", a count and nothing ` +
+      `else), the hand-back is exactly that: no heading, no preamble, no note, no "Decisions I made".`,
+    `- Hand back the deliverable itself. Anything you couldn't do, or a detail to confirm, rides in one ` +
+      `short line BESIDE the finished work ("one thing to confirm: …"), never instead of it and never as a ` +
+      `recap of what you wrote. Never report yourself blocked while handing back ` +
       `completed work (found live: a finished agenda reported as "cut off, can't proceed").`,
     `- ${EXCERPT_RULE} Never claim an instruction or document "got cut off" unless the SOURCE ` +
       `itself shows it — our clip marker is a length budget, not evidence.`,
@@ -132,6 +191,8 @@ export interface DelegateResult {
   /** W25 · A CLAIM RENDERS — the evaluator accepted `output` as THE deliverable (not an ask, not a
    *  rejected attempt). The posting side shows `output` itself when no artifact carries it. */
   delivered?: boolean;
+  /** W28.4 — the reviewer's remaining objection to a DELIVERED output, shown beside the work. */
+  caution?: string;
   deliverable?: Deliverable;   // the coworker's output written to the per-item pool (S2)
   poolSize?: number;           // pool entries the coworker saw as context (for logging / smoke test)
   /** FIX 3 — the evaluator judged the output a genuine ASK for principal-only inputs; these are the
@@ -193,6 +254,8 @@ export async function runDelegation(args: {
    *  item's thread at prep time. Stamped on the pool deliverable so the one reader derives its
    *  staleness when the counterparty speaks again. Absent → unstamped, and therefore exempt. */
   preparedFrom?: { emailId: string | null; receivedAt: string | null } | null;
+  /** W28 — the research tools ride only when the work needs them (see needsWebResearch). Default on. */
+  webResearch?: boolean;
 }): Promise<DelegateResult> {
   const { supabase, userId, worker, prompt: rawPrompt, itemLabel, firstName, pool: poolScope, themeOverride } = args;
   // THE MOMENT THEME rides at MATERIALIZATION — the coworker must produce CONTENT and never
@@ -201,7 +264,7 @@ export async function runDelegation(args: {
   let prompt = themeOverride
     ? `${rawPrompt}\n- BRANDING IS HANDLED: the user's logo and brand colors are applied automatically when the document file is generated. Produce the CONTENT only — never ask for the logo, never mention branding as missing or pending.`
     : rawPrompt;
-  // THE DATA-BY-CODE LANE (document hands, Aug 11 — the EG Bank benchmark: Claude ran pandas,
+  // THE DATA-BY-CODE LANE (document hands, Aug 11 — the Globex Bank benchmark: Claude ran pandas,
   // we must never eyeball): when the material carries tabular data, every statistic in the
   // deliverable comes from run_compute output — computed facts, not read-off guesses. The
   // arithmetic floor's law applied at the production door. Detection is cheap and structural.
@@ -239,7 +302,7 @@ export async function runDelegation(args: {
   // surfaced for the user to revisit — silently-made decisions are how trust erodes.
   prompt += `\n- DISCLOSE YOUR DECISIONS: if you made judgment calls the user might reasonably revisit ` +
     `(scope, method, grouping boundaries, exclusions), end the hand-back with a short "Decisions I made:" ` +
-    `list. Only real decisions — never pad this.`;
+    `list. Only real decisions — never pad this, and never a statement about your own accuracy.`;
 
   // ── Read the per-item deliverable pool so the coworker builds on what prior steps produced (S2 — the
   // engine-gap #1 fix). The pool is rendered into a SINGLE previousOutputs entry, which both the native
@@ -270,9 +333,9 @@ export async function runDelegation(args: {
     previousOutputs,
     workflowName: clipLabel(`Delegation: ${itemLabel}`, 120),
     // W25 — the coworker HOLDS web search on the delegation path (native loop; gated by the feature map).
-    webResearch: true,
+    webResearch: args.webResearch !== false,
   });
-  let output = produced.text.trim();
+  let output = stripAnnouncement(produced.text.trim());
   // THE PRODUCER'S RECEIPT travels with the work (Sep 21): the evaluator's truncation floor is a
   // heuristic, and a heuristic may never overrule the completion's own finish_reason.
   let sourceComplete = produced.complete;
@@ -283,6 +346,7 @@ export async function runDelegation(args: {
   // as prepared work and the report-back says so honestly. Non-fatal: an evaluator error → pass. ──
   let deliverableOk = true;
   let evalObjection: string | null = null;
+  let caution: string | null = null;
   // FIX 3 (the Max monologue-ask class): when the evaluator's REASONED read is "this output is
   // fundamentally an ASK for things only the principal can supply", the work routes as a REQUEST —
   // an attributed room turn + input checklist — and is NEVER stored as prepared work. No retry:
@@ -290,21 +354,60 @@ export async function runDelegation(args: {
   let needsInput: string[] | null = null;
   try {
     const { evaluateDeliverable } = await import('@/lib/prepare/evaluate');
-    let review = await evaluateDeliverable(supabase, userId, { content: output, task: itemLabel, recipient: null, entityId: null, kind: 'deliverable', sourceComplete });
+    let review = await evaluateDeliverable(supabase, userId, { content: output, task: itemLabel, recipient: null, entityId: null, kind: 'deliverable', brief: rawPrompt, sourceComplete });
     if (review.verdict === 'revise' && review.objection) {
       const second = await executeAgentStepDetailed(
         { ...step, prompt: `${prompt}\n\nA REVIEWER REJECTED YOUR FIRST ATTEMPT:\n"${review.objection}"\nProduce the actual finished deliverable now — the thing itself, not commentary about it.` },
-        { userId, supabase, previousOutputs, workflowName: clipLabel(`Delegation (retry): ${itemLabel}`, 120), webResearch: true },
+        { userId, supabase, previousOutputs, workflowName: clipLabel(`Delegation (retry): ${itemLabel}`, 120), webResearch: args.webResearch !== false },
       ).catch(() => ({ text: '' } as { text: string; complete?: boolean }));
       const retry = second.text.trim();
       if (retry) {
-        review = await evaluateDeliverable(supabase, userId, { content: retry, task: itemLabel, recipient: null, entityId: null, kind: 'deliverable', sourceComplete: second.complete });
-        if (review.verdict !== 'revise') { output = retry; sourceComplete = second.complete; }
+        review = await evaluateDeliverable(supabase, userId, { content: retry, task: itemLabel, recipient: null, entityId: null, kind: 'deliverable', brief: rawPrompt, sourceComplete: second.complete });
+        // W28.4 — the second attempt already answered the first objection: it is the better candidate
+        // even when the reviewer still objects (see THE WORK IS SHOWN WITH ITS CAUTION below).
+        if (review.verdict !== 'revise' || looksLikeDeliverable(retry)) { output = retry; sourceComplete = second.complete; }
       }
     }
-    if (review.verdict === 'needs_input') { deliverableOk = false; needsInput = review.missing ?? []; }
+    if (review.verdict === 'needs_input' && looksLikeDeliverable(output)) {
+      // W28.5 — the reviewer read a finished deliverable that also asks something as an ASK (eval: two
+      // ready LinkedIn variants routed as "Luca needs something from you first"). The work is handed over;
+      // what it still needs rides beside it.
+      caution = (review.missing ?? []).length ? `still to confirm — ${(review.missing ?? []).join('; ')}` : (review.objection ?? null);
+    }
+    else if (review.verdict === 'needs_input') { deliverableOk = false; needsInput = review.missing ?? []; }
+    else if (review.verdict === 'revise' && looksLikeDeliverable(output) && !NOT_A_DELIVERABLE.test(review.objection ?? '')) {
+      // W28.4 · THE WORK IS SHOWN WITH ITS CAUTION (eval: a finished comparison was withheld after two
+      // objections and the chat posted "numbers aren't adding up — I'll sort it in a bit", a follow-up
+      // nothing had scheduled). A real deliverable the reviewer still questions is handed over WITH the
+      // objection beside it — the user decides; a monologue or an ask is still never stored as work.
+      // The truncation floor is a heuristic about OUR clip, never a fact about the work — it is not a
+      // caution the user should read (eval: a complete table posted with "the artifact cuts off").
+      caution = TRUNCATION_OBJECTION.test(review.objection ?? '') ? null : review.objection ?? null;
+    }
     else if (review.verdict === 'revise') { deliverableOk = false; evalObjection = review.objection; }
   } catch { /* review is an enhancement */ }
+
+  // W28.7 · THE CLAIMS FLOOR (lib/prepare/claims-floor.ts): a delivered output's specifics the brief does not
+  // supply become [PLACEHOLDERS] before anything is posted or stored — not merely flagged. Typed decks and
+  // sheets (a machine fence) are left to their own validator.
+  if (deliverableOk && output) {
+    const { parseTypedDeliverable } = await import('@/lib/workflows/typed-output');
+    if (!parseTypedDeliverable(output)) {
+      const { groundClaims, stripSelfVouching, flooringGutted } = await import('@/lib/prepare/claims-floor');
+      let floored = await groundClaims(supabase, userId, { draft: output, material: rawPrompt });
+      // W28.9 · WHEN THE FLOOR WOULD GUT THE WORK, THE WRITER REWRITES (full eval: three hooks became three
+      // placeholders). One capped rewrite with the unsupported specifics named; its floored text stands.
+      if (flooringGutted(floored)) {
+        const redo = await executeAgentStepDetailed(
+          { ...step, prompt: `${prompt}\n\nTHESE SPECIFICS ARE NOT IN THE MATERIAL YOU WERE GIVEN — rewrite the deliverable without them (same shape, same count; make it work on what the material does say):\n${floored.replaced.map((q) => `- "${q}"`).join('\n')}` },
+          { userId, supabase, previousOutputs, workflowName: clipLabel(`Delegation (grounded rewrite): ${itemLabel}`, 120), webResearch: args.webResearch !== false },
+        ).catch(() => ({ text: '' } as { text: string }));
+        const again = stripAnnouncement(redo.text.trim());
+        if (again) floored = await groundClaims(supabase, userId, { draft: again, material: rawPrompt });
+      }
+      output = stripSelfVouching(floored.text);
+    }
+  }
 
   // ── Report-back (DM from the coworker) — reuse the scheduled-task report writer. A rejected
   // deliverable reports the PROBLEM honestly instead of pretending work exists. ──
@@ -512,5 +615,5 @@ export async function runDelegation(args: {
     } catch { /* narration is an enhancement — the delegation already landed */ }
   }
 
-  return { output, agentName: worker.name, threadId, reportText, delivered: deliverableOk && !!output, deliverable, poolSize: pool.length, artifact, ...(artifacts.length ? { artifacts } : {}), ...(needsInput?.length ? { needsInput } : {}) };
+  return { output, agentName: worker.name, threadId, reportText, delivered: deliverableOk && !!output, ...(caution ? { caution } : {}), deliverable, poolSize: pool.length, artifact, ...(artifacts.length ? { artifacts } : {}), ...(needsInput?.length ? { needsInput } : {}) };
 }

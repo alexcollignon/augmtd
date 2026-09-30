@@ -32,13 +32,41 @@ export function sentencesOf(text: string): string[] {
   return String(text ?? '').split(/\n+|(?<=[.!?])\s+(?=\p{Lu})/u).map((s) => s.trim()).filter(Boolean);
 }
 
-/** Does the message state `iso` in a sentence about THIS deed? The re-date floor. */
-export function deedScopedDate(text: string, iso: string, deed: string): boolean {
+// ── W27 · THE QUOTED SENTENCE (the agnostic clause — found by the eval). The stem test above compares
+// the obligation's words with the message's, so it only works when both are in ONE language and the
+// message NAMES the deed: "Envio tudo até 2026-10-01", "vous parviendra le 2026-10-02", "schicke ich
+// es bis 2026-10-03" — a correct re-date in PT/FR/DE — were always dropped (the deed is an English
+// title; the sentence says "tudo"/"it"). The second path is language-agnostic and keeps the floor's
+// asymmetry: THE MODEL PROPOSES A QUOTE, CODE DISPOSES. The judge names the one sentence that states
+// the new date for the thing owed, verbatim; code accepts it only when (1) the quote really stands in
+// the message, (2) the quote itself states the date, and (3) the quote carries no clock time — a
+// sentence with a time of day is a meeting line ("catch up Oct 12 at 9:30"), the exact incident this
+// floor exists for; a deadline with a clock time simply keeps its old date (no re-date is the safe
+// direction).
+/** A time of day in any common mail form ("9:30", "14h", "9h30", "3pm", "10 Uhr") — never a numeric
+ *  date ("01.10." is the first of October, not 01:10). */
+const CLOCK_TIME = /(?<![\d.])\d{1,2}(?::[0-5]\d|h(?:[0-5]\d)?\b|\s?(?:am\b|pm\b|a\.m\.|p\.m\.)|\s?uhr\b)/i;
+const foldSpan = (s: string) => fold(String(s ?? '')).replace(/[“”«»"']/g, '').replace(/\s+/g, ' ').trim();
+
+/** Does the message state `iso` in a sentence about THIS deed? The re-date floor.
+ *  `opts.quote` — the judge's verbatim sentence for the new date (the agnostic path above). */
+export function deedScopedDate(text: string, iso: string, deed: string, opts: { quote?: string | null } = {}): boolean {
   const terms = keyTerms(deed);
-  if (!terms.length) return false; // a deed with no key term cannot be matched — no re-date
-  return sentencesOf(text).some((s) => {
+  const byStem = terms.length > 0 && sentencesOf(text).some((s) => {
     if (!dateStatedInText(s, iso)) return false;
     const words = keyTerms(s);
     return terms.some((t) => words.some((w) => sameStem(t, w)));
   });
+  if (byStem) return true;
+  return quotedSentenceStatesDate(text, iso, opts.quote);
+}
+
+/** THE QUOTED-SENTENCE PATH (W27), exported for its gate. Pure. */
+export function quotedSentenceStatesDate(text: string, iso: string, quote: string | null | undefined): boolean {
+  const q = foldSpan(String(quote ?? '').replace(/^["'“”«»]+|["'“”«»]+$/g, ''));
+  if (q.length < 6 || q.length > 300) return false;
+  if (!foldSpan(text).includes(q)) return false;                 // (1) verbatim in the message
+  if (!dateStatedInText(String(quote), iso)) return false;       // (2) the quote states THIS date
+  if (CLOCK_TIME.test(String(quote))) return false;               // (3) a time of day = a meeting line
+  return true;
 }

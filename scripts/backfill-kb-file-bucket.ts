@@ -39,7 +39,7 @@ async function existsIn(bucket: string, path: string): Promise<boolean> {
 
 (async () => {
   const { data: users } = await sb.auth.admin.listUsers();
-  const targets = ALL ? users!.users : users!.users.filter((u) => u.email === (userArg ?? 'alextcollignon@gmail.com'));
+  const targets = ALL ? users!.users : users!.users.filter((u) => u.email === (userArg ?? process.env.OWNER_EMAIL ?? ''));
   const tally: Record<string, number> = {};
   let scanned = 0, alreadyStamped = 0, unchanged = 0, moved = 0, missing = 0;
 

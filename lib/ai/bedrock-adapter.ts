@@ -49,6 +49,24 @@ export function createBedrockAdapter(config: BedrockConfig): OpenAI {
   return adapter as unknown as OpenAI
 }
 
+// ─── THE EFFORT LEVER on Bedrock (W27.C) ──────────────────────────────────────
+// Haiku 4.5 / Sonnet 4.5 think through the OLDER extended-thinking API: `thinking: { type: 'enabled',
+// budget_tokens }` (lib/ai/effort.ts maps an effort to it and already widened max_tokens past the
+// budget). Thinking forbids a non-default temperature, so sampling is dropped whenever thinking rides.
+// The model's thinking blocks are never surfaced as content (only text / tool_use blocks are read).
+// Absent `thinking` = byte-identical to before.
+export function thinkingOf(params: any): { type: 'enabled'; budget_tokens: number } | null {
+  const t = params?.thinking
+  return t && t.type === 'enabled' && Number.isFinite(t.budget_tokens) && t.budget_tokens >= 1024
+    ? { type: 'enabled', budget_tokens: Math.floor(t.budget_tokens) } : null
+}
+
+function samplingOrThinking(params: any): Record<string, unknown> {
+  const thinking = thinkingOf(params)
+  if (thinking) return { thinking }
+  return params.temperature != null ? { temperature: params.temperature } : {}
+}
+
 // ─── Non-streaming ────────────────────────────────────────────────────────────
 
 async function handleNonStreaming(bedrock: AnthropicBedrock, params: any): Promise<any> {
@@ -66,12 +84,12 @@ async function handleNonStreaming(bedrock: AnthropicBedrock, params: any): Promi
     max_tokens: params.max_tokens ?? 4096,
     ...(systemFinal ? { system: systemFinal } : {}),
     messages,
-    ...(params.temperature != null ? { temperature: params.temperature } : {}),
+    ...samplingOrThinking(params),
     ...(translateTools(params.tools) ? { tools: translateTools(params.tools)! } : {}),
     ...(params.tool_choice ? { tool_choice: translateToolChoice(params.tool_choice) } : {}),
   })
 
-  return anthropicResponseToOpenAI(response, params.model)
+  return anthropicResponseToOpenAI(response, params.model, !!thinkingOf(params))
 }
 
 // ─── Streaming ────────────────────────────────────────────────────────────────
@@ -90,7 +108,7 @@ async function handleStreaming(bedrock: AnthropicBedrock, params: any): Promise<
     max_tokens: params.max_tokens ?? 4096,
     ...(systemFinal ? { system: systemFinal } : {}),
     messages,
-    ...(params.temperature != null ? { temperature: params.temperature } : {}),
+    ...samplingOrThinking(params),
     ...(translateTools(params.tools) ? { tools: translateTools(params.tools)! } : {}),
     ...(params.tool_choice ? { tool_choice: translateToolChoice(params.tool_choice) } : {}),
     stream: true,
@@ -188,7 +206,7 @@ function makeChunk(id: string, model: string, overrides: any): any {
 
 // ─── Response translator (non-streaming) ──────────────────────────────────────
 
-function anthropicResponseToOpenAI(response: any, model: string): any {
+function anthropicResponseToOpenAI(response: any, model: string, thinking = false): any {
   const textParts: string[] = []
   const toolCalls: any[] = []
 
@@ -228,6 +246,10 @@ function anthropicResponseToOpenAI(response: any, model: string): any {
       prompt_tokens: response.usage?.input_tokens ?? 0,
       completion_tokens: response.usage?.output_tokens ?? 0,
       total_tokens: (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0),
+      // W27.C: Anthropic bills thinking inside output_tokens and reports no split. With thinking on,
+      // the reasoning share is ESTIMATED as output − visible (~4 chars/token) — OpenAI's field name so
+      // one reader (the eval meter) sees both providers. Absent when thinking was off.
+      ...(thinking ? { completion_tokens_details: { reasoning_tokens: Math.max(0, (response.usage?.output_tokens ?? 0) - Math.ceil(((text ?? '').length + toolCalls.reduce((n: number, t: any) => n + t.function.arguments.length, 0)) / 4)), reasoning_estimated: true } } : {}),
     },
   }
 }

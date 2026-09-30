@@ -64,7 +64,7 @@ Today voice is modeled as **statistics, not examples** (the drafter gets "tone: 
 ---
 
 ## Signals we already have — use them (don't only mine sent mail)
-- **`relationship_graph`** (contact_email, importance, interaction_frequency, last_interaction — populated from sync via `extract-contacts.ts`) is a **cross-cutting** signal across all 3 pillars: P1 → per-recipient care/formality + rapport (VIP = importance≥75); P2 → a VIP awaiting your reply ages with higher urgency; P3 → the Brief prioritizes by importance ("the AHK reply is a key client"). *Wired into the drafter in Slice 1.*
+- **`relationship_graph`** (contact_email, importance, interaction_frequency, last_interaction — populated from sync via `extract-contacts.ts`) is a **cross-cutting** signal across all 3 pillars: P1 → per-recipient care/formality + rapport (VIP = importance≥75); P2 → a VIP awaiting your reply ages with higher urgency; P3 → the Brief prioritizes by importance ("the Chamber reply is a key client"). *Wired into the drafter in Slice 1.*
 - **`learning_signals`** — confirm/dismiss role patterns (response rates by To/CC position), `reply_sent`, and now `draft_modified` (edit deltas, Slice 1b). Use the strong ones (importance, exemplars, edit-deltas); **de-emphasize the weak `communication_style` stats** (the whole reason for the rebuild — they're metadata, not voice).
 - **`context_profiles.relationships`** — mirrors relationship knowledge; secondary to `relationship_graph`.
 - **Meetings/calendar** — attendees + action items (see cross-source spine + Pillar 2).

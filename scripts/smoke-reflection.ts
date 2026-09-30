@@ -1,6 +1,6 @@
 // PHASE A — REFLECTION smoke (cross-user, on the live shadow store). Dry-run first (verdicts only),
 // then commit, then verify the store: links repointed, aliases absorbed, no orphan links.
-// The Soboplac granularity question ("Jean-Marie chat" vs "SOBOPLAC agent") gets its reasoned answer here.
+// The Acme Plastics granularity question ("Pat chat" vs "ACME PLASTICS agent") gets its reasoned answer here.
 import { config } from 'dotenv'; config({ path: '.env.local' });
 import { createClient } from '@supabase/supabase-js';
 import { reflectEntities } from '../lib/entities/reflect';

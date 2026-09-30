@@ -599,7 +599,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     !src('components/one/one-sidebar.tsx').includes('>Pinned</div>') &&
     src('components/one/one-sidebar.tsx').includes('href="/home?view=projects"') &&
     // Aug 8: the KIND GLYPH + HOVER EXPAND — the row says what it is on sight and who/where on
-    // approach ("with Clara" / "in EG Bank" / the kind word); plain chats stay quiet.
+    // approach ("with Clara" / "in Globex Bank" / the kind word); plain chats stay quiet.
     src('components/one/one-sidebar.tsx').includes('group-hover/conv:max-h-4') &&
     src('app/api/rooms/recent/route.ts').includes('sub: `with ${') &&
     src('app/api/rooms/recent/route.ts').includes('sub: `in ${proj}`') &&
@@ -767,7 +767,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     !src('components/settings/settings-left-panel.tsx').includes("id: 'knowledge'") &&
     !src('components/settings/settings-left-panel.tsx').includes("href: '/drive'") &&
     // RE-POINTED (Sep 13): the overview READ was extracted out of the route into
-    // `lib/knowledge/overview.ts` by the AHK knowledge-folders arc (Sep 1–2) so the folders surface
+    // `lib/knowledge/overview.ts` by the Chamber knowledge-folders arc (Sep 1–2) so the folders surface
     // and the panel share ONE reader; the route is now a thin door over `buildKnowledgeOverview`.
     // The two structural laws are asserted where they now live.
     src('app/api/knowledge/overview/route.ts').includes('buildKnowledgeOverview') &&
@@ -1008,7 +1008,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/workflows/generate-config.ts').includes('ONE GATE, CODE-ENFORCED') && // found live: a generated pipeline carried two approval gates
     existsSync('supabase/migrations/20260808_workflow_runs_approval_status.sql'));
 
-  check('PA3: THE STRUCTURAL VERIFICATION GATE (production arc step 3) — `verify` is a STEP TYPE built into the engine (one versioned implementation; the AHK hand-built gate never copy-pasted again): the ARITHMETIC FLOOR runs FIRST (code-recomputed claims become MUST-FIX lines) then one persona-free reasoned pass (use_worker_identity:false through the ONE AI-step executor — clock/context ride along); generate-config emits it after synthesis for external-material pipelines and bans duplicate prose verifiers; E2E: wrong sum corrected · ungrounded claim deleted · structure intact',
+  check('PA3: THE STRUCTURAL VERIFICATION GATE (production arc step 3) — `verify` is a STEP TYPE built into the engine (one versioned implementation; the Chamber hand-built gate never copy-pasted again): the ARITHMETIC FLOOR runs FIRST (code-recomputed claims become MUST-FIX lines) then one persona-free reasoned pass (use_worker_identity:false through the ONE AI-step executor — clock/context ride along); generate-config emits it after synthesis for external-material pipelines and bans duplicate prose verifiers; E2E: wrong sum corrected · ungrounded claim deleted · structure intact',
     src('lib/workflows/types.ts').includes('interface VerifyStep') &&
     src('lib/workflows/execute-step.ts').includes('VERIFY_GATE_VERSION') &&
     src('lib/workflows/execute-step.ts').includes('COMPUTED BY CODE') &&
@@ -1441,7 +1441,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('app/platform-admin/platform-admin-client.tsx').includes('read-only index') &&
     !src('app/platform-admin/platform-admin-client.tsx').includes('bg-primary-50') &&
     src('components/platform-admin/workspace-detail.tsx').includes("toggleFeature('email'") &&
-    // BRANDED JOIN CODES: superadmin types a memorable code (ISCORE26-style); server validates
+    // BRANDED JOIN CODES: superadmin types a memorable code (BUREAU26-style); server validates
     // format + uniqueness.
     src('components/platform-admin/workspace-detail.tsx').includes('saveCode') &&
     src('app/api/platform-admin/companies/[id]/route.ts').includes('A-Z0-9]{4,20}') &&
@@ -1501,7 +1501,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('infra/meeting-bot/main.py').includes("@app.post('/transcribe'") &&
     src('lib/integrations/meeting-bot/bot-manager.ts').includes('export async function storeTranscriptAndGenerateWork'));
 
-  check('SV6: THE TEAM ARRIVES WITH THE MEMBERSHIP (found live: an iScore joiner had ZERO coworkers — seeding was coupled to the email bootstrap a sovereign user never triggers, and the retired /workers page had been the backstop) — (1) /api/company/join seeds the team in after() (joining IS "set up your agents"); (2) the presence route SELF-HEALS an empty roster on any authed visit (idempotent ensureWorkers; the facepile can never show a dead no-team again); (3) THE SOVEREIGN GALLERY: mailbox-READING workflow templates + their category chip hide when the email feature is off (email DELIVERY via Resend stays — the boundary is auth connections only); generate-config already excludes mailbox tools by feature. Live repair: the real iScore user seeded (Clara, Sofia, Luca, Max)',
+  check('SV6: THE TEAM ARRIVES WITH THE MEMBERSHIP (found live: an Bureau joiner had ZERO coworkers — seeding was coupled to the email bootstrap a sovereign user never triggers, and the retired /workers page had been the backstop) — (1) /api/company/join seeds the team in after() (joining IS "set up your agents"); (2) the presence route SELF-HEALS an empty roster on any authed visit (idempotent ensureWorkers; the facepile can never show a dead no-team again); (3) THE SOVEREIGN GALLERY: mailbox-READING workflow templates + their category chip hide when the email feature is off (email DELIVERY via Resend stays — the boundary is auth connections only); generate-config already excludes mailbox tools by feature. Live repair: the real Bureau user seeded (Clara, Sofia, Luca, Max)',
     src('app/api/company/join/route.ts').includes('ensureWorkers') &&
     src('app/api/company/join/route.ts').includes('after(async () =>') &&
     src('app/api/workers/presence/route.ts').includes('THE SEEDING SELF-HEAL') &&
@@ -1594,7 +1594,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/workflows/doc-content.ts').includes('opts?.theme ?? null') &&
     src('app/api/home/extract-attach/route.ts').includes('dataB64'));
 
-  check('DH5: THE DATA-BY-CODE LANE (the EG Bank benchmark — every statistic in a deliverable is a COMPUTED fact) — THE DATA-FACTS PASS at the delegation door: tabular chat material (csv/xlsx name or CSV-shaped text) gets its statistics computed IN THE SANDBOX before the coworker writes (codegen with THE DATA PREVIEW — real header+rows, no guessed columns; ONE reasoned repair carrying the actual error; honest null on failure); the facts ride the material as AUTHORITATIVE (verbatim rule) — deterministic and runtime-independent, because the native executeAgentStep is a TOOLLESS single completion (found live: a 150-row CSV made a worker whose prompt CONTAINED the data ask for the data, and a small CSV produced model-arithmetic that merely LOOKED computed). No facts → DATA DISCIPLINE (compute if the tool exists, else mark derived stats unverified). + JUDGMENT DISCLOSURE ("Decisions I made:") in every hand-back. E2E: 150 rows, 6 ground-truth means — the facts pass computed ALL exactly (sandboxed, ~340ms) and the delegated deliverable carries them verbatim',
+  check('DH5: THE DATA-BY-CODE LANE (the Globex Bank benchmark — every statistic in a deliverable is a COMPUTED fact) — THE DATA-FACTS PASS at the delegation door: tabular chat material (csv/xlsx name or CSV-shaped text) gets its statistics computed IN THE SANDBOX before the coworker writes (codegen with THE DATA PREVIEW — real header+rows, no guessed columns; ONE reasoned repair carrying the actual error; honest null on failure); the facts ride the material as AUTHORITATIVE (verbatim rule) — deterministic and runtime-independent, because the native executeAgentStep is a TOOLLESS single completion (found live: a 150-row CSV made a worker whose prompt CONTAINED the data ask for the data, and a small CSV produced model-arithmetic that merely LOOKED computed). No facts → DATA DISCIPLINE (compute if the tool exists, else mark derived stats unverified). + JUDGMENT DISCLOSURE ("Decisions I made:") in every hand-back. E2E: 150 rows, 6 ground-truth means — the facts pass computed ALL exactly (sandboxed, ~340ms) and the delegated deliverable carries them verbatim',
     src('lib/compute/data-facts.ts').includes('export async function computeDataFacts') &&
     src('lib/compute/data-facts.ts').includes('THE DATA PREVIEW') &&
     src('lib/compute/data-facts.ts').includes('repairNote') &&
@@ -1749,7 +1749,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     // the threads port, and the prep CLASS now carries `anticipate:` narrations too.
     src('components/home/item-rail.tsx').includes("|| composed) && t.dkey && /^(prep:|meeting-prep:|anticipate:)/"));
 
-  check('AJ1: THE EDITOR — one composition owns the page (owner, Aug 13: "still doesn\'t feel like one system… some components feel created on the side"; the proof was a live contradiction — the brief claimed the reply prepared, an ask card said the same artifact was missing, the MOVE said review it). Inline components STAY (owner constraint); the responder becomes the page\'s EDITOR: (1) the compose pass SEES the components that will render (decision card, ask cards) and returns a keep/moot verdict per ask — a moot ask (the prepared column already holds it · the verdict no longer needs it · it requests something the team itself produces) is SETTLED at compose time (component stripped, ledger text kept); (2) COHERENCE laws in the prompt — the brief never restates what a component shows ("the choice is laid out below"), never claims prepared+missing, acknowledges a kept ask\'s gap exactly once; (3) THE ONE VOICE (lib/room/voice.ts TEAM_VOICE) injected into every room-prose author (brief + decision brief) — one register, defined once; (4) ASK–VERDICT COHERENCE at the data layer — a verdict whose work-class takes no inputs settles the item\'s asks deterministically (apply-verdict, no model); (5) THE ONE FACE (components/work/worker-face.tsx) — attribution rides the artifact as face+name (prepared bylines, DM bubbles — same visual, same meaning); the voice contract forbids re-attributing in prose. ROOM_BRIEF_VERSION 4. Eyes-on: the TECNICLIMA room went from three contradictory claims to one story',
+  check('AJ1: THE EDITOR — one composition owns the page (owner, Aug 13: "still doesn\'t feel like one system… some components feel created on the side"; the proof was a live contradiction — the brief claimed the reply prepared, an ask card said the same artifact was missing, the MOVE said review it). Inline components STAY (owner constraint); the responder becomes the page\'s EDITOR: (1) the compose pass SEES the components that will render (decision card, ask cards) and returns a keep/moot verdict per ask — a moot ask (the prepared column already holds it · the verdict no longer needs it · it requests something the team itself produces) is SETTLED at compose time (component stripped, ledger text kept); (2) COHERENCE laws in the prompt — the brief never restates what a component shows ("the choice is laid out below"), never claims prepared+missing, acknowledges a kept ask\'s gap exactly once; (3) THE ONE VOICE (lib/room/voice.ts TEAM_VOICE) injected into every room-prose author (brief + decision brief) — one register, defined once; (4) ASK–VERDICT COHERENCE at the data layer — a verdict whose work-class takes no inputs settles the item\'s asks deterministically (apply-verdict, no model); (5) THE ONE FACE (components/work/worker-face.tsx) — attribution rides the artifact as face+name (prepared bylines, DM bubbles — same visual, same meaning); the voice contract forbids re-attributing in prose. ROOM_BRIEF_VERSION 4. Eyes-on: a pilot room went from three contradictory claims to one story',
     // RE-POINTED (Sep 13): the floor is read as a NUMBER (`versionAtLeast`) — the `[5-9]` class
     // died at ROOM_BRIEF_VERSION 10 (the threads arc's editor: ONE AGENDA PER ROOM, the ground
     // evidence, the watermark). The LAW is a floor of ≥5, not a digit.
@@ -1814,7 +1814,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('components/home/item-detail.tsx').includes('export type ReportedDecision') &&
     src('components/home/item-detail.tsx').includes('onDecision') &&
     !src('components/home/item-detail.tsx').includes("import { DecisionCard }") &&  // the stage card is DEAD
-    src('components/entities/entity-room.tsx').includes('onDecision={setFocusDecision}') &&
+    src('components/entities/entity-room.tsx').includes('onDecision={seNorthwindDecision}') &&
     src('components/entities/entity-room.tsx').includes('injectedDraft'));
 
   check('VL1: THE VERB-LANE FIDELITY REPAIRS (the scenario matrix, Aug 13 — an Opus agent walked all 7 lanes end-to-end on the probe; five defects found and fixed, all verified live). B1 — a send_file item whose document can\'t be found RAISES the input_checklist ask in the room (askForFile mirrors the requirements.ts write shape, dedupeKey requires:<id>) instead of returning a silent none that left the machine in `preparing` forever (the one genuine machine-state lie in the matrix); verified live: ask landed, state read awaiting_input. B2 — the one reader serves the invite TIME (the writer stores startISO; reading `.start` served a timeless invite). B3 — the chase draft is ATTRIBUTED (prepared_by rides the nudge lane like every sibling). B4 — a commitment\'s decision brief grounds on the COMMITMENT\'S OWN row (description/counterparty/due_date), never a phantom inbox lookup. B5 — email extraction trims trailing sentence punctuation before validation in all three regex copies ("…to sam@acme.com." no longer yields the address twice, once broken)',

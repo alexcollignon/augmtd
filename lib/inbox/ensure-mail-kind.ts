@@ -46,7 +46,9 @@ export async function ensureMailKind(
     const { computeUnderstanding } = await import('@/lib/ai/email-processor');
     const fresh = await computeUnderstanding({
       user_id: userId, id: item.id,
-      subject: String(sd.subject || ''), body: String(sd.body || '').slice(0, 4000),
+      // W28 · NO RAW CUT (the excerpt law): the one assembler (computeUnderstanding) splits the own words
+      // and clips them two-ended, declared — a raw head slice here dropped a late ask before it ever could.
+      subject: String(sd.subject || ''), body: String(sd.body || ''),
       from_address: String(sd.from_address || ''), from_name: String(sd.from_name || ''),
       to_addresses: (sd.to as string[]) ?? [], cc_addresses: (sd.cc as string[]) ?? [],
       received_at: (sd.received_at as string) ?? null, user_addresses: addrs, recipient_email: addrs[0] ?? null,

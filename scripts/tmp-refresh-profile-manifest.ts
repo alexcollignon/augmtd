@@ -10,8 +10,8 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { readMemberManifest, profileManifestFrom } from '../lib/tenders/member-directory';
 import { writeProfileManifest, readProfileManifest } from '../lib/matching/manifest';
 
-// The live client's folder name — see the matching note in ahk-member-sync.ts.
-const MEMBER_FOLDER_NAME = 'AHK Member companies';
+// The live client's folder name — see the matching note in chamber-member-sync.ts.
+const MEMBER_FOLDER_NAME = 'Chamber Member companies';
 const OWNER = '08fe4449-e5eb-431d-9156-02e9324e5903';
 const FORBIDDEN = ['9d3921b2', 'de4e8824'];
 const APPLY = process.argv.includes('--apply');

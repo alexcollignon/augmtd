@@ -4,6 +4,10 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import type { TaskType, TierType, ModelEndpoint, TenantConfig, ResolvedClient } from './types'
 import { TIER_DEFAULTS } from './defaults'
 import { createBedrockAdapter } from './bedrock-adapter'
+import {
+  CLAUDE_NO_SAMPLING_RE, applyEffort, callerStatedEffort, effortOf, slotEffort, stampUsageEffort, producerEffort, type AIEffort,
+  type EffortProducer,
+} from './effort'
 
 // ─── Tenant config cache ────────────────────────────────────────────────────────
 // Module-level cache — persists for the lifetime of the server process.
@@ -61,6 +65,39 @@ async function getTenantConfig(userId: string, supabase: SupabaseClient): Promis
 
 const clientCache = new Map<string, OpenAI>()
 
+// ─── THE SLOT-BOUND EFFORT (W27.C) ──────────────────────────────────────────────────────────────
+// A slot with an effort (SLOT_EFFORT, or the eval-only override) gets a thin view of the cached client
+// whose chat.completions.create applies that effort to every request that states none — so the ~100
+// sites that call create() directly (and aiCreate) honour it without an edit. A slot with no effort
+// gets the cached client itself: the default path is untouched. The view shares the base client's
+// transport (`_client`), so the meter, the floor and the retries are the same objects.
+const BASE_CLIENT = Symbol.for('augmtd.ai.baseClient')
+const BOUND_EFFORT = Symbol.for('augmtd.ai.boundEffort')
+
+function bindEffort(base: OpenAI, effort: AIEffort): OpenAI {
+  const comps = base.chat.completions as unknown as { create: (p: unknown, o?: unknown) => unknown }
+  const create = (params: unknown, opts?: unknown) =>
+    comps.create(params && !callerStatedEffort(params) ? applyEffort(params as object, effort).params : params, opts)
+  const completions = Object.create(comps, { create: { value: create, writable: true, configurable: true } })
+  const chat = Object.create(base.chat, { completions: { value: completions, writable: true, configurable: true } })
+  return Object.create(base, {
+    chat: { value: chat, writable: true, configurable: true },
+    [BASE_CLIENT]: { value: base },
+    [BOUND_EFFORT]: { value: effort },
+  }) as OpenAI
+}
+
+/** The cached transport under a slot-bound view (the client itself when unbound). The eval's
+ *  same-model column and its meter use it so a slot effort never leaks into a plain column. */
+export function unboundClient(client: OpenAI): OpenAI {
+  return ((client as unknown as Record<symbol, OpenAI | undefined>)[BASE_CLIENT]) ?? client
+}
+
+/** The effort a client view is bound to (undefined = the floor). */
+export function boundEffortOf(client: unknown): AIEffort | undefined {
+  return (client as Record<symbol, AIEffort | undefined> | null)?.[BOUND_EFFORT]
+}
+
 // ─── THE MODEL PARAM FLOOR (Aug 31) ─────────────────────────────────────────────
 // Current-generation models reject the classic completion params, and 23 call sites
 // invoke chat.completions.create directly (streaming included) — so the rewrite lives
@@ -75,7 +112,9 @@ const clientCache = new Map<string, OpenAI>()
 //  • Claude 4.7+/5 family (sonnet-5, opus-5/4-8/4-7, fable-5): sampling params were
 //    removed — `temperature` returns 400 "deprecated for this model" (observed live
 //    on claude-sonnet-5, Aug 31). Haiku 4.5 / Sonnet 4.6 still accept them.
-const CLAUDE_NO_SAMPLING_RE = /^claude-(sonnet-5|opus-5|opus-4-[78]|fable-5)/
+// (W27.C) The floor stays the DEFAULT: a caller or slot that states an effort (THE EFFORT LEVER,
+// lib/ai/effort.ts) writes its own `reasoning_effort` — which the floor already respects — plus the
+// output-budget headroom that keeps a thinking model from starving; nothing stated = byte-identical.
 function withModelParamFloor(client: OpenAI): OpenAI {
   const completions = client.chat.completions
   const orig = completions.create.bind(completions)
@@ -210,9 +249,10 @@ export async function getAIClient(
 ): Promise<ResolvedClient> {
   const config = await getTenantConfig(userId, supabase)
   const endpoint = resolveEndpoint(task, config)
-  const client = buildClient(endpoint, config)
-  console.log(`[AI] task=${task} tier=${config.tier} model=${endpoint.model} user=${userId.slice(0, 8)}`)
-  return { client, model: endpoint.model, endpoint, tier: config.tier }
+  const base = buildClient(endpoint, config)
+  const effort = slotEffort(task)
+  console.log(`[AI] task=${task} tier=${config.tier} model=${endpoint.model} user=${userId.slice(0, 8)}${effort ? ` effort=${effort}` : ''}`)
+  return { client: effort ? bindEffort(base, effort) : base, model: endpoint.model, endpoint, tier: config.tier, ...(effort ? { effort } : {}) }
 }
 
 /**
@@ -236,8 +276,9 @@ export function getSystemClient(task: TaskType): ResolvedClient {
     auditLogging: false,
     modelVersionPinning: false,
   }
-  const client = buildClient(endpoint, fakeConfig)
-  return { client, model: endpoint.model, endpoint, tier: 'standard' }
+  const base = buildClient(endpoint, fakeConfig)
+  const effort = slotEffort(task)
+  return { client: effort ? bindEffort(base, effort) : base, model: endpoint.model, endpoint, tier: 'standard', ...(effort ? { effort } : {}) }
 }
 
 /**
@@ -284,6 +325,14 @@ export const isAITimeout = (e: unknown): e is AITimeoutError =>
   e instanceof AITimeoutError || (e as { name?: string } | null)?.name === 'AITimeoutError'
 
 export type AICallBudget = {
+  /** W27.C — THE EFFORT LEVER, per call (lib/ai/effort.ts): how much the model may think. Wins over the
+   *  client's slot effort; absent (and no slot effort) = the param floor, unchanged. Not a time budget —
+   *  it rides this options bag so every aiCreate caller can state it without a new parameter. */
+  effort?: AIEffort
+  /** W28 — THE PRODUCER EFFORT (lib/ai/effort.ts PRODUCER_EFFORT): the producer names itself and the
+   *  producer × model-family config decides its effort. `effort` above wins; an unresolved producer
+   *  falls through to the slot's effort / the floor. */
+  producer?: EffortProducer
   /** Ceiling for ONE attempt, in ms. */
   timeoutMs?: number
   /** Absolute epoch-ms deadline for the whole call, retries included. */
@@ -416,19 +465,29 @@ export async function aiCreate(
     delete (params as { response_format?: unknown }).response_format
   }
 
+  // W27.C — THE EFFORT LEVER: a per-call effort (or the client's slot effort, when the params state
+  // none) is applied HERE, once, with its output headroom; the stamp lets logAIUsage record it.
+  const stated = budget?.effort
+    ?? (callerStatedEffort(params) ? undefined
+      : (producerEffort(budget?.producer, String((params as { model?: unknown }).model ?? '')) ?? boundEffortOf(client)))
+  if (stated) params = applyEffort(params, stated).params
+  const appliedEffort = effortOf(params)
+
   const once = () => withAttemptBudget((signal) => (budget
     ? (client.chat.completions.create as (p: unknown, o?: unknown) => Promise<unknown>)({ ...params, stream: false }, signal ? { signal } : undefined)
     : client.chat.completions.create({ ...params, stream: false })) as Promise<OpenAI.Chat.ChatCompletion>, budget)
 
+  const stamped = async () => { const res = await once(); stampUsageEffort(res, appliedEffort); return res }
+
   while (true) {
     try {
-      return await once()
+      return await stamped()
     } catch (err: any) {
       if (isAITimeout(err) || isAIAborted(err)) throw err
       if (err?.status === 529 || err?.status === 500) {
         if (!retryFits(budget, 5000)) throw budget ? new AITimeoutError() : err
         await new Promise((r) => setTimeout(r, 5000))
-        return await once()
+        return await stamped()
       }
       if (err?.status === 429 && attempt < MAX_429_RETRIES) {
         attempt++

@@ -8,7 +8,7 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPAB
 });
 
 async function main() {
-  const { data: prof } = await sb.from('profiles').select('id, email').ilike('email', '%alextcollignon%').maybeSingle();
+  const { data: prof } = await sb.from('profiles').select('id, email').ilike('email', '%owner@%').maybeSingle();
   const userId = prof!.id;
   console.log('USER:', prof!.email);
 

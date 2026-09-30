@@ -2,7 +2,7 @@
 
 **Document type:** Technical and Data Processing Information Sheet  
 **Version:** 1.2 — June 2026  
-**Prepared by:** Alexandre Collignon, augmtd  
+**Prepared by:** Alexander Morgan, augmtd  
 **Contact:** alex@augmtd.ai  
 
 ---
@@ -237,7 +237,7 @@ A formal Data Processing Agreement (DPA) under GDPR Article 28 between augmtd (P
 
 For data protection, security, or compliance questions:
 
-**Alexandre Collignon**  
+**Alexander Morgan**  
 augmtd  
 alex@augmtd.ai  
 

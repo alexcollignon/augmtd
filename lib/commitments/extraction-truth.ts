@@ -20,6 +20,7 @@
 import { dateStatedInText } from '@/lib/utils/user-time';
 import { MAY_VERB_TAIL } from '@/lib/utils/weekday-floor'; // THE MAY RULE — one reading of "may"
 import { norm, nameTokens, sameAttendee, emailLocalpart } from '@/lib/projects/identity';
+import { topMessageOf } from '@/lib/inbox/top-message';
 
 const DAY_MS = 86_400_000;
 /** A date with no written year that already went by more than this long before its source reads
@@ -51,6 +52,20 @@ const SEP = '\\s*(?:-|–|—|to|or|and|&|/|ou|e|oder|und|bis|a)\\s*';
 
 const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 const utcNoon = (y: number, m: number, d: number) => Date.UTC(y, m, d, 12);
+
+/** W28 · THE USER'S DAY, NOT UTC'S (TIME TRUTH): the source instant re-expressed as UTC noon of its
+ *  LOCAL calendar day in `tz` — a Thursday 22:00 mail in a zone west of UTC is a THURSDAY mail ("by
+ *  Friday" = tomorrow), though its UTC day is already Friday. Every day-based helper here reads the UTC
+ *  day of its anchor, so callers pass this anchor instead of the raw instant. Unknown/invalid → as is. */
+export function localDayAnchor(instantIso: string | null | undefined, tz: string | null | undefined): string | null {
+  if (!instantIso || Number.isNaN(Date.parse(instantIso))) return instantIso ?? null;
+  if (!tz) return instantIso;
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(instantIso));
+    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+    return `${get('year')}-${get('month')}-${get('day')}T12:00:00Z`;
+  } catch { return instantIso; }
+}
 
 /** Anchor instant of a source (its own date) — UTC noon of that day; now when absent/unparseable. */
 export function anchorMs(anchorIso?: string | null): number {
@@ -187,6 +202,84 @@ export function statedWindow(text: string | null | undefined, anchorIso?: string
   };
 }
 
+// ── W27 · THE WEEKDAY SNAP (TIME TRUTH: "no date derived by a model where code can compute it" — found
+// by the eval). "By Saturday" came back as the Friday on the small tier, and every weekday a day late
+// on another; nothing checked it, because the stated-window parser reads dates, not weekday names. A
+// weekday is arithmetic over the source's own date, so code resolves it. The vocabulary is GENERATED
+// from Intl for the corpus locales (never a hand table of languages); the short PT forms ("sexta",
+// "quarta") are deliberately not read — they are also ordinals ("a quarta versão").
+const WEEKDAY_LOCALES = ['en-US', 'pt-PT', 'de-DE', 'fr-FR', 'es-ES', 'it-IT', 'nl-NL'] as const;
+const WEEKDAY_NAMES: Map<string, number> = (() => {
+  const m = new Map<string, number>();
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(Date.UTC(2026, 0, 4 + i, 12)); // 2026-01-04 is a Sunday → index i
+    for (const loc of WEEKDAY_LOCALES) {
+      try { const n = fold(d.toLocaleDateString(loc, { weekday: 'long', timeZone: 'UTC' })); if (n.length >= 5) m.set(n, i); } catch { /* locale absent */ }
+    }
+  }
+  return m;
+})();
+const WD_RE = new RegExp(`(?<![\\p{L}])(${[...WEEKDAY_NAMES.keys()].sort((a, b) => b.length - a.length).map(esc).join('|')})(?![\\p{L}])`, 'gu');
+
+/** The weekdays (0 = Sunday) a text names, in any corpus language. Pure. */
+export function weekdaysNamedIn(text: string | null | undefined): Set<number> {
+  const out = new Set<number>();
+  for (const m of fold(String(text ?? '')).matchAll(WD_RE)) {
+    const i = WEEKDAY_NAMES.get(m[1]);
+    if (i !== undefined) out.add(i);
+  }
+  return out;
+}
+
+/** The source states `iso` with its DAY NUMBER (any language/format dateStatedInText reads) — a bare
+ *  weekday name is not enough to vouch for a specific date ("by Friday" names every Friday). Pure. */
+export function dateStatedExplicitly(text: string | null | undefined, isoDate: string): boolean {
+  // W28 · A LIST NUMBER IS NOT A DAY: "1. Please send the SOW by Friday" once vouched for the 1st
+  // (a Thursday the model wrote) — the list marker was read as the date's day number, so the weekday
+  // snap stood down and the wrong date stood. Line-leading enumerators ("1.", "2)", "- ") come out
+  // before the day number is looked for.
+  const t = String(text ?? '').replace(/(^|\n)[ \t]*(?:\d{1,2}[.)]|[-*•·])[ \t]+/g, '$1');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate) || !dateStatedInText(t, isoDate)) return false;
+  const day = Number(isoDate.slice(8, 10));
+  return new RegExp(`(?<!\\d)0?${day}(?!\\d)`).test(t);
+}
+
+/** The first date carrying weekday `idx` strictly AFTER the anchor day (1–7 days on) — "by Friday"
+ *  said on a Friday means the next one. */
+export function weekdayForward(idx: number, anchorIso?: string | null): string {
+  const a = anchorMs(anchorIso);
+  const days = ((idx - new Date(a).getUTCDay() + 7) % 7) || 7;
+  return iso(a + days * DAY_MS);
+}
+
+/**
+ * THE WEEKDAY SNAP: a model date within the coming week whose weekday the source never names, while
+ * the source (the commitment's own quote first, else the message's own words) names exactly ONE
+ * weekday that resolves within two days of it, is an arithmetic slip — code writes the right date.
+ * Anything else stands untouched: a date the source spells out, a weekday the source names, several
+ * weekdays with no quote to choose, a date far from any named weekday. A missed snap is survivable; a
+ * false rewrite is not. Pure.
+ */
+export function snapWeekdayDue(modelIso: string | null, opts: { sourceText?: string | null; quote?: string | null; anchorIso?: string | null }): string | null {
+  if (!modelIso || !/^\d{4}-\d{2}-\d{2}$/.test(modelIso)) return modelIso;
+  const anchor = anchorMs(opts.anchorIso);
+  const ms = Date.parse(`${modelIso}T12:00:00Z`);
+  if (Number.isNaN(ms) || ms < anchor - DAY_MS || ms > anchor + 9 * DAY_MS) return modelIso;
+  const own = opts.sourceText ? topMessageOf(String(opts.sourceText)) : '';
+  if (dateStatedExplicitly(own, modelIso) || dateStatedExplicitly(opts.quote, modelIso)) return modelIso;
+  const fromQuote = weekdaysNamedIn(opts.quote);
+  const named = fromQuote.size ? fromQuote : weekdaysNamedIn(own);
+  if (named.size !== 1) return modelIso;
+  const dow = new Date(ms).getUTCDay();
+  if (named.has(dow)) return modelIso;
+  const fixed = weekdayForward([...named][0], opts.anchorIso);
+  // W28: when the commitment's OWN QUOTE names the one weekday, that weekday IS the deadline — a model
+  // date of another weekday in the coming week is an arithmetic slip however far it landed ("by
+  // Thursday" written as next Wednesday). Named only elsewhere in the message, the ±2-day guard stays.
+  if (fromQuote.size === 1) return fixed;
+  return Math.abs(Date.parse(`${fixed}T12:00:00Z`) - ms) <= 2 * DAY_MS ? fixed : modelIso;
+}
+
 /**
  * THE WINDOW'S END as `due_date`: the model's (forward-anchored) date, widened to the end of a
  * window the description states when the model's date sits inside it; the stated window's end when
@@ -195,8 +288,11 @@ export function statedWindow(text: string | null | undefined, anchorIso?: string
  */
 export function dueDateFromSource(opts: {
   modelDate?: unknown; description: string; sourceText?: string | null; anchorIso?: string | null;
+  /** W27: the commitment's verbatim quote — the weekday snap reads the weekday IT names first. */
+  quote?: string | null;
 }): string | null {
-  const model = anchorDueDate(opts.modelDate, opts.anchorIso);
+  const model = snapWeekdayDue(anchorDueDate(opts.modelDate, opts.anchorIso),
+    { sourceText: opts.sourceText, quote: opts.quote, anchorIso: opts.anchorIso });
   const w = statedWindow(opts.description, opts.anchorIso);
   const src = opts.sourceText;
   const sw = w && src != null ? statedWindow(src, opts.anchorIso) : null;

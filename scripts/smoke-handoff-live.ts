@@ -79,8 +79,10 @@ ok('H3.1 the delegation prompt states today and carries the chief\'s RECENT_FACT
   /import \{ RECENT_FACTS_RULE \} from '@\/lib\/converse\/conversation'/.test(delegate)
   && /`TODAY is \$\{today\}\.`/.test(delegate) && /DELEGATION_RECENT_FACTS_RULE,/.test(delegate)
   && /\$\{RECENT_FACTS_RULE\}\\n/.test(delegate) && /"Sources" list/.test(delegate));
-ok('H3.2 both delegation calls ask for the research loop; the step offers it only then',
-  (delegate.match(/webResearch: true/g) ?? []).length === 2 && /if \(ctx\.webResearch\) \{/.test(step));
+// W28 — the research loop rides unless the hand-off's own material bounds the work (needsWebResearch).
+ok('H3.2 both delegation calls ask for the research loop (unless the material bounds the work); the step offers it only then',
+  (delegate.match(/webResearch: args\.webResearch !== false/g) ?? []).length >= 2 && /export function needsWebResearch/.test(delegate)
+  && /if \(ctx\.webResearch\) \{/.test(step));
 ok('H3.3 the research tools are web_search + fetch_url, filtered through the ONE feature map, results wrapped as DATA',
   /WORKER_RESEARCH_TOOL_IDS = \['web_search', 'fetch_url'\]/.test(research)
   && /isToolAllowed\(id, features\)/.test(research)

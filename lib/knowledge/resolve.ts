@@ -83,7 +83,24 @@ const SOURCES: FileSource[] = [
     key: 'kb',
     enabled: () => true,
     search: async (admin, ctx, query, limit) => {
-      const groups = await searchKnowledgeGrouped(ctx.userId, query, limit, admin).catch(() => []);
+      let groups = await searchKnowledgeGrouped(ctx.userId, query, limit, admin).catch(() => []);
+      // W28 · AN AGENCY'S ACRONYM IS NOT THE FILE'S ID: the search's entity gate keeps only files that
+      // spell every ALL-CAPS/code token of the query ("attestation de vigilance URSSAF" → only files naming
+      // URSSAF), so a file named for the document itself was never found. When the gate empties the
+      // result, the query WITHOUT those tokens is asked once, and a file is kept only when its NAME carries
+      // the query's own words (≥ 2 of them) — a bare code query ("Z100", "RIB") still finds nothing.
+      if (!groups.length) {
+        const rest = entityFreeWords(query);
+        if (rest.length >= 2) {
+          const again = await searchKnowledgeGrouped(ctx.userId, rest.join(' '), limit, admin).catch(() => []);
+          // The file's NAME must carry the query's distinctive words — all of them, or (a translated label:
+          // "URSSAF vigilance certificate" for "Attestation de vigilance …") at least one of ≥ 6 letters.
+          groups = again.filter((g) => {
+            const n = foldWords(g.filename);
+            return rest.every((w) => n.includes(w)) || rest.some((w) => w.length >= 6 && n.includes(w));
+          });
+        }
+      }
       if (!groups.length) return [];
       // Join the Phase-A provenance (entity link + origin) for affinity + the pick's reasoning.
       const ids = groups.map((g) => g.fileId);
@@ -144,6 +161,14 @@ const SOURCES: FileSource[] = [
     },
   },
 ];
+
+const foldWords = (x: string) => String(x ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+/** The query's own content words (≥ 4 letters) once its ALL-CAPS and letter+digit code tokens are set
+ *  aside — the words a file's NAME must carry when the code tokens gated everything out. Pure. */
+export function entityFreeWords(query: string): string[] {
+  const kept = String(query ?? '').split(/[\s,;:()"'’]+/).filter((t) => t && !/^[A-Z]{2,}$/.test(t) && !/^(?:[A-Za-z]+\d[\w-]*|\d+[A-Za-z][\w-]*)$/.test(t));
+  return [...new Set(kept.map(foldWords).filter((w) => /^\p{L}{4,}$/u.test(w)))];
+}
 
 /** Search all enabled sources, merge, and rank — ENTITY AFFINITY first among close scores (a file that
  *  belongs to the same deal beats a topically-similar stranger — the same identity-over-topic lesson

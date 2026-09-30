@@ -44,7 +44,7 @@ days whose resolving message fails the new floor; log + undoable.
 still resolves; sweep reports before applying.
 
 **T2 · self-artifact debris.** Extend `heal-self-identity.ts`: pool deliverables whose title/
-recipient resolves to the SELF entity (the "Nudge — Alex Collignon" class) are deleted (they are
+recipient resolves to the SELF entity (the "Nudge — Alex Morgan" class) are deleted (they are
 machine output, not user work — safe); the evaluator already blocks new ones.
 **Gates:** zero self-recipient deliverables across users post-sweep.
 
@@ -265,7 +265,7 @@ Two real mistakes, recorded so they don't repeat:
 - Live-verified on user A's real pool: 11 junk rows demoted (all four "Property inquiry" + the
   meeting acceptance), 8 real obligations kept (pay-booking, security, billing).
 - **Re-stamps RUN post-deploy** (prod now carries mailKind): heal clean ×4; mail-kind stamped
-  (Rene 120). **home_brief CACHE BUSTED for all 8 profiles** — verified 0 remaining.
+  (Sam 120). **home_brief CACHE BUSTED for all 8 profiles** — verified 0 remaining.
 - ⚠️ The ownership-keyed fix renders only after the NEXT deploy (prod serves this morning's
   kind-keyed H4-v1 until then). NEXT: W.**
 

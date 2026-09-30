@@ -1,6 +1,6 @@
 # THE GUARDRAILS ARC — the gate speaks, the user steers it, the run keeps receipts
 
-**Origin (Aug 14):** pilot feedback (René) — workflows need visible guardrails: per-step QA the user
+**Origin (Aug 14):** pilot feedback (Sam) — workflows need visible guardrails: per-step QA the user
 can see, custom policy rules, and easy audit of executed runs. Design mockup approved by owner
 (artifact "Studio Guardrails"). This plan is the build spec; the orchestrator (Fable) owns the
 contracts and review, Opus subagents implement against surgical briefs.
@@ -202,11 +202,11 @@ fixed — across workflows and runs." Two truths conceded:
 - **NO LYING DOORS below the seated gate (owner walk #3):** the inline + only offers content
   steps and seatGate re-seats every one ABOVE the gate — so any add button at or below the gate
   teleports its insert. Positions past the gate render a plain connector (`canAddAt`).
-- **THE FIDELITY PROOF (pre-deploy):** suite 74/74 at v5 incl. the owner-account AHK clone ×3;
+- **THE FIDELITY PROOF (pre-deploy):** suite 74/74 at v5 incl. the owner-account Chamber clone ×3;
   plus the pilot-account Executive Briefing config replayed VERBATIM (all 12 steps incl.
   deep_research) on the probe — succeeded, 358s, 20.4k-char in-format German briefing, no
   verdict on any step (the gateless-regression promise), no sentinel leak, source rows read-only.
-  Legacy AHK workflows carry NO verify step → the new branches are structurally unreachable
+  Legacy Chamber workflows carry NO verify step → the new branches are structurally unreachable
   until a gate is added.
 
 ## Rollout notes

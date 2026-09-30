@@ -147,7 +147,8 @@ console.log('\nE · every drafter producer passes the one check');
     && /buildVoiceBlock\(userId, recipientEmail, client, mailbox, \{ language: mirrorLang \}\)/.test(dr)
     && dr.indexOf('const detected = detectLanguage(') < dr.indexOf('buildVoiceBlock(userId, from, client'));
   gate('E3 the check\'s target is the drafter\'s own language (reply: detected · nudge: the mirror)',
-    /\}, detected\);\n\s+return checked\.body;/.test(dr) && /\}, mirrorLang\);\n\s+return checked\.body;/.test(dr));
+    // W28.10 — the reply's commitment floor may sit between (it only swaps unsupported spans for slots).
+    /\}, detected\);\n(?:\s*\/\/[^\n]*\n|[\s\S]{0,1800}?COMMITMENT_OR_AVAILABILITY[\s\S]{0,900}?)?\s+return checked\.body;/.test(dr) && /\}, mirrorLang\);\n\s+return checked\.body;/.test(dr));
   const cr = src('app/api/compose/draft/route.ts');
   gate('E4 compose: its one model call is wrapped — every generation the truth vet asks for is language-checked',
     (cr.match(/\baiCreate\(/g) ?? []).length === 1 && /draftInLanguage\(\(languageFix\) => generateOnce\(objection, languageFix\), target\)/.test(cr)

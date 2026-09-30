@@ -970,7 +970,7 @@ console.log('\nR11 · the workflow receipts — the composed report, the boundar
     const code = standCode;
     // Acronyms are names, not shouting — and FEEDBACK is the dated marker appended to
     // worker_instructions (a PROMPT field the model reads, never a line a person is served).
-    const ALLOW = new Set(['SQL', 'AHK', 'AI', 'URL', 'PDF', 'DM', 'FEEDBACK']);
+    const ALLOW = new Set(['SQL', 'Chamber', 'AI', 'URL', 'PDF', 'DM', 'FEEDBACK']);
     const shouted: string[] = [];
     for (const m of code.matchAll(/`([^`\\]*)`|'([^'\\]*)'|"([^"\\]*)"/g)) {
       const lit = m[1] ?? m[2] ?? m[3] ?? '';

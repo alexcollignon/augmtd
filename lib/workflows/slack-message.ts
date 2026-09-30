@@ -4,6 +4,8 @@
 
 import type { OpenAI } from 'openai';
 import { aiCreate } from '@/lib/ai/factory';
+// W28 — ONE CONDUCT (lib/ai/conduct.ts `draft`): the instruction's structure/length is the contract.
+import { conductBlock } from '@/lib/ai/conduct';
 
 export async function composeSlackMessage(client: OpenAI, model: string, opts: {
   workerName: string;
@@ -21,6 +23,8 @@ Instruction (what to say / who to tag): ${opts.instruction || 'Briefly announce 
 
 What was just produced (use only this — do not invent facts or links):
 ${opts.context || '(nothing produced this run)'}
+
+${conductBlock('draft')}
 
 Write ONLY the message text — concise and channel-appropriate. Slack mrkdwn (*bold*) ok. To @-mention someone write <@Their Name>; <!channel> / <!here> for the group. No preamble.`;
   try {

@@ -1,14 +1,14 @@
 # PROJECTHOOD & CURATION — registry ≠ portfolio — ✅ P1–P5 SHIPPED (July 22)
 
 **Shipped + cross-user gated** (`scripts/smoke-projecthood.ts` 17/17; voice 20/20, converse 9/9, room
-15/15, portfolio 12/12 re-green; build clean). Live results: Alexandre 75→20 projects (security
-alert/vendor issues → errand; AWS/Hetzner → background), Rene 77→49 lanes + the Jun-25 wall dead
+15/15, portfolio 12/12 re-green; build clean). Live results: Alexander 75→20 projects (security
+alert/vendor issues → errand; AWS/Hetzner → background), Sam 77→49 lanes + the Jun-25 wall dead
 (374 candidates → 55 honestly plotted, 316 fold as undated), personal user 7→0 projects (correct).
-Dedup sweep dismissed 25 real duplicate commitments (Rene 22). Two safety catches en route: a missing
+Dedup sweep dismissed 25 real duplicate commitments (Sam 22). Two safety catches en route: a missing
 project name in move_item_to_project must ASK, never default to detach; the fast-path classifier
 improvises arg keys → tolerant reads + detach phrasing taught explicitly.
 
-**The feedback that triggered this** (user review + Rene): "this view is great but I have too many
+**The feedback that triggered this** (user review + Sam): "this view is great but I have too many
 projects (they were accepted automatically which I think is not ideal)" · the expanded project card
 is confusing (double arrow-actions, five overlapping dismiss verbs) · the Timeline "groups
 everything — not necessarily only tasks… but notifications?" · managing is hard ("not easy to close
@@ -20,7 +20,7 @@ one-off intro ARE entities the brain must remember (identity memory is the subst
 is the presentation layer rendering the registry 1:1 as the portfolio. The registry holds
 everything; the portfolio is the user's mental list of real bodies of work (~5–15). The label era
 had this distinction (Prepared → Suggested → Awareness; projects needed accepting); the one-brain
-demolition dropped the acceptance tier, and Rene's feedback says it was load-bearing.
+demolition dropped the acceptance tier, and Sam's feedback says it was load-bearing.
 
 **The law this plan adds:** *projecthood is a JUDGMENT the brain makes (and the user can override),
 never a side effect of recognition.* Brain remembers everything; portfolio shows judged projects.
@@ -50,7 +50,7 @@ Mechanics:
   automatically — new members change the ledger sig, the synthesis re-runs, scope flips. No special
   machinery, no acceptance queue to maintain.
 - Trust gate: fixtures in the voice smoke — a security-alert-shaped entity must judge errand; a
-  multi-thread deal must judge project. Cross-user counts logged (Rene's portfolio target: dozens →
+  multi-thread deal must judge project. Cross-user counts logged (Sam's portfolio target: dozens →
   a short list + folded tail).
 
 ## P2 — PORTFOLIO reads scope (+ the card fix)
@@ -105,23 +105,23 @@ affordances don't. Two wires, per the one-truth law:
    - The room's Work board rows: hover ✕ = detach (locked, undoable).
    All logged (`activity_events`) + undoable via the existing restore path.
 
-## P5 — MEETING commitment granularity (Rene's wall of near-dupes)
+## P5 — MEETING commitment granularity (Sam's wall of near-dupes)
 
-The AHK screenshot shows the extractor's "explicit obligations only" rule failing at scale for
+The Chamber screenshot shows the extractor's "explicit obligations only" rule failing at scale for
 meeting-heavy users: 25+ granular items, visible near-duplicates across repeated meetings
 ("Identify and secure a pilot project" ×2, three pricing variants).
 - **Write-time cross-MEETING dedup:** a new commitment is checked (isNearDuplicate ~0.5) against
   the entity's OPEN commitments — not just the same batch — skip/refresh instead of insert.
 - Extractor prompt: consolidate sub-tasks; a recurring meeting re-stating an obligation UPDATES it,
   never mints a sibling.
-- One-time cleanup: `scripts/dedup-entity-commitments.ts` (dry-run default, `--apply`), Rene's
+- One-time cleanup: `scripts/dedup-entity-commitments.ts` (dry-run default, `--apply`), Sam's
   data as the test case.
 
 ---
 
 **Order: P1 → P2 → P3 → P4 → P5.** P1+P2 land together (the verdict + the surface that reads it);
 P3 is independent and cheap; P4 rides the registry; P5 is data hygiene. Cross-user smokes per phase
-(Rene = the acceptance test: portfolio shrinks to a believable list; timeline loses the Jun-25
+(Sam = the acceptance test: portfolio shrinks to a believable list; timeline loses the Jun-25
 wall). All existing gates stay green; no migration (scope lives in `state` jsonb; `undated` is a
 render-path value).
 
@@ -162,7 +162,7 @@ Chip, the mini-picker list, the row ⋯ menu, the pin star. Nothing new-looking.
 ## S3 — MOVE by description, from anywhere
 - `move_item_to_project` gains `item_description`; `resolveItemByDescription` (token overlap over
   recent inbox titles/senders + commitment descriptions; clear-winner rule, ambiguous → ask).
-  Global/Home chat: "put the Goldenergy email into Admin" now works. Bulk rides the agent loop
+  Global/Home chat: "put the Acme Energy email into Admin" now works. Bulk rides the agent loop
   (multiple calls). SPLIT emerges by composition: create_project + move-by-description.
 
 ## S5 — MERGE click path

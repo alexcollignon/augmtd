@@ -38,7 +38,7 @@ const LEAK_SHAPES: Array<[string, RegExp]> = [
 (async () => {
   const { data: users, error: uErr } = await sb.auth.admin.listUsers();
   if (uErr) { console.error('listUsers failed:', uErr); process.exit(1); }
-  const targets = ALL ? users!.users : users!.users.filter((u) => u.email === (userArg ?? 'alextcollignon@gmail.com'));
+  const targets = ALL ? users!.users : users!.users.filter((u) => u.email === (userArg ?? process.env.OWNER_EMAIL ?? ''));
 
   let scanned = 0, hits = 0, archived = 0;
   const byShape: Record<string, number> = {};

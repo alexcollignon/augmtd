@@ -1,3 +1,4 @@
+import { conductBlock } from '@/lib/ai/conduct';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getAIClient } from '@/lib/ai/factory';
@@ -380,7 +381,7 @@ REPLY MODE — follow exactly:
 3. If QUERY intent → respond normally. Do NOT emit REPLY_DRAFT.
 
 4. EMAIL BODY FORMAT:
-   "Hi Alex,\\n\\nThank you for reaching out...\\n\\nBest regards,\\nAlexandre"
+   "Hi Alex,\\n\\nThank you for reaching out...\\n\\nBest regards,\\nAlexander"
    Greeting on first line, blank line between paragraphs, sign-off on its own line, name on the next.
    Use \\n for newlines inside JSON. Never add extra commas.
 
@@ -467,6 +468,11 @@ Format (COLON separator, never parentheses): UPDATE_MEETING:{"notes":"...","acti
     if (context === 'drive') {
       systemPrompt += `\n\nYou are a document and knowledge assistant on the Drive page. Help the user find files, understand what's in their knowledge base, and decide what to generate or connect. You can suggest workflows for creating new documents based on existing files.`;
     }
+
+    // W28 — ONE CONDUCT, EVERY PRODUCER (lib/ai/conduct.ts `sidebar_chat`): deliver first, one round of
+    // clarifying questions then the thing, the user's format is the contract, short endings. Last, after the
+    // mode addenda, so it frames the words — the machine tokens above keep their exact contracts.
+    systemPrompt += `\n\n${conductBlock('sidebar_chat')}`;
 
     const userContent = fileContext
       ? `[Attached document content:\n${fileContext}\n]\n\n${message}`

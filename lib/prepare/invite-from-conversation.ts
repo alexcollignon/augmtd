@@ -3,7 +3,7 @@
 //
 // "A plain prompt routes through the SAME preparer and lands the SAME card." This is the chat lane's
 // door onto the ONE grounding (`groundInviteFromText` in lib/home/prepare-action.ts): "set up a
-// meeting with Léa Thursday 11h" typed into the Home thread or a coworker DM produces the SAME
+// meeting with Zoé Thursday 11h" typed into the Home thread or a coworker DM produces the SAME
 // PreparedCalendarInvite shape the proactive pass produces — same time discipline, same propose
 // tier, same code-verified alternatives, same card.
 //

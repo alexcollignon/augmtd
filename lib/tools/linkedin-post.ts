@@ -3,6 +3,7 @@
 // content. Config supports freeform instructions, vocabulary seeding, a
 // predefined content framework, and optional tone/length/language overrides.
 
+import { conductBlock } from '@/lib/ai/conduct';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { clipWithRule } from '@/lib/utils/pack-context';
@@ -228,6 +229,9 @@ export async function executeLinkedInPost(
 - Politically neutral — frame any political topic in business/economic terms only.
 - If citing a specific fact or statistic, include a brief inline source reference.`
   );
+
+  // W28 — ONE CONDUCT (lib/ai/conduct.ts `draft`): the user's instructions are the format contract.
+  blocks.push(conductBlock('draft'));
 
   if (imagePrompt) {
     blocks.push(`IMAGE PROMPT — after each draft, add a "**Visual prompt:**" line with a specific prompt for Canva or Midjourney matching the post's theme and mood.`);

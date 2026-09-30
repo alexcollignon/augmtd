@@ -424,7 +424,7 @@ export function WorkspaceDetail({ company: initial }: { company: Company }) {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[12px] text-neutral-500 w-20 flex-shrink-0">Join code</span>
-              {/* EDITABLE (owner, Aug 10): type a branded code (ISCORE26-style) and save on
+              {/* EDITABLE (owner, Aug 10): type a branded code (BUREAU26-style) and save on
                   blur/Enter — uppercase alphanumeric, uniqueness enforced server-side. */}
               <input
                 value={codeDraft}

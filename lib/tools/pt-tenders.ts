@@ -1,6 +1,6 @@
 // ─── Portuguese Public Procurement tool (Portal Base / IMPIC) ────────────────
 // A FORMATTER over `lib/tenders/fetch.ts` — the structured reader every consumer shares
-// (docs/ahk-tender-matching-plan.md, law 5: one fetch, two consumers). Everything about talking to
+// (docs/chamber-tender-matching-plan.md, law 5: one fetch, two consumers). Everything about talking to
 // the API — the code-side day window, the "Inexistente" law, the DR-link reconstruction, amendment
 // folding — lives there. What lives here is presentation: the item cap, the NIF strip, the sector
 // wording — plus, behind `structured_output`, the generic match-items fence that hands the window

@@ -215,7 +215,7 @@ build agents + 1 gates agent, every diff orchestrator-reviewed). Suite `scripts/
   workflow's deep-dive page (new mount stamp) — each optimistically zeroes the pill and bumps the
   sidebar via `aug:conversation-changed`. Gate C6 pins predicate parity across both routes, the
   served share, the rendered pill, and the stamping doors.
-- **A RUN NEEDS ITS MATERIAL (René's incident, Aug 20 — processes 124/124 ×2; suites re-earned
+- **A RUN NEEDS ITS MATERIAL (Sam's incident, Aug 20 — processes 124/124 ×2; suites re-earned
   handoffs 250 · frames 216 · run-record 102)**: a draft reaction workflow ran with no event and
   SUCCEEDED with a six-step narrated-emptiness cascade as its "deliverable" (which the frame
   lane then dressed). TWO STATES, DELIBERATELY DISTINCT: **READINESS** (workflow-level,

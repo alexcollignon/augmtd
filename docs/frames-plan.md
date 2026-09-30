@@ -217,7 +217,7 @@ validator). The design contract: A NUMBER NEVER STANDS ALONE (KPI carries contex
 behind Kit.expand) · chart chosen by the data's shape · .k-empty says something · header
 names scope/date · "Updated <date>" foot. Known limit (prompt rule, not code floor): a model
 re-declaring `.k-` classes in its own <style> could override the kit. NOT touched: the
-workflow word-trigger (René's "weird addition" — held until he clarifies). Demo: the owner's
+workflow word-trigger (Sam's "weird addition" — held until he clarifies). Demo: the owner's
 dashboard series regenerated as v3 through the kit (v1/v2 plain behind the picker — the
 evolution is visible).
 

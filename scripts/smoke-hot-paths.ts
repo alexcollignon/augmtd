@@ -84,6 +84,7 @@ const BODY_READ_ALLOW: Record<string, string> = {
   // by the one source reader (lib/commitments/source.ts emailSourcesOf, by id, ≤ DECK_CONTEXT_MAX_IDS).
   'lib/home/prepare-action.ts · emails': 'the forward lane (POST, AI) — not a page load',
   'lib/home/item-context.ts · emails': 'the prepare lane (POST, AI) — not a page load',
+  'lib/room/grounding.ts · emails': 'W28 THE NEWEST WORD IN FULL: the grounding every reasoned room call reads (AI lanes) — ≤ NEWEST_IN_FULL_THREADS rows, limit 1 each, clipped under the excerpt law',
 };
 /** Declared `withBody: true` pools — the derivation reads the body, bounded. */
 const WITH_BODY_ALLOW: Record<string, string> = {

@@ -3,6 +3,8 @@
 // output (message / artifact), fires notification, updates run + workflow rows.
 // Called from the cron dispatcher and from manual-run API endpoints.
 
+// W28 — ONE CONDUCT (lib/ai/conduct.ts `draft`) shapes the cover email the task's instructions ask for.
+import { conductBlock } from '@/lib/ai/conduct';
 import { createClient as createAdminClient, SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
 import { executeStep } from './execute-step';
@@ -61,7 +63,7 @@ async function draftEmailCoverBody(
     const completion = await aiCreate(client, {
       model,
       messages: [
-        { role: 'system', content: 'You write a short, warm email body (2–4 sentences) to accompany an attached document. Output ONLY the body text — no subject line and no sign-off (a signature is added automatically).' },
+        { role: 'system', content: 'You write a short, warm email body (2–4 sentences) to accompany an attached document. Output ONLY the body text — no subject line and no sign-off (a signature is added automatically).\n\n' + conductBlock('draft') },
         { role: 'user', content: `Attached document: "${title}".\n\nHow to write the body: ${instructions}\n\nDocument content (for context):\n${content.slice(0, 2000)}` },
       ],
       max_tokens: 400,

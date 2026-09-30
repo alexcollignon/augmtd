@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { estimateCostEur } from './pricing';
+import { effortOf, type AIEffort } from './effort';
 
 export type AIUsageSource =
   | 'workflow_step'       // Studio workflow AI steps
@@ -39,6 +40,18 @@ export interface LogAIUsageParams {
   /** The AI task type (e.g. 'conversation', 'summarization') — separate dimension from tier. */
   taskType?: string;
   usage: { prompt_tokens?: number; completion_tokens?: number } | null | undefined;
+  /** W27.C — the effort the call ran at, when a caller knows it. Otherwise read from the stamp aiCreate
+   *  leaves on `usage` (lib/ai/effort.ts), so direct aiCreate producers record it without an edit. */
+  effort?: AIEffort | null;
+}
+
+/** THE EFFORT RECORD (W27.C): a call that ran ABOVE the param floor is recorded as `<task>@<effort>` in
+ *  task_type (no schema change — the table has no effort column, and code must work before any
+ *  migration). The floor ('minimal', or nothing stated) keeps the bare task type, so every default row —
+ *  and every existing channel grouping (lib/platform/status.ts) — is unchanged. Pure. */
+export function taskTypeWithEffort(taskType: string | null | undefined, effort: AIEffort | null | undefined): string | null {
+  if (!taskType) return taskType ?? null;
+  return effort && effort !== 'minimal' ? `${taskType}@${effort}` : taskType;
 }
 
 /**
@@ -60,7 +73,8 @@ export async function logAIUsage(supabase: SupabaseClient, params: LogAIUsagePar
       provider: params.provider,
       model: params.model,
       tier: params.tier ?? null,
-      task_type: params.taskType ?? null,
+      // The transport's stamp (what was APPLIED — null when the model had nothing to steer) wins.
+      task_type: taskTypeWithEffort(params.taskType, effortOf(params.usage) !== undefined ? effortOf(params.usage) : params.effort),
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
       cost_eur: estimateCostEur(params.model, promptTokens, completionTokens),

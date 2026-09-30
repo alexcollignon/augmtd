@@ -23,7 +23,9 @@ const src = (p: string) => readFileSync(p, 'utf8');
     src('lib/work/judge.ts').includes("from '@/lib/inbox/notice-demotion'") &&
     !src('app/api/home/brief/route.ts').includes('function isActionWorthyAutomated'));
   check('J1: the judge reads the REGISTRY for its component options (never a hardcoded enum in the prompt)',
-    src('lib/work/judge.ts').includes('renderComponentOptions()') &&
+    // ⟲ RE-POINTED W27: the judge picks a VERB, so it is shown the registry's verbs with their meaning
+    // (renderWorkOptions — WORK_MEANING over WORK_VERBS); the component still derives in code.
+    src('lib/work/judge.ts').includes('renderWorkOptions()') &&
     src('lib/work/judge.ts').includes('COMPONENT_KEYS.has(component)'));
   check('J1: conservative floors — none is always legal; an unrecognized coworker never invents one',
     src('lib/work/judge.ts').includes("fallbackVerdict('could not judge") &&

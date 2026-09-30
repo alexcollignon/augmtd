@@ -14,7 +14,7 @@
 //       park `awaiting_approval` → the hold narrates into the standing commitment's room → an
 //       explicit resume completes the run WITHOUT re-running the gate. Plus the test-mode floor:
 //       the same workflow under isTest never parks ("would be held" lives on the step output).
-//   G5  REAL-WORKFLOW REPLAY: the live AHK Executive Briefing's own step config (read-only on its
+//   G5  REAL-WORKFLOW REPLAY: the live Chamber Executive Briefing's own step config (read-only on its
 //       owner's account) cloned onto the probe, deep_research dropped for runtime, the engine gate
 //       appended — plus the cheap Daily-email-digest shape. Structure survives, verdict present.
 //   G6  the source floors: the degradation contract, the code-enforced downgrade, the sentinel-leak
@@ -301,13 +301,13 @@ async function main() {
     // ── G5 — real-workflow replay ──────────────────────────────────────────────────────────────
     console.log('\nG5 — real-workflow replay:');
     const { data: allWf } = await admin.from('workflows').select('id, name, steps, output_config');
-    const ahk = (allWf ?? []).find(w => String(w.id).startsWith('4366060c')) as
+    const chamber = (allWf ?? []).find(w => String(w.id).startsWith('4366060c')) as
       { id: string; name: string; steps: WorkflowStep[]; output_config: OutputConfig } | undefined;
-    if (!ahk) {
+    if (!chamber) {
       ok('the live briefing workflow resolves (read-only on its owner)', false, 'no workflow id starting 4366060c');
     } else {
-      const cloned = (ahk.steps ?? []).filter(s => !(s.type === 'tool' && s.tool === 'deep_research'));
-      const dropped = (ahk.steps ?? []).length - cloned.length;
+      const cloned = (chamber.steps ?? []).filter(s => !(s.type === 'tool' && s.tool === 'deep_research'));
+      const dropped = (chamber.steps ?? []).length - cloned.length;
       const gateStep: WorkflowStep = {
         type: 'verify', id: 'g5_gate', label: 'Delivery check',
         rules: ['Never name any private individual — refer to people by role only'],
@@ -315,7 +315,7 @@ async function main() {
       const wf5 = await makeWorkflow({
         name: 'Guardrails G5 — real briefing shape (clone)',
         steps: [...cloned, gateStep],
-        output_config: { ...(ahk.output_config ?? {}), destination: 'message', report_mode: 'silent' },
+        output_config: { ...(chamber.output_config ?? {}), destination: 'message', report_mode: 'silent' },
       });
       const t0 = Date.now();
       const r5 = await runWorkflow({ workflowId: wf5, triggerSource: 'manual', isTest: true });
@@ -324,7 +324,7 @@ async function main() {
       const g5Gate = verifyOut(row5?.step_outputs ?? []);
       const v5 = g5Gate?.verdict as GateVerdict | undefined;
       const g5Text = textOf(g5Gate);
-      console.log(`  (${secs}s · ${(ahk.steps ?? []).length - dropped + 1} steps · draft ${g5Text.length} chars · verdict ${JSON.stringify({ s: v5?.status, n: v5?.findings?.length, reported: v5?.reported })})`);
+      console.log(`  (${secs}s · ${(chamber.steps ?? []).length - dropped + 1} steps · draft ${g5Text.length} chars · verdict ${JSON.stringify({ s: v5?.status, n: v5?.findings?.length, reported: v5?.reported })})`);
       ok(`the real briefing shape RUNS on the engine gate (deep_research dropped ×${dropped})`,
         r5.status === 'succeeded', `${r5.status} ${row5?.error ?? r5.error ?? ''}`);
       ok('a verdict landed', !!v5, JSON.stringify(g5Gate?.verdict));

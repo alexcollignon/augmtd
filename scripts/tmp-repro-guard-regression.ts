@@ -62,8 +62,8 @@ async function visit(browser: any, email: string, path: string, label: string) {
 
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
-    // 1) The gate still FIRES: AHK has email:false, so /inbox must still bounce to /home.
-    await visit(browser, 'user.ahk@company.com', '/inbox', 'GATE STILL FIRES (email:false)');
+    // 1) The gate still FIRES: Chamber has email:false, so /inbox must still bounce to /home.
+    await visit(browser, 'user.chamber@company.com', '/inbox', 'GATE STILL FIRES (email:false)');
     // 2) A normal workspace's Home is untouched.
     await visit(browser, prof!.email!, '/home', 'NORMAL WORKSPACE HOME');
   } finally {

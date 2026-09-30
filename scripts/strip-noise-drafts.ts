@@ -12,8 +12,8 @@ const USERS = ['08fe4449-e5eb-431d-9156-02e9324e5903', 'c723c2f2-e069-4ab8-980e-
 
 (async () => {
   const { data: uidRows } = await sb.from('work_entities').select('user_id').limit(2000);
-  const rene = [...new Set(((uidRows ?? []) as Array<{ user_id: string }>).map((r) => r.user_id))].find((u) => u.startsWith('ae306f38'));
-  if (rene) USERS.push(rene);
+  const sam = [...new Set(((uidRows ?? []) as Array<{ user_id: string }>).map((r) => r.user_id))].find((u) => u.startsWith('ae306f38'));
+  if (sam) USERS.push(sam);
   for (const uid of USERS) {
     const { data: items } = await sb.from('inbox_items')
       .select('id, work_title, rule_type, type_override, source_data')

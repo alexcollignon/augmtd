@@ -1,5 +1,5 @@
 -- Commitments carry the same `initiative` label as emails (the deal/client/project they belong to),
--- so a commitment-heavy deal (e.g. the Jean-Marie pilot) groups its commitments alongside its emails in
+-- so a commitment-heavy deal (e.g. the Pat pilot) groups its commitments alongside its emails in
 -- the projects lens. Populated by the commitment extractor (lib/commitments/extract.ts) at capture time
 -- + backfilled (scripts/backfill-commitment-initiative.ts). Append-only; nothing outside the projects
 -- lens reads it (the Home/inbox never do).

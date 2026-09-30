@@ -123,7 +123,7 @@ external agents propose actions through our commit door; spec and design partner
 By now it documents real architecture rather than intentions. The organs already exist and are
 anonymous: the commit door · EXPLICIT_SEND · the human-in-the-loop law · the network-refusal-proven
 sandbox · Nango token custody (surrogate credentials, already true here) · the EU perimeter · the
-audit ledger — plus W2 and W3. Assemble under one name, publish, make it the iScore/CelcomDigi
+audit ledger — plus W2 and W3. Assemble under one name, publish, make it the Bureau/Globex Telco
 sales artifact.
 
 ---
@@ -134,7 +134,7 @@ sales artifact.
   May 2025 Slack penalizes non-listed apps with materially worse history/replies rate limits. This
   is what makes the N-apps-per-coworker model scale.
 - **Owner-run**: the three pending manual migrations (`20260722b_drop_initiative_state.sql`,
-  `20260722c_drop_projects.sql`, `20260727c_room_turns_archived.sql`) · **AHK `dedupe:false` is
+  `20260722c_drop_projects.sql`, `20260727c_room_turns_archived.sql`) · **Chamber `dedupe:false` is
   still set FOR TESTING on the live weekly workflow — flip before real operation** · verify the
   Resend + Tavily DPAs are actually executed (the sub-processor table asserts "DPA available").
 

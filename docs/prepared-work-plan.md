@@ -7,7 +7,7 @@ is *attribution + arrival* — "✦ Sofia drafted the Volta proposal — review"
 Not groundbreaking tech; the feeling people didn't realize was doable: **things just get done.**
 
 Everything below serves that. The file/KB work (Phases A–B) is a *step* — the substrate preparations stand
-on — never the product itself. The Home stays the curated Madalena-grammar deck; the Home chat is FROZEN
+on — never the product itself. The Home stays the curated Maya-grammar deck; the Home chat is FROZEN
 (the Ask composer stays but gets no investment); the deep-dive + proactivity are the value.
 
 **The autonomy stance (decided):** *prepared-by-default, approved-at-the-commit-line.* The system works

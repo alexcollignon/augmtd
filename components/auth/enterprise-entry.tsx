@@ -33,7 +33,7 @@ export function EnterpriseEntry({ mode, authedEmail }: Props) {
   const [code, setCode] = useState('');
   const [fullName, setFullName] = useState('');
   const [role, setRole] = useState('');
-  const [focus, setFocus] = useState('');
+  const [focus, seNorthwind] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -290,7 +290,7 @@ export function EnterpriseEntry({ mode, authedEmail }: Props) {
                 )}
                 <input type="text" required value={role} onChange={(e) => setRole(e.target.value)}
                   placeholder="Your role — e.g. Head of Operations" className={input} autoFocus={!askName} />
-                <input type="text" value={focus} onChange={(e) => setFocus(e.target.value)}
+                <input type="text" value={focus} onChange={(e) => seNorthwind(e.target.value)}
                   placeholder="What does your work mostly involve? (optional)" maxLength={240} className={input} />
                 <button type="submit" disabled={busy} className={button}>
                   {busy ? 'Saving…' : 'Meet your team'}

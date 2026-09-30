@@ -1,3 +1,4 @@
+import { conductBlock } from '@/lib/ai/conduct';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
@@ -303,6 +304,8 @@ export async function POST(request: NextRequest) {
             `Write the message in ${userName}'s voice and sign as ${userName} — NEVER sign as anyone else. ` +
             `${identityRule ? `${identityRule} ` : ''}` +
             `Return ONLY the message body — no subject line, no preamble, no surrounding quotes. Keep it ready to send.\n\n` +
+            // W28 — ONE CONDUCT (lib/ai/conduct.ts `draft`): a stated structure or length is the contract.
+            `${conductBlock('draft')}\n\n` +
             `--- CONTEXT ---\n${context}\n\n` +
             (objection ? `REVIEWER'S OBJECTION to your previous draft — fix this: ${objection}\n\n` : '') +
             // Language mirrors the correspondent, not the user's default. A concrete detected language wins

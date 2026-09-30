@@ -6,7 +6,7 @@ for its type, organised by **source + where it sits in the taxonomy**. Builds on
 classifier + digest (see `docs/unified-classifier-digest-plan.md`).
 
 ## Principle
-- **Narrative, not just cards.** "6 follow-ups where the ball is in your court… the AHK pilot and
+- **Narrative, not just cards.** "6 follow-ups where the ball is in your court… the Chamber pilot and
   Sanjay note are the two I'd tackle first," each with a *Next move* — that grounded prose is the
   digital-twin feel a card list can't give.
 - **Type-specific by source + taxonomy.** A brief renders for *what it is* — a follow-ups roundup,

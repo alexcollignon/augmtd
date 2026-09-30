@@ -1,6 +1,7 @@
 // Voice-grounded reply drafting — the single drafter used by BOTH the on-demand route
 // (/api/inbox/[id]/draft) and the auto-draft sweep (/api/cron/draft-sweep). Returns the reply body.
 
+import { conductBlock } from '@/lib/ai/conduct';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { COMPLETION_HONESTY_RULE } from '@/lib/prepare/truth';
 import { buildVoiceBlock, buildMeetingFollowupContext } from '@/lib/context/voice-context';
@@ -30,6 +31,15 @@ export async function getDraftingAssistant(client: DBClient, userId: string): Pr
   } catch { /* non-fatal */ }
   paMemo.set(userId, { at: Date.now(), pa });
   return pa;
+}
+
+
+/** W28 — the coworkers' names on this account (a draft signed with one of them is re-signed as the user). */
+async function coworkerNames(client: DBClient, userId: string): Promise<string[]> {
+  try {
+    const { data, error } = await client.from('custom_agents').select('name').eq('user_id', userId).eq('is_worker', true);
+    return error ? [] : ((data ?? []) as Array<{ name?: string }>).map((r) => String(r.name ?? '')).filter(Boolean);
+  } catch { return []; }
 }
 
 // ── THE MAILBOX A DRAFT IS WRITTEN FROM (stabilization W11.1 · connection-scoped signature) ─────────
@@ -217,6 +227,8 @@ ${clipForPrompt(body, 1200)}
         `${registerFact ? registerFact + '\n' : ''}` +
         `${planBlock}` +
         `${instructions?.trim() ? `Follow this guidance for the reply: ${instructions.trim()}\n\n` : ''}` +
+        // W28 — ONE CONDUCT (lib/ai/conduct.ts `draft`): the user's guidance is the format contract.
+        `${conductBlock('draft')}\n\n` +
         // Anchor the perspective hard — the model otherwise mirrors the sender and signs with THEIR name.
         `You are ${userName}. Write ${userName}'s reply to the email below (which was sent TO ${userName} ` +
         `by ${from}), in ${userName}'s voice. Address the sender, and sign as ${userName} — NEVER sign as ` +
@@ -244,6 +256,23 @@ ${clipForPrompt(body, 1200)}
     });
     return res.choices?.[0]?.message?.content?.trim() || '';
   }, detected);
+  // W28.10 · A REPLY PROMISES ONLY WHAT THE USER SAID (full eval: "Tuesday or Wednesday afternoon would work
+  // well for me" with no calendar; "I'll send the SOW by end of day Thursday"). When the draft states an
+  // availability or a dated commitment on the user's behalf, the claims floor checks it against the thread
+  // and the user's guidance; an unsupported one becomes a [SLOT] the user fills. Only then (a regex
+  // precheck), so an ordinary reply costs nothing extra.
+  if (checked.body) {
+    const { COMMITMENT_OR_AVAILABILITY, groundClaims } = await import('@/lib/prepare/claims-floor');
+    if (COMMITMENT_OR_AVAILABILITY.test(checked.body)) {
+      // Everything the drafter itself was grounded in (the thread, the meeting follow-up, the brain, the plan,
+      // attachments, the user's guidance) — a slot fires only on what NONE of it supports.
+      const material = [`Subject: ${subject}`, earlierContext, body, String(meetingFollowup ?? ''), String(brainBlock ?? ''), String(planBlock ?? ''), String(attachBlock ?? ''), String(registerFact ?? ''),
+        instructions ? `The user's guidance: ${instructions}` : ''].filter((x) => x && x.trim()).join('\n\n');
+      checked.body = (await groundClaims(client, userId, { draft: checked.body, material, focus: 'commitments' })).text;
+    }
+    const { enforceUserSignOff } = await import('@/lib/inbox/sign-off');
+    checked.body = enforceUserSignOff(checked.body, userName, await coworkerNames(client, userId));
+  }
   return checked.body;
 }
 
@@ -328,6 +357,8 @@ export async function generateNudgeDraft(
           : `Write it in the language the recipient communicates in (infer from the recipient and the ` +
             `description above); if unclear, use English. ${exemplarRule(null)} `) +
         (opts.instructions ? `\n${opts.instructions}\n` : '') +
+        // W28 — ONE CONDUCT (lib/ai/conduct.ts `draft`): the user's guidance is the format contract.
+        `\n${conductBlock('draft')}\n` +
         `${mailboxIdentityRule(mailbox) ? `${mailboxIdentityRule(mailbox)} ` : ''}` +
         `Return ONLY the message body — no subject line, no preamble, no surrounding quotes.` +
         (languageFix ? `\n\n${languageFix}` : '') }],

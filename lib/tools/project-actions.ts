@@ -1,6 +1,6 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // PROJECT / MEMBERSHIP capabilities (projecthood-plan P4) — the registry executors behind
-// "this isn't part of Soboplac", "move this to the pilot", "mark the hire done", "merge these two".
+// "this isn't part of Acme Plastics", "move this to the pilot", "mark the hire done", "merge these two".
 // Each wraps EXISTING machinery (setItemMembership / entity lifecycle PATCH semantics / absorbEntity)
 // so a chat command and the click path can never behave differently. Exposed to the chief-of-staff
 // slice — every conversation surface gets them at once. All reversible or logged.
@@ -73,7 +73,7 @@ export async function executeCreateProject(
   };
 }
 
-/** RESOLVE an item by plain description (projecthood-plan S3) — "the Goldenergy email", "the refund
+/** RESOLVE an item by plain description (projecthood-plan S3) — "the Acme Energy email", "the refund
  *  commitment". Token overlap over recent inbox titles/senders + open commitment descriptions;
  *  a CLEAR winner or nothing (ambiguity is a question, never a guess). Deterministic, zero AI. */
 export async function resolveItemByDescription(
@@ -203,7 +203,7 @@ export async function executeCreateTaskItem(
 // ── OpenAI-schema definitions (the converse loop's toolset). ──
 export const moveItemToProjectDefinition = {
   name: 'move_item_to_project',
-  description: "Move an item into a project, or take it OUT of its project (project_name 'none'). Without item_description it acts on the item being viewed; with item_description it finds the item anywhere ('the Goldenergy email'). The user's decision is permanent — the system won't re-file it.",
+  description: "Move an item into a project, or take it OUT of its project (project_name 'none'). Without item_description it acts on the item being viewed; with item_description it finds the item anywhere ('the Acme Energy email'). The user's decision is permanent — the system won't re-file it.",
   input_schema: {
     type: 'object',
     properties: {

@@ -484,7 +484,7 @@ async function main() {
   };
 
   try {
-    // (c) THE RENÉ SHAPE: a real reaction workflow, run by hand, with nothing that happened.
+    // (c) THE SAM SHAPE: a real reaction workflow, run by hand, with nothing that happened.
     const reactWhen = 'a new tender matching our sectors arrives';
     const reactId = await mkWf(`${NAME_PREFIX} — reaction`, {
       trigger: { type: 'reaction', when: reactWhen, label: 'On a new tender' },

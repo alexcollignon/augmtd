@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// THE TENDER-FETCH SUITE (permanent — docs/ahk-tender-matching-plan.md P1, law 5).
+// THE TENDER-FETCH SUITE (permanent — docs/chamber-tender-matching-plan.md P1, law 5).
 // One fetch, two consumers: the structured BASE reader and the briefing formatter must never
 // disagree about what was published. These are LIVE gates against the real APIBase2 — the laws
 // they hold are the ones that already failed in production once.

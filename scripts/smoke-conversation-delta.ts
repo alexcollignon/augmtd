@@ -221,7 +221,7 @@ const deps = (verdict: FulfillmentJudgment['verdict'] | 'throw'): ApplyDeps & { 
   ok('H1 a due before its own source (Aug 8 from an Aug 10 mail) → null', dueFloorAgainstSource('2026-08-08', '2026-08-10T09:00:00Z', 'Share updated report').due === null);
   ok('H2 a title naming that past date → no commitment', dueFloorAgainstSource('2026-08-08', '2026-08-10T09:00:00Z', 'Attend the August 8 review').drop);
   ok('H3 a due on/after its source stands', dueFloorAgainstSource('2026-08-12', '2026-08-10T09:00:00Z', 'x').due === '2026-08-12');
-  ok('H4 the writer floors every row it writes', /dueFloorAgainstSource\(due, meta\.anchorAt/.test(ex) && /filter\(\(d\) => !d\.drop\)/.test(ex));
+  ok('H4 the writer floors every row it writes', /dueFloorAgainstSource\(due, (?:meta\.anchorAt|dayAnchor)/.test(ex) && /filter\(\(d\) => !d\.drop\)/.test(ex));
   ok('H5 accent + short-surname forms fold to one human', nameFormsAgree('Zoe Costa', 'Zoé Maria Costa') && foldCounterparty('Zoe Costa', [{ name: 'Zoé Maria Costa', aliases: [] }]) === 'Zoé Maria Costa');
   ok('H6 a bare address resolves to its person\'s name', foldCounterparty('sam.rivera@acme.test', [], ['Sam Rivera']) === 'Sam Rivera');
   ok('H7 ambiguity stays raw (two people share the short form)', foldCounterparty('Dana', [], ['Dana Lee', 'Dana Park']) === 'Dana');

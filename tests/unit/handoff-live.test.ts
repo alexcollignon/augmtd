@@ -287,9 +287,11 @@ describe('R · the delegation path holds web_search and the recent-facts rule', 
     expect(stub.calls[0].tools).toEqual([]);
   });
 
-  it('R5 the delegation engine asks for the research loop on both of its coworker calls', async () => {
+  it('R5 the delegation engine asks for the research loop on both of its coworker calls (unless the material bounds the work — W28)', async () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('lib/home/delegate.ts', 'utf8');
-    expect((src.match(/webResearch: true/g) ?? []).length).toBe(2);
+    expect((src.match(/webResearch: args\.webResearch !== false/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    const conv = readFileSync('lib/converse/index.ts', 'utf8');
+    expect(conv).toMatch(/webResearch: needsWebResearch\(userText, material\)/);
   });
 });

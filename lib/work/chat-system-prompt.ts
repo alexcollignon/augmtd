@@ -1,3 +1,10 @@
+// W28 — ONE CONDUCT, EVERY PRODUCER: the conduct rules (deliver first, clarify-then-deliver, the format
+// contract, endings, cross-checks…) come from lib/ai/conduct.ts. The coworker DM composes the
+// `coworker_chat` profile; a workflow/agent step composes `workflow_step` (no interview rules, its own
+// declared format wins). The old "attempt first" / "never list multiple questions" principles are
+// retired here — the second contradicted CLARIFY, THEN DELIVER.
+import { conductBlock, type ConductProfile } from '@/lib/ai/conduct'
+
 export type ModelFamily = 'claude' | 'llama' | 'deepseek' | 'gpt' | 'unknown'
 
 export function detectModelFamily(model: string): ModelFamily {
@@ -9,11 +16,11 @@ export function detectModelFamily(model: string): ModelFamily {
   return 'unknown'
 }
 
-export function buildChatSystemPrompt(modelFamily: ModelFamily = 'claude'): string {
+export function buildChatSystemPrompt(modelFamily: ModelFamily = 'claude', conduct: ConductProfile = 'coworker_chat'): string {
   // The clock — without it, models normalize old source material (search results,
   // fetched pages) into the present when asked about "this week"/"recent" work.
   const dateLine = `<current_date>\nToday is ${new Date().toISOString().slice(0, 10)} (UTC). Search results and fetched pages carry their own dates — treat meaningfully older or undated material as historical/unverified, never as current, and never shift its dates or years toward the present.\n</current_date>\n\n`
-  const base = dateLine + BASE_PROMPT
+  const base = dateLine + BASE_PROMPT + '\n\n' + conductBlock(conduct)
   if (modelFamily === 'llama' || modelFamily === 'deepseek' || modelFamily === 'unknown') {
     return base + OSS_RULES
   }
@@ -102,7 +109,7 @@ User: "Draft a proposal for the client" / "Write a report on X" / "make a report
 → a substantial composed deliverable: gather context (calendar/emails/KB as appropriate) → generate_document directly → short summary reply. Never paste the whole report into chat.
 
 User: "Draft an email to the team"
-→ write the email inline in your response. Ask one question only if the topic is genuinely unknown.
+→ write the email inline in your response now — sensible defaults, [PLACEHOLDERS] for what only the user knows.
 
 User: "Send a formal email to the client about the contract" / "Draft an email to open in my mail client"
 → explicit send intent — call request_clarification or generate_document type "email"
@@ -133,10 +140,8 @@ User: "what did John say about the invoice in his last email?"
 </examples>
 
 <principles>
-- Attempt first, ask later. When details are missing, make a reasonable assumption, state it in one sentence, and get it done. The user wants output, not a questionnaire.
-- Never list multiple questions. If you genuinely cannot proceed without information, ask the single most important question — one, not four.
 - Sound like a smart colleague, not a form. Use natural, direct language.
-- Be specific. Vague answers are less useful than short concrete ones. When you receive data from a tool (tasks, meetings, documents), reference actual names, times, and details — never generate empty section headers or placeholder summaries.
+- Be specific. Vague answers are less useful than short concrete ones. When you receive data from a tool (tasks, meetings, documents), reference actual names, times, and details — never generate empty section headers or filler summaries.
 - Never narrate tool calls. Don't say "I'll search your knowledge base now" — just call the tool.
 - The clarification "question" field must always be a statement — a confident declaration of what you will create. Never a yes/no question, never "Would you like me to…".
 - Use the user's actual role, responsibilities, and contacts from context when generating.

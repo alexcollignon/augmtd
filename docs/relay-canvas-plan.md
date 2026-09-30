@@ -4,7 +4,7 @@
 blocks pass the baton down a machine-laid track, stations guard the line, one endpoint delivers —
 and everything the canvas can draw is sayable through every other door.
 
-Born from René's CV-triage whiteboard (the gap ladder recorded in the processes plan) + the
+Born from Sam's CV-triage whiteboard (the gap ladder recorded in the processes plan) + the
 owner's calls: keep the building-blocks relay (NOT a free 2D canvas — layout is always the
 machine's job, never the user's); Make/n8n's recognizability with Zapier's spine; current
 capabilities only (no new integrations — the trigger/step catalogues stay registry-driven so a
@@ -39,7 +39,7 @@ branching engine (pipelines stay linear; the process becomes a graph of pipeline
    contain a workflow step — readiness refuses), circular-reference refusal, test mode NEVER
    fires the real child (it uses the child's latest delivered output, exactly like
    get_workflow_output today). Loops = composition: "when another workflow delivers" is a
-   TRIGGER SOURCE, so two linear pipelines form René's cycle with no loop engine.
+   TRIGGER SOURCE, so two linear pipelines form Sam's cycle with no loop engine.
 6. **MANY DOORS, ONE RUN.** `triggers[]` is any-of: each door fires ITS OWN run carrying the one
    thing that arrived (which door fired rides the run's context — the normalizer step can see
    it). Constraint v1, stated not hidden: at most ONE schedule trigger per workflow (next_run_at
@@ -51,7 +51,7 @@ branching engine (pipelines stay linear; the process becomes a graph of pipeline
    reaction workflows testable — the clause the refusal copy earns back).
 8. **CURRENT CAPABILITIES ONLY.** W1–W4 touch no external surface. Internal event sources ship
    first: mail reaction (exists) · a file lands in Knowledge · a meeting is recorded · another
-   workflow delivers. René's own "Later" boxes (talent platform, LinkedIn) wait for their
+   workflow delivers. Sam's own "Later" boxes (talent platform, LinkedIn) wait for their
    registry rows.
 
 ## THE SCHEMA (additive; ONE migration — the arc's only one)
@@ -161,7 +161,7 @@ run-record 102 · build green):**
   close a door the user opened); create-path ridden from birth this time.
 
 **W3 — THE SUBPROCESS STATION BUILT (Aug 24; relay 336/336 ×2 (+128) · processes 124/124 ·
-RENÉ'S LOOP LIVE):**
+SAM'S LOOP LIVE):**
 - lib/workflows/subprocess.ts = the whole law: async door check at fire time (missing/draft/
   depth-cap — readiness rule 7 and the door speak ONE identical self-reference sentence) ·
   insert-first claim (`subprocess_link`, the BATON stored on the row — auditable + durable) ·
@@ -230,7 +230,7 @@ THE LAW: **the limit paces, it never loses.**
 
 ## W4 — THE CASE LAYER (spec addendum, Aug 24 — build contract)
 
-René's step 2: "Augmtd links application to job opening." Applications arrive over days through
+Sam's step 2: "Augmtd links application to job opening." Applications arrive over days through
 many doors; each run carries ONE; the comparison needs the OPENING'S ACCUMULATED candidates.
 Cross-run state — the last structural gap in the diagram.
 

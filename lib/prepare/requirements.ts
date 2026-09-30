@@ -18,9 +18,11 @@ import { aiCall } from '@/lib/ai/call';
 import { resolveFileUniversal, type UniversalCandidate } from '@/lib/knowledge/resolve';
 import { clip } from '@/lib/room/turns';
 import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { topMessageOf } from '@/lib/inbox/top-message';
 import { detectLanguage } from '@/lib/inbox/detect-language';
 import { GENERIC_WORK_WORDS } from '@/lib/entities/recognize';
-import type { WorkVerb } from '@/lib/work/surface-registry';
+import { REQUIRES_BUDGET, budgetRequires, type WorkVerb } from '@/lib/work/surface-registry';
+import { isSecretInput } from '@/lib/room/cta-law';
 import { requireTaskId } from '@/lib/prepare/supply';
 import { askClaimsReadiness } from '@/lib/prepare/truth';
 import { baseOfferLine } from '@/lib/room/ask-base';
@@ -45,7 +47,24 @@ export type RequirementsResult = {
   /** W3 — the user tapped "go ahead with what's available" on this item's ask: the work proceeds
    *  around the gaps (work-with-what-you-have), and the ask is never re-posted. */
   proceeded?: boolean;
+  /** W27 · NO SILENT CAPS: labels beyond REQUIRES_BUDGET — never resolved, never silently dropped:
+   *  reported here and named in the ARTIFACT TRUTH as not checked (so nothing claims them in hand). */
+  leftBehind?: string[];
+  /** W27 · A SECRET IS NEVER AN INPUT: labels refused as secrets (a password, login, code, key, card
+   *  number) — never searched, staged or asked for; the ARTIFACT TRUTH says they are never sent. */
+  refusedSecrets?: string[];
+  /** W27e · labels that are the work's OWN output (a produce task's new-work deliverable) — never asked
+   *  of the user; the ARTIFACT TRUTH names them as the work to write. */
+  ownOutput?: string[];
 };
+
+/** W27e · THE WORK IS NOT ITS OWN INPUT (pure): a NEW-WORK requirement of a `produce` task with NO
+ *  existing document to go into is the deliverable itself — the team writes it; it is never an ask.
+ *  With a BASE it stays an ask (W13.6: "details on slides 7&8 in the interim report" are the user's to
+ *  give, the base is offered). Unknown kind → false (it may exist). */
+export function isOwnOutput(work: string | null | undefined, kind: RequirementKind | null | undefined, hasBase = false): boolean {
+  return work === 'produce' && kind === 'new_work' && !hasBase;
+}
 
 const CONFIDENT = 0.55; // below this, don't even ask the judge — retrieval found nothing close
 
@@ -538,7 +557,8 @@ export async function requestFactsOf(
       return {
         requestAt: sd.received_at ?? (it?.created_at as string | null) ?? null,
         requestText: [it?.work_title, sd.subject, body.slice(0, 4000)].filter(Boolean).join('\n'),
-        excerpt: body.slice(0, 700) || null,
+        // W28 · the pick reads the message's OWN words, clipped under the excerpt law (never a raw head cut).
+        excerpt: body ? clipForPrompt(topMessageOf(body) || body, 700) : null,
       };
     }
     const { data: c } = await client.from('commitments').select('description, created_at, source, source_id').eq('id', item.id).eq('user_id', userId).maybeSingle();
@@ -554,7 +574,7 @@ export async function requestFactsOf(
     return {
       requestAt: at,
       requestText: [desc, subject, body.slice(0, 4000)].filter(Boolean).join('\n'),
-      excerpt: [desc, body.slice(0, 500)].filter(Boolean).join(' — ').slice(0, 700) || null,
+      excerpt: clipForPrompt([desc, body ? clipForPrompt(topMessageOf(body) || body, 500) : ''].filter(Boolean).join(' — '), 700) || null,
     };
   } catch { return { requestAt: null, requestText: '', excerpt: null }; }
 }
@@ -581,13 +601,46 @@ export type ArtifactPick = {
   judged?: boolean;
 };
 
-const normText = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+// W28 · typographic apostrophes/quotes and accents fold (a model writes D'ASSURANCE for a file's
+// D’ASSURANCE — the same words; the evidence check must never refuse a verbatim quote for a glyph).
+const normText = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  .replace(/[‘’‚‛`´]/g, "'").replace(/[“”„‟]/g, '"').replace(/\s+/g, ' ').trim();
 
-/** Is this candidate ALLOWED to auto-stage for this item (provenance law #1 + the score bar #4)? */
-function stageEligible(c: UniversalCandidate, entityId: string | null | undefined): boolean {
+/** W28 · THE EVIDENCE CHECK, robust to how a model QUOTES (law #2's code half): the evidence is checked
+ *  fragment by fragment — wrapping quote marks come off and a "<file name>" — <snippet words> answer
+ *  splits at its separators — so a verbatim filename wrapped in quotes, or a filename followed by the
+ *  snippet it came with, still proves itself. Each fragment must still exist in the candidate's own
+ *  text (substring, or every word present); nothing unverified ever passes. Found by the eval: the pick
+ *  named the right file, and the check refused it for the quote marks around its name. Pure. */
+export function evidenceInText(evidence: string, candTextNorm: string): boolean {
+  const frags = String(evidence ?? '').split(/["“”«»]|\s[—–-]\s|\s\|\s/).map((f) => normText(f).replace(/^[\s'’.,:;]+|[\s'’.,:;]+$/g, '')).filter((f) => f.length >= 3);
+  return frags.some((f) => {
+    if (candTextNorm.includes(f)) return true;
+    const toks = f.split(' ').map((t) => t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')).filter((t) => t.length > 1);
+    return toks.length >= 2 && toks.every((t) => candTextNorm.includes(t));
+  });
+}
+
+/** A COMPANY DOCUMENT (W27.B): a knowledge-base file that belongs to NO body of work — the user's own
+ *  standing material (a VAT or insurance certificate, a company registration, an ISO certificate, a
+ *  CV, a policy). Provenance law #1 exists to stop a file of ANOTHER body of work being attached here;
+ *  a file of no body of work cannot be another's. Found by the W26 eval: 245 of 246 input-ask runs
+ *  staged nothing, because every company document failed the old entity-equality test and the user
+ *  was ASKED for files already in their knowledge base. Pure. */
+export function isCompanyDocument(c: Pick<UniversalCandidate, 'source' | 'entityId'>): boolean {
+  return c.source === 'kb' && !c.entityId;
+}
+
+/** Is this candidate ALLOWED to auto-stage for this item (provenance law #1 + the score bar #4)? Pure. */
+export function stageEligible(c: UniversalCandidate, entityId: string | null | undefined): boolean {
   if (c.source === 'pool') return true;
   if (entityId && c.entityId === entityId) return c.score >= STAGE_SCORE; // affinity boost already rides the score
-  return false; // global KB / drive hit on a loose or different-entity item — suggestion at best
+  // W27.B · a company document (no body of work) may stage for ANY item — it still passes the same
+  // evidence-quoting pick (#2), one-file-one-label (#3) and the staging role in time (#6: an existing
+  // file that predates the request stages only when the request NAMES it). Another body of work's file
+  // (a different entity) and drive hits (a shallow name catalog, no provenance) stay suggestions.
+  if (isCompanyDocument(c)) return c.score >= STAGE_SCORE;
+  return false; // a different-entity KB hit or a drive hit — suggestion at best
 }
 
 /**
@@ -610,10 +663,11 @@ export async function verifyArtifactMatch(
     const res = await aiCall<{ match?: boolean; evidence?: string; kind?: string }>({
       userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 180, source: 'task_preparation',
       prompt:
-        `TASK: ${input.task.slice(0, 140)}\n` +
-        (input.emailExcerpt ? `THEIR OWN WORDS: ${input.emailExcerpt.replace(/\s+/g, ' ').slice(0, 400)}\n` : '') +
+        `${EXCERPT_RULE}\n` +
+        `TASK: ${clipForPrompt(input.task, 140)}\n` +
+        (input.emailExcerpt ? `THEIR OWN WORDS: ${clipForPrompt(input.emailExcerpt.replace(/\s+/g, ' '), 400)}\n` : '') +
         (input.requestAt && tsOf(input.requestAt) !== null ? `THE REQUEST WAS MADE ON: ${new Date(tsOf(input.requestAt)!).toISOString().slice(0, 10)}\n` : '') +
-        `CANDIDATE FILE: "${c.filename}" [${c.source}${c.originKind ? ` · ${c.originKind}` : ''}${datedLine(c)}]\nSnippet: ${c.snippet.slice(0, 200)}\n\n` +
+        `CANDIDATE FILE: "${c.filename}" [${c.source}${c.originKind ? ` · ${c.originKind}` : ''}${datedLine(c)}]\nSnippet: ${clipForPrompt(c.snippet, 200)}\n\n` +
         `Is this file THE document the task asks to send/share — not merely related to the same ` +
         `client/topic? If yes, return "evidence": a short phrase COPIED VERBATIM from the filename ` +
         `or snippet that proves it is THIS document. Unsure → false.\n` +
@@ -622,8 +676,7 @@ export async function verifyArtifactMatch(
     });
     const evidence = String(res.json?.evidence ?? '').trim();
     const kind = kindOf(res.json?.kind);
-    const real = res.json?.match === true && evidence.length >= 3
-      && normText(`${c.filename} ${c.snippet}`).includes(normText(evidence));
+    const real = res.json?.match === true && evidenceInText(evidence, normText(`${c.filename} ${c.snippet}`));
     if (!real) return { match: false, evidence: null, kind, role: null };
     // W13 · law 6, the CODE half: the verified file must also be the deliverable IN TIME.
     const role = stagingRole({
@@ -639,6 +692,21 @@ export async function verifyArtifactMatch(
  * wrong-PDF class lived). Applies the staging law per label: provenance filter → one contrastive,
  * evidence-quoting verification per label → code-side quote check → the one-file-one-label collapse.
  */
+/** W28 · Does a requirement label spell this file's name verbatim (accent/case/space folded, the
+ *  extension included, ≥ 8 chars)? A bare topic word never counts — only the file's own full name. Pure. */
+export function labelNamesFile(label: string, filename: string): boolean {
+  const f = (x: string) => String(x ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[_\s]+/g, ' ').trim();
+  const name = f(filename);
+  const lab = f(label);
+  if (!(name.length >= 8 && /\.[a-z0-9]{2,5}$/.test(name) && lab.includes(name))) return false;
+  // …and the label asks for nothing the file's name does not already say: "signed Order form X.pdf"
+  // beside an UNSIGNED "Order form X.pdf" names a state that file lacks — the pick decides that one.
+  const words = (x: string) => x.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter((w) => w.length >= 3);
+  const inName = new Set(words(name));
+  const FILLER = new Set(['the', 'this', 'that', 'file', 'copy', 'attachment', 'attached', 'document', 'previously', 'again', 'resend', 'send', 'attach', 'message', 'same', 'pdf']);
+  return words(lab.replace(name, ' ')).every((w) => inName.has(w) || FILLER.has(w));
+}
+
 export async function pickArtifacts(
   admin: SupabaseClient, userId: string,
   input: {
@@ -671,8 +739,8 @@ export async function pickArtifacts(
     if (suggestion) {
       const sres = await aiCall<{ plausible?: boolean }>({
         userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 60, source: 'task_preparation',
-        prompt: `THE ASK: ${input.itemTitle.slice(0, 120)} — needs "${label}".\n` +
-          `CANDIDATE FILE (from elsewhere in the user's files): "${suggestion.filename}" — ${suggestion.snippet.slice(0, 140)}\n\n` +
+        prompt: `${EXCERPT_RULE}\nTHE ASK: ${clipForPrompt(input.itemTitle, 120)} — needs "${label}".\n` +
+          `CANDIDATE FILE (from elsewhere in the user's files): "${suggestion.filename}" — ${clipForPrompt(suggestion.snippet, 140)}\n\n` +
           `Could this file PLAUSIBLY be that artifact or this same engagement's material — not another ` +
           `client's or an unrelated meeting's? Unsure → false.\nJSON only: {"plausible":true|false}`,
       }).catch(() => ({ json: { plausible: false } }));
@@ -687,12 +755,13 @@ export async function pickArtifacts(
         `A colleague asked for a specific artifact. Decide whether one of the candidate files IS that ` +
         `artifact — not merely related to the same client, topic, or kind of work. Being adjacent ` +
         `("assessment material" when they asked for "the individual report") is NOT a match.\n\n` +
-        `THE ASK: ${input.itemTitle.slice(0, 140)}\n` +
-        (input.emailExcerpt ? `THEIR OWN WORDS: ${input.emailExcerpt.replace(/\s+/g, ' ').slice(0, 500)}\n` : '') +
+        `${EXCERPT_RULE}\n` +
+        `THE ASK: ${clipForPrompt(input.itemTitle, 140)}\n` +
+        (input.emailExcerpt ? `THEIR OWN WORDS: ${clipForPrompt(input.emailExcerpt.replace(/\s+/g, ' '), 500)}\n` : '') +
         (input.requestAt && tsOf(input.requestAt) !== null ? `THE REQUEST WAS MADE ON: ${new Date(tsOf(input.requestAt)!).toISOString().slice(0, 10)}\n` : '') +
         `THE NEEDED ARTIFACT: "${label}"\n\n` +
         `CANDIDATES:\n${eligible.map((c, j) =>
-          `${j}. "${c.filename}" [${c.source}${c.originKind ? ` · ${c.originKind}` : ''}${input.entityId && c.entityId === input.entityId ? ' · SAME body of work' : ''}${datedLine(c)}] — ${c.snippet.slice(0, 160)}`).join('\n')}\n\n` +
+          `${j}. "${c.filename}" [${c.source}${c.originKind ? ` · ${c.originKind}` : ''}${input.entityId && c.entityId === input.entityId ? ' · SAME body of work' : isCompanyDocument(c) ? ' · company document (belongs to no single body of work)' : ''}${datedLine(c)}] — ${clipForPrompt(c.snippet, 160)}`).join('\n')}\n\n` +
         `If one IS the artifact: return its number AND "evidence" — a short phrase COPIED VERBATIM ` +
         `from that candidate's filename or snippet above that proves it (the proof must name what ` +
         `makes it THIS artifact, not the shared topic). If none qualifies, match null. Unsure → null.\n` +
@@ -703,20 +772,25 @@ export async function pickArtifacts(
     const kind: RequirementKind | null = judgedKind ?? kindOf(res.json?.kind);
     // W13.2: did the pick ANSWER? (an outage / no budget → json undefined → never a verdict)
     const judged = !!res.json && typeof res.json === 'object' && ('match' in res.json || 'kind' in res.json);
-    const idx = typeof res.json?.match === 'number' ? res.json.match : null;
+    let idx = typeof res.json?.match === 'number' ? res.json.match : null;
+    let evidence = String(res.json?.evidence ?? '').trim();
+    // W28 · A NAMED FILE IS ITS OWN PROOF: when the needed artifact's label spells ONE eligible
+    // candidate's file name verbatim (the ask names the very file — "resend Order form X signed.pdf")
+    // and the work is to send it AS IT IS, that candidate IS the artifact; the file name is the verbatim
+    // evidence. Found by the eval: the pick answered null ~2/3 of the time exactly when the label carried
+    // the filename. New work (a named file to revise) still goes through the pick and the staging law.
+    if (judged && kind !== 'new_work' && (idx === null || !eligible[idx])) {
+      const named = eligible.map((c, j) => ({ c, j })).filter(({ c }) => labelNamesFile(label, c.filename));
+      if (named.length === 1) { idx = named[0].j; evidence = named[0].c.filename; }
+    }
     const cand = idx !== null ? eligible[idx] : undefined;
-    const evidence = String(res.json?.evidence ?? '').trim();
     // Law #2, the CODE half: the quoted evidence must actually appear in the candidate's own text.
     // Ask-journey D2 (Aug 13): substring-only rejected the RIGHT file ~2/3 of runs — the model
     // quotes the ask's word order ("signed Schedule B addendum") against a file named "Schedule B
     // addendum - signed". A token-subset fallback keeps the check code-verified (every evidence
     // word must exist in the candidate's own text) while surviving word-order variance.
     const candText = normText(`${cand?.filename ?? ''} ${cand?.snippet ?? ''}`);
-    const evNorm = normText(evidence);
-    const evTokens = evNorm.split(' ').filter((t) => t.length > 1);
-    const evidenceReal = !!cand && evidence.length >= 3
-      && (candText.includes(evNorm)
-        || (evTokens.length >= 2 && evTokens.every((t) => candText.includes(t))));
+    const evidenceReal = !!cand && evidenceInText(evidence, candText);
     if (!evidenceReal) { out.push({ label, candidate: null, suggestion, kind, judged }); continue; }
     // ── W13 · law 6, the CODE half: a verified match must also be the deliverable IN TIME. ──
     const role = stagingRole({
@@ -742,45 +816,96 @@ export async function pickArtifacts(
 
 // The drafter/producer's constraint block — non-blocking by design: missing pieces are named so the
 // work proceeds honestly around them, never so it stalls waiting for completeness.
-export function buildTruth(have: RequirementResolution[], missing: RequirementResolution[]): string {
+export function buildTruth(
+  have: RequirementResolution[], missing: RequirementResolution[],
+  /** W27 · what the resolver did not work on — reported, never silent. */
+  extra: { leftBehind?: string[]; secrets?: string[]; toWrite?: string[] } = {},
+): string {
   const bases = missing.filter((m2) => m2.base);
+  const left = extra.leftBehind ?? [];
+  const secrets = extra.secrets ?? [];
+  const toWrite = extra.toWrite ?? [];
   return (
     `ARTIFACT TRUTH — claim, attach, or build on ONLY what is actually staged:\n` +
     (have.length ? `- STAGED (attached/ready): ${have.map((h) => `${h.label} → "${h.file!.filename}"`).join(' · ')}\n` : '') +
     (missing.length ? `- MISSING (NOT in hand): ${missing.map((m2) => m2.label).join(' · ')}. Do NOT claim these are attached or promise a specific delivery time for them — either say they will follow separately or ask what's needed to get them.\n` : '') +
     // W13 · THE BASE: the current version new work builds on — context, never the answer.
-    (bases.length ? `- BASE ONLY (the CURRENT version the new work goes into — NOT the deliverable): ${bases.map((b) => `${b.label} → "${b.base!.filename}"`).join(' · ')}. Never attach it as the answer and never say it now includes, has been updated with, or contains the requested new work — that work is still to be done.\n` : '')
+    (bases.length ? `- BASE ONLY (the CURRENT version the new work goes into — NOT the deliverable): ${bases.map((b) => `${b.label} → "${b.base!.filename}"`).join(' · ')}. Never attach it as the answer and never say it now includes, has been updated with, or contains the requested new work — that work is still to be done.\n` : '') +
+    // W27 · NO SILENT CAPS — the labels over the resolver's budget were never looked for.
+    (left.length ? `- NOT CHECKED (over the resolver's budget of ${REQUIRES_BUDGET} — NOT in hand): ${left.join(' · ')}. Do NOT claim these are attached; say they will follow separately.\n` : '') +
+    // W27 · A SECRET IS NEVER AN INPUT — it never travels in a draft, whoever asked for it.
+    // W27e · THE WORK IS NOT ITS OWN INPUT — the produce task's own deliverable is written, never asked for.
+    (toWrite.length ? `- TO WRITE (the work itself — draft it from the sources in hand; never ask the user for it): ${toWrite.join(' · ')}\n` : '') +
+    (secrets.length ? `- NEVER SENT (a secret — password, login, code, key or card details): ${secrets.join(' · ')}. Never include, request or promise it; if the reply must address it, say it is not shared by email and point to a channel the user trusts.\n` : '')
   );
 }
 
 // THE ATTACHABILITY FLOOR's one reasoned check — which labels denote retrievable/attachable
 // THINGS (documents, files, sheets, decks, links) vs answers/decisions/confirmations that only
-// the user's own words or sign-off can supply. Memoized per label-set (the same judged requires
-// recur every pass); conservative on failure (keep all).
-const _attachMemo = new Map<string, { at: number; keep: Set<string> }>();
-async function attachableOnly(
+// the user's own words or sign-off can supply, vs SECRETS (W27.B) that are never collected at all.
+// Memoized per label-set (the same judged requires recur every pass); conservative on failure (keep
+// all but the code-floored secrets — a silly ask beats a silently dropped real requirement, but a
+// credential never becomes an "attach it here" card, AI or no AI).
+const _attachMemo = new Map<string, { at: number; keep: Set<string>; secret: Set<string> }>();
+
+/** THE SECRET FLOOR's split (pure — the code half of the SECRET class; tests/unit/requirements-secret). */
+export function splitSecrets<T extends { label: string }>(requires: readonly T[]): { kept: T[]; secrets: T[] } {
+  const kept: T[] = [];
+  const secrets: T[] = [];
+  for (const r of requires) (isSecretInput(r.label) ? secrets : kept).push(r);
+  return { kept, secrets };
+}
+
+/** Apply the attachability verdict (pure): keep only the model's ATTACHABLE labels, and never one it
+ *  (or the code floor) called a SECRET — even when also listed attachable. */
+export function applyAttachVerdict<T extends { label: string }>(
+  requires: readonly T[], verdict: { attachable?: unknown; secret?: unknown } | null | undefined,
+): { kept: T[]; secrets: T[] } | null {
+  if (!Array.isArray(verdict?.attachable)) return null; // failure ≠ a verdict
+  const at = (n: unknown) => requires[Number(n) - 1]?.label;
+  const secret = new Set((Array.isArray(verdict!.secret) ? verdict!.secret : []).map(at).filter((l): l is string => !!l));
+  for (const r of requires) if (isSecretInput(r.label)) secret.add(r.label);
+  const keep = new Set((verdict!.attachable as unknown[]).map(at).filter((l): l is string => !!l && !secret.has(l)));
+  return { kept: requires.filter((r) => keep.has(r.label)), secrets: requires.filter((r) => secret.has(r.label)) };
+}
+
+async function attachableSplit(
   client: SupabaseClient, userId: string, requires: Array<{ label: string }>,
-): Promise<Array<{ label: string }>> {
-  const sig = requires.map((r) => r.label.toLowerCase()).join('|');
+): Promise<{ kept: Array<{ label: string }>; secrets: Array<{ label: string }> }> {
+  // The code floor first — a secret never reaches the model, the memo, or retrieval.
+  const floored = splitSecrets(requires);
+  if (!floored.kept.length) return floored;
+  const sig = floored.kept.map((r) => r.label.toLowerCase()).join('|');
   const memo = _attachMemo.get(sig);
-  if (memo && Date.now() - memo.at < 10 * 60 * 1000) return requires.filter((r) => memo.keep.has(r.label));
+  if (memo && Date.now() - memo.at < 10 * 60 * 1000) {
+    return {
+      kept: floored.kept.filter((r) => memo.keep.has(r.label)),
+      secrets: [...floored.secrets, ...floored.kept.filter((r) => memo.secret.has(r.label))],
+    };
+  }
   try {
-    const lines = requires.map((r, i) => `${i + 1}. ${r.label}`).join('\n');
-    const res = await aiCall<{ attachable?: number[] }>({
-      userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: 80,
+    const lines = floored.kept.map((r, i) => `${i + 1}. ${r.label}`).join('\n');
+    const res = await aiCall<{ attachable?: number[]; secret?: number[] }>({
+      userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: 120,
       source: 'task_preparation',
       prompt:
-        `Which of these are ATTACHABLE THINGS — a document, file, report, sheet, deck, or link that ` +
-        `could be retrieved and attached to an email? NOT attachable: a confirmation, approval, ` +
-        `decision, answer, availability, a time, or anything only a person's own words can supply. ` +
-        `(A "confirmation letter" IS a document; "confirmation of the meeting time" is an answer.)\n` +
-        `${lines}\n\nJSON only: {"attachable":[numbers]}`,
+        `These are things a piece of work was judged to require. Sort each by what it is, because only ` +
+        `ATTACHABLE things become an "attach it here" request to the user:\n` +
+        `- ATTACHABLE THINGS: a document, file, report, sheet, deck, or link that could be retrieved and ` +
+        `attached to an email — including the user's own documents (a bank-details letter, a signed copy, ` +
+        `a certificate, an ID scan).\n` +
+        `- ANSWERS: a confirmation, approval, decision, answer, availability, a time, or anything only a ` +
+        `person's own words can supply — the reply's own words carry it. (A "confirmation letter" IS a ` +
+        `document; "confirmation of the meeting time" is an answer.)\n` +
+        `- SECRETS: a password, login, PIN, verification or access code, API key or token, or card ` +
+        `number — never collected or passed on, whoever asks.\n` +
+        `${lines}\n\nJSON only: {"attachable":[numbers],"secret":[numbers]}`,
     });
-    if (!Array.isArray(res.json?.attachable)) return requires; // failure ≠ a verdict — keep all
-    const keep = new Set(res.json.attachable.map((n) => requires[Number(n) - 1]?.label).filter(Boolean) as string[]);
-    _attachMemo.set(sig, { at: Date.now(), keep });
-    return requires.filter((r) => keep.has(r.label));
-  } catch { return requires; }
+    const split = applyAttachVerdict(floored.kept, res.json);
+    if (!split) return floored; // failure ≠ a verdict — keep all (but the floored secrets)
+    _attachMemo.set(sig, { at: Date.now(), keep: new Set(split.kept.map((r) => r.label)), secret: new Set(split.secrets.map((r) => r.label)) });
+    return { kept: split.kept, secrets: [...floored.secrets, ...split.secrets] };
+  } catch { return floored; }
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1180,7 +1305,12 @@ export async function resolveRequirements(
   },
 ): Promise<RequirementsResult> {
   const empty: RequirementsResult = { resolutions: [], have: [], missing: [], artifactTruth: '' };
-  let requires = (args.requires ?? []).filter((r) => r.label?.trim()).slice(0, 5);
+  // W27 · NO SILENT CAPS: the resolver works on REQUIRES_BUDGET labels (each costs a retrieval + up to
+  // two cheap reasoned calls); the rest are REPORTED (`leftBehind` + ARTIFACT TRUTH), never dropped.
+  const budget = budgetRequires((args.requires ?? []).filter((r) => r.label?.trim()));
+  const leftBehind = budget.leftBehind.map((r) => r.label);
+  if (leftBehind.length) console.warn(`[requirements] ${leftBehind.length} requirement(s) over budget (${REQUIRES_BUDGET}) — reported, not resolved:`, leftBehind);
+  let requires = budget.kept;
   // W5c · OUR OWN ARTIFACT IS NEVER THE USER'S INPUT (the moot-ask predicate, one implementation):
   // a label naming one of our prepared-artifact kinds (a paste pack, a nudge, an invite, a decision
   // brief) is the team's to produce — it is never retrieved, staged or asked of the user. (The
@@ -1189,7 +1319,19 @@ export async function resolveRequirements(
     const { namesOurArtifact } = await import('@/lib/room/ask-mootness');
     requires = requires.filter((r) => !namesOurArtifact(r.label));
   }
-  if (!requires.length) return empty;
+  // What the resolver did not work on rides every result (NO SILENT CAPS · a secret is never an input).
+  let refusedSecrets: string[] = [];
+  let toWrite: string[] = [];
+  const reported = (r: RequirementsResult): RequirementsResult => {
+    const extra = { leftBehind, secrets: refusedSecrets, toWrite };
+    if (!leftBehind.length && !refusedSecrets.length && !toWrite.length) return r;
+    return {
+      ...r, ...(leftBehind.length ? { leftBehind } : {}), ...(refusedSecrets.length ? { refusedSecrets } : {}),
+      ...(toWrite.length ? { ownOutput: toWrite } : {}),
+      artifactTruth: buildTruth(r.have, r.missing, extra),
+    };
+  };
+  if (!requires.length) return reported(empty);
 
   // ── THE ATTACHABILITY FLOOR (Aug 4, found live: "attach a confirmation of the Thursday demo
   // call time" — an ANSWER classified as an artifact; the resolver searched drives for a decision
@@ -1198,8 +1340,15 @@ export async function resolveRequirements(
   // memoized per label-set; on AI failure keep everything (a silly ask beats a silently dropped
   // real requirement). Runs at the ONE resolver, so every door — pass, on-demand draft, judge
   // serving edge, any item/task/project — inherits it. ──
-  requires = await attachableOnly(admin, userId, requires);
-  if (!requires.length) return empty;
+  // W27.B · …and THE SECRET CLASS: a password/login/code/key/card label is refused (code floor, then the
+  // reasoned class) — never searched, never staged, never an ask; the drafter is told it is never sent.
+  {
+    const split = await attachableSplit(admin, userId, requires);
+    requires = split.kept;
+    refusedSecrets = split.secrets.map((r) => r.label);
+    if (refusedSecrets.length) console.warn('[requirements] refused secret requirement(s):', refusedSecrets);
+  }
+  if (!requires.length) return reported(empty);
 
   try {
     // ── W13.2 · THE STANDING ROWS: what the resolver already staged for these labels (one read). Each
@@ -1348,7 +1497,12 @@ export async function resolveRequirements(
       }
     }
     const have = resolutions.filter((r) => r.status === 'have');
-    const missing = resolutions.filter((r) => r.status === 'missing');
+    // W27e · THE WORK IS NOT ITS OWN INPUT: on `produce`, a missing NEW-WORK requirement is the
+    // deliverable the team was asked to write (no existing document to go into) — never asked of the user
+    // (the input card asked for "the one-page summary" we were to write). It rides the truth as TO WRITE.
+    const ownOutput = resolutions.filter((r) => r.status === 'missing' && isOwnOutput(args.work ?? null, r.kind ?? null, !!r.base));
+    const missing = resolutions.filter((r) => r.status === 'missing' && !ownOutput.includes(r));
+    if (ownOutput.length) toWrite = ownOutput.map((r) => r.label);
 
     // ── The ASK: missing requirements land as the room's ONE input-checklist turn (CoS-voiced —
     // the engine asking, not a coworker). The ingest funnel clears it; a later pass re-resolves
@@ -1376,7 +1530,7 @@ export async function resolveRequirements(
     }
     if (workerAsk) {
       await admin.from('room_turns').delete().eq('user_id', userId).eq('room_key', roomKey).eq('dedupe_key', dedupeKey).then(() => {}, () => {});
-      return { resolutions, have, missing, artifactTruth: buildTruth(have, missing) };
+      return reported({ resolutions, have, missing, artifactTruth: buildTruth(have, missing) });
     }
     // W3 LIFECYCLE — a PROCEEDED ask (the user's "go ahead with what's available") is a standing
     // decision: the ask is never re-posted (the turn stays in the room as the record), and the
@@ -1385,7 +1539,7 @@ export async function resolveRequirements(
       .eq('user_id', userId).eq('room_key', roomKey).eq('dedupe_key', dedupeKey).maybeSingle();
     const proceeded = !!((priorAsk?.component as { state?: { proceeded?: boolean } } | null)?.state?.proceeded);
     if (proceeded) {
-      return { resolutions, have, missing, artifactTruth: buildTruth(have, missing), proceeded: true };
+      return reported({ resolutions, have, missing, artifactTruth: buildTruth(have, missing), proceeded: true });
     }
     // ONE ARTIFACT = ONE ASK (experience-spec law 3, Aug 2 — found live: two items asked for the
     // "STC Bahrain comprehensive assessment report" under word-shuffled labels as two checklists).
@@ -1457,13 +1611,13 @@ export async function resolveRequirements(
     }
 
     // ── The drafter's ARTIFACT TRUTH. ──
-    return { resolutions, have, missing, artifactTruth: buildTruth(have, missing) };
+    return reported({ resolutions, have, missing, artifactTruth: buildTruth(have, missing) });
   } catch {
     // FAILURE HONESTY (W2): a failed resolution is not "nothing was required" — the draft still
     // goes out (asks never block), but under a truth block that forbids claiming anything is in
     // hand (an unconstrained draft after a resolver outage was the silent fabrication channel).
     return {
-      ...empty,
+      ...empty, ...(leftBehind.length ? { leftBehind } : {}), ...(refusedSecrets.length ? { refusedSecrets } : {}),
       artifactTruth:
         'ARTIFACT TRUTH — the artifact resolution FAILED, so NOTHING is staged: do not claim or ' +
         'promise any attachment; say the documents will follow separately.',

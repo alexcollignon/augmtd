@@ -53,7 +53,7 @@ export type PreparedArtifact = {
    *  reach — the note says where they go. Present only on `kind: 'paste_pack'`; a pack is never
    *  send-shaped (there is no door here that could fire), which is the whole honesty of it. */
   note?: string | null;
-  /** René sweep (Aug 13): an invite with no time / a forward with no recipient is NOT send-shaped —
+  /** Sam sweep (Aug 13): an invite with no time / a forward with no recipient is NOT send-shaped —
    *  the send door hard-rejects it, so a Send primary would be a button that cannot fire. false =
    *  staged but missing what the send needs (the machine reads awaiting_input). Absent = ready. */
   sendReady?: boolean;
@@ -530,12 +530,13 @@ type PoolMeta = {
  *  machine's batch derivation: forking this mapping is how a deck row and a deep-dive disagree
  *  about what's prepared. KIND-TRUE (W2.1): a row carrying `metadata.invite` IS an invite — it was
  *  read as a reply draft for weeks, so no commitment room could ever mount its card.
- *  René sweep (Aug 13): a commitment's `type:'draft'` row IS the chase/reply lane home — a
+ *  Sam sweep (Aug 13): a commitment's `type:'draft'` row IS the chase/reply lane home — a
  *  ready-to-send nudge must not wear the document card; and stacked re-drafts collapse to the
  *  NEWEST (rows must arrive newest-first). Ask-journey D5: `file` rows are the user's own
  *  supplied inputs and `sent` rows are done work — neither is pending preparation. J3:
  *  version-history rows are the ledger, not the surface. */
-export function poolRowsToArtifacts(rows: Array<Record<string, unknown>>, poolKind: 'email' | 'commitment'): PreparedArtifact[] {
+/** `now` defaults to the real clock; a caller that pins the clock (a smoke gate) passes its own. */
+export function poolRowsToArtifacts(rows: Array<Record<string, unknown>>, poolKind: 'email' | 'commitment', now: number = Date.now()): PreparedArtifact[] {
   const out: PreparedArtifact[] = [];
   let sawCommitDraft = false;
   let sawInvite = false;
@@ -599,7 +600,7 @@ export function poolRowsToArtifacts(rows: Array<Record<string, unknown>>, poolKi
       } } : {}),
     });
   }
-  return stampExpiry(out);
+  return stampExpiry(out, now);
 }
 
 /** The pool columns every reader selects — one list, so a batch and a single read can't drift. */

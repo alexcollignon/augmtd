@@ -13,7 +13,7 @@ import { resolveProbeUser } from './probe-user';
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 const A = '08fe4449-e5eb-431d-9156-02e9324e5903';
 const B = 'c723c2f2-e069-4ab8-980e-ac3585028fec';
-const RENE_PREFIX = 'ae306f38';
+const PILOT_PREFIX = 'ae306f38';
 let PERSONAL = ''; // the PROBE HOST — resolved at start (scripts/probe-user.ts)
 const out: Array<[string, boolean, string]> = [];
 const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
@@ -112,7 +112,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
   // This week · When you can) died with OneDeck; their ORDERING survives as the door's stated sort
   // (lib/home/calm.ts sortDoorRows), which smoke-threads T19.4 proves on data.
   check('B3d: the Home holds ONE row grammar (the whisper) — the grouped deck, hero and peek all gone',
-    !hv.includes('<OneDeck') && !hv.includes('PEEK_VISIBLE') && !hv.includes('setFocusKey') &&
+    !hv.includes('<OneDeck') && !hv.includes('PEEK_VISIBLE') && !hv.includes('seNorthwindKey') &&
     hv.includes('<WhisperLine') && src('lib/home/calm.ts').includes('export function sortDoorRows'));
   const passB3 = src('lib/prepare/pass.ts');
   // ── B3c RE-POINTED (owner call, Sep 17 — attention-plan PART III, law Q8) ──────────────────────
@@ -141,16 +141,16 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('B5: deliverable is a first-class FOCUS kind (renders in the main card)',
     roomB2.includes("{ kind: 'deliverable'; id: string; title: string }") && roomB2.includes('DeliverableFocus'));
   check('B5: prepared tokens + brief deliverables open the FOCUS, not the modal',
-    (roomB2.match(/setFocused\(\{ kind: 'deliverable'/g) ?? []).length >= 2 &&
+    (roomB2.match(/seNorthwinded\(\{ kind: 'deliverable'/g) ?? []).length >= 2 &&
     !roomB2.includes("setPreview({ name, ref: { kind: 'deliverable'"));
   check('B5: entity-level deliverables (prep briefs, status updates) surface in the room pool',
     src('app/api/entities/[id]/detail/route.ts').includes('...commitIds, id]'));
 
   // ── B1 LIVE — assemble the brief from each user's REAL busiest deal ──
   const { data: uidRows } = await sb.from('work_entities').select('user_id').eq('kind', 'initiative');
-  const rene = [...new Set((uidRows ?? []).map((r) => r.user_id as string))].find((u) => u.startsWith(RENE_PREFIX));
+  const sam = [...new Set((uidRows ?? []).map((r) => r.user_id as string))].find((u) => u.startsWith(PILOT_PREFIX));
   const users: Array<[string, string]> = [[A, 'user A'], [B, 'user B'], [PERSONAL, 'personal']];
-  if (rene) users.push([rene, 'user C']);
+  if (sam) users.push([sam, 'user C']);
   const todayStr = new Date().toISOString().slice(0, 10);
 
   for (const [uid, label] of users) {

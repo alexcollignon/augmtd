@@ -9,6 +9,21 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 const tzMemo = new Map<string, { at: number; tz: string }>();
 
+/** Drop the memoized zone (one user, or all). The quality engine (W27.C) calls it when a seeded
+ *  fixture world is torn down — the 10-minute memo otherwise carries one world's zone into the next on
+ *  the same probe host. Production never needs it (a user's calendar zone does not flip in minutes). */
+export function forgetUserTimezone(userId?: string): void {
+  if (userId) tzMemo.delete(userId); else tzMemo.clear();
+}
+
+/** Scope the zone to a seeded fixture world (the quality engine, W27.C): the world DECLARES its user's
+ *  zone, which a real account's calendar history would yield. An invalid zone is refused (kept UTC). */
+export function primeUserTimezone(userId: string, tz: string): void {
+  let zone = 'UTC';
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); zone = tz; } catch { /* keep UTC */ }
+  tzMemo.set(userId, { at: Date.now(), tz: zone });
+}
+
 export async function userTimezone(client: SupabaseClient, userId: string): Promise<string> {
   const hit = tzMemo.get(userId);
   if (hit && Date.now() - hit.at < 10 * 60_000) return hit.tz;
