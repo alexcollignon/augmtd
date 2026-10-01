@@ -600,7 +600,6 @@ const src = (p: string) => readFileSync(p, 'utf8');
       g.includes('preparedStatesFor') && g.includes('function preparedWordsOf') && !g.includes('function preparedOf(') && g.includes('THE LIVE BOARD') && g.includes('OPEN ASKS'));
     check('R13 · every room-scope reasoner reads the SAME page: the responder, the chat question path, the agent loop',
       src('lib/room/brief.ts').includes('assembleRoomGrounding') &&
-      src('lib/entities/ask.ts').includes('assembleRoomGrounding') &&
       src('lib/converse/index.ts').includes('assembleRoomGrounding'));
     // RE-POINTED, STRICTER (Sep 8): board membership alone was never the law — a settled deed's CTA
     // bound to an unrelated notice that happened to be on the same board. The ref must be ON the

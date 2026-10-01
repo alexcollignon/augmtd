@@ -19,6 +19,8 @@ import { executeWebSearch, executeFetchUrl, executeRssFeed, executeLinkedInPost,
 import type { SendCalendarInviteConfig, ForwardEmailConfig, ComputeConfig } from '@/lib/tools';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import { clipWithRule } from '@/lib/utils/pack-context';
+import { enforceWeekdayDatePairs } from '@/lib/utils/weekday-floor';
+import { localDayOf, addDays, dayRelativeTo } from '@/lib/core/relative-time';
 import type { WorkflowStep, StepOutput, ToolStep, AIStep, AgentStep, VerifyStep, GateFinding, GateVerdict } from './types';
 
 export interface StepContext {
@@ -127,6 +129,57 @@ export async function executeStep(step: WorkflowStep, ctx: StepContext): Promise
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** W37 · THE STEP'S CLOCK (TIME TRUTH): today in the USER'S zone — the weekday in words, the date, and the
+ *  days around it, so no step derives a weekday by itself ("Monday 30 September" on a Wednesday). The same
+ *  approach as the briefing's clock (lib/core/relative-time dayRelativeTo, the user's local day). Pure. */
+export function stepClockLine(now: Date, tz: string): string {
+  const today = localDayOf(now, tz) ?? now.toISOString().slice(0, 10);
+  const words = dayRelativeTo(today, now, tz).replace(/^today \((.*)\)$/, '$1');
+  const short = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+  const strip = Array.from({ length: 15 }, (_, i) => addDays(today, i - 7))
+    .map((d) => (d === today ? `${short(d)} (today)` : short(d))).join(' · ');
+  return `Today is ${words} (${tz}). The days around it: ${strip}. A date you write carries its weekday from ` +
+    `this calendar, and a weekday named in the material (a report "from Monday") is that day, not today. ` +
+    `Source material carries its own dates — treat anything meaningfully older than the task's time window as ` +
+    `historical: never present it as current, and never shift dates, years, or figures to fit the present.`;
+}
+
+/** W37 · THE MATERIAL'S WEEKDAYS, PLACED (eval workflow.step EU: a CRM export "Monday 07:00" and an email "Friday"
+ *  were read as "both from this morning", so the newer source went unnamed). Each weekday the upstream material
+ *  names is given its most recent date (today counts) and its next one — calendar arithmetic is code's; which
+ *  one a mention means stays the writer's reading of its tense. English, German, French, Portuguese, Spanish. Pure. */
+const MATERIAL_WEEKDAYS: Array<[number, RegExp]> = [
+  [1, /\b(monday|montag|lundi|segunda(?:-feira)?|lunes)\b/i], [2, /\b(tuesday|dienstag|mardi|terça(?:-feira)?|martes)\b/i],
+  [3, /\b(wednesday|mittwoch|mercredi|quarta(?:-feira)?|miércoles)\b/i], [4, /\b(thursday|donnerstag|jeudi|quinta(?:-feira)?|jueves)\b/i],
+  [5, /\b(friday|freitag|vendredi|sexta(?:-feira)?|viernes)\b/i], [6, /\b(saturday|samstag|samedi|sábado)\b/i],
+  [0, /\b(sunday|sonntag|dimanche|domingo)\b/i],
+];
+export function materialWeekdaysLine(material: string, now: Date, tz: string): string | null {
+  const text = String(material ?? '');
+  if (!text.trim()) return null;
+  const today = localDayOf(now, tz) ?? now.toISOString().slice(0, 10);
+  const dow = new Date(`${today}T12:00:00Z`).getUTCDay();
+  const fmt = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
+  const parts: string[] = [];
+  for (const [idx, re] of MATERIAL_WEEKDAYS) {
+    const m = re.exec(text);
+    if (!m) continue;
+    const back = (dow - idx + 7) % 7;
+    const last = addDays(today, -back);
+    const next = addDays(today, back === 0 ? 7 : 7 - back);
+    parts.push(`"${m[1]}" = ${back === 0 ? `today, ${fmt(last)}` : `${fmt(last)} (${back} day${back === 1 ? '' : 's'} ago)`} if it is past, ${fmt(next)} if it is ahead`);
+  }
+  return parts.length ? `Weekdays the material names, placed on the calendar: ${parts.join('; ')}. A dated source is as old as its day — when sources disagree, the later day is the newer one.` : null;
+}
+
+async function stepClockFor(ctx: StepContext): Promise<string> {
+  const { userTimezone } = await import('@/lib/utils/user-time');
+  const tz = await userTimezone(ctx.supabase, ctx.userId).catch(() => 'UTC');
+  const now = new Date();
+  const material = [ctx.triggerEvent ?? '', ...ctx.previousOutputs.map((o) => (typeof o.output === 'string' ? o.output : ''))].join('\n');
+  return [stepClockLine(now, tz), materialWeekdaysLine(material.slice(0, 200_000), now, tz)].filter(Boolean).join(' ');
+}
 
 function formatPreviousOutputs(outputs: StepOutput[], maxChars?: number, provenance?: boolean): string {
   if (outputs.length === 0) return '';
@@ -859,12 +912,10 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
   // The clock — workflow AI steps used to run dateless, and a model writing a "this week"
   // deliverable normalized years-old source material into the present (real client incident:
   // a 2021 article rewritten as current news with a fabricated citation date).
-  const now = new Date();
-  const dateLine =
-    `Today is ${now.toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' })}, ` +
-    `${now.toISOString().slice(0, 10)} (UTC). Source material carries its own dates — treat anything ` +
-    `meaningfully older than the task's time window as historical: never present it as current, and ` +
-    `never shift dates, years, or figures to fit the present.`;
+  // W37 · THE STEP'S CLOCK IS THE USER'S (eval workflow.step: a summary headed "Monday 30 September" on a
+  // Wednesday — the line used to carry the UTC weekday and an ISO date, and the model paired the workflow's
+  // "Monday" with today's date). The user's local day, its weekday in words, and the days around it.
+  const dateLine = await stepClockFor(ctx);
 
   let systemPrompt =
     `You are executing one step of an automated workflow named "${ctx.workflowName}". ` +
@@ -1025,7 +1076,9 @@ async function executeAIStep(step: AIStep, ctx: StepContext): Promise<string> {
     // W28.2 · A DECLARED JSON OUTPUT IS JSON: a model that wraps the object in a code fence hands the next
     // station a string that does not parse. The fence is unwrapped here (deterministic; nothing else is touched).
     if (text && step.output_format === 'json') text = unwrapJsonFence(text);
-    if (text) return text;
+    // W37 · a weekday↔date pair the step wrote is arithmetic, so code settles it (lib/utils/weekday-floor).
+    // (Never on the verify gate — its output carries the gate's own verdict and quotes; it is persona-free.)
+    if (text) return step.use_worker_identity === false ? text : enforceWeekdayDatePairs(text, { now: new Date(), userText: step.prompt });
     console.warn(`[executeAIStep] empty completion from ${resolved.model} (attempt ${attempt + 1}/2, finish=${res.choices[0]?.finish_reason ?? '?'}) — ${attempt === 0 ? 'retrying once' : 'failing honestly'}`);
   }
   throw new Error(`AI step "${step.label ?? step.id}" returned an empty completion twice (${resolved.model})`);
@@ -1060,14 +1113,102 @@ function getOutputLanguageName(code: string): string {
 // tools + per-user context) and falls back to the native inline call otherwise — so the caller never
 // has to know which path is live. Reused by the Home item-delegation route (`/api/items/delegate`).
 export async function executeAgentStep(step: AgentStep, ctx: StepContext): Promise<string> {
-  return (await executeAgentStepDetailed(step, ctx)).text;
+  const produced = await executeAgentStepDetailed(step, ctx);
+  return floorAgentDeliverable(step, ctx, produced);
+}
+
+// ── W37 · THE AGENT STEP'S FLOORS (workflow runs; the delegation path keeps its own in lib/home/delegate.ts) ──
+// Eval workflow.step (EU Sonnet 4.6, std gpt/Sonnet): Luca's workflow post invented a vote margin ("it wasn't
+// close"), the losing options ("Not price volatility. Not lead times."), "the checklist is free. Link in the
+// comments" and future plans — and delivered two posts when the step asked for one. A rule the writer must
+// remember is not a floor; these are code after the write.
+
+const COUNT_WORDS: Record<string, number> = { one: 1, single: 1, two: 2, three: 3, four: 4, five: 5, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5 };
+const DELIVERABLE_NOUN = String.raw`(?:linkedin\s+|social\s+|blog\s+|short\s+|final\s+)?(?:post|posts|email|emails|message|messages|caption|captions|tweet|tweets|update|updates|draft|drafts|version|versions|variant|variants|option|options|summary|summaries|announcement|announcements|reply|replies)`;
+
+/** How many deliverables the instruction asks for, when it says so explicitly ("One post", "a single
+ *  email", "two variants", "exactly 3 options"); null when it does not say. Pure. */
+export function requestedDeliverableCount(instruction: string): number | null {
+  const re = new RegExp(String.raw`\b(?:exactly\s+|only\s+|just\s+)?(one|a single|single|two|three|four|five|[1-5])\s+(?:(?!of\b)[a-z'’-]+\s+){0,2}?${DELIVERABLE_NOUN}\b`, 'i');
+  const m = re.exec(String(instruction ?? ''));
+  if (!m) return null;
+  return COUNT_WORDS[m[1].toLowerCase().replace(/^a\s+/, '')] ?? null;
+}
+
+/** A line that only LABELS a variant ("*Variant — punchier:*", "**Option 2**", "### Version B",
+ *  "Alternative (shorter):"). Formatting or a trailing colon is required, so a content line that starts with
+ *  "Option 1: build in-house" is never read as a label. */
+const VARIANT_WORD = String.raw`(?:variant|version|option|alternative|alt|take|draft|post)`;
+const VARIANT_LABEL = new RegExp(
+  String.raw`^\s*(?:#{1,4}\s*)?([*_]{1,2})?\s*(?:(?:[a-z]+\s+){0,2}${VARIANT_WORD}(?:\s*#?(?:\d|[a-c]|one|two|three)\b)?` +
+  String.raw`(?:\s*[—–:(-]\s*[\p{L}\s,]{0,25}\)?)?)\s*:?\s*\1?\s*:?\s*$`, 'iu');
+function isVariantLabel(line: string): boolean {
+  const t = line.trim();
+  if (!t || t.length > 60 || !VARIANT_LABEL.test(t)) return false;
+  return /^#{1,4}\s/.test(t) || /^[*_]/.test(t) || /:\s*[*_]*\s*$/.test(t);
+}
+
+/** THE REQUESTED COUNT IS THE CONTRACT: an output that delivers more labelled variants than the instruction
+ *  asked for keeps the first N (a lone kept variant loses its label and any "here are two versions" lead-in).
+ *  Untouched when the instruction states no count or nothing reads as a variant split. Pure. */
+export function enforceRequestedCount(text: string, instruction: string): string {
+  const n = requestedDeliverableCount(instruction);
+  const src = String(text ?? '');
+  if (!n) return src;
+  const lines = src.split('\n');
+  let labels = lines.map((l, i) => (isVariantLabel(l) ? i : -1)).filter((i) => i >= 0);
+  // An output that ANNOUNCES its variants ("Two variants, both under 180 words:") labels them however it likes —
+  // "**Punchy**", "### Narrative" (eval workflow.step, EU Sonnet 4.6): there a short standalone bold/heading line is a label.
+  const opening = lines.slice(0, 3).join(' ');
+  if (labels.length < 2 && /\b(two|three|four|2|3|4)\s+(?:[\p{L}-]+\s+)?(variants|versions|options|takes|drafts|posts|alternatives)\b/iu.test(opening)) {
+    const styled = lines.map((l, i) => (/^\s*(?:#{1,4}\s+[^\n]{1,40}|\*\*[^*\n]{1,40}\*\*:?|__[^_\n]{1,40}__:?)\s*$/.test(l) && l.trim().split(/\s+/).length <= 6 ? i : -1)).filter((i) => i >= 0);
+    if (styled.length >= 2) labels = styled;
+  }
+  if (!labels.length) return src;
+  const seg = (a: number, b: number) => lines.slice(a, b).join('\n').replace(/(^|\n)\s*(-{3,}|\*{3,}|_{3,})\s*(?=\n|$)/g, '$1').trim();
+  const lead = seg(0, labels[0]);
+  const labelled = labels.map((at, k) => ({ label: lines[at], body: seg(at + 1, labels[k + 1] ?? lines.length) })).filter((v) => v.body);
+  const leadIsVariant = lead.split(/\s+/).filter(Boolean).length >= 25;
+  const variants = [...(leadIsVariant ? [{ label: null as string | null, body: lead }] : []), ...labelled];
+  if (variants.length <= n) return src;
+  const kept = variants.slice(0, n);
+  if (n === 1) return kept[0].body;
+  return kept.map((v) => (v.label ? `${v.label.trim()}\n\n${v.body}` : v.body)).join('\n\n---\n\n');
+}
+
+async function floorAgentDeliverable(step: AgentStep, ctx: StepContext, produced: AgentStepResult): Promise<string> {
+  let text = enforceRequestedCount(produced.text, step.prompt);
+  // The claims floor needs to know everything the writer had; the AgentOS lane does not hand that back.
+  if (!text.trim() || !produced.material) return text;
+  try {
+    const { parseTypedDeliverable } = await import('@/lib/workflows/typed-output');
+    if (parseTypedDeliverable(text) || /^\s*[{[]/.test(text)) return text;
+    const { groundClaims, stripSelfVouching, flooringGutted, slotUnsupportedWork } = await import('@/lib/prepare/claims-floor');
+    const material = produced.material;
+    let floored = await groundClaims(ctx.supabase, ctx.userId, { draft: text, material });
+    // When the floor would gut the work, the writer rewrites ONCE with the unsupported specifics named
+    // (the delegation path's W28.9 rule), and the rewrite is floored too.
+    if (flooringGutted(floored)) {
+      const redo = await executeAgentStepDetailed(
+        { ...step, prompt: `${step.prompt}\n\nTHESE SPECIFICS ARE NOT IN THE MATERIAL YOU WERE GIVEN — rewrite the deliverable without them (same shape, same count; make it work on what the material does say):\n${floored.replaced.map((q) => `- "${q}"`).join('\n')}` },
+        ctx,
+      ).catch(() => null);
+      const again = redo ? enforceRequestedCount(redo.text, step.prompt).trim() : '';
+      if (again) floored = await groundClaims(ctx.supabase, ctx.userId, { draft: again, material: redo?.material ?? material });
+    }
+    // A status / progress / deed / dated promise about the user's work the material does not show → its named slot.
+    text = stripSelfVouching(slotUnsupportedWork(floored.text, material).text);
+  } catch (e) {
+    console.warn('[executeAgentStep] claims floor skipped:', e instanceof Error ? e.message : e);
+  }
+  return text;
 }
 
 /** What the producer KNOWS about its own completion. `complete` is the model's finish_reason read
  *  literally — true when the completion ENDED (finish_reason 'stop'), false when the budget cut it,
  *  undefined when the runtime hands back no receipt (the AgentOS bridge). Downstream floors that
  *  otherwise GUESS at truncation take the receipt over their guess (see `looksMechanicallyTruncated`). */
-export interface AgentStepResult { text: string; complete?: boolean }
+export interface AgentStepResult { text: string; complete?: boolean; /** W37 — everything the writer was given (system context + task), for the claims floor; absent on the AgentOS lane */ material?: string }
 
 export async function executeAgentStepDetailed(step: AgentStep, ctx: StepContext): Promise<AgentStepResult> {
   // Load agent
@@ -1099,6 +1240,7 @@ export async function executeAgentStepDetailed(step: AgentStep, ctx: StepContext
   if (agentRow.is_worker && agentRow.worker_role && isAgentOSEnabled()) {
     try {
       const stepMessage = [
+        `<clock>\n${await stepClockFor(ctx)}\n</clock>`,
         formatPreviousOutputs(ctx.previousOutputs),
         `<workflow_task>\n${step.prompt}\n</workflow_task>`,
         guardrailFeedbackBlock(ctx),
@@ -1132,6 +1274,8 @@ export async function executeAgentStepDetailed(step: AgentStep, ctx: StepContext
     `You are "${agentRow.name}", a custom AI assistant with a specific role.`,
     agentRow.instructions?.trim() ? `Your instructions:\n${agentRow.instructions.trim()}` : '',
     `Stay in this role for the entire task. This is an automated workflow run — produce the requested deliverable directly, no conversation.`,
+    // W37 · the agent step ran with no clock at all — the user's local day, as the AI step has it.
+    await stepClockFor(ctx),
   ].filter(Boolean).join('\n\n');
   systemParts.push(agentHeader);
 
@@ -1202,7 +1346,10 @@ export async function executeAgentStepDetailed(step: AgentStep, ctx: StepContext
           // The model wrote the deliverable instead of calling a tool, and finished it: that IS the
           // answer (no second write). A cut or empty answer falls through to the budgeted write below.
           if (msg && !calls.length && String(msg.content ?? '').trim() && r.choices[0]?.finish_reason === 'stop') {
-            return { text: String(msg.content).trim(), complete: true };
+            return {
+              text: enforceWeekdayDatePairs(String(msg.content).trim(), { now: new Date(), userText: step.prompt }), complete: true,
+              material: [userPrompt, researched.filter((m) => m.role === 'tool').map((m) => String(m.content)).join('\n\n'), systemParts.join('\n\n')].filter(Boolean).join('\n\n'),
+            };
           }
           if (!msg || !calls.length) break;
           researched.push({ role: 'assistant', content: msg.content ?? null, tool_calls: calls });
@@ -1241,8 +1388,14 @@ export async function executeAgentStepDetailed(step: AgentStep, ctx: StepContext
     if (wider?.choices[0]?.message?.content?.trim()) res = wider;
   }
   const choice = res.choices[0];
+  const raw = choice?.message?.content?.trim() ?? '';
   return {
-    text: choice?.message?.content?.trim() ?? '',
+    // W37 · a weekday↔date pair is arithmetic: code settles it (lib/utils/weekday-floor).
+    text: raw ? enforceWeekdayDatePairs(raw, { now: new Date(), userText: step.prompt }) : raw,
     complete: choice?.finish_reason ? choice.finish_reason !== 'length' : undefined,
+    // The task and its upstream material FIRST: the floor clips what it reads, and a long system context
+    // ahead of them clipped the very facts the deliverable was built from (eval: "18 procurement leads"
+    // slotted as [NUMBER OF ATTENDEES]).
+    material: [userPrompt, researchBlock, systemParts.join('\n\n')].filter(Boolean).join('\n\n'),
   };
 }

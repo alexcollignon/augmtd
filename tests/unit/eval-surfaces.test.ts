@@ -135,7 +135,10 @@ describe('verdicts', () => {
 describe('the surface packs', () => {
   it('every surface: 4–6 scenarios, edge cases, truth + checks, a quick subset of ≤ 2, the plain view never names a coworker', async () => {
     const { SURFACES } = await import('../../scripts/lib/eval-surfaces/registry');
-    expect(SURFACES.map((a) => a.id)).toEqual(['dm.coworker', 'room.chat', 'workflow.step', 'handoff.result', 'draft.reply', 'briefing.home', 'decision.options', 'room.opening', 'document.author', 'frame.view', 'gate.verify', 'meeting.insights', 'sent.compose', 'sent.cover', 'sent.slack', 'sent.report', 'sidebar.chat', 'home.synthesis', 'reply.directions', 'workflow.linkedin']);
+    // Each wave's surfaces are asserted as a group (the registry grows from several waves in parallel).
+    expect(SURFACES.map((a) => a.id).slice(0, 24)).toEqual(['dm.coworker', 'room.chat', 'workflow.step', 'handoff.result', 'draft.reply', 'briefing.home', 'decision.options', 'room.opening', 'document.author', 'frame.view', 'gate.verify', 'meeting.insights', 'sent.compose', 'sent.cover', 'sent.slack', 'sent.report', 'sidebar.chat', 'home.synthesis', 'reply.directions', 'workflow.linkedin', 'decoration.chat-title', 'decoration.chat-starters', 'decoration.bundle-names', 'decoration.memory-render']);
+    expect(SURFACES.map((a) => a.id)).toEqual(expect.arrayContaining(['build.workflow', 'build.workflow-chat', 'build.suggestions', 'build.step-prompt', 'build.agent-prompt', 'build.skill-questions', 'build.skill-draft', 'build.generalize', 'build.open-workflow', 'plan.item', 'plan.standing', 'plan.alignment', 'compute.produce', 'compute.document']));
+    expect(SURFACES.map((a) => a.id)).toEqual(expect.arrayContaining(['narrate.status', 'narrate.state', 'narrate.person', 'prep.brief', 'prep.anticipate', 'prep.agenda']));
     const ids = new Set<string>();
     for (const a of SURFACES) {
       const cs = a.cases();

@@ -99,7 +99,9 @@ export async function analyzeCalendarPatterns(
       schedulingPatterns,
       participationStyle,
       organizerRate,
-      acceptanceRate: 0.85, // Default until we track RSVPs
+      // W37 · UNMEASURED IS ABSENT: RSVPs are not tracked, so there is no acceptance rate — never a default
+      // number a reader can state as learned (it used to store 0.85 and the context block said "85%").
+      acceptanceRate: null,
       meetingTypes,
     };
 

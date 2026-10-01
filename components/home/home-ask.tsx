@@ -49,8 +49,8 @@ import type { DocumentArtifact } from '@/lib/types/inbox';
 // THE DOC CARD'S TWO FACTS, from the ONE resolver (client-safe: types + the version chain).
 import { docCardTypeOf, resolveDocVersion, type DocCardType } from '@/lib/documents/doc-card';
 import { projectHref } from '@/lib/room/project-href';
-// THE REF IS ITS TAG — the ONE ref grammar, shared with the two serving doors (lib/home/ask.ts,
-// lib/entities/ask.ts). A chip resolves by id in the answer renderer; the partial-tag trim reads the
+// THE REF IS ITS TAG — the ONE ref grammar, shared with the serving door (lib/home/ask.ts; the entity
+// ask was removed in W37). A chip resolves by id in the answer renderer; the partial-tag trim reads the
 // same letters through components/home/chat-flight.ts (`trimPartialTag`).
 import { Answer } from '@/components/home/ask-answer';
 import { AnswerActions } from '@/components/home/ask-answer';

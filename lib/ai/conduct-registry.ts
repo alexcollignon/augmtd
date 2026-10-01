@@ -102,7 +102,6 @@ export const CONDUCT_EXEMPT: readonly ConductExemption[] = [
   { file: 'lib/context-sources/registry.ts', reason: 'judgment', note: 'source assignment' },
   { file: 'lib/context/intake-memory.ts', reason: 'judgment', note: 'intake memory classification' },
   { file: 'lib/converse/chat-title.ts', reason: 'judgment', note: 'a chat title (a label, not prose)' },
-  { file: 'lib/entities/ask.ts', reason: 'judgment', note: 'entity question JSON' },
   { file: 'lib/entities/recognize.ts', reason: 'judgment', note: 'entity recognition' },
   { file: 'lib/entities/reconcile-registry.ts', reason: 'judgment', note: 'registry reconciliation' },
   { file: 'lib/entities/reconcile.ts', reason: 'judgment', note: 'entity reconciliation' },

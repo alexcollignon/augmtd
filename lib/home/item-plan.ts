@@ -314,6 +314,11 @@ const AVAILABILITY_OBJECT = /\b(calendar|availability|available|schedule|free\/b
 function isTrivialInternalCheck(t: ItemPlanTask): boolean {
   // Never fold a committing send step (a reply/invite is real) — only a pure look-up/check.
   if (t.actor === 'system' && t.capability === 'send') return false;
+  // W37 — nor a step that WRITES the reply (found by the plan.item eval: "Confirm Thursday 3pm meeting —
+  // reply to Raj confirming…", graded draft, read as an availability check and was folded to done — the
+  // reply itself vanished from the plan). A draft step, or one that replies, is the communication.
+  if (t.actor === 'system' && t.capability === 'draft') return false;
+  if (isReplyLikeStep(t)) return false;
   const hay = `${t.text || ''} ${t.detail || ''}`;
   // Must read as a CHECK of availability/the calendar — and NOT be a file/document action (locate/send
   // the deck is a distinct task, never a trivial check even if it mentions a time).

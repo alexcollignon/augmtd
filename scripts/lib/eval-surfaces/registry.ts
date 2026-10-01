@@ -9,8 +9,11 @@ import { draftSurface } from './surfaces/draft';
 import { MORE_SURFACES } from './surfaces/more';
 import { SENT_SURFACES } from './surfaces/sent';
 import { ASSIST_SURFACES } from './surfaces/assist';
+import { DECOR_SURFACES } from './surfaces/decor';
+import { NARRATE_SURFACES } from './surfaces/narrate';
+import { BUILD_SURFACES } from './surfaces/build';
 
-export const SURFACES: AnyAdapter[] = [dmSurface, roomSurface, stepSurface, handoffSurface, draftSurface, ...MORE_SURFACES, ...SENT_SURFACES, ...ASSIST_SURFACES];
+export const SURFACES: AnyAdapter[] = [dmSurface, roomSurface, stepSurface, handoffSurface, draftSurface, ...MORE_SURFACES, ...SENT_SURFACES, ...ASSIST_SURFACES, ...DECOR_SURFACES, ...NARRATE_SURFACES, ...BUILD_SURFACES];
 
 export function selectSurfaces(ids: string[] | null): AnyAdapter[] {
   if (!ids?.length) return SURFACES;

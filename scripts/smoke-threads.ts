@@ -3386,7 +3386,6 @@ console.log('\nT22 · THE GROUND EVIDENCE + ONE AGENDA AT THE RENDER — the roo
   {
     const FRAME_SITES: Array<[string, string]> = [
       ['lib/room/brief.ts', 'the room’s composed opening'],
-      ['lib/entities/ask.ts', 'answerEntityQuestion — the room’s Q&A'],
       ['lib/home/ask.ts', 'the Home ask’s FOCUSED WORK block (answerHomeQuestion + converse’s global grounding)'],
       ['lib/converse/index.ts', 'the chief’s agent loop'],
       ['lib/work/worker-grounding.ts', 'a coworker’s focused project page'],
@@ -3525,7 +3524,7 @@ console.log('\nT23 · THE ROOM THAT KEPT ASKING — the world is read, the settl
       })());
     gate('T23.2 ONE CLIPPER — every ledger consumer routes through it; no raw head-cut of a ledger line survives',
       !!now && /export function clipLedgerLine\(/.test(now) && /export function nowClause\(/.test(now)
-      && !!state && state.includes('clipLedgerLine(l.text, 200)') && !/l\.text\.slice\(0, 200\)/.test(state)
+      && !!state && /clipLedgerLine\(l\.text, (?:200|LEDGER_GIST_CHARS \+ 120)\)/.test(state) && !/l\.text\.slice\(0, \d+\)/.test(state) /* W37: the state reads a wider, named width */
       && !!grounding && grounding.includes('clipLedgerLine(l.text, 200)') && !/l\.text\.slice\(0, 200\)/.test(grounding));
     gate('T23.2b the clause has ONE author — the marker and the sentence live beside the read that makes them',
       !!now && /export const NOW_CLAUSE_MARK =/.test(now)

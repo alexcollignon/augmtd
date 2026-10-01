@@ -21,7 +21,13 @@ type Gate = <T>(model: string, fn: () => Promise<T>) => Promise<T>;
 export function failureGate(inner: Gate): Gate {
   return async <T>(model: string, fn: () => Promise<T>): Promise<T> => {
     if (quota.euStopped && isBedrockModel(model)) throw new Error(`EU QUOTA STOP — unrun (${quota.reason})`);
-    try { return await inner(model, fn); }
+    try {
+      const r = await inner(model, fn);
+      // W37 · THE RESPONSE TAP (optional): a surface whose producer keeps its model output internal (a
+      // codegen whose script goes to a remote sandbox) reads what the call returned, on its own unit only.
+      (currentBucket() as { tap?: (model: string, res: unknown) => void }).tap?.(model, r);
+      return r;
+    }
     catch (e) {
       const msg = `${(e as { name?: string })?.name ?? 'Error'}: ${(e as Error)?.message ?? String(e)}`;
       const b = currentBucket() as { failures?: string[] };

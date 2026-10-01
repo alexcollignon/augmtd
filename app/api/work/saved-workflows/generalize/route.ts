@@ -18,21 +18,22 @@ export async function POST(req: NextRequest) {
     const { client, model } = await getAIClient(user.id, 'summarization', supabase);
     const completion = await aiCreate(client, {
       model,
-      max_tokens: 100,
+      max_tokens: 120,
       messages: [
         {
           role: 'system',
           content: `Convert a specific workflow description into a reusable template by replacing all specifics with generic placeholders.
 
 Rules:
-- Replace ALL specific names: people, companies, clients, products, topics, projects → use "a client", "a product or service", "the topic", "a project", etc.
-- Keep the deliverable type and action verb
+- Replace EVERY specific: people, companies, clients, products, projects, places, dates, periods and the specific subject matter → "a client", "a contact", "a product or service", "a topic", "a project", "a date", "a period", etc.
+- Keep the deliverable type, its shape (e.g. one-page memo) and the action verb
 - 1 sentence max, starts with a verb (Draft, Create, Prepare, Summarize, etc.)
+- Write it in the same language as the input
 - Return ONLY the template sentence. No explanation, no quotes.
 
 Example:
-Input: Draft an email introducing AI Readiness Hub to Accenture's innovation team
-Output: Draft an email introducing a product or service to a client's team`,
+Input: Draft an email introducing our onboarding service to Acme's operations team about the March pilot
+Output: Draft an email introducing a product or service to a client's team about a project`,
         },
         { role: 'user', content: prompt },
       ],

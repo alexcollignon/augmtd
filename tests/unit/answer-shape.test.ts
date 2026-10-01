@@ -39,12 +39,6 @@ vi.mock('@/lib/home/ask', async (orig) => ({
   ...(await orig<typeof import('@/lib/home/ask')>()),
   buildBrainSnapshot: vi.fn(async () => ({ text: 'WORLD', refs: new Map() })),
 }));
-vi.mock('@/lib/entities/ask', () => ({
-  answerEntityQuestion: vi.fn(async (_c: unknown, _u: string, _e: string, q: string) => {
-    stub.entityAsks.push(q);
-    return { answer: 'Entity answer.', refs: [] };
-  }),
-}));
 vi.mock('@/lib/room/grounding', async (orig) => ({
   ...(await orig<typeof import('@/lib/room/grounding')>()),
   assembleRoomGrounding: vi.fn(async () => ({ text: 'ROOM PAGE — decisions: two stand · open: one question · owner: Sam', entity: { id: 'ent-1', name: 'Acme' }, ledgerRefs: new Map() })),

@@ -2370,16 +2370,15 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
 
     // ── SOURCE FLOORS: the three doors speak the one grammar. ──
     const askSrc = src('lib/home/ask.ts');
-    const entSrc = src('lib/entities/ask.ts');
     const routeSrc = src('app/api/home/ask/route.ts');
     const panelSrc = src('components/home/home-ask.tsx');
     check('RT7: NO POSITIONAL READ SURVIVES in the renderer — the emit-order cursor is gone and chips resolve through the shared index',
       !/refs\[refIdx/.test(panelSrc) && !/refIdx/.test(panelSrc) && panelSrc.includes('byTag.get(id)'),
       /refIdx/.test(panelSrc) ? 'refIdx still present' : '');
-    check('RT8: ONE RESOLVER, BOTH ENDS — the two serving doors and the renderer all import lib/home/ask-refs (a grammar owned by two parsers drifts)',
-      askSrc.includes("from '@/lib/home/ask-refs'") && entSrc.includes("from '@/lib/home/ask-refs'") &&
+    check('RT8: ONE RESOLVER, BOTH ENDS — the serving door and the renderer import lib/home/ask-refs (a grammar owned by two parsers drifts; the entity ask was removed in W37)',
+      askSrc.includes("from '@/lib/home/ask-refs'") &&
       panelSrc.includes("from '@/lib/home/ask-refs'") &&
-      askSrc.includes('resolveAskRefs(raw') && entSrc.includes('resolveAskRefs(raw'));
+      askSrc.includes('resolveAskRefs(raw'));
     check('RT9: THE PERSIST DOOR CARRIES THE TAG — both writers (the server door and the panel\'s own) store it beside the label, so a rehydrated turn resolves identically',
       /tagOf\(r\) \? \{ tag: tagOf\(r\) \}/.test(routeSrc) && /r\.tag \? \{ tag: r\.tag \}/.test(panelSrc) &&
       src('lib/room/turns.ts').includes('tag?: string'));
@@ -2403,7 +2402,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
         stripUnresolvedTags('owed on [F3] and [L2] today.', []));
     }
     check('RT10: the declared ref list no longer decides anything — neither serving door maps res.json.refs to objects (the declaration-order read that started this)',
-      !/res\.json\?\.refs/.test(askSrc) && !/res\.json\?\.refs/.test(entSrc));
+      !/res\.json\?\.refs/.test(askSrc));
   }
 
   // ── Report ──

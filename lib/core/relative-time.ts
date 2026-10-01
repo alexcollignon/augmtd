@@ -423,3 +423,73 @@ export function absolutizeTimeWords(
   const day = localDayOf(anchor.now ?? new Date(), anchor.tz) ?? new Date().toISOString().slice(0, 10);
   return rewriteExact(s, spans, day, day);
 }
+
+// ── W37 · THE DAY A MESSAGE MEANT ────────────────────────────────────────────────────────────────
+// A message's "by Monday" / "tomorrow" belongs to the message's OWN date, not to today — and models do
+// calendar arithmetic badly (eval narrate.*/prep.*: "board meeting on Monday" in a mail sent Monday 28 Sep
+// was served as "Monday 30 September", a day that does not exist as a Monday, and a deadline four days
+// out was declared passed). Code resolves it once, beside the words: "by Monday [Mon 5 Oct]".
+
+const WEEKDAY_INDEX: Record<string, number> = {};
+for (const l of Object.keys(WEEKDAYS) as TimeLang[]) {
+  const order = l === 'pt' ? [1, 2, 2, 3, 4, 5, 6, 6, 0] : l === 'de' ? [1, 2, 3, 4, 5, 6, 6, 0] : [1, 2, 3, 4, 5, 6, 0];
+  // The source lists are sorted in place by length elsewhere — map from a fresh canonical order.
+  const canon: Record<TimeLang, string[]> = {
+    en: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
+    pt: ['segunda-feira', 'terça-feira', 'terca-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado', 'sabado', 'domingo'],
+    de: ['montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag', 'samstag', 'sonnabend', 'sonntag'],
+    fr: ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'],
+  };
+  canon[l].forEach((w, i) => { WEEKDAY_INDEX[w] = order[i]; });
+}
+const BARE_WEEKDAY = new RegExp(`(?<![\\p{L}])(${Object.keys(WEEKDAY_INDEX).sort(byLength).join('|')})(?![\\p{L}])`, 'giu');
+
+/** "Mon 5 Oct" for a YYYY-MM-DD day. Pure. */
+export function shortDay(day: string): string {
+  const d = new Date(`${day}T12:00:00Z`);
+  return `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()]} ${d.getUTCDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getUTCMonth()]}`;
+}
+
+/**
+ * Annotate a message's own day words with the date they mean, resolved against the day the message was
+ * SENT (in the user's zone): exact deixis ("tomorrow", "in two days") by its offset; a bare weekday
+ * ("by Monday", "on Friday") as the next such day strictly after the send day. A weekday beside an
+ * absolute date is a label and is left alone; vague phrases stay as written. Pure.
+ */
+export function annotateMessageDays(
+  text: string | null | undefined, sentAt: Date | string | number | null | undefined, tz?: string | null,
+  /** Place each resolved day against an event (a meeting): "[Tue 6 Oct — after the meeting]". */
+  event?: { day: string; name: string } | null,
+): string {
+  const s = String(text ?? '');
+  const sentDay = sentAt == null ? null : localDayOf(sentAt, tz);
+  if (!s.trim() || !sentDay) return s;
+  const placed = (day: string) => `${shortDay(day)}${event?.day ? (day > event.day ? ` — after the ${event.name}` : day < event.day ? ` — before the ${event.name}` : ` — the day of the ${event.name}`) : ''}`;
+  const marks: Array<{ end: number; label: string }> = [];
+  const taken: Array<[number, number]> = [];
+  for (const sp of findRelativeTime(s)) {
+    if (typeof sp.offset !== 'number' || sp.overdue) continue;
+    marks.push({ end: sp.index + sp.phrase.length, label: placed(addDays(sentDay, sp.offset)) });
+    taken.push([sp.index, sp.index + sp.phrase.length]);
+  }
+  const sentDow = new Date(`${sentDay}T12:00:00Z`).getUTCDay();
+  BARE_WEEKDAY.lastIndex = 0;
+  for (let m = BARE_WEEKDAY.exec(s); m; m = BARE_WEEKDAY.exec(s)) {
+    const at = m.index, end = at + m[0].length;
+    if (taken.some(([a, b]) => at < b && end > a)) continue;
+    if (DATE_AFTER.test(s.slice(end)) || DATE_BEFORE.test(s.slice(Math.max(0, at - 16), at))) continue;
+    const dow = WEEKDAY_INDEX[m[0].toLowerCase()];
+    if (dow == null) continue;
+    const ahead = ((dow - sentDow + 7) % 7) || 7;
+    marks.push({ end, label: placed(addDays(sentDay, ahead)) });
+  }
+  let out = s;
+  for (const mk of marks.sort((a, b) => b.end - a.end)) out = `${out.slice(0, mk.end)} [${mk.label}]${out.slice(mk.end)}`;
+  return out;
+}
+
+/** THE NEXT DAYS, NAMED — "Thu 1 Oct (today) · Fri 2 Oct · …", so a writer never computes a weekday. Pure. */
+export function dayStrip(now: Date = new Date(), tz?: string | null, days = 14): string {
+  const today = localDayOf(now, tz) ?? now.toISOString().slice(0, 10);
+  return Array.from({ length: days }, (_, i) => `${shortDay(addDays(today, i))}${i === 0 ? ' (today)' : ''}`).join(' · ');
+}

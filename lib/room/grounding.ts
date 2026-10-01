@@ -18,6 +18,7 @@ import { renderGroundEvidence } from '@/lib/room/ground-evidence';
 import { clipLedgerLine } from '@/lib/inbox/thread-now';
 import { clipForPrompt, clipLabel, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import { figuresOnRecord, type FigureSource } from '@/lib/room/figures';
+import { dayRelativeTo } from '@/lib/core/relative-time';
 
 /** W28 — how many live threads get their newest message in full, and its excerpt budget. */
 export const NEWEST_IN_FULL_THREADS = 4;
@@ -207,7 +208,7 @@ export function preparedWordsOf(st: Pick<import('@/lib/prepare/read').PreparedSt
 // The room's opening read "Clara is asking you to approve the shortlist" — in Clara's own voice.
 // `lib/room/self-voice` collapses that AFTER composition, which fixes the sentence and leaves the
 // cause standing: THIS page — the one every reasoner in room scope reads — rendered the speaker's
-// own ask as "Clara asks", so every consumer (the responder, answerEntityQuestion, the converse
+// own ask as "Clara asks", so every consumer (the responder, the converse
 // loop) had to re-derive the same collapse or speak a third person that was itself.
 //
 // So the speaker is plumbed in HERE, and the page states whose ask it is in the first person. The
@@ -621,8 +622,12 @@ export async function assembleRoomGrounding(
     return `[${id}] ${f.filename}${f.summary ? ` — ${clipForPrompt(String(f.summary), 100)}` : ''}`;
   });
 
+  // W37 · a due day is stated with its weekday and where it stands from today ("in 4 days (Monday 5 October
+  // 2026)") — a bare ISO day was read as the wrong weekday ("due Tue 5 Oct").
+  const boardTz = await tzP;
+  const dueWords = (due: string) => (/^\d{4}-\d{2}-\d{2}/.test(due) ? `${due.slice(0, 10)}, ${dayRelativeTo(due.slice(0, 10), new Date(), boardTz)}` : due);
   const boardLines = board.map((b) =>
-    `- [${b.ref}] (${b.kind}) "${b.title}"${b.who ? ` · with ${b.who}` : ''}${b.due ? ` · due ${b.due}` : ''}` +
+    `- [${b.ref}] (${b.kind}) "${b.title}"${b.who ? ` · with ${b.who}` : ''}${b.due ? ` · due ${dueWords(b.due)}` : ''}` +
     `${b.judgedWork ? ` · judged: ${b.judgedWork}` : ' · not yet judged'}` +
     `${b.prepared.length ? ` · PREPARED: ${b.prepared.join(' + ')}${b.preparedBy ? ` (by ${b.preparedBy})` : ''}` : ' · nothing prepared yet'}` +
     // TIME TRUTH: a past-time invite is stated as expired on the line itself — never "prepared".

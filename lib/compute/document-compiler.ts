@@ -13,6 +13,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
+import { clipForPrompt, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import type { DocTheme } from '@/lib/documents/theme';
 
 export type CompiledDocument = { name: string; bytes: Buffer; mime: string; stdout: string };
@@ -56,6 +57,7 @@ export async function compileDocument(
         `charts use the accent color.`
       : 'No brand theme — clean neutral design, dark text, one restrained accent.';
 
+    const dataHead = args.csvText ? clipForPrompt(args.csvText.split('\n').slice(0, 6).join('\n'), 700) : '';
     const gen = async (repairNote?: string, deep = true): Promise<string | null> => {
       const res = await aiCall<{ script?: string }>({
         userId, supabase: client, shape: deep ? { output: 'json', reasoning: 'deep' } : { output: 'json' }, temperature: 0, maxTokens: 6000, source: 'brain_synthesis',
@@ -65,8 +67,10 @@ export async function compileDocument(
           `${themeBlock}\n` +
           (args.computedFacts ? `\nCOMPUTED FACTS (authoritative numbers — use them verbatim):\n${args.computedFacts.slice(0, 2000)}\n` : '') +
           (args.contentText ? `\nTHE CONTENT (authoritative — the document's text comes from THIS, formatted for the ` +
-            `document; NEVER invent facts, names, numbers, or sections of your own):\n${args.contentText.slice(0, 6000)}\n` : '') +
+            `document; NEVER invent facts, names, numbers, or sections of your own, and add no sentence of your own beyond ` +
+            `headings and captions — no conclusions, benefits, risks or claims THE CONTENT does not state):\n${args.contentText.slice(0, 6000)}\n` : '') +
           (inputNames.length ? `\nINPUT FILES at /job/inputs/: ${inputNames.join(', ')}\n` : '') +
+          (args.csvText ? `\nTHE HEAD OF data.txt (ground truth for column names and order — use EXACTLY these names, keep the rows' order, never guess):\n${dataHead}\n${dataHead.includes(EXCERPT_MARK) ? `(${EXCERPT_RULE})\n` : ''}` : '') +
           (repairNote ? `\nYOUR PREVIOUS SCRIPT FAILED — fix the cause:\n${repairNote.slice(0, 800)}\n` : '') +
           `\nAVAILABLE: python-docx, python-pptx, openpyxl, matplotlib (Agg backend; save charts as PNG ` +
           `and embed them), pandas, pypdf, and \`from augmtd_docs import clone_slide, render_verify\`.\n` +
