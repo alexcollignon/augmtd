@@ -30,7 +30,8 @@
 // serves; the composer writes in the user's language. That table is the LABEL guard (it strips
 // day-words from titles); this one carries each phrase's day OFFSET, which a stripper does not need.
 //
-// Pure, zero IO, zero AI, client-safe (imports nothing).
+// Pure, zero IO, zero AI, client-safe (imports only the pure ISO-date floor).
+import { localizeIsoDates, type DateLang } from '@/lib/core/iso-dates';
 
 export type TimeLang = 'en' | 'pt' | 'de' | 'fr';
 
@@ -393,6 +394,17 @@ export type TimeWordsVerdict = {
  * and `tz` fix the serving day in the user's zone. Same local day → unchanged (the words are true).
  */
 export function serveTimeWords(
+  text: string | null | undefined,
+  anchor: { composedAt: string | null | undefined; now?: Date; tz?: string | null; lang?: DateLang | null },
+): TimeWordsVerdict {
+  const v = serveRelativeWords(text, anchor);
+  // W39 · THE ISO-DATE FLOOR rides the same seam: a served sentence never carries a machine date
+  // ("asked on 2026-09-30") — it reads in the reader's language (lib/core/iso-dates). A withheld
+  // sentence is not served, so it is left as it was.
+  return v.withheld ? v : { ...v, text: localizeIsoDates(v.text, { tz: anchor.tz, now: anchor.now, lang: anchor.lang }) };
+}
+
+function serveRelativeWords(
   text: string | null | undefined,
   anchor: { composedAt: string | null | undefined; now?: Date; tz?: string | null },
 ): TimeWordsVerdict {

@@ -35,10 +35,12 @@ export async function GET(
       return NextResponse.json({ processes: [], threads: [], files: [], priorMeetings: [] });
     }
 
-    const matchScore = (title: string) => {
-      const titleLower = title.toLowerCase();
-      const matched = tokens.filter((t: string) => titleLower.includes(t.toLowerCase())).length;
-      return Math.round((matched / tokens.length) * 100);
+    // W39 (walk, Oct 1 — an unexplained "33%" on a linked file): the old score was the share of the
+    // meeting title's first four long words found in the row's name — a number nobody could read. The
+    // row now carries the WORDS it shares with the meeting's title; the panel says them in plain words.
+    const sharedWords = (title: string): string[] => {
+      const titleLower = String(title ?? '').toLowerCase();
+      return tokens.filter((t: string) => titleLower.includes(t.toLowerCase()));
     };
 
     const ilikeFilter = tokens.map((t: string) => `title.ilike.%${t}%`).join(',');
@@ -68,14 +70,14 @@ export async function GET(
     ]);
 
     const threads = (threadsRes.data ?? []).map((t) => ({
-      id: t.id, title: t.title, score: matchScore(t.title),
+      id: t.id, title: t.title, shared: sharedWords(t.title),
     }));
     const files = (filesRes.data ?? []).map((f) => ({
-      id: f.id, filename: f.filename, score: matchScore(f.filename),
+      id: f.id, filename: f.filename, shared: sharedWords(f.filename),
     }));
     const priorMeetings = (priorRes.data ?? []).map((m) => ({
       id: m.id, title: m.title, start_time: m.start_time,
-      calendarEventId: m.calendar_event_id, score: matchScore(m.title),
+      calendarEventId: m.calendar_event_id, shared: sharedWords(m.title),
     }));
 
     return NextResponse.json({ threads, files, priorMeetings });

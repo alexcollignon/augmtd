@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { cn } from '@/lib/cn';
+import { localizeIsoDates } from '@/lib/core/iso-dates';
 import { AvatarStatus } from './avatar-status';
 import { ThreadCards } from './thread-cards';
 import { traceLine } from '@/lib/work/trace';
@@ -96,7 +97,7 @@ function Pinned({ item }: { item: PinnedItem }) {
           <span className="text-[13px] font-semibold text-neutral-900">{item.actorName}</span>
           {item.actorRoleLabel && <span className="text-[11px] text-neutral-400">{item.actorRoleLabel}</span>}
         </div>
-        {item.text && <div className={cn(THREAD_TEXT_W, 'text-[13px] leading-[1.55] text-neutral-800')}>{item.text}</div>}
+        {item.text && <div className={cn(THREAD_TEXT_W, 'text-[13px] leading-[1.55] text-neutral-800')}>{localizeIsoDates(item.text)}</div>}
         {item.node}
         <ActionRow actions={item.actions} />
       </div>
@@ -149,7 +150,8 @@ function ActorBubble({ item, showHeader }: { item: ActorBubbleItem; showHeader: 
             {item.ts && <span className="text-[11px] text-neutral-400">{item.ts}</span>}
           </div>
         )}
-        {item.text && <div className={cn(THREAD_TEXT_W, 'text-[13px] leading-[1.55] text-neutral-800 whitespace-pre-wrap')}>{item.text}</div>}
+        {/* W39 · the ISO-date floor (lib/core/iso-dates): an actor's prose never shows a machine date. */}
+        {item.text && <div className={cn(THREAD_TEXT_W, 'text-[13px] leading-[1.55] text-neutral-800 whitespace-pre-wrap')}>{localizeIsoDates(item.text)}</div>}
         <ThreadCards cards={item.cards} />
       </div>
     </div>

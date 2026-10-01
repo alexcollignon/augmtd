@@ -56,6 +56,8 @@ export async function stageTypedSupply(
       source: 'requirement_resolution',
       requirement: args.label,
       via: 'typed_supply',
+      // W39b · the ask's ANSWER (lib/prepare/input-kind 'answer') — an input, never prepared work.
+      input: 'answer',
       supplied_at: new Date().toISOString(),
     },
   });

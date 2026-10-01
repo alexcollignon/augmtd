@@ -24,6 +24,7 @@ import type { MeetingChatContext } from '@/components/meetings/meeting-chat-side
 import { Button, IconButton, Badge } from '@/components/ui';
 import { useRecordingContext } from '@/context/recording-context';
 import type { CalendarEvent } from '@/lib/types/meetings';
+import { useUserZone } from '@/context/user-zone-context';
 import { formatMeetingTime, calculateDuration } from '@/lib/types/meetings';
 import LinkedWorkPanel from '@/components/meetings/linked-work-panel';
 import ProcessingPipeline from '@/components/meetings/processing-pipeline';
@@ -234,6 +235,7 @@ export default function InlineNoteView({
   onNoteRowCreated,
   onStartRecording,
 }: InlineNoteViewProps) {
+  const zone = useUserZone();
   const isAdHoc = !eventId;
 
   // Remote data (scheduled meetings)
@@ -736,7 +738,7 @@ const handleRetry = async () => {
   const sharingMode = transcript?.sharingMode ?? null;
   const isAfterStart = event ? new Date(event.start_time).getTime() <= Date.now() : true;
   const hasGoogleMeetLink = !!event?.meeting_link?.includes('meet.google.com');
-  const { primary } = !isAdHoc && event ? formatMeetingTime(event.start_time, event.end_time) : { primary: '' };
+  const { primary } = !isAdHoc && event ? formatMeetingTime(event.start_time, event.end_time, zone) : { primary: '' };
   const duration = !isAdHoc && event ? calculateDuration(event.start_time, event.end_time) : 0;
 
   const segmentDuration = (transcript?.transcriptSegments?.length ?? 0) > 0

@@ -590,7 +590,7 @@
    ],
    "tier": 1,
    "domain": "truth",
-   "statement": "Nothing — chip, brief, narration, chat answer — claims prepared work that no surface renders; a claim without a card does not compose. W14.1: the inbox reader's obligation is the understanding's (`inboxTruthFacts` — you_owe opens the completion and chase vets, as on a you_owe commitment), and a machine reply draft's attachment on an inbox item is re-proven like a commitment doc-send's (an unstamped file match no current-law resolver row proves is withdrawn, and the re-prepare trip re-verifies it).",
+   "statement": "Nothing — chip, brief, narration, chat answer — claims prepared work that no surface renders; a claim without a card does not compose. W14.1: the inbox reader's obligation is the understanding's (`inboxTruthFacts` — you_owe opens the completion and chase vets, as on a you_owe commitment), and a machine reply draft's attachment on an inbox item is re-proven like a commitment doc-send's (an unstamped file match no current-law resolver row proves is withdrawn, and the re-prepare trip re-verifies it). W39: the item page's own exchange (narration and answers after the reader's first word) passes a render-time net — a sentence claiming a prepared thing (first person, a named actor, or the passive \"is drafted / ready to review\") whose kind the action seat does not render is withheld, and the host makes one seat-only re-read (lib/room/seat-claims.ts dropUnseatedClaims).",
    "homes": [
     "app/api/home/brief/route.ts",
     "components/home/item-detail.tsx",
@@ -618,7 +618,8 @@
     "components/home/home-ask.tsx",
     "lib/present/converse-stream.ts",
     "lib/skills/for-turn.ts",
-    "lib/skills/followed.ts"
+    "lib/skills/followed.ts",
+    "lib/room/seat-claims.ts"
    ],
    "gates": [
     {
@@ -786,6 +787,16 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W21 (uncommitted) SKILLS IN CHAT — A CLAIM RENDERS for skills: every chat answer (Home ask, item/project steer, coworker DM) resolves its skills through ONE resolver (lib/skills/for-turn.ts: the addressed actor's assigned skills — the chief is the cos seat's custom_agents row — plus this message's adds, minus its skips) and mounts them through ONE renderer (lib/work/worker-skills-context.ts renderSkillsBlock, clipped under the excerpt law, voiced as the user's own instructions); an answer's `skillsFollowed` is the model's [[skills_applied:…]] report FLOORED to the skills actually loaded into that prompt (lib/skills/followed.ts) — never a skill that was not loaded; the marker never reaches a surface (stream filter + answer-door strip); room answers record it in one companion row (a component would break the chat boundary). tests/unit/skills-chat drives both chief doors over an in-memory DB with the core stubbed"
+    },
+    {
+     "suite": "smoke-w39-walk-floors",
+     "ids": [
+      "W1",
+      "W2d"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W39: dropUnseatedClaims withholds a draft claim the seat does not render and keeps it once the card does; offers/questions untouched"
     }
    ],
    "version_key": null,
@@ -800,6 +811,10 @@
     {
      "law": "open-ask-outranks-staged-send",
      "precedence": "same chain: floor → ladder pick → single claim"
+    },
+    {
+     "law": "no-mutation-and-address",
+     "precedence": "W39: the claim yields to the seat — withheld while the seat is empty, shown once the empty-seat fill seats its card; never by swapping a painted widget"
     }
    ],
    "note": "W13.6 (owner walk after W13.5): the live engine ask said \"I have the details on slides 7&8 … ready to go\" over work nobody had started (the composer's words were never checked, and the doc-send lane re-posted an ARCHIVED ask's words); the ask did not render (the lane's generic label \"the document itself\" was mooted by the verdict-drift rule while the brief's grounding still read it as open); and \"Clara found the file and drafted the send\" stood live over a send already filed. Fixed by W13.6 (uncommitted). W19.2a (owner walk Sep 28): a project-room catch-up was routed to a 7-day recordings read; its zero-row card stood under a framing sentence that replaced the answer on reload. Fixed by W19.2a (uncommitted)."
@@ -1045,7 +1060,7 @@
    ],
    "tier": 1,
    "domain": "surfaces",
-   "statement": "The first paint is the truth — a served surface never changes in place while read (recompute lands on next open or as an append); and every thread owns a URL that survives refresh and never renders under an address that says otherwise.",
+   "statement": "The first paint is the truth — a served surface never changes in place while read (recompute lands on next open or as an append); and every thread owns a URL that survives refresh and never renders under an address that says otherwise. W39 (owner-approved, Oct 1 — the item room lost its draft after an answered ask): an EMPTY action seat (no draft, ask, decision or other action card painted) is a skeleton — a held landing may fill THAT SEAT ONLY (the fields that choose and carry the action widget), never the words the reader met, never a painted widget and never a reserved placeholder (lib/room/no-mutation.ts mayFillEmptySeat · fillEmptySeat; the rail reports the seat it painted). W39c: an EMPTY conversation (no turn painted) and a seat still being judged (machine state preparing/unjudged) are skeletons too — capped beats re-read until the first turn / the settled state lands (filling only, never replacing); the reader's own deed turns (a typed answer, a go-ahead) re-read the conversation at once, persist across refresh in order, are never read as an orphan question, and the work they produced is seated after them.",
    "homes": [
     "lib/room/no-mutation.ts",
     "lib/room/project-href.ts",
@@ -1065,7 +1080,10 @@
     "lib/work-items/gantt-date.ts",
     "components/entities/gantt-chart.tsx",
     "components/thread/markdown-view.tsx",
-    "components/home/chat-flight.ts"
+    "components/home/chat-flight.ts",
+    "components/home/item-detail.tsx",
+    "components/home/item-rail.tsx",
+    "components/home/room-chat.ts"
    ],
    "gates": [
     {
@@ -1189,6 +1207,20 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W22.B THE STREAM NEVER REMOUNTS + NEVER A SILENT RING: every prefix of a streamed answer leaves its painted blocks identical (blocks keyed by position; only the last grows); the in-flight tokens and the seated answer share one renderer; the stage speaks in the one working line, 'still working' past 20 s, a 120 s client abort, and a stream without its done frame is a failure line with Retry — never a fake answer"
+    },
+    {
+     "suite": "smoke-w39-walk-floors",
+     "ids": [
+      "W1",
+      "W2a",
+      "W2b",
+      "W2c",
+      "W2e",
+      "W2m"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W39 THE EMPTY ACTION SEAT IS A SKELETON: tests/unit/w39-walk-floors calls mayFillEmptySeat/fillEmptySeat and composeItemPage on the filled view (the draft card seats; the opening keeps its words); the seats assert the item view's fill, the three doors' seat reports and the empty-draft seed"
     }
    ],
    "version_key": null,
@@ -1207,6 +1239,10 @@
     {
      "law": "one-production-door",
      "precedence": "replace-in-place is allowed only as the consequence of the user's own action on that surface; engine regeneration appends or versions"
+    },
+    {
+     "law": "a-claim-renders",
+     "precedence": "W39: an EMPTY seat yields to the truth — a held landing fills an empty action seat (seat fields only) so a claim and its card arrive together; a painted widget still never swaps, and a claim the seat cannot show is withheld until it can (lib/room/seat-claims.ts)"
     }
    ]
   },
@@ -1391,11 +1427,12 @@
     "T-CLASS",
     "THE CLOCK REACHES FRAME CHROME",
     "NEVER MODERNIZE",
-    "THE YEAR-TRANSPOSITION CLASS"
+    "THE YEAR-TRANSPOSITION CLASS",
+    "ONE READER ZONE"
    ],
    "tier": 1,
    "domain": "time",
-   "statement": "No served claim is false about time — no past slot proposed, no expired window treated as live, no year transposed, no date derived by a model where code can compute it.",
+   "statement": "No served claim is false about time — no past slot proposed, no expired window treated as live, no year transposed, no date derived by a model where code can compute it — and the same event never shows two times: every surface renders event times and days in the user's one zone (served by the shell; the device zone only when none is known), with one quiet hint when the device disagrees.",
    "homes": [
     "lib/calendar/schedule-window.ts",
     "lib/frames/generate-frame.ts",
@@ -1420,7 +1457,17 @@
     "lib/home/prepare-action.ts",
     "lib/prepare/schedule-offer.ts",
     "lib/commitments/extraction-truth.ts",
-    "lib/room/voice.ts"
+    "lib/room/voice.ts",
+    "lib/core/iso-dates.ts",
+    "components/thread/markdown-view.tsx",
+    "components/thread/thread-timeline.tsx",
+    "lib/core/user-zone.ts",
+    "context/user-zone-context.tsx",
+    "components/one/zone-hint.tsx",
+    "app/(main)/layout.tsx",
+    "components/meetings/meetings-home.tsx",
+    "components/meetings/week-calendar.tsx",
+    "lib/types/meetings.ts"
    ],
    "gates": [
     {
@@ -1517,6 +1564,15 @@
      "note": "W19.A: an overdue COUNT ('nine days overdue', '9 dias de atraso', 'seit 5 Tagen überfällig', '4 jours de retard') served on a later day is rewritten to its deadline's date ('overdue since Sep 18') or withheld when vague/unanchored; the compose-time belt dates it before storing; the entity state summary passes the floor where W19.A serves it"
     },
     {
+     "suite": "smoke-time-words",
+     "ids": [
+      "E1-E8"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W39 THE ISO-DATE FLOOR (browser walk Oct 1: 'asked on 2026-09-30'): an ISO date (YYYY-MM-DD, optional time + zone) in served model prose is rewritten into the reader's language and locale format — weekday + month names EN·FR·DE·PT·ES, the year only when not the serving year, a zoned instant in the reader's zone — never inside code, URLs/link targets, filenames/identifiers or quoted source (blockquotes, quoted spans). One home (lib/core/iso-dates localizeIsoDates), carried by serveTimeWords (so every served cached sentence passes: room brief, entity state, Home briefing + brief line), the anchor ask (spokenIsoDates delegates), and at render in the one chat markdown renderer and the thread's pinned/actor prose; tests/unit/iso-dates"
+    },
+    {
      "suite": "smoke-rib-class",
      "ids": [
       "C2",
@@ -1597,6 +1653,12 @@
      "kind": "pure",
      "cost": "zero-ai",
      "note": "W28 (uncommitted) THE WEEKDAY SNAP HOLDS AT ANY HOUR: a list number (\"1.\") is never a date’s day number (dateStatedExplicitly), the quote’s one weekday is the deadline however far the model slipped (snapWeekdayDue), and the extraction prompt carries the coming seven days; every day-based date law (and the understanding's reference day) reads the source's LOCAL day in the user's zone (localDayAnchor, userDayString), never the UTC or server day on the snap’s own day basis; tests/unit/w28-extraction-and-move-floors"
+    },
+    {
+     "suite": "smoke-reader-zone",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "Oct 1 walk: Home 10:00 vs Meetings 11:00 for one event (server user zone vs device zone). One served zone (lib/utils/user-time servedUserTimezone → UserZoneProvider), one client formatter set (lib/core/user-zone), a render-site sweep that fails on device-zone event formatting, and the mismatch hint (components/one/zone-hint.tsx)."
     }
    ],
    "version_key": "JUDGE_VERSION",
@@ -9530,13 +9592,19 @@
    ],
    "tier": 2,
    "domain": "judge-prepare-deck",
-   "statement": "Every requirement the judge lists names what it is: \"attach\" (a THING that can be retrieved and attached) or \"answer\" (a specific fact only the user holds, which the work must state and no message or file already states — a figure, the price to quote, their account details for a payment to them, contacts). The resolver's check VERIFIES the kind with the item's thread in view: a verified fact is an answer (never searched for; a fact the user already typed is in hand); a sign-off (a confirmation, approval, availability, a status) is nobody's input — the go-ahead carries it; a fact the thread already states is given; a secret is refused before any of this. On produce, a fact-shaped requirement is the work to write, never an ask. Both kinds flow into the SAME ask card (the input_checklist turn, answers marked in state.answer — existing JSON, no migration), whose answer rows lead with the type-it door; the drafter is told an answer still to come is never guessed.",
+   "statement": "Every requirement the judge lists names what it is: \"attach\" (a THING that can be retrieved and attached) or \"answer\" (a specific fact only the user holds, which the work must state and no message or file already states — a figure, the price to quote, their account details for a payment to them, contacts). The resolver's check VERIFIES the kind with the item's thread in view: a verified fact is an answer (never searched for; a fact the user already typed is in hand); a sign-off (a confirmation, approval, availability, a status) is nobody's input — the go-ahead carries it; a fact the thread already states is given; a secret is refused before any of this. On produce, a fact-shaped requirement is the work to write, never an ask. Both kinds flow into the SAME ask card (the input_checklist turn, answers marked in state.answer — existing JSON, no migration), whose answer rows lead with the type-it door; the drafter is told an answer still to come is never guessed. W39 (walk, Oct 1 — \"Type it\" offered for a signed contract): the kind drives the doors — a fact row offers Type it · Attach · Point me to it; a document row offers Attach · Point me to it and no Type it while either stands (a figure ON a document, \"the invoice number\", is a fact). W39b (walk, Oct 1 — a typed answer read as a \"ready to review\" deliverable no door mounts, and the go-ahead drafted nothing): a typed answer is the ask's ANSWER (`input: 'answer'`), an input never served as prepared work (lib/prepare/read isTypedAnswerRow); it matches its label across the judge's re-wordings (matchTypedLabel — exact key, else the one label sharing its content words, never a guess between two); its VALUE reaches every drafting lane in the artifact truth (never a placeholder over a given fact); and a reader's deed re-prepares the item it names (lib/prepare/prepare-by-id), never only when the deck's spine happens to carry it.",
    "homes": [
     "lib/prepare/input-kind.ts",
     "lib/prepare/requirements.ts",
     "lib/work/judge.ts",
     "components/home/input-card.tsx",
-    "components/home/item-rail.tsx"
+    "components/home/item-rail.tsx",
+    "components/thread/ask-rows.tsx",
+    "lib/room/go-ahead.ts",
+    "lib/prepare/prepare-by-id.ts",
+    "lib/prepare/read.ts",
+    "lib/prepare/supply.ts",
+    "app/api/room/asks/route.ts"
    ],
    "gates": [
     {
@@ -9550,9 +9618,20 @@
      "kind": "pure",
      "cost": "zero-ai",
      "note": "W35 (uncommitted): tests/unit/w35-bill-inputs-figures — the judge keeps the stated kind; settleInputKind; applyAttachVerdict sorts attach/answer/sign-off and never keeps a secret; the ask speaks the right door; ARTIFACT TRUTH never guesses an answer. Measured by the eval (judgment.input-ask ia-07/17/20 answers scored)."
+    },
+    {
+     "suite": "smoke-w39-walk-floors",
+     "ids": [
+      "W1",
+      "W2g",
+      "W2l"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W39: the rendered rows leaf — a signed contract shows Attach and no Type it; the IBAN shows both; a document row with no other door keeps typing; W39b: the typed answer is never a deliverable, survives label re-wording, its value reaches the truth, and the go-ahead re-prepares the named item (W2l)"
     }
    ],
-   "fn": "settleInputKind · applyAttachVerdict · typedSupplyRows",
+   "fn": "settleInputKind · applyAttachVerdict · typedSupplyRows · matchTypedLabel · isTypedAnswerRow · prepareItemById",
    "version_key": "JUDGE_VERSION",
    "status": "holding-uncommitted",
    "broken_by": null,
@@ -10004,6 +10083,123 @@
     }
    ],
    "note": "Found by the W38 live verifier (Oct 1): an Excel 'tracker' ask and a typed sheet titled 'tracker' shipped as .html frames; a forced sheet/deck over markdown threw in the builder (no file); the workflow e-mail re-rendered the attachment by the CONFIGURED kind (a sheet fed to the Word builder threw; compiled charts were lost); compute .xlsx/.docx outputs were stored as application/octet-stream and skipped by the KB indexer; computeDataFacts' 900-token codegen truncated every script (facts silently null product-wide); a DM deck stated quarter totals +5,000 and a 29,600 year total (true 13,600); a compiled .docx carried literal **bold**, an ASCII bar chart and no heading styles; served filenames lost every accented letter and DM titles were mid-word slices of the ask. The compiler's one reasoned repair was blind: it carried the HEAD of stderr (a screen of Fontconfig cache warnings), never the exception. Indexing a delivered file snowballed 'AUGMTD Files' sources: after one race left two rows, .maybeSingle() errored (ignored) and every later index inserted another (64 on one real account — census only, not swept)."
+  },
+  {
+   "id": "the-reader-is-you",
+   "name": "THE READER IS YOU",
+   "aliases": [
+    "toReaderVoice",
+    "SECOND-PERSON DESCRIPTIONS"
+   ],
+   "tier": 2,
+   "domain": "workflows",
+   "statement": "A model-authored line the app serves to its reader (a workflow's description) speaks TO them in the second person — \"your documents\", never \"the user's documents\": the builder prompt asks for it and a code floor enforces it where the description is written and where it is served.",
+   "homes": [
+    "lib/workflows/reader-voice.ts",
+    "lib/workflows/generate-config.ts",
+    "components/workflows/workflow-detail.tsx"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w39-walk-floors",
+     "ids": [
+      "W1",
+      "W2i"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "toReaderVoice rewrites the builder's third person; wired at write and serve"
+    }
+   ],
+   "fn": "toReaderVoice",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W39.1",
+   "collides_with": [
+    {
+     "law": "a-claim-renders",
+     "precedence": "voice only — the floor rewrites who is addressed, never what is claimed"
+    }
+   ]
+  },
+  {
+   "id": "active-means-alive",
+   "name": "ACTIVE MEANS ALIVE",
+   "aliases": [
+    "ACTIVE_STATES",
+    "THE DELIVERED LINE"
+   ],
+   "tier": 2,
+   "domain": "workflows",
+   "statement": "A list headed active carries only live work (needs you · waiting · running); a delivered run leaves it the moment it delivers — a fresh delivery is news said once in its own quiet line, never counted or listed as active.",
+   "homes": [
+    "components/workflows/workflows-ledger.tsx"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w39-walk-floors",
+     "ids": [
+      "W2j"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "the active strip filters to ACTIVE_STATES; the delivered count is its own line outside it"
+    }
+   ],
+   "fn": "ACTIVE_STATES filter over PROCESS_BUCKETS",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W39.1",
+   "collides_with": [
+    {
+     "law": "one-claim-per-row",
+     "precedence": "the state word stays the derivation's (processStateOf); this law only decides which states an ACTIVE list may carry"
+    }
+   ]
+  },
+  {
+   "id": "one-receipt-per-deed",
+   "name": "ONE RECEIPT PER DEED",
+   "aliases": [
+    "NO TOAST BESIDE A BANNER",
+    "Answer added"
+   ],
+   "tier": 2,
+   "domain": "surfaces",
+   "statement": "A deed is acknowledged once, where the reader is looking, in words that say what happened: a card that turns into its own receipt is not echoed by a toast (creating a workflow says it is live once), and a typed or attached answer reads \"Answer added — the run continued\", never \"Sent\" (the send word belongs to mail that left).",
+   "homes": [
+    "components/workflows/workflow-draft-card.tsx",
+    "lib/workflows/process-state.ts",
+    "lib/workflows/standing.ts",
+    "components/workflows/process-drawer.tsx",
+    "lib/tools/worker-tasks.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w39-walk-floors",
+     "ids": [
+      "W1",
+      "W2f",
+      "W2k"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "GATE_OUTCOME_WORDS.supplied says the answer was added; no answer surface says Sent; the draft card raises no live toast"
+    }
+   ],
+   "fn": "GATE_OUTCOME_WORDS.supplied",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W39.1",
+   "collides_with": [
+    {
+     "law": "human-in-the-loop",
+     "precedence": "a receipt never claims an external send that did not happen — the send word is reserved for the commit door's own deeds"
+    }
+   ]
   }
  ],
  "lessons": [

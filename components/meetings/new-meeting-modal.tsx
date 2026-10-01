@@ -4,6 +4,9 @@ import { useState, useEffect } from 'react';
 import { XMarkIcon, VideoCameraIcon } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
 import type { CalendarEvent } from '@/lib/types/meetings';
+import { useUserZone } from '@/context/user-zone-context';
+import { dayKeyIn, zonedClock } from '@/lib/core/user-zone';
+import { wallTimeToUtc } from '@/lib/core/zoned-time';
 import AttendeeInput, { type AttendeeChip } from './attendee-input';
 import { Button, IconButton, Input, Textarea, Select } from '@/components/ui';
 
@@ -21,13 +24,15 @@ interface NewMeetingModalProps {
   event?: CalendarEvent;
 }
 
-function toLocalDateStr(iso: string) {
-  return new Date(iso).toISOString().slice(0, 10);
+// THE READER'S ZONE (law `one-reader-zone`): the form edits the wall clock in the user's zone — the
+// zone every list and grid shows — and converts back in that same zone.
+function toLocalDateStr(iso: string, zone: string) {
+  return dayKeyIn(iso, zone) || new Date(iso).toISOString().slice(0, 10);
 }
 
-function toLocalTimeStr(iso: string) {
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+function toLocalTimeStr(iso: string, zone: string) {
+  const c = zonedClock(iso, zone);
+  return c ? `${String(c.hour).padStart(2, '0')}:${String(c.minute).padStart(2, '0')}` : '';
 }
 
 function calcDurationMins(start: string, end: string) {
@@ -42,6 +47,7 @@ function snapDuration(mins: number) {
 }
 
 export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDate, initialTitle, event }: NewMeetingModalProps) {
+  const zone = useUserZone();
   const isEdit = !!event;
   const [connections, setConnections] = useState<Connection[]>([]);
   const [form, setForm] = useState({
@@ -78,8 +84,8 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
       setForm(f => ({
         ...f,
         title: event.title,
-        date: toLocalDateStr(event.start_time),
-        time: toLocalTimeStr(event.start_time),
+        date: toLocalDateStr(event.start_time, zone),
+        time: toLocalTimeStr(event.start_time, zone),
         duration: snapDuration(durMins),
         attendees: event.attendees.map(a => ({ email: a.email, name: a.name })),
         notes: event.description ?? '',
@@ -123,9 +129,10 @@ export default function NewMeetingModal({ isOpen, onClose, onSuccess, initialDat
     setFormError(null);
 
     try {
-      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const startTime = new Date(`${date}T${time}`).toISOString();
-      const endTime = new Date(new Date(`${date}T${time}`).getTime() + duration * 60000).toISOString();
+      const timezone = zone;
+      const [hh, mm] = time.split(':').map(Number);
+      const startTime = wallTimeToUtc(date, hh, mm, zone) ?? new Date(`${date}T${time}`).toISOString();
+      const endTime = new Date(new Date(startTime).getTime() + duration * 60000).toISOString();
 
       let res: Response;
       if (isEdit && event) {

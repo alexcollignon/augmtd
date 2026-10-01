@@ -1,4 +1,5 @@
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { toReaderVoice } from '@/lib/workflows/reader-voice';
 import { logAIUsage } from '@/lib/ai/log-usage';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import { makeStepId } from '@/lib/workflows/types';
@@ -60,7 +61,7 @@ Respond with ONLY valid JSON — no markdown, no explanation.
 JSON shape:
 {
   "name": "Short name (3–6 words)",
-  "description": "One sentence — what this produces",
+  "description": "One sentence — what this produces, spoken TO the reader in the second person (\"your documents\", never \"the user's documents\")",
   "trigger": { "type": "manual" },
   "triggers": [],
   "fire_limit": null,
@@ -1361,7 +1362,8 @@ export async function generateWorkflowConfig(
 
   return {
     name: noSentinel(String(generated.name)),
-    description: typeof generated.description === 'string' ? (noSentinel(generated.description) || null) : null,
+    // W39 · THE READER IS "YOU" (lib/workflows/reader-voice) — the description is spoken to its reader.
+    description: typeof generated.description === 'string' ? (toReaderVoice(noSentinel(generated.description)) || null) : null,
     trigger: (generated.trigger as Record<string, unknown>) ?? { type: 'manual' },
     triggers: doors,
     steps,

@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   numbersIn, unsourcedFigures, missingFigures, derivableFigures, evalFormula, guessLanguage, nonTestAddresses,
-  isMidWordClip, formatConsistency, garbageHits, comparisonThresholds, readFileView, sniffFormat, MIME_BY_EXT,
+  isMidWordClip, formatConsistency, garbageHits, comparisonThresholds, withReferenceGaps, readFileView, sniffFormat, MIME_BY_EXT,
 } from '../../scripts/lib/file-check';
 import { downloadHeaders, safeFileStem } from '@/lib/artifacts/download-name';
 import { contentFitsType, contentAsText } from '@/lib/artifacts/attachment';
@@ -31,6 +31,11 @@ describe('file-check — numbers', () => {
   it('years, small counts and stated thresholds are prose, not claims', () => {
     expect(unsourcedFigures('In 2026, 4 regions; two are above 3,000 units', derivableFigures(ROWS))).toEqual([]);
     expect(comparisonThresholds('plus de 1 000 unités, below 500, at 1,234')).toEqual([1000, 500]);
+  });
+  it('a gap to a stated target is derived (target − mean per cell), a made-up gap is not', () => {
+    const allowed = withReferenceGaps(derivableFigures(ROWS), [1400, 4200, 5600, 16800]);
+    expect(unsourcedFigures('on average 267 units below target per region per quarter; South 1,235 short', allowed)).toEqual([]);
+    expect(unsourcedFigures('a 777-unit gap; Q1 total 9,365', allowed)).toEqual([777, 9365]);
   });
   it('missing figures are named', () => {
     expect(missingFigures('North 3,730 and East 4 305', [3730, 4305, 2600])).toEqual([2600]);

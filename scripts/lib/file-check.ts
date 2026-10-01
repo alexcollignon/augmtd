@@ -270,6 +270,18 @@ export function derivableFigures(rows: number[][]): number[] {
   return [...s];
 }
 
+/** A stated reference figure (a target, a budget) and everything told against it: the reference, its
+ *  scalings (per row / per column / overall) and each derivable figure's gap to each of them — e.g.
+ *  "267 below target" = 1,400 − the mean per cell (13,600 / 12). Pure. */
+export function withReferenceGaps(allowed: number[], refs: number[]): number[] {
+  const out = new Set<number>(allowed);
+  for (const r of refs) {
+    out.add(r);
+    for (const a of allowed) { const g = r - a; out.add(Math.round(g * 100) / 100); out.add(Math.round(g)); out.add(-Math.round(g)); out.add(-Math.round(g * 100) / 100); }
+  }
+  return [...out];
+}
+
 // ── FORMULAS ────────────────────────────────────────────────────────────────────────────────────
 
 const colNum = (c: string) => c.toUpperCase().split('').reduce((n, ch) => n * 26 + (ch.charCodeAt(0) - 64), 0);

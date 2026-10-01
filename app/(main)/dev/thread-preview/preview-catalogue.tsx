@@ -332,7 +332,7 @@ const SECTIONS: Section[] = [
         ),
       },
       {
-        label: 'input · open — THE HOST (document-led: Attach leads, Type it stays)',
+        label: 'input · open — THE HOST (document-led: Attach leads, no Type it)',
         node: (
           <InputCard
             id="cat-ask-doc"
@@ -416,7 +416,7 @@ const SECTIONS: Section[] = [
         label: 'input · settled',
         node: <ThreadCardView card={{
           kind: 'input', id: 'cat-in-settled', state: 'settled', ask: 'Paste the signed addendum.',
-          statusChip: 'answered', settledLine: 'Sent — the run picked up from there.',
+          statusChip: 'answered', settledLine: 'Answer added — the run continued.',
         }} />,
       },
       {

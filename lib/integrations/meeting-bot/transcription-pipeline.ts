@@ -7,6 +7,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { transcribeAudio } from './whisper-client';
+import { transcriptionVocabulary } from './transcription-vocabulary';
 import { storeTranscriptAndGenerateWork } from '@/lib/integrations/meeting-bot/bot-manager';
 
 export interface ProcessAudioFileParams {
@@ -45,7 +46,8 @@ export async function processAudioFile(params: ProcessAudioFileParams): Promise<
     const filename = storagePath.split('/').pop() ?? 'recording.webm';
 
     // 2. Transcribe via faster-whisper-server
-    const { segments } = await transcribeAudio(audioBuffer, filename);
+    const vocabulary = await transcriptionVocabulary(adminClient, userId, calendarEventId);
+    const { segments } = await transcribeAudio(audioBuffer, filename, vocabulary);
 
     console.log(`[TranscriptionPipeline] Transcribed ${segments.length} segments for: ${title}`);
 

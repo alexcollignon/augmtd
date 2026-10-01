@@ -14,6 +14,7 @@
 import { isLiveArtifact, type PreparedArtifact } from '@/lib/prepare/read';
 import { leanSelect, foldLean, ANCHOR_KEYS } from '@/lib/home/lean-source';
 import { stripDeixis } from '@/lib/inbox/deixis';
+import { localizeIsoDates } from '@/lib/core/iso-dates';
 
 export type AnchorLinkKind = 'inbox_item' | 'commitment' | 'meeting';
 export type ItemAnchor = { who: string | null; ask: string | null; prepared: string | null };
@@ -84,11 +85,8 @@ export function anchorOf(linkKind: AnchorLinkKind, row: AnyRow, prepared: Prepar
  *  verbatim ("Sam asked you to send the signed MSA — 2026-10-02."). A date-only ISO is rewritten the
  *  way the rest of the product writes dates ("Fri, Oct 2"); date-only, so no zone can shift it. Pure. */
 export function spokenIsoDates(text: string): string {
-  return String(text ?? '').replace(/\b(\d{4})-(\d{2})-(\d{2})\b(?![T:\d])/g, (m, y, mo, d) => {
-    const dt = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d), 12));
-    if (Number.isNaN(dt.getTime()) || dt.getUTCDate() !== Number(d)) return m;
-    return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }).format(dt);
-  });
+  // W39 · one home for the floor: lib/core/iso-dates (the reader's language, never inside code/URLs/filenames/quotes).
+  return localizeIsoDates(String(text ?? ''));
 }
 
 /** The item's latest activity (the plan-freshness rule reads it). */

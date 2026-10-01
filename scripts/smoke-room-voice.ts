@@ -171,7 +171,8 @@ async function main() {
       && /await kickOpenedItem\(supabase, uid, it\)/.test(warmRoute));
     const detail = src('components/home/item-detail.tsx');
     gate('E7 the deep-dive\'s re-checks are pure reads (`&warm=1`) — they pick up what the open kicked, never buy it again',
-      (detail.match(/fetch\(`\/api\/items\/view\?kind=\$\{kind\}&id=\$\{id\}&warm=1`\)/g) ?? []).length === 2);
+      // ⟲ RE-POINTED (W39c): the third pure re-check is the still-judging seat's capped beat (a skeleton fill).
+      (detail.match(/fetch\(`\/api\/items\/view\?kind=\$\{kind\}&id=\$\{id\}&warm=1`\)/g) ?? []).length === 3);
 
     // pure — the client: a hover warm asks warm=1; the joined open kicks ONCE; a fresh open asks plainly
     type Call = { url: string; body?: string };

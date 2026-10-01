@@ -104,7 +104,31 @@ export function outcomeOf(opts: { approve: boolean; input?: SupplyPayload }): Ga
  * re-runs the one preparation engine.
  */
 export async function proceedAsk(turnId: string): Promise<DeedResult> {
-  return post('/api/room/asks', { turnId, action: 'proceed' });
+  return postAskDeed({ turnId, action: 'proceed' });
+}
+
+/** W39b · THE ASK DOORS NAME THEIR ITEM: the server answers which item the deed re-opened, and the
+ *  door tells the page (`aug:item-deed`) so the item's view re-reads the post-deed world — the reader's
+ *  own action (the no-mutation law's exception) — instead of serving the pre-deed cache on the next
+ *  open while the re-prepared draft sits unseen. */
+async function postAskDeed(body: Record<string, unknown>): Promise<DeedResult> {
+  let res: Response;
+  try {
+    res = await fetch('/api/room/asks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch { return { ok: false, reason: 'failed', message: null }; }
+  if (res.ok) {
+    const j = await res.json().catch(() => null) as { item?: { kind?: string; id?: string } | null } | null;
+    const id = j?.item?.id;
+    if (id && typeof window !== 'undefined') {
+      try { window.dispatchEvent(new CustomEvent('aug:item-deed', { detail: { id, kind: j?.item?.kind ?? null } })); } catch { /* SSR */ }
+    }
+    return { ok: true };
+  }
+  if (res.status === 401 || res.status === 403 || res.status === 404) return { ok: false, reason: 'denied' };
+  const j = await res.json().catch(() => null) as { error?: unknown } | null;
+  const message = typeof j?.error === 'string' && j.error.trim() ? j.error.trim() : null;
+  if (res.status === 409) return { ok: false, reason: 'conflict', message };
+  return { ok: false, reason: 'failed', message };
 }
 
 /**
@@ -117,5 +141,5 @@ export async function proceedAsk(turnId: string): Promise<DeedResult> {
  * THE ONLY CLIENT CALLER OF THE TYPED SUPPLY, exactly like the two doors above it.
  */
 export async function supplyAskText(turnId: string, label: string, text: string): Promise<DeedResult> {
-  return post('/api/room/asks', { turnId, action: 'supply', label, text });
+  return postAskDeed({ turnId, action: 'supply', label, text });
 }

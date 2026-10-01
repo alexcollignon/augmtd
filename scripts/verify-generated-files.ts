@@ -35,7 +35,7 @@ config({ path: '.env.local', quiet: true } as never);
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import {
   readFileView, garbageHits, unsourcedFigures, missingFigures, derivableFigures, evaluateSheetFormulas,
-  guessLanguage, nonTestAddresses, isMidWordClip, formatConsistency, sizeProblem, MIME_BY_EXT, type FileView,
+  guessLanguage, nonTestAddresses, withReferenceGaps, isMidWordClip, formatConsistency, sizeProblem, MIME_BY_EXT, type FileView,
 } from './lib/file-check';
 import { installMeter, metered, meterAdapterClient, setCallGate } from './lib/eval/meter';
 import { priceCalls } from './lib/eval/engine/pricing';
@@ -65,9 +65,7 @@ const MATERIAL = `Quarterly sales by region (units), from the sales tracker:\n${
 // The target and what derives from it: per-cell gaps, per-region (×3) / per-quarter (×4) / overall (×12)
 // targets, and each total's gap to its target.
 const TARGETS = [1400, 1400 * 3, 1400 * 4, 1400 * 12];
-const ALLOWED_WITH_TARGET = [...ALLOWED, ...TARGETS,
-  ...NUMS.flat().flatMap((x) => [x - 1400, 1400 - x]),
-  ...REGION_TOTALS.flatMap((x) => [x - 4200, 4200 - x]), ...QUARTER_TOTALS.flatMap((x) => [x - 5600, 5600 - x]), GRAND - 16800, 16800 - GRAND];
+const ALLOWED_WITH_TARGET = withReferenceGaps(ALLOWED, TARGETS);
 
 type Produced = { bytes: Buffer; ext: string; mime: string | null; title?: string; request?: string; note?: string };
 type Expect = {

@@ -30,6 +30,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+import zipfile
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -41,8 +42,20 @@ for _ext, _mime in {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+    ".xls": "application/vnd.ms-excel",
+    ".doc": "application/msword",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".odt": "application/vnd.oasis.opendocument.text",
+    ".ods": "application/vnd.oasis.opendocument.spreadsheet",
     ".csv": "text/csv",
+    ".tsv": "text/tab-separated-values",
     ".md": "text/markdown",
+    ".json": "application/json",
+    ".svg": "image/svg+xml",
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".zip": "application/zip",
 }.items():
     mimetypes.add_type(_mime, _ext)
 from pydantic import BaseModel, Field
@@ -59,6 +72,14 @@ MAX_OUTPUT_FILES = 10
 MAX_TIMEOUT_S = 120
 MAX_SCRIPT_CHARS = 200_000
 STDOUT_TAIL = 20_000
+# THE FORMULA RECALC STEP (Oct 1): an .xlsx output with formulas is re-saved by LibreOffice inside
+# the locked room so it carries computed values (openpyxl caches none, xlsxwriter caches 0 — previews
+# showed blanks/zeros). recalc_xlsx.py ships with this service and is mounted read-only into a second,
+# short job. It must finish inside the CALLER's budget: lib/tools/compute.ts aborts at timeout_s+30s.
+RECALC_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recalc_xlsx.py")
+RECALC_MAX_S = 60
+RECALC_MIN_S = 12
+CALLER_GRACE_S = 25
 
 app = FastAPI(title="augmtd-compute", docs_url=None, redoc_url=None)
 
@@ -121,9 +142,13 @@ def _tail(v: object) -> str:
     return str(s)[-STDOUT_TAIL:]
 
 
-def _run_container(job_id: str, job_dir: str, timeout_s: int) -> tuple[int, str, str]:
+def _run_container(job_id: str, job_dir: str, timeout_s: int, command: list[str] | None = None,
+                   extra_mounts: list[str] | None = None) -> tuple[int, str, str]:
     """The locked room: no network, read-only inputs, bounded cpu/mem/pids/time."""
     container = f"compute-{_safe_name(job_id)}"
+    mounts: list[str] = []
+    for m in extra_mounts or []:
+        mounts += ["-v", m]
     cmd = [
         "docker", "run", "--rm", "--name", container,
         "--network", "none",
@@ -133,9 +158,10 @@ def _run_container(job_id: str, job_dir: str, timeout_s: int) -> tuple[int, str,
         "-v", f"{job_dir}/inputs:/job/inputs:ro",
         "-v", f"{job_dir}/out:/job/out:rw",
         "-v", f"{job_dir}/script.py:/job/script.py:ro",
+        *mounts,
         "-w", "/job",
         RUNNER_IMAGE,
-        "python", "/job/script.py",
+        *(command or ["python", "/job/script.py"]),
     ]
     try:
         # +10s grace so docker's own startup overhead never eats the script's budget.
@@ -145,6 +171,42 @@ def _run_container(job_id: str, job_dir: str, timeout_s: int) -> tuple[int, str,
         # A timed-out container must not linger.
         subprocess.run(["docker", "kill", container], capture_output=True)
         return 124, _tail(e.stdout), "wall-clock timeout"
+
+
+def _xlsx_with_formulas(out_dir: str) -> list[str]:
+    """Output workbooks that contain at least one formula cell (zip scan, stdlib only)."""
+    found: list[str] = []
+    for name in sorted(os.listdir(out_dir))[:MAX_OUTPUT_FILES]:
+        path = os.path.join(out_dir, name)
+        if not (name.lower().endswith(".xlsx") and os.path.isfile(path)):
+            continue
+        try:
+            with zipfile.ZipFile(path) as z:
+                for member in z.namelist():
+                    if member.startswith("xl/worksheets/") and member.endswith(".xml"):
+                        xml = z.read(member)
+                        if b"<f>" in xml or b"<f " in xml:
+                            found.append(name)
+                            break
+        except Exception:
+            continue  # not a readable zip — leave it exactly as the script wrote it
+    return found
+
+
+def _recalc_xlsx(job_id: str, job_dir: str, names: list[str], budget_s: int) -> str:
+    """Second short job: LibreOffice recalculates + re-saves each workbook in place. Never fatal —
+    returns a log line for stderr; on any failure the script's original files stand."""
+    if not names:
+        return ""
+    if budget_s < RECALC_MIN_S or not os.path.exists(RECALC_SCRIPT):
+        return f"[recalc] skipped ({'no time left' if budget_s < RECALC_MIN_S else 'helper missing'}): {', '.join(names)}"
+    shutil.copyfile(RECALC_SCRIPT, os.path.join(job_dir, "recalc.py"))
+    code, stdout, stderr = _run_container(
+        f"{job_id}-recalc", job_dir, budget_s,
+        command=["python", "/job/recalc.py", *[f"/job/out/{n}" for n in names]],
+        extra_mounts=[f"{job_dir}/recalc.py:/job/recalc.py:ro"],
+    )
+    return f"[recalc] exit={code} {stdout.strip()} {stderr.strip()[-300:] if code else ''}".strip()
 
 
 def _collect_outputs(out_dir: str) -> list[dict]:
@@ -187,6 +249,14 @@ async def run_job(req: JobRequest, request: Request):
             fh.write(req.script)
         await _download_inputs(req.files, inputs_dir)
         code, stdout, stderr = await asyncio.to_thread(_run_container, req.job_id, job_dir, req.timeout_s)
+        recalc_log = ""
+        if code == 0:
+            # Re-runs in a fresh locked room, so it can never see more than the script produced.
+            deadline_left = req.timeout_s + CALLER_GRACE_S - (time.monotonic() - started)
+            recalc_log = await asyncio.to_thread(
+                _recalc_xlsx, req.job_id, job_dir, _xlsx_with_formulas(out_dir),
+                int(min(RECALC_MAX_S, deadline_left - 10)),  # -10: _run_container's docker grace
+            )
         outputs = _collect_outputs(out_dir) if code == 0 else []
         return {
             "ok": code == 0,
@@ -194,6 +264,7 @@ async def run_job(req: JobRequest, request: Request):
             "outputs": outputs,
             "stdout": stdout,
             "stderr": stderr,
+            "recalc": recalc_log,  # the formula-recalc step's report (empty when no workbook had formulas)
             "duration_ms": int((time.monotonic() - started) * 1000),
         }
     finally:

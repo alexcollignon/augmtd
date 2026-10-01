@@ -935,9 +935,12 @@ async function main() {
       /decided === 'supplied'/.test(drawerCode2)
       // RE-POINTED (W3-A, Sep 22): the sentence is the ONE vocabulary's now (GATE_OUTCOME_WORDS
       // .supplied.line) — so it is asserted at the table, and the drawer is asserted to read it.
-      && /supplied: \{ chip: 'sent',\s*line: 'Sent — the run picked up from there\.' \}/
+      // W39 (walk, Oct 1): an answer is NOT a send — the word says the answer was added.
+      && /supplied: \{ chip: 'answer added',\s*line: 'Answer added — the run continued\.' \}/
         .test(readFileSync('lib/workflows/process-state.ts', 'utf8'))
-      && /Sent — "\$\{process\.workflowName\}" picked up from there\./.test(drawerSrc));
+      && /Answer added — "\$\{process\.workflowName\}" continued\./.test(drawerSrc)
+      // …and no answer surface calls it "Sent" (the send-word belongs to mail that left).
+      && !/Sent — [^`'"]*picked up from there/.test(drawerSrc + readFileSync('lib/workflows/process-state.ts', 'utf8') + readFileSync('lib/workflows/standing.ts', 'utf8')));
 
     // ── P7o — THE ATTACH DOOR (THE WAVE, Aug 25). The third way to answer: a file off this
     // person's machine. It must be ONE input, ONE upload route, and then the SAME resume door

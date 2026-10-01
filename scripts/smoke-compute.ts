@@ -74,6 +74,11 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('infra/compute/Dockerfile.runner').includes('USER jobrunner') &&
     src('infra/compute/Dockerfile.runner').includes('pandas'));
 
+  check('C4: the formula-recalc step re-saves formula workbooks in a SECOND locked room (same caps), keeps the original on loss, fits the caller budget',
+    svc.includes('def _recalc_xlsx') && svc.includes('extra_mounts=[f"{job_dir}/recalc.py:/job/recalc.py:ro"]') &&
+    svc.includes('CALLER_GRACE_S') && src('infra/compute/Dockerfile').includes('COPY recalc_xlsx.py') &&
+    src('infra/compute/recalc_xlsx.py').includes('OOXMLRecalcMode') && src('infra/compute/recalc_xlsx.py').includes('round-trip lost'));
+
   // ── C5 · THE LIVE JOB (env-gated — runs only where the service is deployed+configured). ──
   if (process.env.COMPUTE_SERVICE_URL && process.env.COMPUTE_SECRET) {
     const script = [
@@ -1501,6 +1506,15 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('infra/meeting-bot/main.py').includes("@app.post('/transcribe'") &&
     src('lib/integrations/meeting-bot/bot-manager.ts').includes('export async function storeTranscriptAndGenerateWork'));
 
+  check('SV5b: THE NAME VOCABULARY — the box appends a bounded name list to the punctuated seed prompt (seed always leads), every /transcribe caller sends the user-derived vocabulary, the Vercel fallback builds the same prompt',
+    src('infra/meeting-bot/transcription_worker.py').includes("_SEED_PROMPT = 'Okay, let us begin.'") &&
+    src('infra/meeting-bot/transcription_worker.py').includes("'prompt': whisper_prompt") &&
+    src('infra/meeting-bot/transcription_worker.py').includes("whisper_fields['hotwords']") &&
+    src('infra/meeting-bot/main.py').includes('vocabulary: list[str] | None = None') &&
+    ['app/api/meetings/recordings/confirm/route.ts', 'app/api/meetings/recording/[id]/retry/route.ts', 'app/api/meetings/[id]/transcript/retry/route.ts']
+      .every((f) => src(f).includes('vocabulary: await transcriptionVocabulary(')) &&
+    src('lib/integrations/meeting-bot/whisper-client.ts').includes("formData.append('prompt', whisperPrompt(vocabulary))"));
+
   check('SV6: THE TEAM ARRIVES WITH THE MEMBERSHIP (found live: an Bureau joiner had ZERO coworkers — seeding was coupled to the email bootstrap a sovereign user never triggers, and the retired /workers page had been the backstop) — (1) /api/company/join seeds the team in after() (joining IS "set up your agents"); (2) the presence route SELF-HEALS an empty roster on any authed visit (idempotent ensureWorkers; the facepile can never show a dead no-team again); (3) THE SOVEREIGN GALLERY: mailbox-READING workflow templates + their category chip hide when the email feature is off (email DELIVERY via Resend stays — the boundary is auth connections only); generate-config already excludes mailbox tools by feature. Live repair: the real Bureau user seeded (Clara, Sofia, Luca, Max)',
     src('app/api/company/join/route.ts').includes('ensureWorkers') &&
     src('app/api/company/join/route.ts').includes('after(async () =>') &&
@@ -1649,7 +1663,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/home/delegate.ts').includes('args.revise || args.templateFile || output.length >= 600') && // always materialize
     src('lib/home/delegate.ts').includes("cacheControl: '0'") &&
     src('lib/workflows/doc-content.ts').includes("cacheControl: '0'") &&
-    src('lib/documents/materialize.ts').includes('contentText: args.content') &&        // the content floor
+    src('lib/documents/materialize.ts').includes('contentText: content, // THE CONTENT FLOOR') && src('lib/documents/materialize.ts').includes('const content = stripCharacterArt(args.content)') &&        // the content floor
     src('lib/compute/document-compiler.ts').includes('NEVER invent facts') &&
     src('lib/compute/document-compiler.ts').includes("current.* is the document's CURRENT version") &&
     src('app/api/home/extract-attach/route.ts').includes('docx|pptx|xlsx') &&

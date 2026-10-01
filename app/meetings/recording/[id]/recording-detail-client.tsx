@@ -13,6 +13,7 @@ import {
   SparklesIcon,
 } from '@heroicons/react/24/outline';
 import { formatMeetingTime } from '@/lib/types/meetings';
+import { useUserZone } from '@/context/user-zone-context';
 import ProcessingPipeline from '@/components/meetings/processing-pipeline';
 import MeetingChatSidebar, { type MeetingChatContext } from '@/components/meetings/meeting-chat-sidebar';
 
@@ -63,6 +64,7 @@ const KEY_MOMENT_BADGES = {
 };
 
 export default function RecordingDetailClient({ transcript, actionItems, risks, suggestedNextStep, audioUrl }: RecordingDetailClientProps) {
+  const zone = useUserZone();
   const router = useRouter();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -145,7 +147,7 @@ export default function RecordingDetailClient({ transcript, actionItems, risks, 
     }
   };
 
-  const { primary } = formatMeetingTime(transcript.startTime, transcript.endTime);
+  const { primary } = formatMeetingTime(transcript.startTime, transcript.endTime, zone);
   const keyMomentMap = new Map<number, KeyMoment>();
   transcript.keyMoments?.forEach((km) => keyMomentMap.set(km.segmentIndex, km));
 

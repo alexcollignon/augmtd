@@ -56,6 +56,9 @@ import PortfolioView from '@/components/entities/portfolio-view';
 // THE ADDRESS LAW — a project room is opened by its own address, never by a Home query param.
 import { projectHref } from '@/lib/room/project-href';
 import WorkflowsLedger from '@/components/workflows/workflows-ledger';
+import { clockIn, dateIn } from '@/lib/core/user-zone';
+import ZoneHint from '@/components/one/zone-hint';
+import { useUserZone } from '@/context/user-zone-context';
 
 // Priority / SlippingDeal / DoItem / DeckEntry / bundling / sorting now live in lib/home/agenda.ts —
 // the ONE agenda spine the deck, the day ring, and the brief composer all project from (Living-Home S1).
@@ -173,7 +176,9 @@ function greeting() {
   const h = new Date().getHours();
   return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 }
-const timeOf = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+// THE READER'S ZONE (law `one-reader-zone`): an event's time renders in the user's zone, the same
+// zone the server composes Home's day in — never the device's own clock.
+const timeOf = (iso: string, zone: string) => clockIn(iso, zone, '24h');
 // Relative due words — "overdue 3d" / "due today" / "due tomorrow" / "due Wed" (readable at a glance,
 // zero width — the task-first line grammar).
 function relDue(iso?: string | null): { label: string; overdue: boolean } | null {
@@ -1047,6 +1052,7 @@ function CalmGreeting({ name, greeting: hello, next, entrance, loading }: {
   entrance: OrbEntrance;
   loading: boolean;
 }) {
+  const zone = useUserZone();
   return (
     <div className="flex items-center justify-center gap-4">
       {/* THE ALIVE MARK (owner walk, Sep 14, rebuilt Sep 15 as a neural mesh) — the one quiet sign
@@ -1060,10 +1066,11 @@ function CalmGreeting({ name, greeting: hello, next, entrance, loading }: {
       <OrbSeat entrance={entrance} loading={loading} />
       <div className="flex flex-col gap-1.5 text-left" style={entrance.veil(0)}>
         <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-neutral-400">
-          {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+          {dateIn(new Date(), zone, { weekday: 'long', month: 'long', day: 'numeric' })}
           {next && <span className="font-normal normal-case tracking-normal text-neutral-300"> · next: {next.title}{next.time ? `, ${next.time}` : ''}</span>}
         </p>
         <h1 className="text-[24px] font-semibold tracking-[-0.02em] text-neutral-900 leading-tight">{hello}{name ? `, ${name}` : ''}</h1>
+        <ZoneHint />
       </div>
     </div>
   );
@@ -1351,6 +1358,7 @@ function freezeForOpen(prev: Brief, next: Brief): Brief {
 }
 
 export function HomeView({ initialView = null }: { initialView?: string | null } = {}) {
+  const zone = useUserZone();
   const [brief, setBrief] = useState<Brief | null>(null);
   // THE NO-MUTATION LAW needs the SERVED deck synchronously (the merge decides what the reader
   // keeps, and the cleared-id reconcile in the same tick must read the merged result, not the raw
@@ -2204,7 +2212,7 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
         {b!.schedule.map(m => (
           <SideRow key={m.id} href="/meetings">
             <div className="flex items-baseline gap-2">
-              <span className="text-[12px] font-semibold text-indigo-600 flex-shrink-0">{timeOf(m.time)}</span>
+              <span className="text-[12px] font-semibold text-indigo-600 flex-shrink-0">{timeOf(m.time, zone)}</span>
               <span className="text-[13px] text-neutral-800 truncate">{m.title}</span>
             </div>
             {m.prep && (m.prep.lastEmail || m.prep.openCommitments.length > 0 || m.prep.lastMeeting) && (

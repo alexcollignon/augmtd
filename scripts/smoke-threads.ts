@@ -1180,7 +1180,8 @@ console.log('\nT8 · THE CALM HOME — one sentence, five whispers, one door');
     && (() => {
       const i = home.indexOf('function CalmGreeting(');
       const seg = home.slice(i, home.indexOf('/** ONE WHISPERED LINE'));
-      return /\{new Date\(\)\.toLocaleDateString\(/.test(seg) && /<h1 /.test(seg) && !/<p className="text-\[13px\]/.test(seg);
+      // ⟲ RE-POINTED (W39 · ONE READER ZONE): the date paints in the USER's zone (lib/core/user-zone dateIn) — still the client's own clock, still at the first paint.
+      return /\{dateIn\(new Date\(\), zone, /.test(seg) && /<h1 /.test(seg) && !/<p className="text-\[13px\]/.test(seg);
     })()
     // the rows come from the capped pick — never a hand-sliced list
     && /pickWhispers\(flatRows\.map\(\(r\) => r\.item\), CALM_MAX_WHISPERS\)/.test(home)
@@ -3302,7 +3303,8 @@ console.log('\nT21 · THE HOME PAINTS FIRST — the read path carries only the r
     && !/\[0, 1, 2, 3, 4\]\.map/.test(home)
     && !/h-\[52px\] rounded-2xl border border-neutral-200\/70 bg-white\/60 animate-pulse/.test(home)
     // the facts the client already holds still paint with the first stagger step; only claims wait
-    && /toLocaleDateString\('en-US', \{ weekday: 'long', month: 'long', day: 'numeric' \}\)/.test(home)
+    // ⟲ RE-POINTED (W39 · ONE READER ZONE): the same date, formatted in the user's zone
+    && /dateIn\(new Date\(\), zone, \{ weekday: 'long', month: 'long', day: 'numeric' \}\)/.test(home)
     && /\{greeting\(\)\}/.test(home)
     && /entrance\.veil\(0\)/.test(home));
 }
@@ -6978,6 +6980,8 @@ console.log('\nT39 · THE TYPE-IT DOOR — an ask answered by saying the fact');
       ['PT', 'O IBAN da conta'], ['PT', 'A morada de entrega'], ['PT', 'O número de contribuinte'],
       ['DE', 'Die IBAN'], ['DE', 'Die Lieferadresse'], ['DE', 'Der Ansprechpartner'],
       ['FR', 'L’IBAN'], ['FR', 'Le montant exact'], ['FR', 'La date de livraison'],
+      // W39 · a figure ON a document is a fact (said, not attached)
+      ['EN', 'The invoice number'], ['PT', 'O número da fatura'], ['DE', 'Der Rechnungsbetrag'], ['FR', 'Le montant du contrat'],
     ];
     const wrongDoc = DOCS.filter(([, l]) => askItemShape(l) !== 'document').map(([g, l]) => `${g}:${l}`);
     const wrongFact = FACTS.filter(([, l]) => askItemShape(l) !== 'fact').map(([g, l]) => `${g}:${l}`);
@@ -6996,13 +7000,16 @@ console.log('\nT39 · THE TYPE-IT DOOR — an ask answered by saying the fact');
       && saidItLabels(['The IBAN'], '').length === 0);
   }
 
-  gate('T39.10 OPTIONS STAY OPEN — `lead` only REORDERS: Attach and Type it are in BOTH branches of the row’s door list, and nothing in the leaf can drop a door the host handed over',
+  // ⟲ RE-POINTED (W39, walk Oct 1 — "Type it" offered for a signed contract): the INPUT'S KIND
+  // drives the doors. A fact row keeps all three; a document row is answered by the file — Attach ·
+  // Point me to it, and Type it only when no other door stands (never a dead row).
+  gate('T39.10 THE KIND DRIVES THE DOORS — a fact row offers Type it · Attach · Point me to it; a document row offers Attach · Point me to it and no Type it while either stands',
     (() => {
       const list = (rows.match(/const doorList = [\s\S]*?\: \[\];/) ?? [''])[0];
       const fact = (list.match(/d\.lead === 'fact'[\s\S]*?\]\s*\n\s*\/\/ A DOCUMENT/) ?? [''])[0];
       const doc = list.slice(list.indexOf('// A DOCUMENT'));
       return /canType \?/.test(fact) && /d\.onAttach \?/.test(fact)
-        && /canType \?/.test(doc) && /d\.onAttach \?/.test(doc)
+        && /canType && !d\.onAttach && !d\.onPointToIt \?/.test(doc) && /d\.onAttach \?/.test(doc)
         && /d\.onPointToIt \?/.test(fact) && /d\.onPointToIt \?/.test(doc);
     })());
 

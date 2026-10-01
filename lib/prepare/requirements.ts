@@ -425,8 +425,13 @@ export async function standingRequireRows(
 }
 
 /** W35 · the facts the user already TYPED for these labels (the type-it door's `require:<label>` text rows,
- *  `metadata.via = 'typed_supply'`) — task_id → the typed text. One bounded read, zero AI; an unreadable
- *  pool reads as nothing typed (the answer is asked again, never silently assumed). */
+ *  `metadata.via = 'typed_supply'`) — task_id (of the REQUESTED label) → the typed text. One bounded read,
+ *  zero AI; an unreadable pool reads as nothing typed (the answer is asked again, never silently assumed).
+ *  W39b (walk, Oct 1): the judge re-words a label between passes ("…on the invoice" → "…on invoice"), and
+ *  an exact-key read then lost the user's answer — the ask re-asked it and the draft wrote a placeholder
+ *  over a fact already given. A typed answer now matches its label by MEANING-BEARING WORDS
+ *  (`matchTypedLabel`): exact key first, else the one typed label whose content words cover the asked
+ *  label's (and vice versa) — never a guess between two. */
 export async function typedSupplyRows(
   client: SupabaseClient, userId: string,
   args: { itemKind: 'inbox' | 'commitment'; itemId: string; labels: string[] },
@@ -435,12 +440,47 @@ export async function typedSupplyRows(
   if (!args.labels.length) return out;
   const { data, error } = await client.from('item_deliverables').select('task_id, content, metadata')
     .eq('user_id', userId).eq('kind', args.itemKind === 'commitment' ? 'commitment' : 'email').eq('entity_id', args.itemId)
-    .in('task_id', args.labels.map((l) => requireTaskId(l)));
+    .like('task_id', 'require:%');
   if (error) return out;
+  const typed: Array<{ taskId: string; label: string; text: string }> = [];
   for (const r of (data ?? []) as Array<{ task_id: string; content: string | null; metadata: Record<string, unknown> | null }>) {
-    if ((r.metadata as { via?: unknown } | null)?.via === 'typed_supply' && String(r.content ?? '').trim()) out.set(r.task_id, String(r.content));
+    const m = (r.metadata ?? {}) as { via?: unknown; requirement?: unknown };
+    if (m.via === 'typed_supply' && String(r.content ?? '').trim()) {
+      typed.push({ taskId: r.task_id, label: String(m.requirement ?? r.task_id.slice('require:'.length)), text: String(r.content) });
+    }
+  }
+  for (const label of args.labels) {
+    const hit = matchTypedLabel(label, typed);
+    if (hit) out.set(requireTaskId(label), hit.text);
   }
   return out;
+}
+
+const LABEL_STOP = new Set(['the', 'a', 'an', 'to', 'on', 'of', 'for', 'in', 'at', 'and', 'or', 'you', 'your', 'our', 'we', 'want', 'that', 'this', 'be', 'is', 'appear',
+  'o', 'os', 'as', 'de', 'da', 'do', 'na', 'no', 'em', 'le', 'la', 'les', 'du', 'des', 'der', 'die', 'das', 'den', 'dem', 'el', 'los', 'las', 'del']);
+function labelWords(l: string): Set<string> {
+  return new Set(String(l ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u).filter((w) => w && !LABEL_STOP.has(w)).map((w) => (w.length > 4 && w.endsWith('s') ? w.slice(0, -1) : w)));
+}
+/** W39b · PURE — the typed answer for an asked label: the exact key, else the ONE typed label whose
+ *  content words overlap the asked label's at ≥ 0.75 of the smaller set (two equally good → none). */
+export function matchTypedLabel<T extends { taskId: string; label: string }>(label: string, typed: T[]): T | null {
+  const key = requireTaskId(label);
+  const exact = typed.find((t) => t.taskId === key);
+  if (exact) return exact;
+  const want = labelWords(label);
+  if (!want.size) return null;
+  const scored = typed.map((t) => {
+    const have = labelWords(t.label);
+    let shared = 0;
+    for (const w of want) if (have.has(w)) shared++;
+    // a one-word overlap only counts when one-word labels are all there is ("IBAN" ↔ "the IBAN")
+    const enough = shared >= 2 || (shared === 1 && Math.min(want.size, have.size) === 1);
+    return { t, score: have.size && enough ? shared / Math.min(want.size, have.size) : 0 };
+  }).filter((x) => x.score >= 0.75).sort((a, b) => b.score - a.score);
+  if (!scored.length) return null;
+  if (scored.length > 1 && scored[1].score === scored[0].score) return null;
+  return scored[0].t;
 }
 
 /** The FILE dates of standing rows (a W13.1 row carries its stamp; an older row's KB file is read) —
@@ -893,7 +933,9 @@ export function buildTruth(
     `ARTIFACT TRUTH — claim, attach, or build on ONLY what is actually staged:\n` +
     (have.some((h) => h.file) ? `- STAGED (attached/ready): ${have.filter((h) => h.file).map((h) => `${h.label} → "${h.file!.filename}"`).join(' · ')}\n` : '') +
     // W35 · INPUTS HAVE A KIND — a fact the user typed is in hand as THEIR words (the pool renders the text).
-    (have.some((h) => !h.file) ? `- GIVEN BY THE USER (their own words, in the pool — state them as given): ${have.filter((h) => !h.file).map((h) => h.label).join(' · ')}\n` : '') +
+    // W39b · THE VALUE TRAVELS WITH ITS LABEL: every lane (reply, doc-send, nudge) reads this truth, but
+    // not every lane renders the pool — a draft wrote "[PO NUMBER]" over a number the user had typed.
+    (have.some((h) => !h.file) ? `- GIVEN BY THE USER (their own words — state them exactly as given, never a placeholder): ${have.filter((h) => !h.file).map((h) => (h.supplied ? `${h.label}: "${h.supplied.replace(/\s+/g, ' ').trim()}"` : h.label)).join(' · ')}\n` : '') +
     (missing.some((m2) => m2.input !== 'answer') ? `- MISSING (NOT in hand): ${missing.filter((m2) => m2.input !== 'answer').map((m2) => m2.label).join(' · ')}. Do NOT claim these are attached or promise a specific delivery time for them — either say they will follow separately or ask what's needed to get them.\n` : '') +
     (missing.some((m2) => m2.input === 'answer') ? `- STILL TO COME FROM THE USER (facts only they hold — asked of them): ${missing.filter((m2) => m2.input === 'answer').map((m2) => m2.label).join(' · ')}. Never guess or invent them; leave a clearly marked [PLACEHOLDER] where each belongs.\n` : '') +
     // W13 · THE BASE: the current version new work builds on — context, never the answer.

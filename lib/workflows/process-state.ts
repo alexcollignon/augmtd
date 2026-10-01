@@ -91,7 +91,9 @@ export type GateOutcome = 'approved' | 'rejected' | 'supplied';
 export const GATE_OUTCOME_WORDS: Record<GateOutcome, { chip: string; line: string }> = {
   approved: { chip: 'approved — delivering', line: 'Approved — the run is delivering.' },
   rejected: { chip: 'held back',             line: 'Held back — nothing was delivered.' },
-  supplied: { chip: 'sent',                  line: 'Sent — the run picked up from there.' },
+  // An ANSWER is not a send (walk, Oct 1: "Sent — …" after typing a fact read like an email went
+  // out). The word says what happened: the reader's answer was added and the run went on.
+  supplied: { chip: 'answer added',          line: 'Answer added — the run continued.' },
 };
 
 /** The chip a LIVE gate wears (nobody has answered it yet). */

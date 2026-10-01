@@ -479,7 +479,7 @@ export async function executeSupplyRunInput(
   }).catch(() => {});
 
   const what = answered.docName ? `"${answered.docName}"` : 'what you gave me';
-  return `Sent ${what} to "${answered.workflowName}", which was asking for ${answered.ask} — the run picked up from there and will finish on its own.`
+  return `Added ${what} to "${answered.workflowName}", which was asking for ${answered.ask} — the run continued and will finish on its own.`
     + (answered.pinned ? ' It is also pinned to that workflow now, so every future run reads it.' : '');
 }
 

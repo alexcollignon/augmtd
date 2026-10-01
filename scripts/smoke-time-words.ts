@@ -252,7 +252,37 @@ function fakeClient(tasks: Record<string, unknown>) {
   gate('D6 the item anchor\'s stored ask (the fallback sentence + the composer read it) passes THE SERVE GUARD (deixis)',
     /if \(anchor\.ask\) anchor\.ask = spokenIsoDates\(stripDeixis\(anchor\.ask\)\) \|\| null;/.test(anchor));
   const leaf = src('lib/core/relative-time.ts');
-  gate('D7 the floor is a pure client-safe leaf (imports nothing)', !/^import /m.test(leaf));
+  const leafImports = leaf.match(/^import .*$/gm) ?? [];
+  gate('D7 the floor is a pure client-safe leaf (imports only the pure ISO-date floor)',
+    leafImports.length === 1 && /from '@\/lib\/core\/iso-dates'/.test(leafImports[0]), leafImports.join(' | '));
+
+  // ═══ E · THE ISO-DATE FLOOR (W39, browser walk Oct 1: "asked on 2026-09-30") ═══
+  console.log('\nE · a machine date in served prose reads in the reader\'s language');
+  {
+    const { localizeIsoDates } = await import('../lib/core/iso-dates');
+    const NOW = new Date('2026-10-01T10:00:00Z');
+    const fx: Array<[string, string]> = [
+      ['Sam asked on 2026-09-30 for the signed copy.', 'Sam asked on Wed, Sep 30 for the signed copy.'],
+      ['Sam a demandé le 2026-09-30 une copie signée pour vous.', 'Sam a demandé le mer. 30 septembre une copie signée pour vous.'],
+      ['Sam hat am 2026-09-30 die Kopie geschickt und sie ist nicht unterschrieben.', 'Sam hat am Mi., 30. September die Kopie geschickt und sie ist nicht unterschrieben.'],
+      ['O Sam pediu em 2026-09-30 uma cópia para você, com prazo curto.', 'O Sam pediu em qua., 30 de setembro uma cópia para você, com prazo curto.'],
+      ['Sam pidió el 2026-09-30 una copia para usted, con gracias.', 'Sam pidió el mié., 30 de septiembre una copia para usted, con gracias.'],
+    ];
+    for (const [i, o] of fx) gate(`E1 ${o.slice(0, 40)}…`, localizeIsoDates(i, { now: NOW, tz: TZ }) === o, localizeIsoDates(i, { now: NOW, tz: TZ }));
+    const keep = ['Run `day = 2026-09-30` first.', 'See https://example.com/2026-09-30/x.', 'Filed report-2026-09-30.pdf.', '> On 2026-09-30 Sam wrote', 'Sam wrote "due 2026-09-30" here.'];
+    gate('E2 never inside code, URLs, filenames or quoted source', keep.every((t) => localizeIsoDates(t, { now: NOW, tz: TZ }) === t));
+    const served = serveTimeWords('Sam asked on 2026-09-30.', { composedAt: '2026-10-01T08:00:00Z', now: NOW, tz: TZ });
+    gate('E3 OUTCOME — the serve floor (serveTimeWords) carries it: every served cached sentence passes', served.text === 'Sam asked on Wed, Sep 30.', served.text);
+    gate('E4 serveTimeWords applies localizeIsoDates to every served (non-withheld) verdict',
+      /return v\.withheld \? v : \{ \.\.\.v, text: localizeIsoDates\(v\.text,/.test(leaf));
+    gate('E5 the one chat markdown renderer applies it before parsing', /parseMarkdown\(localizeIsoDates\(text\)\)/.test(src('components/thread/markdown-view.tsx')));
+    const tl = src('components/thread/thread-timeline.tsx');
+    gate('E6 the thread renderer applies it to pinned + actor prose', (tl.match(/\{localizeIsoDates\(item\.text\)\}/g) ?? []).length === 2);
+    gate('E7 the anchor ask delegates to the one floor', /return localizeIsoDates\(/.test(src('lib/room/item-anchor.ts')));
+    const iso = src('lib/core/iso-dates.ts');
+    gate('E8 the ISO floor is client-safe (imports only the pure stopword detector)',
+      (iso.match(/^import .*$/gm) ?? []).every((l) => /lib\/inbox\/detect-language'/.test(l)) && !/^import /m.test(src('lib/inbox/detect-language.ts')));
+  }
 
   console.log(`\n${pass} passed, ${failures.length} failed`);
   if (failures.length) { console.log(failures.map((f) => `  - ${f}`).join('\n')); process.exit(1); }

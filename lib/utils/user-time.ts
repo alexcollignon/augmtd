@@ -7,7 +7,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-const tzMemo = new Map<string, { at: number; tz: string }>();
+const tzMemo = new Map<string, { at: number; tz: string; known: boolean }>();
 
 /** Drop the memoized zone (one user, or all). The quality engine (W27.C) calls it when a seeded
  *  fixture world is torn down — the 10-minute memo otherwise carries one world's zone into the next on
@@ -21,13 +21,25 @@ export function forgetUserTimezone(userId?: string): void {
 export function primeUserTimezone(userId: string, tz: string): void {
   let zone = 'UTC';
   try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); zone = tz; } catch { /* keep UTC */ }
-  tzMemo.set(userId, { at: Date.now(), tz: zone });
+  tzMemo.set(userId, { at: Date.now(), tz: zone, known: zone !== 'UTC' || tz === 'UTC' });
 }
 
 export async function userTimezone(client: SupabaseClient, userId: string): Promise<string> {
+  return (await userTimezoneRead(client, userId)).tz;
+}
+
+/** THE ZONE THE SHELL SERVES (law `one-reader-zone`): the same one reader, or null when the user's
+ *  calendar names no zone yet (the client then falls back to the device's zone). */
+export async function servedUserTimezone(client: SupabaseClient, userId: string): Promise<string | null> {
+  const r = await userTimezoneRead(client, userId);
+  return r.known ? r.tz : null;
+}
+
+async function userTimezoneRead(client: SupabaseClient, userId: string): Promise<{ tz: string; known: boolean }> {
   const hit = tzMemo.get(userId);
-  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.tz;
+  if (hit && Date.now() - hit.at < 10 * 60_000) return hit;
   let tz = 'UTC';
+  let known = false;
   try {
     const { data } = await client.from('calendar_events').select('timezone')
       .eq('user_id', userId).not('timezone', 'is', null).limit(300);
@@ -36,10 +48,11 @@ export async function userTimezone(client: SupabaseClient, userId: string): Prom
       if (r.timezone) freq.set(r.timezone, (freq.get(r.timezone) ?? 0) + 1);
     }
     const top = [...freq.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-    if (top) { new Intl.DateTimeFormat('en-US', { timeZone: top }); tz = top; } // throws on junk → keep UTC
+    if (top) { new Intl.DateTimeFormat('en-US', { timeZone: top }); tz = top; known = true; } // throws on junk → keep UTC
   } catch { /* fallback UTC */ }
-  tzMemo.set(userId, { at: Date.now(), tz });
-  return tz;
+  const out = { at: Date.now(), tz, known };
+  tzMemo.set(userId, out);
+  return out;
 }
 
 export type LocalNow = {

@@ -207,7 +207,8 @@ export function WorkflowDraftCard({
       if (!r.ok || !j.workflow?.id) { toast.error(j.error ?? 'Could not create it.'); return; }
       setCreatedId(j.workflow.id as string);
       if (draft.token) { try { localStorage.setItem(consumedKey(draft.token), j.workflow.id); } catch { /* no LS */ } }
-      toast.success(`"${draft.name}" is live.`);
+      // W39 (walk, Oct 1 — a toast AND the banner both said it was live): ONE message. The card turns
+      // into its own receipt in place (below), which stays where the reader is looking; no toast.
       try { window.dispatchEvent(new CustomEvent('aug:conversation-changed')); } catch { /* SSR */ }
       onCreated?.(j.workflow.id as string);
     } finally { setConfirming(false); }

@@ -1,13 +1,13 @@
 import { createHash } from 'crypto';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
 import { logAIUsage } from '@/lib/ai/log-usage';
-import { parseModelJSON } from '@/lib/ai/parse-json';
 import Anthropic from '@anthropic-ai/sdk';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { extractTextFromAttachment } from '@/lib/attachments/text-extractor';
 import { listDriveContents, readDriveFile, getDriveFilesForIds, DriveItem } from './google-drive';
 import { listOneDriveContents, readOneDriveFile, getOneDriveFilesForIds, OneDriveItem } from './onedrive';
 import { stampFileBucket, DEFAULT_KB_BUCKET } from './file-bucket';
+import { parseChunkSummaries, summaryPrompt, summaryMaxTokens, isThrottleError } from './chunk-summaries';
 
 const MAX_FILES_PER_SYNC = 300;
 
@@ -277,51 +277,67 @@ export async function summarizeChunks(
   userId: string,
   supabase: SupabaseClient
 ): Promise<string[]> {
+  return (await summarizeChunksDetailed(chunks, filename, userId, supabase)).summaries;
+}
+
+export type ChunkSummaryReport = {
+  summaries: string[];
+  /** true where the chunk got the raw-text fallback instead of a model sentence */
+  fellBack: boolean[];
+  /** provider errors seen (a throttle shows here — the re-embed sweep stops on it) */
+  errors: string[];
+};
+
+/** The same summaries, plus WHICH chunks fell back and WHY (Oct 1). Keyed-object contract + per-batch
+ *  token budget + salvage of complete pairs + one retry of just the missing chunks — see
+ *  lib/knowledge/chunk-summaries.ts for the found failure. Never throws (the indexer must not fail). */
+export async function summarizeChunksDetailed(
+  chunks: Chunk[],
+  filename: string,
+  userId: string,
+  supabase: SupabaseClient
+): Promise<ChunkSummaryReport> {
   const FALLBACK_CHARS = 800;
-  const results: string[] = new Array(chunks.length);
+  const results: Array<string | null> = new Array(chunks.length).fill(null);
+  const errors: string[] = [];
 
-  for (let batchStart = 0; batchStart < chunks.length; batchStart += SUMMARIZE_BATCH_SIZE) {
-    const batch = chunks.slice(batchStart, batchStart + SUMMARIZE_BATCH_SIZE);
-    const batchIndices = batch.map((_, i) => batchStart + i);
-
+  const ask = async (idx: number[]): Promise<void> => {
     try {
       const { client, model, endpoint, tier } = await getAIClient(userId, 'summarization', supabase);
-      const chunkList = batch
-        .map((c, i) => `[${i + 1}]: ${c.content.slice(0, SUMMARIZE_CHUNK_PREVIEW)}`)
+      const chunkList = idx
+        .map((g, i) => `[${i + 1}]: ${chunks[g].content.slice(0, SUMMARIZE_CHUNK_PREVIEW)}`)
         .join('\n\n');
-
       const res = await aiCreate(client, {
         model,
-        messages: [{
-          role: 'user',
-          content: `Summarize each chunk in 1 sentence (max 25 words). Focus on key facts, entities, dates, and topics. Return a JSON array of strings — one per chunk, in order.\n\nFile: ${filename}\n\nCHUNKS:\n${chunkList}`,
-        }],
-        max_tokens: 400,
+        messages: [{ role: 'user', content: summaryPrompt(filename, chunkList) }],
+        max_tokens: summaryMaxTokens(idx.length),
       });
       logAIUsage(supabase, {
         userId, source: 'kb_indexing', provider: endpoint.provider, model, tier, taskType: 'summarization', usage: res.usage,
       }).catch(() => {});
-
-      const raw = res.choices[0]?.message?.content ?? '';
-      const parsed = parseModelJSON<string[]>(raw, []);
-
-      if (Array.isArray(parsed) && parsed.length === batch.length) {
-        batchIndices.forEach((globalIdx, i) => {
-          results[globalIdx] = String(parsed[i] ?? batch[i].content.slice(0, FALLBACK_CHARS));
-        });
-        continue;
-      }
-    } catch {
-      // Fall through to per-chunk fallback
+      const parsed = parseChunkSummaries(res.choices[0]?.message?.content ?? '', idx.length);
+      idx.forEach((g, i) => { if (parsed[i]) results[g] = parsed[i]; });
+    } catch (e) {
+      errors.push(String((e as Error)?.message ?? e).slice(0, 300));
     }
+  };
 
-    // Fallback: truncate each chunk in this batch
-    batchIndices.forEach((globalIdx, i) => {
-      results[globalIdx] = batch[i].content.slice(0, FALLBACK_CHARS);
-    });
+  for (let b = 0; b < chunks.length; b += SUMMARIZE_BATCH_SIZE) {
+    await ask(Array.from({ length: Math.min(SUMMARIZE_BATCH_SIZE, chunks.length - b) }, (_, i) => b + i));
+  }
+  // ONE retry, only for the chunks still missing (a truncated or malformed batch), in small batches —
+  // skipped when the provider is throttling (retrying would only spend more of the cap).
+  const missing = results.map((r, i) => (r ? -1 : i)).filter((i) => i >= 0);
+  if (missing.length && !errors.some(isThrottleError)) {
+    for (let k = 0; k < missing.length; k += 2) await ask(missing.slice(k, k + 2));
   }
 
-  return results;
+  const fellBack = results.map((r) => r === null);
+  return {
+    summaries: results.map((r, i) => r ?? chunks[i].content.slice(0, FALLBACK_CHARS)),
+    fellBack,
+    errors,
+  };
 }
 
 // ─── OCR + PDF extraction ────────────────────────────────────────────────────
@@ -549,13 +565,19 @@ async function collectAllFiles(
  * Returns the source_id.
  */
 export async function getOrCreateUploadSource(userId: string, adminClient: SupabaseClient): Promise<string> {
-  // Check for existing upload source first
-  const { data: existing } = await adminClient
+  // THE SNOWBALL's sibling (Oct 1 — same class as getOrCreateAugmtdSource, W38): `.maybeSingle()`
+  // ERRORS once a race leaves two rows, the error read as "none", and every later call inserted
+  // another source. The oldest row is the one source; a read error is surfaced, never "none".
+  // Existing duplicates fold via scripts/dedupe-augmtd-sources.ts.
+  const { data: rows, error: readErr } = await adminClient
     .from('knowledge_sources')
     .select('id')
     .eq('user_id', userId)
     .eq('provider', 'upload')
-    .maybeSingle();
+    .order('created_at', { ascending: true })
+    .limit(1);
+  if (readErr) throw new Error(`Failed to read upload source: ${readErr.message}`);
+  const existing = rows?.[0] as { id: string } | undefined;
 
   if (existing) return existing.id;
 

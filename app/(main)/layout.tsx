@@ -8,6 +8,8 @@ import SidebarNav from '@/components/one/one-sidebar';
 import { getMyWorkspace, getMyProfile } from '@/lib/workspace/features';
 import { WorkspaceProvider } from '@/context/workspace-context';
 import { DEFAULT_FEATURES } from '@/lib/workspace/types';
+import { UserZoneProvider } from '@/context/user-zone-context';
+import { servedUserTimezone } from '@/lib/utils/user-time';
 
 export default async function MainLayout({ children, modal }: { children: React.ReactNode; modal: React.ReactNode }) {
   const user = await getSessionUser();
@@ -16,10 +18,13 @@ export default async function MainLayout({ children, modal }: { children: React.
   // Fetch sidebar + workspace data in parallel — no serial waterfalls. The profile +
   // workspace reads are React-cached, so the feature-guard on the page reuses them.
   const supabase = await createClient();
-  const [profile, { data: connectionsData }, workspace] = await Promise.all([
+  // THE READER'S ZONE (law `one-reader-zone`): served once, from the server's one reader, so every
+  // client surface renders event times in the same zone Home's server-composed times use.
+  const [profile, { data: connectionsData }, workspace, userZone] = await Promise.all([
     getMyProfile(user.id),
     supabase.from('connections').select('metadata').eq('user_id', user.id).eq('status', 'active').order('created_at', { ascending: true }),
     getMyWorkspace(user.id, supabase),
+    servedUserTimezone(supabase, user.id).catch(() => null),
   ]);
 
   const isSuperAdmin = profile?.is_super_admin === true;
@@ -47,6 +52,7 @@ export default async function MainLayout({ children, modal }: { children: React.
 
   return (
     <WorkspaceProvider workspace={workspace ?? null} isSuperAdmin={isSuperAdmin}>
+      <UserZoneProvider zone={userZone}>
       <div className="flex h-screen bg-neutral-50 overflow-hidden">
         <SidebarNav
           userEmail={user.email}
@@ -61,6 +67,7 @@ export default async function MainLayout({ children, modal }: { children: React.
         {/* @modal parallel slot — filled only by the intercepting /item/[id] route (modal over Home) */}
         {modal}
       </div>
+      </UserZoneProvider>
     </WorkspaceProvider>
   );
 }

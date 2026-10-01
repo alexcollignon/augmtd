@@ -6,6 +6,7 @@
  */
 
 import { Agent } from 'undici';
+import { whisperPrompt, composeVocabulary } from './transcription-vocabulary';
 
 // 30-minute timeout for headers + body — large audio files on the medium model
 // can take several minutes to process on a CX32.
@@ -39,7 +40,8 @@ interface WhisperVerboseResponse {
  */
 export async function transcribeAudio(
   audioBuffer: Buffer,
-  filename: string
+  filename: string,
+  vocabulary?: string[],
 ): Promise<{ text: string; segments: TranscriptSegment[] }> {
   const whisperUrl = process.env.WHISPER_SERVICE_URL;
   if (!whisperUrl) {
@@ -53,11 +55,16 @@ export async function transcribeAudio(
   // deployed recording takes; this client is the no-service fallback). Until Oct 1 this fallback
   // forced `language: en` (a Portuguese/German/French meeting came back as English-shaped noise) on
   // the old medium model. Now the same request the service sends: large-v3-turbo, language
-  // auto-detected per file, VAD on, and the punctuation seed prompt.
+  // auto-detected per file, VAD on, and the punctuation seed prompt (+ the bounded name vocabulary,
+  // transcription-vocabulary.ts — the same prompt the box builds).
   formData.append('model', 'deepdml/faster-whisper-large-v3-turbo-ct2');
   formData.append('response_format', 'verbose_json');
   formData.append('vad_filter', 'true');
-  formData.append('prompt', 'Okay, let us begin.');
+  formData.append('prompt', whisperPrompt(vocabulary));
+  // `hotwords` re-injects the names into every 30-s window (the prompt only conditions the first) —
+  // the same field the box sends.
+  const terms = composeVocabulary([vocabulary ?? []]);
+  if (terms.length) formData.append('hotwords', terms.join(', '));
 
   const response = await fetch(`${whisperUrl}/v1/audio/transcriptions`, {
     method: 'POST',

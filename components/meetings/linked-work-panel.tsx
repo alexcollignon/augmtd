@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useUserZone } from '@/context/user-zone-context';
+import { dateIn } from '@/lib/core/user-zone';
 import Link from 'next/link';
 import {
   ChatBubbleLeftRightIcon,
@@ -9,9 +11,10 @@ import {
 } from '@heroicons/react/24/outline';
 
 interface LinkedWork {
-  threads: Array<{ id: string; title: string; score: number }>;
-  files: Array<{ id: string; filename: string; score: number }>;
-  priorMeetings: Array<{ id: string; title: string; start_time: string; calendarEventId: string | null; score: number }>;
+  // W39 · the words each row shares with the meeting's title (said in plain words — never a bare %).
+  threads: Array<{ id: string; title: string; shared?: string[] }>;
+  files: Array<{ id: string; filename: string; shared?: string[] }>;
+  priorMeetings: Array<{ id: string; title: string; start_time: string; calendarEventId: string | null; shared?: string[] }>;
 }
 
 interface LinkedWorkPanelProps {
@@ -19,6 +22,7 @@ interface LinkedWorkPanelProps {
 }
 
 export default function LinkedWorkPanel({ calendarEventId }: LinkedWorkPanelProps) {
+  const zone = useUserZone();
   const [data, setData] = useState<LinkedWork | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -59,7 +63,7 @@ export default function LinkedWorkPanel({ calendarEventId }: LinkedWorkPanelProp
                   key={t.id}
                   href={`/work?thread=${t.id}`}
                   title={t.title}
-                  score={t.score}
+                  shared={t.shared}
                 />
               ))}
             </Section>
@@ -72,7 +76,7 @@ export default function LinkedWorkPanel({ calendarEventId }: LinkedWorkPanelProp
                   key={f.id}
                   href="/documents"
                   title={f.filename}
-                  score={f.score}
+                  shared={f.shared}
                 />
               ))}
             </Section>
@@ -85,8 +89,8 @@ export default function LinkedWorkPanel({ calendarEventId }: LinkedWorkPanelProp
                   key={m.id}
                   href={m.calendarEventId ? `/meetings/${m.calendarEventId}` : `/meetings`}
                   title={m.title}
-                  meta={new Date(m.start_time).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                  score={m.score}
+                  meta={dateIn(m.start_time, zone, { day: 'numeric', month: 'short' }, 'en-GB')}
+                  shared={m.shared}
                 />
               ))}
             </Section>
@@ -109,7 +113,18 @@ function Section({ title, icon, children }: { title: string; icon: React.ReactNo
   );
 }
 
-function LinkedItem({ href, title, meta, score }: { href: string; title: string; meta?: string; score: number }) {
+/** WHY THIS ROW IS HERE, in plain words (W39 — the walk's unexplained "33%"): the words its name
+ *  shares with the meeting's title. Exported pure for the gate. */
+export function sharedWordsLine(shared: string[] | null | undefined): string | null {
+  const w = (shared ?? []).map((x) => String(x ?? '').trim()).filter(Boolean);
+  if (!w.length) return null;
+  const quoted = w.map((x) => `“${x.toLowerCase()}”`);
+  const list = quoted.length === 1 ? quoted[0] : `${quoted.slice(0, -1).join(', ')} and ${quoted[quoted.length - 1]}`;
+  return `Shares ${list} with this meeting’s title`;
+}
+
+function LinkedItem({ href, title, meta, shared }: { href: string; title: string; meta?: string; shared?: string[] }) {
+  const why = sharedWordsLine(shared);
   return (
     <Link
       href={href}
@@ -120,8 +135,8 @@ function LinkedItem({ href, title, meta, score }: { href: string; title: string;
           {title}
         </p>
         {meta && <p className="text-[10px] text-neutral-400 capitalize">{meta}</p>}
+        {why && <p className="text-[10px] text-neutral-400 truncate">{why}</p>}
       </div>
-      <span className="flex-shrink-0 text-[10px] font-semibold text-neutral-400">{score}%</span>
     </Link>
   );
 }

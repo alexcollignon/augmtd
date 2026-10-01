@@ -526,6 +526,12 @@ type PoolMeta = {
   addressee?: unknown;
 };
 
+/** W39b · the type-it door's row: the user's typed ANSWER to an ask (an input, never prepared work). */
+export function isTypedAnswerRow(d: Record<string, unknown>): boolean {
+  const m = (d.metadata ?? {}) as { via?: unknown };
+  return m.via === 'typed_supply' && String(d.task_id ?? '').startsWith('require:');
+}
+
 /** The PURE pool-row mapper — the other half of the one reader, shared by preparedState and the
  *  machine's batch derivation: forking this mapping is how a deck row and a deep-dive disagree
  *  about what's prepared. KIND-TRUE (W2.1): a row carrying `metadata.invite` IS an invite — it was
@@ -543,6 +549,10 @@ export function poolRowsToArtifacts(rows: Array<Record<string, unknown>>, poolKi
   for (const d of rows) {
     if (!d.content) continue;
     if (d.type === 'file' || d.type === 'sent') continue;
+    // W39b · A TYPED ANSWER IS AN INPUT, NOT PREPARED WORK (the type-it door's `require:<label>` text
+    // row — lib/prepare/supply.ts): exactly like a supplied file (D5). Read as a `deliverable` it put the
+    // item at "ready to review" with a card no door mounts, and the draft it feeds never got the seat.
+    if (isTypedAnswerRow(d)) continue;
     const meta = (d.metadata ?? {}) as PoolMeta;
     if (meta.version_of) continue;
     if (meta.sent_at) continue;   // a sent artifact is done work — never pending preparation

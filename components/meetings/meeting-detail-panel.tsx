@@ -16,6 +16,7 @@ import {
   CheckIcon,
 } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
+import { useUserZone } from '@/context/user-zone-context';
 import {
   formatMeetingTime,
   calculateDuration,
@@ -102,8 +103,9 @@ export default function MeetingDetailPanel({
   onEdit,
   onDelete,
 }: MeetingDetailPanelProps) {
+  const zone = useUserZone();
   const panelRecording = useRecording(() => setTranscriptKey(k => k + 1));
-  const { primary } = formatMeetingTime(event.start_time, event.end_time);
+  const { primary } = formatMeetingTime(event.start_time, event.end_time, zone);
   const duration = calculateDuration(event.start_time, event.end_time);
   const vipAttendees = getVIPAttendees(event.attendees);
   const isUpcoming = event.meeting_status !== 'completed';

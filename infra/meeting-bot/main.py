@@ -59,6 +59,7 @@ class TranscribeRequest(BaseModel):
     calendarEventId: str | None = None
     userId: str
     source: str = 'recording'
+    vocabulary: list[str] | None = None  # proper nouns appended to the Whisper prompt (bounded there)
 
 
 @app.post('/transcribe', status_code=202)
@@ -69,6 +70,7 @@ async def transcribe(body: TranscribeRequest, _: HTTPAuthorizationCredentials = 
         user_id=body.userId,
         source=body.source,
         transcript_id=body.transcriptId,
+        vocabulary=(body.vocabulary or [])[:200],
     ))
     logger.info(f'[Main] Queued transcription for storage_path={body.storagePath} transcript_id={body.transcriptId}')
     return {'status': 'queued', 'transcriptId': body.transcriptId}

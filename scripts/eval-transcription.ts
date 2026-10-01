@@ -15,6 +15,8 @@
 //   npx tsx scripts/eval-transcription.ts                 # EU probe #2 (default), all four languages
 //   npx tsx scripts/eval-transcription.ts --tier std --only en,pt
 //   flags: --probe k (pool account #k, default 2) · --keep (skip teardown) · --show (print transcripts)
+//          --no-vocab (omit the name vocabulary — the A/B baseline; by default each sample sends the
+//          vocabulary the product would: company + attendee + entity names, plus unrelated decoys)
 // Requires macOS (`say`, `afconvert`) and MEETING_BOT_SERVICE_URL + MEETING_BOT_SECRET in .env.local.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { config } from 'dotenv';
@@ -35,7 +37,10 @@ const opt = (n: string) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? a
 
 /** `keep`: what must survive — a string, or alternatives any one of which counts (a date may print
  *  as "14 March 2026" or "March 14, 2026"). */
-type Sample = { lang: string; /** a macOS system voice id (`say -v '?'`) */ voice: string; text: string; keep: Array<string | string[]> };
+type Sample = { lang: string; /** a macOS system voice id (`say -v '?'`) */ voice: string; text: string; keep: Array<string | string[]>; vocab: string[] };
+/** Names a real user's vocabulary would also carry that the sample never says — the list must help
+ *  without leaking decoys into the transcript. */
+const DECOYS = ['Umbrella Partners', 'Northwind', 'Q3 Launch', 'Jordan Vale'];
 
 // The reference IS what `say` reads; written the way a transcript would print it (digits, %, €-less).
 const SAMPLES: Sample[] = [
@@ -43,21 +48,25 @@ const SAMPLES: Sample[] = [
     lang: 'en', voice: 'Samantha',
     text: 'Good morning everyone. This is Sam from Acme. The quarterly review is on 14 March 2026 at 10:30. Revenue grew 18% to 1.42 million euros. Please send the signed contract to Lee before Friday, and call the Globex office about invoice 4417.',
     keep: ['Acme', ['14 March 2026', 'March 14, 2026'], '10:30', '18%', '1.42', 'Lee', 'Globex', '4417'],
+    vocab: ['Acme', 'Sam', 'Lee', 'Globex'],
   },
   {
     lang: 'pt', voice: 'Joana',
     text: 'Bom dia a todos. Fala a Ana, da Acme. A reunião de orçamento é no dia 9 de fevereiro de 2026, às 15 horas. O orçamento aprovado é de 12600 euros. Por favor enviem a proposta ao Sam até sexta-feira.',
     keep: ['Acme', '9 de fevereiro de 2026', ['15 horas', '15h'], '12600', 'Sam', 'sexta-feira'],
+    vocab: ['Acme', 'Ana', 'Sam'],
   },
   {
     lang: 'de', voice: 'Anna',
     text: 'Guten Tag zusammen. Hier spricht Lee von Acme. Das Projektmeeting findet am 3. Juni 2026 um 9 Uhr statt. Das Budget beträgt 48000 Euro. Bitte schicken Sie den Vertrag bis Freitag an Globex.',
     keep: ['Acme', '3. Juni 2026', '9 Uhr', '48000', 'Globex', 'Freitag'],
+    vocab: ['Acme', 'Lee', 'Globex'],
   },
   {
     lang: 'fr', voice: 'Thomas',
     text: "Bonjour à tous. Ici Sam, de chez Acme. La réunion de lancement aura lieu le 12 mai 2026 à 14 heures. Le budget prévu est de 7500 euros. Merci d'envoyer le contrat signé à Initech avant vendredi.",
     keep: ['Acme', '12 mai 2026', ['14 heures', '14h'], '7500', 'Initech', 'vendredi'],
+    vocab: ['Acme', 'Sam', 'Initech'],
   },
 ];
 
@@ -89,7 +98,7 @@ async function transcribe(admin: SupabaseClient, userId: string, s: Sample, file
   const res = await fetch(`${process.env.MEETING_BOT_SERVICE_URL}/transcribe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.MEETING_BOT_SECRET}` },
-    body: JSON.stringify({ storagePath, transcriptId: id, userId, source: 'upload' }),
+    body: JSON.stringify({ storagePath, transcriptId: id, userId, source: 'upload', ...(argv.includes('--no-vocab') ? {} : { vocabulary: [...s.vocab, ...DECOYS] }) }),
   });
   if (res.status !== 202) throw new Error(`/transcribe ${s.lang}: HTTP ${res.status} ${await res.text().catch(() => '')}`);
   for (;;) {
@@ -161,7 +170,7 @@ async function main() {
   const pool = await resolveProbePool(admin, { spec: { [tier]: [k] }, create: false });
   if (!pool.accounts.length) throw new Error(`probe ${tier}#${k} missing: ${[...pool.problems, ...pool.missing].join('; ')}`);
   const { userId, label, email } = pool.accounts[0];
-  console.log(`probe ${label} (${email}) → ${new URL(process.env.MEETING_BOT_SERVICE_URL).host}/transcribe`);
+  console.log(`probe ${label} (${email}) → ${new URL(process.env.MEETING_BOT_SERVICE_URL).host}/transcribe · vocabulary ${argv.includes('--no-vocab') ? 'OFF' : 'ON'}`);
   const startIso = new Date(Date.now() - 1000).toISOString();
   const dir = mkdtempSync(path.join(tmpdir(), 'eval-transcription-'));
   const tag = Date.now().toString(36);
@@ -178,6 +187,8 @@ async function main() {
       const wer = wordErrorRate(s.text, r.text);
       const lost = s.keep.filter((k) => (Array.isArray(k) ? k : [k]).every((alt) => tokensKept([alt], r.text).lost.length));
       const kept = { kept: s.keep.filter((k) => !lost.includes(k)), lost: lost.map((k) => (Array.isArray(k) ? k[0] : k)) };
+      const leaked = argv.includes('--no-vocab') ? [] : DECOYS.filter((d) => r.text.toLowerCase().includes(d.toLowerCase()));
+      if (leaked.length) kept.lost.push(`decoy leaked: ${leaked.join('/')}`);
       const ok = !('failed' in r) && wer <= 0.15 && kept.lost.length === 0;
       if (!ok) fails++;
       rows.push(`| ${s.lang} | ${ok ? 'PASS' : 'FAIL'} | ${pct(wer)} | ${kept.kept.length}/${s.keep.length}${kept.lost.length ? ` lost: ${kept.lost.join(', ')}` : ''} | ${seconds.toFixed(1)}s | ${(r.ms / 1000).toFixed(1)}s | ${seconds ? (r.ms / 1000 / seconds).toFixed(2) : '—'} |`);

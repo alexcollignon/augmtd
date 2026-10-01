@@ -405,6 +405,8 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
     needs_you: 'needs you', running: 'running', waiting_on_others: 'waiting on others', delivered: 'delivered',
   };
   const showStrip = liveProcesses.length > 0 || recentlyDelivered.length > 0;
+  // W39 · the states the ACTIVE strip may count — a delivered run is never active.
+  const ACTIVE_STATES = new Set<string>(['needs_you', 'running', 'waiting_on_others']);
   // Needs-you first, then running — delivered rows stay OUT of the attention strip (they live in
   // Activity and the deep-dive; the chip count is all the strip owes them).
   const stripRows = [
@@ -523,11 +525,15 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
 
       {/* ── ACTIVE PROCESSES — the runs that are alive right now, in the ONE derivation's words.
           Empty buckets don't render; a quiet account sees nothing here at all. ── */}
+      {/* W39 (walk, Oct 1 — "Active processes" listed a delivered run): ACTIVE means alive. The strip
+          and its chips carry only live states (needs you · waiting · running); a fresh delivery is
+          news, said once in its own quiet line beneath — never counted as active. */}
       {tab === 'workflows' && showStrip && (
         <div className="mt-8">
+          {liveProcesses.length > 0 && (<>
           <h2 className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">Active processes</h2>
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
-            {PROCESS_BUCKETS.filter((b) => (bucketCounts[b.state] ?? 0) > 0).map((b) => (
+            {PROCESS_BUCKETS.filter((b) => ACTIVE_STATES.has(b.state) && (bucketCounts[b.state] ?? 0) > 0).map((b) => (
               <span key={b.state} className="inline-flex items-center gap-1.5 text-[12px] text-neutral-600">
                 <span className={`h-1.5 w-1.5 rounded-full ${BUCKET_DOT[b.state]}`} />
                 {b.label}
@@ -565,6 +571,13 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                 )}
               />
             </div>
+          )}
+          </>)}
+          {recentlyDelivered.length > 0 && (
+            <p className={`${liveProcesses.length > 0 ? 'mt-3' : ''} inline-flex items-center gap-1.5 text-[12px] text-neutral-500`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${BUCKET_DOT.delivered}`} />
+              {recentlyDelivered.length === 1 ? '1 run delivered' : `${recentlyDelivered.length} runs delivered`} in the last two days
+            </p>
           )}
         </div>
       )}

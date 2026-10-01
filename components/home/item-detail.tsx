@@ -47,7 +47,7 @@ import ReplyEditor from '@/components/inbox/reply-editor';
 import KbFilePicker from '@/components/inbox/kb-file-picker';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 // THE NO-MUTATION LAW — the one mechanism a loader consults before replacing what is painted.
-import { mayReplaceInPlace, ROOM_CACHE_MAX_AGE_MS, type ArrivalReason } from '@/lib/room/no-mutation';
+import { mayReplaceInPlace, mayFillEmptySeat, fillEmptySeat, ROOM_CACHE_MAX_AGE_MS, type ArrivalReason, type SlotPaint } from '@/lib/room/no-mutation';
 import { fetchItemView, fetchOpenObject, itemViewKey, itemObjectKey } from '@/lib/room/warm-client';
 // W17 · NO WAITING — the view serves the cached judgment; the page reads it at first paint.
 import { relevanceOfWork, REPLY_WORKS, type ServedVerdict } from '@/lib/room/served-verdict';
@@ -1064,7 +1064,13 @@ function commonRoomTabs(
 // is re-checked just past that — the appended brief arrives while the reader is still reading.
 const LATE_BRIEF_RECHECK_MS = 6_500;
 
-function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'awareness', id: string): { view: ItemViewData | null; refresh: () => void; failed: boolean } {
+// W39 · THE ACTION SEAT'S FIELDS (lib/room/no-mutation.ts fillEmptySeat): what chooses and carries the
+// item page's ONE action widget (components/thread/item-page.ts — the machine's state, THE ONE
+// READER's prepared list, the verdict, the ask's moot keys and the invite/steps the cards mount from).
+// An action seat that painted NOTHING takes these from a held landing; nothing else moves.
+const ITEM_SEAT_FIELDS = ['prepared', 'machineState', 'verdict', 'mootAskKeys', 'inviteTaskId', 'inviteHasTime', 'steps', 'gap'] as const satisfies readonly (keyof ItemViewData)[];
+
+function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'awareness', id: string): { view: ItemViewData | null; refresh: () => void; failed: boolean; reportSeat: (s: SlotPaint) => void; refillSeat: () => void } {
   // THE ONE KEY, THE ONE FLIGHT (W3.7 ROOM SPEED): the hover warm (lib/room/warm-client) fills this
   // exact key, and an open that lands while that warm is still in flight JOINS it — one request.
   const key = itemViewKey(kind, id);
@@ -1085,6 +1091,18 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
     const cached = loadLS<ItemViewData>(key, { maxAgeMs: ROOM_CACHE_MAX_AGE_MS });
     if (cached) { paintedRef.current = true; setView((prev) => prev ?? cached); }
   }, [key]);
+  // W39 · what the item page's action seat PAINTED (reported by the rail — components/home/item-rail.tsx
+  // `onSeat`). null = never reported → the hold stands (lib/room/no-mutation.ts mayFillEmptySeat).
+  const seatRef = useRef<SlotPaint | null>(null);
+  // The landing this open HELD while the seat was not empty (a placeholder whose producer then made
+  // nothing — the draft door answering "skipped" while the view already carried the reply): the
+  // moment the seat reports empty, that held landing fills it.
+  const heldRef = useRef<ItemViewData | null>(null);
+  const reportSeat = useCallback((s: SlotPaint) => {
+    seatRef.current = s;
+    const held = heldRef.current;
+    if (held && mayFillEmptySeat(s)) { heldRef.current = null; setView((prev) => (prev ? fillEmptySeat(prev, held, ITEM_SEAT_FIELDS) : held)); }
+  }, []);
   const recheckedRef = useRef(false);
   const lateCheckedRef = useRef(false);
   // `reason`: 'user' for a deed the reader just performed (the law's own exception), 'open' for the
@@ -1101,6 +1119,10 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
         saveLS(key, d);
         const paint = mayReplaceInPlace(reason, paintedRef.current);
         if (paint) { paintedRef.current = true; setView(d); }
+        // W39 · THE EMPTY ACTION SEAT IS A SKELETON: the painted view stays, but a seat that showed no
+        // card takes the landing's seat fields (the draft / ask / decision the cache predates).
+        else if (mayFillEmptySeat(seatRef.current)) setView((prev) => (prev ? fillEmptySeat(prev, d as ItemViewData, ITEM_SEAT_FIELDS) : d));
+        else heldRef.current = d as ItemViewData;
         // RECOGNIZE-ON-OPEN follow-up: no deal yet → the server just kicked a background recognition;
         // re-check ONCE so the CONNECTION LINE appears on this very open (not only the next one).
         // ONE OBJECT, ONE DOOR (W7.2 — lib/room/door.ts): a link landing mid-visit changes the
@@ -1147,6 +1169,79 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
       .catch(() => { if (reason === 'open') setFailed(true); });
   }, [kind, id, key]);
   useEffect(() => { refresh('open'); }, [refresh]);
+  // W39 · A CLAIM RENDERS: the seat's words claimed a prepared thing the page does not show (the rail
+  // drops that sentence and calls this) — ONE fresh read whose landing may fill the EMPTY seat only.
+  const refilledRef = useRef(false);
+  const refillSeat = useCallback(() => {
+    if (refilledRef.current) return;
+    refilledRef.current = true;
+    fetch(`/api/items/view?kind=${kind}&id=${id}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: ItemViewData | null) => {
+        if (!d || (d as { error?: unknown }).error) return;
+        saveLS(key, d);
+        if (!paintedRef.current) { paintedRef.current = true; setView(d); return; }
+        if (mayFillEmptySeat(seatRef.current)) setView((prev) => (prev ? fillEmptySeat(prev, d, ITEM_SEAT_FIELDS) : d));
+      })
+      .catch(() => {});
+  }, [kind, id, key]);
+  // W39c · A ROOM STILL BEING JUDGED IS A SKELETON (the empty-seat principle): an open that painted the
+  // machine's transient word (preparing / unjudged — the judge and the pass were running when the page
+  // read) has nothing in its action seat yet; the seat fills when the work lands. A short, capped beat
+  // (pure reads — `warm=1`) re-reads the view and FILLS AN EMPTY SEAT only (fillEmptySeat); it stops
+  // the moment the state settles, a card holds the seat, or the cap is reached.
+  const transientState = !view ? null : (view.machineState?.state ?? 'unjudged');
+  const settling = transientState === 'preparing' || transientState === 'unjudged';
+  useEffect(() => {
+    if (!settling) return;
+    let beats = 0;
+    let alive = true;
+    const t = setInterval(() => {
+      if (!alive) return;
+      beats++;
+      if (beats > 10 || !mayFillEmptySeat(seatRef.current)) { clearInterval(t); return; }
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      fetch(`/api/items/view?kind=${kind}&id=${id}&warm=1`).then((r) => (r.ok ? r.json() : null)).then((d: ItemViewData | null) => {
+        if (!alive || !d || (d as { error?: unknown }).error) return;
+        const st = d.machineState?.state ?? 'unjudged';
+        if (st === 'preparing' || st === 'unjudged') return;
+        saveLS(key, d);
+        if (mayFillEmptySeat(seatRef.current)) setView((prev) => (prev ? fillEmptySeat(prev, d, ITEM_SEAT_FIELDS) : d));
+        clearInterval(t);
+      }).catch(() => {});
+    }, 6000);
+    return () => { alive = false; clearInterval(t); };
+  }, [settling, kind, id, key]);
+  // W39b · THE READER'S OWN DEED ON THIS ITEM (a typed answer, a go-ahead — lib/deeds/gate-doors
+  // `aug:item-deed`): the work re-prepares in the background, so the view re-reads now and then on a
+  // short bounded beat until what the seat stands on moves (the machine's state or the prepared set) —
+  // the user's own action, so it replaces in place. Never an open-ended poll: six beats, then the next
+  // open's read is the truth.
+  const deedBeatRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const sigOf = (v: ItemViewData | null) => JSON.stringify([v?.machineState?.state ?? null, (v?.prepared ?? []).map((p) => [p.kind, p.content?.length ?? 0])]);
+    const onDeed = (ev: Event) => {
+      if ((ev as CustomEvent).detail?.id !== id) return;
+      if (deedBeatRef.current) clearTimeout(deedBeatRef.current);
+      let before: string | null = null;
+      let beats = 0;
+      const beat = () => {
+        fetch(`/api/items/view?kind=${kind}&id=${id}`).then((r) => (r.ok ? r.json() : null)).then((d: ItemViewData | null) => {
+          if (!d || (d as { error?: unknown }).error) return;
+          const sig = sigOf(d);
+          if (before === null) before = sig;
+          saveLS(key, d);
+          paintedRef.current = true;
+          setView(d);
+          beats++;
+          if (sig === before && beats < 6) deedBeatRef.current = setTimeout(beat, 8000);
+        }).catch(() => {});
+      };
+      beat();
+    };
+    window.addEventListener('aug:item-deed', onDeed);
+    return () => { window.removeEventListener('aug:item-deed', onDeed); if (deedBeatRef.current) clearTimeout(deedBeatRef.current); };
+  }, [kind, id, key]);
   // Coherence (promise fix): a membership correction anywhere (the chip's move/detach/found)
   // refetches THIS view — the rail's room key, entity context and strip follow the change live.
   useEffect(() => {
@@ -1154,7 +1249,7 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
     window.addEventListener('aug:membership-changed', onChange);
     return () => window.removeEventListener('aug:membership-changed', onChange);
   }, [id, refresh]);
-  return { view, refresh, failed };
+  return { view, refresh, failed, reportSeat, refillSeat };
 }
 
 // ── THE GAP LINE — when preparation is incomplete, ONE plain suggestion (derived server-side from the
@@ -1503,7 +1598,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
   const [copied, setCopied] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
   // The ONE outcome read (prepared + gap + entity/rail + invite affordance) — no step data on the client.
-  const { view, failed: viewFailed } = useItemView('email', id);
+  const { view, failed: viewFailed, reportSeat, refillSeat } = useItemView('email', id);
   const [inviteOpen, setInviteOpen] = useState(false); // the contextual prepared-invite card
   const [draftV, setDraftV] = useState(0);             // bumps to re-seed the editor after a steer rework / late draft
   const userTypedRef = useRef(false);                  // once the user types, a late-arriving draft never clobbers
@@ -1609,7 +1704,9 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
   // preparing slot in the email card's shape) and the card lands in that same seat.
   const viewReply = (view?.prepared ?? []).find((p) => p.kind === 'reply_draft' && !!p.content?.trim()) ?? null;
   useEffect(() => {
-    if (!viewReply?.content || draft !== null) return;
+    // W39 · an EMPTY draft ('' — nothing was made on this open) is a seat, not words: a reply that lands
+    // later (the empty-seat fill) seeds it, unless the reader has started typing (their words win).
+    if (!viewReply?.content || draft?.trim() || userTypedRef.current) return;
     setDraft(viewReply.content); setDraftLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewReply?.content]);
@@ -1637,10 +1734,12 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
       // an error line. The composer is TYPABLE AT PAINT: the draft fills in when ready, and only if the
       // user hasn't started typing (their words always win over a late-arriving draft).
       .then(d => {
-        setDraft(d.skipped ? '' : (d.draft || ''));
+        // W39 · a draft already seeded meanwhile (the empty-seat fill landed the view's reply) is never
+        // clobbered by this door's empty answer.
+        setDraft((prev) => (d.skipped ? (prev?.trim() ? prev : '') : (d.draft || prev || '')));
         if (d.draft && !d.skipped && !userTypedRef.current) setDraftV((v) => v + 1);
       })
-      .catch(() => { setDraft(''); })
+      .catch(() => { setDraft((prev) => (prev?.trim() ? prev : '')); })
       .finally(() => { setDraftLoading(false); if (owed) setReplySlot({ artifact: 'reply_draft', inFlight: false }); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewKnown, id]);
@@ -2049,7 +2148,7 @@ function EmailDetail({ id, angle, embedded = false, initialStage, stageSignal, h
     // is always present (a pending shell until the view lands), never a bare single-column card
     // that later morphs into the room. Structure must not flip on data arrival.
     <DeepDiveShell embedded={embedded} room={room} rail={(
-      <ItemRail kind="email" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }}
+      <ItemRail kind="email" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} onSeat={reportSeat} onUnseatedClaim={refillSeat} onDraft={(d) => { setDraft(d); setBodyHTML(''); setDraftV((v) => v + 1); }}
         // W18.A · NO THREAD DOOR HERE — the source card's "Open thread" unfolds the conversation IN the
         // card (the one thread door); the drawer's Thread section stays the drawer's own content.
         // W17 · the reply THIS open is drafting reserves the action seat (the preparing slot → the card).
@@ -2710,7 +2809,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   // split-stage composer on this door any more, and the judge never raises one.
   const [draftSummoned, setDraftSummoned] = useState(false);
   // The ONE outcome read — rail context + gap + prepared deliverables + a contextual invite.
-  const { view } = useItemView('commitment', id);
+  const { view, reportSeat, refillSeat } = useItemView('commitment', id);
   const [inviteOpen, setInviteOpen] = useState(false);
 
   // THE ONE WORK JUDGMENT — read for the decision card's options only. ⚠️ NO INTERNAL TEXT ON
@@ -2947,7 +3046,7 @@ function CommitmentDetail({ id, embedded = false }: { id: string; embedded?: boo
   };
 
   return (
-    <DeepDiveShell embedded={embedded} room={room} rail={<ItemRail kind="commitment" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} artifacts={commitArtifacts}
+    <DeepDiveShell embedded={embedded} room={room} rail={<ItemRail kind="commitment" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} onSeat={reportSeat} onUnseatedClaim={refillSeat} artifacts={commitArtifacts}
       // W18.A · the source card's "Open thread" unfolds the conversation in the card — no drawer door.
       // ONE OBJECT, ONE DOOR: the source object is the commitment's OWN (served by the door) — the
       // rail never derives it from the move (lib/room/door.ts objectIdForDoor).
@@ -3323,7 +3422,7 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
   const [copied, setCopied] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
   // The ONE outcome read — rail context + prepared nudge byline + gap + contextual invite.
-  const { view } = useItemView('followup', id);
+  const { view, reportSeat, refillSeat } = useItemView('followup', id);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [draftV, setDraftV] = useState(0);        // bumps to re-seed the editor (steer rework / late draft)
   const userTypedRef = useRef(false);             // the user's words always win over a late-arriving draft
@@ -3482,7 +3581,7 @@ function FollowUpDetail({ id, embedded = false }: { id: string; embedded?: boole
 
   return (
     <DeepDiveShell embedded={embedded} room={room} rail={
-      <ItemRail kind="followup" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} onDraft={(d) => { setDraft(d); setDraftV((v) => v + 1); }}
+      <ItemRail kind="followup" id={id} view={railView ?? EMPTY_RAIL} pending={!railView} onHistory={setHistoryLines} onSeat={reportSeat} onUnseatedClaim={refillSeat} onDraft={(d) => { setDraft(d); setDraftV((v) => v + 1); }}
         // W15.2 · a SETTLED / closed follow-up mounts no action card; an EMPTY draft never claims "drafted".
         artifacts={sent || closed || roomSettled(view) ? [] : [
           ...(embedded ? [] : confirmArtifactOf(followConfirm)),

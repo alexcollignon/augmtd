@@ -4,6 +4,7 @@
  * Meetings are time-based commitments, separate from email communication work.
  * They have their own lifecycle: upcoming → starting soon → in progress → completed
  */
+import { clockIn, dateIn, dayKeyIn } from '@/lib/core/user-zone';
 
 export type MeetingStatus =
   | 'upcoming'        // > 60 minutes away
@@ -103,22 +104,23 @@ export interface MeetingPrep {
 /**
  * Calculate human-readable time display for meetings
  */
-export function formatMeetingTime(startTime: string, endTime: string): {
+export function formatMeetingTime(startTime: string, endTime: string, zone: string): {
   primary: string;      // "Today · 2:00–2:30 PM"
   secondary: string;    // "Starts in 2h"
 } {
+  // THE READER'S ZONE (law `one-reader-zone`): day and clock in the user's zone, never the device's.
   const start = new Date(startTime);
-  const end = new Date(endTime);
   const now = new Date();
 
   // Primary: Date + Time range
-  const isToday = start.toDateString() === now.toDateString();
-  const isTomorrow = start.toDateString() === new Date(now.getTime() + 24 * 60 * 60 * 1000).toDateString();
+  const startDay = dayKeyIn(start, zone);
+  const isToday = startDay === dayKeyIn(now, zone);
+  const isTomorrow = startDay === dayKeyIn(now.getTime() + 24 * 60 * 60 * 1000, zone);
 
-  const dateLabel = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const dateLabel = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : dateIn(start, zone, { weekday: 'short', month: 'short', day: 'numeric' });
 
-  const startTimeStr = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-  const endTimeStr = end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const startTimeStr = clockIn(startTime, zone, '12h');
+  const endTimeStr = clockIn(endTime, zone, '12h');
 
   const primary = `${dateLabel} · ${startTimeStr}–${endTimeStr}`;
 

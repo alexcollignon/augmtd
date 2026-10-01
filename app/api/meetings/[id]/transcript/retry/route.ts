@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdmin } from '@supabase/supabase-js';
 import { processAudioFile } from '@/lib/integrations/meeting-bot/transcription-pipeline';
+import { transcriptionVocabulary } from '@/lib/integrations/meeting-bot/transcription-vocabulary';
 
 export const maxDuration = 300;
 
@@ -81,6 +82,7 @@ export async function POST(
         calendarEventId,
         userId: user.id,
         source: transcript.source ?? 'bot',
+        vocabulary: await transcriptionVocabulary(adminClient, user.id, calendarEventId),
       }),
     }).catch((err) => console.error('[RetryRoute] Failed to call Hetzner /transcribe:', err));
 

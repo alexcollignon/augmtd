@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { processAudioFile } from '@/lib/integrations/meeting-bot/transcription-pipeline';
+import { transcriptionVocabulary } from '@/lib/integrations/meeting-bot/transcription-vocabulary';
 
 // POST /api/meetings/recordings/confirm
 // Body: { storagePath, calendarEventId?, title, startTime, endTime, source? }
@@ -132,6 +133,8 @@ export async function POST(request: NextRequest) {
           userId,
           source,
           liveNotes: mergedLiveNotes || undefined,
+          // Proper nouns for Whisper's prompt (an older box ignores the field).
+          vocabulary: await transcriptionVocabulary(adminClient, userId, calendarEventId ?? null),
         }),
       }).catch((err) => console.error('[Recordings/Confirm] Failed to call Hetzner /transcribe:', err));
     } else {

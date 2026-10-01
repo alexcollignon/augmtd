@@ -1,6 +1,8 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useUserZone } from '@/context/user-zone-context';
+import { clockIn, dateIn } from '@/lib/core/user-zone';
 import Link from 'next/link';
 import {
   FolderOpenIcon,
@@ -96,11 +98,11 @@ function SourceBadge({ source }: { source: string }) {
   );
 }
 
-function groupByDate(items: Transcript[]): Array<{ label: string; items: Transcript[] }> {
+function groupByDate(items: Transcript[], zone: string): Array<{ label: string; items: Transcript[] }> {
   const groups = new Map<string, Transcript[]>();
   const order: string[] = [];
   for (const item of items) {
-    const label = new Date(item.startTime).toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
+    const label = dateIn(item.startTime, zone, { weekday: 'short', day: 'numeric', month: 'short' });
     if (!groups.has(label)) { groups.set(label, []); order.push(label); }
     groups.get(label)!.push(item);
   }
@@ -111,6 +113,7 @@ function groupByDate(items: Transcript[]): Array<{ label: string; items: Transcr
 // cross-artifact project experience (goals, rules, tasks, AI) lives in ONE place: the Home Projects lens,
 // reached via "Open project →". Same project identity + membership, so the two feel like one thing.
 export default function ProjectMeetingsView({ project, suggestion, transcripts, isNew }: ProjectMeetingsViewProps) {
+  const zone = useUserZone();
   const [captureFilter, setCaptureFilter] = useState<CaptureFilter>('all');
 
   const name = project?.name ?? suggestion?.name ?? '';
@@ -131,7 +134,7 @@ export default function ProjectMeetingsView({ project, suggestion, transcripts, 
     return allProjectTranscripts;
   }, [allProjectTranscripts, captureFilter]);
 
-  const dateGroups = groupByDate(projectTranscripts);
+  const dateGroups = groupByDate(projectTranscripts, zone);
 
   return (
     <div className="flex-1 flex flex-col">
@@ -217,7 +220,7 @@ export default function ProjectMeetingsView({ project, suggestion, transcripts, 
                     </div>
                     <div className="flex-shrink-0 text-right">
                       <p className="text-[11px] text-neutral-400">
-                        {new Date(t.startTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                        {clockIn(t.startTime, zone)}
                       </p>
                       {t.workItemsGenerated > 0 && (
                         <p className="text-[10px] text-blue-500 font-medium">{t.workItemsGenerated} items</p>

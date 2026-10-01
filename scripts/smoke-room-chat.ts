@@ -230,7 +230,8 @@ async function main() {
     ok('B5 the seat\'s answer is a bubble in the seat\'s face, drawn by <Answer>',
       /const answer = isAnswerTurn\(t\) && !!t\.text;/.test(bubble) && /<Answer text=\{t\.text\} refs=\{t\.refs \?\? \[\]\}/.test(bubble)
       && /actorName: t\.author\?\.name \? t\.author\.name\.split\(' '\)\[0\] : seatName/.test(bubble) && /actorRoleLabel: seatLabel/.test(bubble));
-    ok('B5 both doors draw spoken turns through the one bubble builder', (rail.match(/items\.push\(speechBubble\(t, key\)\)/g) ?? []).length === 2);
+    // ⟲ RE-POINTED (W39 · A CLAIM RENDERS): the item door hands the builder the turn after the claim net (`said`)
+    ok('B5 both doors draw spoken turns through the one bubble builder', (rail.match(/items\.push\(speechBubble\((?:t|said), key\)\)/g) ?? []).length === 2);
     ok('B5 tagged refs ride inline, never as the grey link row beneath', /const shownRefs = \(t\.refs \?\? \[\]\)\.filter\(\(r\) => !r\.tag/.test(rail));
   }
 

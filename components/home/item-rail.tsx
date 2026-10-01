@@ -20,6 +20,8 @@ import Link from 'next/link';
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import React, { useEffect, useRef, useState } from 'react';
+import type { SlotPaint } from '@/lib/room/no-mutation';
+import { dropUnseatedClaims, seatKindsOf } from '@/lib/room/seat-claims';
 import { useRouter } from 'next/navigation';
 import { DocumentIcon } from '@heroicons/react/24/outline';
 import { WorkerMentionInput } from '@/components/workers/worker-mention-input';
@@ -77,7 +79,7 @@ import { announceDeed, DEED_EVENT } from '@/lib/room/deed-echo';
 import type { RoomHistoryLine } from '@/components/room/filed-drawer';
 // THE ROOM'S CONVERSATION IS A REAL CHAT (W19.B): one reading of a turn for fold AND render, the
 // opener's one producer, the orphan rule — and the ONE answer renderer the Home chat draws with.
-import { isAnswerTurn, isNarrationTurn, isPersistedOpener, openerInvite, OPENER_INVITE, orphanQuestion, ORPHAN_LINE, ORPHAN_RETRY } from '@/components/home/room-chat';
+import { isAnswerTurn, isNarrationTurn, isPersistedOpener, openerInvite, OPENER_INVITE, orphanQuestion, ORPHAN_LINE, ORPHAN_RETRY, isAskDeedKey, actionFollowsExchange } from '@/components/home/room-chat';
 import { Answer } from '@/components/home/ask-answer';
 // W23.A · THE CHAT SURFACE — the one scroll follows the stream, Stop, "Worked for Xs ›".
 import { activityOf, durationOf, recordStep, type ActivityStep } from '@/components/home/chat-surface';
@@ -160,6 +162,9 @@ type Turn =
   /** W19.B · `reqId` = the per-question key the steer door wrote the question under (`ask:<reqId>`);
    *  `turnId` = its durable row. "Ask again" on an orphan re-keys THAT row through the same door. */
   | { role: 'user'; text: string; reqId?: string; turnId?: string;
+      /** W39c · the reader's DEED on an ask (a typed answer `supply:*`, a go-ahead `proceed:*`) — the
+       *  work answers it (the action card), never a chat reply, so it is never an orphan question. */
+      deed?: true;
       /** W23.A · the reader stopped the answer to this question (live only — never persisted). */
       stopped?: true }
   | { role: 'system'; text: string; key?: string; actions?: TurnAction[]; refs?: Array<{ label: string; href: string | null; tag?: string }>; files?: Array<{ id: string; filename: string; source: string }>; author?: { name: string; role?: string | null };
@@ -317,6 +322,7 @@ function mapServerTurns(rows: ServerTurnRow[]): Turn[] {
     if (turn.role === 'user') {
       if (t.key?.startsWith('ask:')) turn.reqId = t.key.slice(4);
       if (t.id) turn.turnId = t.id;
+      if (isAskDeedKey(t.key)) turn.deed = true;
     }
     // THE GROUND LAW: the durable write time — the narration-expiry fold's only input.
     if (turn.role === 'system' && t.createdAt) turn.at = String(t.createdAt);
@@ -413,7 +419,7 @@ function Chip({ icon, label, onClick }: { icon?: React.ReactNode; label: string;
   );
 }
 
-export function ItemRail({ kind, id, view, pending = false, onDraft, decision: decisionIn, artifacts: artifactsIn, onOpenHref, onStage, onHistory, sourceItemId, sourceMeeting, sourceEmail, gate, sourceEvent, slot }: {
+export function ItemRail({ kind, id, view, pending = false, onDraft, decision: decisionIn, artifacts: artifactsIn, onOpenHref, onStage, onHistory, onSeat, onUnseatedClaim, sourceItemId, sourceMeeting, sourceEmail, gate, sourceEvent, slot }: {
   kind: RailKind; id: string; view: RailView;
   /** THE STRUCTURAL FRAME (UX arc): true while the view is still loading — the rail mounts its
    *  shell (header, turns, composer) immediately and shows a quiet shimmer instead of anchor
@@ -471,6 +477,13 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
    *  the ONE drawer (components/room/filed-drawer.tsx → RoomHistorySection), read-only, beside
    *  everything else this work has filed. One seam, both doors: no door-local fork. */
   onHistory?: (lines: RoomHistoryLine[]) => void;
+  /** W39 · THE EMPTY ACTION SEAT IS A SKELETON (lib/room/no-mutation.ts mayFillEmptySeat): the rail
+   *  REPORTS what the item page's action seat painted — 'widget' · 'placeholder' · 'empty' — so the
+   *  host's held landing may fill a seat that showed nothing (never one that showed a card). */
+  onSeat?: (seat: SlotPaint) => void;
+  /** W39 · A CLAIM RENDERS: the exchange claimed a prepared thing the seat does not render (the
+   *  sentence is not shown — lib/room/seat-claims.ts); the host makes one fresh, seat-only read. */
+  onUnseatedClaim?: () => void;
   /** THE OPENING CONTRACT (clause 2): the INBOX-BACKED item this room's opening is about, when the
    *  host knows it (a project room's focused mail). The loose email door needs no prop — its own
    *  `id` IS the item — and a project room with a mail MOVE falls back to the move's target, so no
@@ -632,12 +645,27 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   useEffect(() => {
     const onDeed = () => setTurnsNonce((n) => n + 1);
     window.addEventListener(DEED_EVENT, onDeed);
-    return () => window.removeEventListener(DEED_EVENT, onDeed);
-  }, []);
+    // W39c · THE READER'S OWN WORDS LAND AT ONCE: an ask deed (a typed answer, a go-ahead —
+    // lib/deeds/gate-doors `aug:item-deed`) wrote the reader's turn server-side; the conversation re-reads
+    // now, so their words stand in order under the ask instead of arriving on the next beat.
+    const onItemDeed = (ev: Event) => { if ((ev as CustomEvent).detail?.id === id) setTurnsNonce((n) => n + 1); };
+    window.addEventListener('aug:item-deed', onItemDeed);
+    return () => { window.removeEventListener(DEED_EVENT, onDeed); window.removeEventListener('aug:item-deed', onItemDeed); };
+  }, [id]);
   // LIVE = this room has a story or a standing move, i.e. the engine can still speak into it. A
   // never-used room beats zero times; the primitive's hidden-tab skip and tick cap do the rest.
   useLiveRefresh(turns.length > 0 || !!respMove, () => setTurnsNonce((n) => n + 1),
     { everyMs: 20_000, maxTicks: 45 });
+  // W39c · AN EMPTY CONVERSATION IS A SKELETON (the empty-seat principle, lib/room/no-mutation): a room
+  // opened before its engine has spoken (the judge writing the ask while the page painted) re-reads on
+  // a short, capped beat until its first turn lands — the ask card arrives without a reload. New turns
+  // only APPEND (the no-mutation law's first allowance). A room that stays empty stops after ~1 min.
+  useLiveRefresh(!pending && turns.length === 0, () => setTurnsNonce((n) => n + 1),
+    { everyMs: 6_000, maxTicks: 10 });
+  // …and when the item's machine state moves (the view the host just read), the conversation re-reads
+  // once: a state change is how an ask, an answer or a narration is announced.
+  const machineStateWord = view.machineState?.state ?? null;
+  useEffect(() => { if (machineStateWord) setTurnsNonce((n) => n + 1); }, [machineStateWord]);
   // ── THE CONVERSATION HYDRATES (Sep 8, the second half of the white void) ──────────────────────
   // The turns fetch fires only after mount, strictly AFTER /room returned — a waterfall whose
   // second leg the reader watched as an empty column beneath a painted brief. The room's other two
@@ -1805,6 +1833,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
       refs: [{ label: ORPHAN_RETRY, onClick: () => { void send(orphan.text, orphan); } }] });
   };
 
+  let unseatedClaim = false;
   if (itemPage) {
     const { plan, card } = itemPage;
     // CLARA — one sentence, the SOURCE widget directly under it (the thing the sentence is about),
@@ -1834,13 +1863,45 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
       pending: plan.pending ? <PreparingSlot widget={plan.pending.widget} who={seatName} /> : null,
     }));
     // THE READER'S OWN EXCHANGE — from their first word on (answers, and what an answer presents).
+    // W39 · A CLAIM RENDERS: a seat sentence claiming a prepared thing the action seat does not render
+    // is not shown (lib/room/seat-claims.ts) — it renders the moment its card does.
+    const seated = seatKindsOf(items.some((x) => x.id === 'action') && !plan.pending ? plan.artifact : null);
     itemExchange.forEach((t, i) => {
       const key = `x${i}`;
       if (t.role === 'user') { items.push({ type: 'user_bubble', id: key, text: t.text }); return; }
-      items.push(speechBubble(t, key)); pushSkillLines(t, key);
+      const net = t.text ? dropUnseatedClaims(t.text, seated) : null;
+      let said = t;
+      if (net?.dropped.length) {
+        unseatedClaim = true;
+        // an item chip (refs) is not content of its own — a bubble with nothing left to say never stands empty
+        const cardless = !t.checklist?.length && !t.actions?.length && !t.files?.length;
+        if (!net.text && cardless) return;
+        said = { ...t, text: net.text };
+      }
+      items.push(speechBubble(said, key)); pushSkillLines(said, key);
     });
     pushOrphanLine(itemExchange);
+    // W39c · THE ANSWER FOLLOWS ITS QUESTION (components/home/room-chat.ts actionFollowsExchange): the
+    // work the reader's own deed produced moves below their words — same seat id, so it stays ONE card.
+    if (actionFollowsExchange(plan.artifact, itemExchange)) {
+      const at = items.findIndex((x) => x.id === 'action');
+      if (at >= 0) { const [card] = items.splice(at, 1); items.push(card); }
+    }
   }
+
+  // W39 · REPORT THE SEAT (lib/room/no-mutation.ts mayFillEmptySeat): a card in the seat is 'widget',
+  // the reserved preparing slot is 'placeholder', nothing is 'empty'. A door with no item page (the
+  // project-room embed) reports nothing — its host's hold stands.
+  const seatPaint: SlotPaint | null = !itemPage ? null
+    : !items.some((x) => x.id === 'action') ? 'empty'
+      : itemPage.plan.action ? 'widget' : 'placeholder';
+  const onSeatRef = useRef(onSeat);
+  onSeatRef.current = onSeat;
+  useEffect(() => { if (seatPaint) onSeatRef.current?.(seatPaint); }, [seatPaint]);
+  // …and a claim the seat cannot show asks the host for ONE seat-only re-read.
+  const onUnseatedRef = useRef(onUnseatedClaim);
+  onUnseatedRef.current = onUnseatedClaim;
+  useEffect(() => { if (unseatedClaim && seatPaint === 'empty') onUnseatedRef.current?.(); }, [unseatedClaim, seatPaint]);
 
   // THE OPENING IS A MESSAGE (owner walk, Sep 14: "this can just look like a message, so remove
   // border and the 'pinned' label"). The seat and the behaviour are unchanged — it opens the room,
