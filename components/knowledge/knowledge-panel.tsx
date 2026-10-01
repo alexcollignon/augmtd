@@ -975,13 +975,15 @@ export default function KnowledgePanel() {
     }`;
 
   return (
-    <div className={`h-full min-h-0 flex ${dragging ? 'outline-dashed outline-2 outline-offset-[-8px] outline-indigo-300 rounded-2xl' : ''}`}>
+    <div className={`h-full min-h-0 flex flex-col md:flex-row ${dragging ? 'outline-dashed outline-2 outline-offset-[-8px] outline-indigo-300 rounded-2xl' : ''}`}>
       {/* ONE input, every door — the door that opens it parks its destination first. */}
       <input ref={fileRef} type="file" multiple className="hidden" accept={ACCEPT}
         onChange={(e) => { const dest = pendingDest.current; pendingDest.current = null; void upload(e.target.files, dest); }} />
 
       {/* ── LEFT RAIL: the scopes, and nothing that acts on them ───────────────────────────── */}
-      <div className="w-[230px] flex-shrink-0 flex flex-col border-r border-neutral-100 overflow-y-auto">
+      {/* Phone width (mobile walk, Oct 1): the rail stacks ABOVE the library (capped, scrolls) — side by
+          side it left the file list ~120px wide. */}
+      <div className="md:w-[230px] max-md:max-h-[34%] flex-shrink-0 flex flex-col border-b md:border-b-0 md:border-r border-neutral-100 overflow-y-auto">
         <div className="flex-shrink-0 px-4 pt-4 pb-3">
           <h2 className="text-[15px] font-semibold text-neutral-900 tracking-tight">Documents</h2>
           <p className="mt-0.5 text-[11.5px] text-neutral-400"
@@ -1049,7 +1051,7 @@ export default function KnowledgePanel() {
       {/* ── RIGHT PANE: the selected scope, its deeds, and its list ────────────────────────── */}
       <div className="flex-1 min-w-0 min-h-0 flex flex-col relative">
        <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="max-w-4xl px-6 py-6">
+        <div className="max-w-4xl px-4 py-4 md:px-6 md:py-6">
           {/* THE HEADER NAMES WHAT IT ACTS ON — a folder's rename / delete / upload live where the
               folder is named, never in the rail (which stays a map, not a workbench). */}
           <div className="flex items-start justify-between gap-4">

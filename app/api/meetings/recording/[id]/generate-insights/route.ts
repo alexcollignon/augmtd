@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createAdmin } from '@supabase/supabase-js';
 import { storeTranscriptAndGenerateWork } from '@/lib/integrations/meeting-bot/bot-manager';
 import { hasBearer } from '@/lib/utils/bearer-auth';
+import { transcriptionVocabulary } from '@/lib/integrations/meeting-bot/transcription-vocabulary';
+import { snapSegments } from '@/lib/integrations/meeting-bot/vocabulary-snap';
 
 export const maxDuration = 300;
 
@@ -39,10 +41,16 @@ export async function POST(
     return NextResponse.json({ error: 'Transcript not found' }, { status: 404 });
   }
 
-  const segments = (transcript.transcript_segments as any[]) ?? [];
-  if (segments.length === 0) {
+  const boxSegments = (transcript.transcript_segments as any[]) ?? [];
+  if (boxSegments.length === 0) {
     return NextResponse.json({ error: 'No segments to process' }, { status: 400 });
   }
+  // THE VOCABULARY SNAP (vocabulary-snap.ts): near-miss spellings of this meeting's names ("Akme" →
+  // "Acme") are corrected before anything reads the transcript; storeTranscriptAndGenerateWork
+  // writes the snapped segments back to the row. Same vocabulary the box was sent.
+  const vocabulary = await transcriptionVocabulary(adminClient, transcript.user_id, transcript.calendar_event_id ?? null);
+  const { segments, snaps } = snapSegments(boxSegments, vocabulary);
+  if (snaps.length) console.log(`[generate-insights] vocabulary snap ${transcriptId}: ${snaps.map((x) => `${x.from} → ${x.to}`).join(' · ')}`);
 
   // storeTranscriptAndGenerateWork with existingTranscriptId skips the insert/update
   // of segments (already done by Hetzner) and goes straight to insights + inbox items.

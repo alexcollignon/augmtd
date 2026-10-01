@@ -1093,7 +1093,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
   // ONE-ROOM R2 — THE INVERSION via THE ONE shared shell (components/room/room-shell.tsx): the
   // CONVERSATION is the center of the room; the focused artifact / the LAUNCHER is the stage.
   return (
-    <div className="w-full h-[100dvh] min-h-0 flex flex-col bg-neutral-50">
+    <div className="w-full h-[100dvh] max-md:h-full min-h-0 flex flex-col bg-neutral-50">{/* phone: the app top bar shares the screen — fill the column, not the viewport */}
       {/* ══ THE HEADER (threads Phase 3 — docs/design/threads/Main.dc.html) ═══════════════════════
           ONE quiet line of chrome: name · state dot · the faces of whoever is in this room · the
           handle that summons the filed truth. NO PROSE LIVES HERE. The room's position is spoken

@@ -53,7 +53,8 @@ export default async function MainLayout({ children, modal }: { children: React.
   return (
     <WorkspaceProvider workspace={workspace ?? null} isSuperAdmin={isSuperAdmin}>
       <UserZoneProvider zone={userZone}>
-      <div className="flex h-screen bg-neutral-50 overflow-hidden">
+      {/* Phone width stacks the sidebar's slim top bar over the page (the sidebar is a drawer there). */}
+      <div className="flex flex-col md:flex-row h-[100dvh] md:h-screen bg-neutral-50 overflow-hidden">
         <SidebarNav
           userEmail={user.email}
           avatarUrl={avatarUrl}

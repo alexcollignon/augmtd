@@ -49,7 +49,10 @@ export type AskRowDoors = {
   saidIt?: { label: string; text: string; onUse: () => void } | null;
 };
 
-const DOOR = 'aug-focus rounded text-[11.5px] font-medium transition-colors';
+// On a touch screen the doors keep their look but grow their HIT AREA (padding out, equal margin in
+// — zero layout shift): a 17px-tall word is not a tappable door at phone width (mobile walk, Oct 1).
+const TOUCH_HIT = '[@media(pointer:coarse)]:py-2.5 [@media(pointer:coarse)]:-my-2.5';
+const DOOR = cn('aug-focus rounded text-[11.5px] font-medium transition-colors', TOUCH_HIT);
 const LEAD_DOOR = cn(DOOR, 'text-indigo-600 hover:text-indigo-700');
 const QUIET_DOOR = cn(DOOR, 'text-neutral-500 hover:text-neutral-800');
 

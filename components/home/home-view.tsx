@@ -2662,7 +2662,7 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
 
       {/* Floating view-switcher island — swaps the Home lens (Dashboard ↔ Timeline) without crowding.
           Hidden while the Activity panel is open so they never overlap. */}
-      <ViewSwitcher value={view} onChange={setView} hidden={activityOpen} />
+      <ViewSwitcher value={view} onChange={setView} hidden={activityOpen} phoneHidden={chatActive} />
 
       {/* Activity panel — a width-animated SIBLING column (NOT a fixed overlay): w-0 closed →
           w-[360px] open, `transition-[width]` so opening reflows the main column left. Self-contained

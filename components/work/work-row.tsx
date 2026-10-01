@@ -53,7 +53,7 @@ function RowAction({ label, onClick, disabled, hoverTone, iconFirst = false, chi
   const glyph = <span className="text-[13px] leading-none flex items-center">{children}</span>;
   return (
     <button onClick={onClick} disabled={disabled}
-      className={`flex items-center gap-1 text-neutral-400 ${hoverTone} ${DEED_MOTION} disabled:opacity-50`}>
+      className={`flex items-center gap-1 text-neutral-400 ${hoverTone} ${DEED_MOTION} disabled:opacity-50 [@media(pointer:coarse)]:py-2.5 [@media(pointer:coarse)]:-my-2.5`}>{/* touch: a tappable hit area, zero layout shift */}
       {iconFirst ? <>{glyph}{word}</> : <>{word}{glyph}</>}
     </button>
   );

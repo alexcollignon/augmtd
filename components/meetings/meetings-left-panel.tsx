@@ -177,7 +177,8 @@ export default function MeetingsLeftPanel({
 
   return (
     // Width aligned with the inbox folder rail (196+chrome ≈ 204) — one sub-panel system.
-    <div className="w-[204px] flex-shrink-0 flex flex-col bg-neutral-50 p-2 pl-0">
+    // Phone width: the folder rail steps aside (the page header keeps "New meeting"; the app drawer keeps the doors).
+    <div className="hidden md:flex w-[204px] flex-shrink-0 flex-col bg-neutral-50 p-2 pl-0">
       <div className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden">
 
         {/* Search */}
