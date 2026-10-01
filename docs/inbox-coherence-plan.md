@@ -142,7 +142,7 @@ reply-state + `hasDirectQuestion`/`hasRequestForAction`, but has **no notion of 
 direct (To) recipient or CC-only** — and the question signals don't know if the ask is aimed at *you*
 or at the To recipient. The rule-match envelope (`batchMatchRules`) also omits to/cc entirely. So an
 email where you're **CC'd, not addressed, and not asked to do anything** can wrongly become Needs
-reply. (Real signal in this account: `madalena@zeroto100.ai` is the user's 2nd-most-frequent "To"
+reply. (Real signal in this account: `maya@acme-ventures.ai` is the user's 2nd-most-frequent "To"
 among *received* mail — i.e. he's routinely CC'd on mail addressed to her.)
 
 **Change:**

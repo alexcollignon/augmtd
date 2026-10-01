@@ -106,8 +106,8 @@ const src = (p: string) => readFileSync(p, 'utf8');
     return mapWorkStateToLabel(it.work_state) || 'fyi';
   };
   const { data: uidRows } = await sb.from('work_entities').select('user_id').limit(2000);
-  const rene = [...new Set(((uidRows ?? []) as Array<{ user_id: string }>).map((r) => r.user_id))].find((u) => u.startsWith('ae306f38')) ?? null;
-  const USERS: Array<[string, string]> = [[A, 'user A'], [B, 'user B'], ...(rene ? [[rene, 'user C'] as [string, string]] : [])];
+  const sam = [...new Set(((uidRows ?? []) as Array<{ user_id: string }>).map((r) => r.user_id))].find((u) => u.startsWith('ae306f38')) ?? null;
+  const USERS: Array<[string, string]> = [[A, 'user A'], [B, 'user B'], ...(sam ? [[sam, 'user C'] as [string, string]] : [])];
   for (const [uid, label] of USERS) {
     const { data: items } = await sb.from('inbox_items')
       .select('id, source_data, work_state, rule_type')

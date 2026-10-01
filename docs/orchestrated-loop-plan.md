@@ -4,7 +4,7 @@ Follows THE WORK LOOP (docs/work-loop-plan.md, shipped). This arc fixes the two 
 session exposed at their ROOTS, per the doctrine (no bandaids — reasoning with memory in view;
 facts structural; plumbing mechanical):
 
-1. **Identity is still string-matched in places** — "Alex Collignon" ≠ "Alexandre Collignon" to the
+1. **Identity is still string-matched in places** — "Alex Morgan" ≠ "Alexander Morgan" to the
    spine's self-guard, so a commitment mis-captured with the user as counterparty produced
    "Waiting on Alex" + a Portuguese nudge addressed to the user himself. The registry that solves
    this EXISTS (`work_entities kind='person'`, alias-matched via `lib/entities/people.ts`
@@ -32,7 +32,7 @@ The person registry did the identity work; nothing downstream re-derives it with
 - **O1a · the user's own person entity.** A durable "self" entity (kind `person`,
   `state.self: true` — jsonb, no migration): seeded from profile (full name, login email),
   connections (mailbox addresses + display names), and the from-names observed on the user's own
-  sent mail ("Alex Collignon <alex@…>" → alias "alex collignon"). New self-forms accumulate by the
+  sent mail ("Alex Morgan <alex@…>" → alias "alex morgan"). New self-forms accumulate by the
   SAME recognition judgment person entities already use — one reasoned verdict when an unseen form
   arrives with self-evidence (sent from the user's own address, the signature block), never a
   prefix/nickname heuristic. Idempotent bootstrap for all users (mirror of `bootstrapMemory`).
@@ -53,7 +53,7 @@ The person registry did the identity work; nothing downstream re-derives it with
 - **Gates:** the user's self entity exists with both name forms + all addresses (4 users);
   zero open commitments whose counterparty resolves to self; extraction write-time resolution
   proven live (a synthetic commitment with a nickname counterparty lands canonical); the spine
-  flags "Alex Collignon" as self for user A.
+  flags "Alex Morgan" as self for user A.
 
 ## O2 — Roster-reasoned routing (the map dies)
 

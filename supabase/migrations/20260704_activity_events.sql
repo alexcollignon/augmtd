@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS activity_events (
   user_id      UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   type         TEXT NOT NULL,              -- reply_sent | marked_done | dismissed | nudge_sent
                                            -- | commitment_done | commitment_dismissed | sender_muted
-  title        TEXT NOT NULL,              -- human summary, e.g. "Replied to TECNICLIMA"
+  title        TEXT NOT NULL,              -- human summary, e.g. "Replied to ACME HVAC"
   entity_type  TEXT,                       -- 'inbox_item' | 'commitment' | 'sender' | ...
   entity_id    TEXT,                       -- id of the acted-on entity (text: ids may be non-uuid)
   metadata     JSONB NOT NULL DEFAULT '{}'::jsonb,

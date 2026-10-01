@@ -441,7 +441,7 @@ budget spent on avatars and card arrival, nowhere else · light/dark honest.
 - **P5** — retire + redirect old surfaces; the full pre-handover browser walk; the owner walk.
 
 Execution mode: Fable orchestrates and reviews every diff; Opus agents build to surgical
-briefs; live pilots (the weekly AHK briefings above all) must keep working through every
+briefs; live pilots (the weekly Chamber briefings above all) must keep working through every
 intermediate commit — strangler pattern, no big bang. New laws ship with their gates in the
 same change. Nothing merges without the owner's walk.
 

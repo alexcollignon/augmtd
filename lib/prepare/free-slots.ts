@@ -117,7 +117,9 @@ export function pickFreeSlots(opts: {
  *  actually asked about. Defaults are byte-compatible with the existing caller (lib/prepare/pass). */
 export async function proposeFreeSlots(
   client: SupabaseClient, userId: string,
-  opts: { tz: string; todayStr: string; count?: number; minutes?: number; fromDayStr?: string; toDayStr?: string },
+  opts: { tz: string; todayStr: string; count?: number; minutes?: number; fromDayStr?: string; toDayStr?: string;
+    /** The clock (default: now). A caller that pins its day (a gate) pins the clock with it. */
+    nowMs?: number },
 ): Promise<ProposedSlot[]> {
   try {
     // TIME TRUTH (W5a): a stated window is honored, but never behind the clock. A window opening in
@@ -133,7 +135,7 @@ export async function proposeFreeSlots(
     const days = fromDayStr && opts.toDayStr
       ? Math.max(1, Math.round((Date.parse(`${opts.toDayStr}T00:00:00Z`) - Date.parse(`${anchor}T00:00:00Z`)) / DAY_MS))
       : PROPOSAL_HORIZON_DAYS;
-    const floorMs = fromDayStr ? Date.parse(`${fromDayStr}T00:00:00Z`) : Date.now();
+    const floorMs = fromDayStr ? Date.parse(`${fromDayStr}T00:00:00Z`) : (opts.nowMs ?? Date.now());
     const ceil = new Date(Date.parse(`${anchor}T00:00:00Z`) + (days + 2) * DAY_MS).toISOString();
     const { data } = await client.from('calendar_events').select('start_time, end_time, status')
       .eq('user_id', userId).eq('status', 'confirmed')
@@ -147,6 +149,6 @@ export async function proposeFreeSlots(
       if (endMs < floorMs) continue;                  // over before the window opens — not busy for us
       busy.push({ startMs: s, endMs });
     }
-    return pickFreeSlots({ todayStr: anchor, tz: opts.tz, busy, count: opts.count, minutes: opts.minutes, days });
+    return pickFreeSlots({ todayStr: anchor, tz: opts.tz, busy, count: opts.count, minutes: opts.minutes, days, ...(opts.nowMs != null ? { nowMs: opts.nowMs } : {}) });
   } catch { return []; }
 }

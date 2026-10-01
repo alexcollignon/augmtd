@@ -29,7 +29,7 @@ Ordering: overdue/dated first, then the synthesis order. The ✦ "start here" ac
  ✉  Jaden · Reply to the Apekey.ai sales outreach          ✦  Jul 10   ✓ ✕ →
      Apekey.ai sales outreach
  ─────────────────────────────────────────────────────────────────────────
- ◎  Process the refund & share the details with Madalena    OVERDUE   ✓ ✕ →
+ ◎  Process the refund & share the details with Maya    OVERDUE   ✓ ✕ →
      You owe Yann · ↳ Jordan pilot
  ─────────────────────────────────────────────────────────────────────────
  ⚠  Verify your account — a payment failed                   Jul 7    ✓ ✕ →
@@ -43,7 +43,7 @@ Replace the pill marquee with a horizontal row of small **project tiles** built 
 ```
  YOUR PROJECTS                                                          21 ▸
  ┌────────────────────────┐ ┌────────────────────────┐ ┌───────────────────┐
- │ ● Jordan pilot     │ │ ● Meridian        📁 │ │ ● Zero to 100     │
+ │ ● Jordan pilot     │ │ ● Meridian        📁 │ │ ● Acme Ventures     │
  │   Needs attention · 4  │ │   Active · 2           │ │   Active · 3      │
  │   Next: reply to Jaden │ │   Next: send the deck  │ │   Next: —         │
  └────────────────────────┘ └────────────────────────┘ └───────────────────┘

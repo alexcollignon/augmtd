@@ -1,5 +1,6 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { embedText } from './indexer';
+import { mentionsEntity, nameAffinity, queryIdentifiers, nameTokens, preferCurrentVersion, queryContentTokens, versionInfo } from './rank';
 
 export interface ChunkResult {
   chunkId: string;
@@ -94,44 +95,104 @@ export async function searchKnowledgeGrouped(
   }
 
   const groups: FileChunkGroup[] = [];
-  for (const [fileId, chunks] of byFile) {
-    const top = chunks[0];
-    const contextText = chunks
-      .map((c) => `${c.citation}\n${c.content}`)
-      .join('\n\n');
+  for (const [fileId, chunks] of byFile) groups.push(toGroup(fileId, chunks[0].filename, chunks[0].summary, chunks[0].similarity, chunks));
 
-    groups.push({
-      fileId,
-      filename: top.filename,
-      summary: top.summary,
-      similarity: top.similarity,
-      topCitation: top.citation,
-      chunks: chunks.map((c) => ({ heading: c.heading, content: c.content, citation: c.citation })),
-      contextText,
-    });
-  }
-
-  // Sort groups by best chunk rrf_score
+  // THE NAME IS EVIDENCE (lib/knowledge/rank.ts): a file whose NAME strongly answers the query (an
+  // acronym/code it carries, or most of the query's words) joins the candidates even when no chunk
+  // surfaced it, and the strong-name files form a THIRD ranked list fused like the other two
+  // (reciprocal rank, k = 60) — a name lifts a file by about one list's worth, never more, so a
+  // weak echo of one query word ("Globex" in a long question) changes nothing.
   const topRrfByFile = new Map<string, number>();
   for (const chunk of rawChunks) {
     const cur = topRrfByFile.get(chunk.fileId) ?? 0;
     if (chunk.rrfScore > cur) topRrfByFile.set(chunk.fileId, chunk.rrfScore);
   }
-  groups.sort((a, b) => (topRrfByFile.get(b.fileId) ?? 0) - (topRrfByFile.get(a.fileId) ?? 0));
+  for (const g of await nameCandidates(userId, query, new Set(byFile.keys()), maxChunksPerFile, adminClient)) groups.push(g);
+  const nameRanked = groups.map((g) => ({ id: g.fileId, a: nameAffinity(query, g.filename) }))
+    .filter((x) => x.a >= STRONG_NAME).sort((a, b) => b.a - a.a);
+  const nameBonus = new Map(nameRanked.map((x, i) => [x.id, 1 / (RRF_K + i + 1)]));
+  // THE EXACT TOKEN IS EVIDENCE: a number or code the user typed ("318.75", "INV-2026-0417") found
+  // verbatim in a candidate's retrieved text ranks that candidate in a fourth list (same scale).
+  const ids = queryIdentifiers(query);
+  const exactRanked = ids.length ? groups.map((g) => {
+    const hay = `${g.filename}\n${g.contextText}`.toLowerCase();
+    return { id: g.fileId, n: ids.filter((t) => hay.includes(t)).length };
+  }).filter((x) => x.n > 0).sort((a, b) => b.n - a.n) : [];
+  const exactBonus = new Map(exactRanked.map((x, i) => [x.id, 1 / (RRF_K + i + 1)]));
+  const score = (id: string) => (topRrfByFile.get(id) ?? 0) + (nameBonus.get(id) ?? 0) + (exactBonus.get(id) ?? 0);
+  groups.sort((a, b) => score(b.fileId) - score(a.fileId));
 
   // Entity gate: if the query contains a specific named identifier (e.g. "Z100", "ISO27001"),
-  // only return files whose filename or summary mention it. If nothing matches, return empty
-  // so the AI reports "not found" rather than serving unrelated documents.
+  // only return files whose filename, summary or retrieved text mention it. If nothing matches,
+  // return empty so the AI reports "not found" rather than serving unrelated documents. (The text
+  // joined the haystack Oct 1 — "password length and MFA requirement" gated out the very policy
+  // whose body requires multi-factor authentication; an acronym now also matches its spelled-out
+  // initials — lib/knowledge/rank.ts mentionsEntity.)
   const entities = extractQueryEntities(query);
+  let kept = groups;
   if (entities.length > 0) {
-    const matched = groups.filter(g => {
-      const haystack = `${g.filename} ${g.summary ?? ''}`.toLowerCase();
-      return entities.some(e => haystack.includes(e.toLowerCase()));
+    kept = groups.filter(g => {
+      const haystack = `${g.filename} ${g.summary ?? ''} ${g.contextText}`;
+      return entities.some(e => mentionsEntity(haystack, e));
     });
-    return matched.slice(0, fileLimit);
   }
 
-  return groups.slice(0, fileLimit);
+  // THE CURRENT VERSION LEADS — only when two results share a version family (one cheap date read).
+  kept = kept.slice(0, Math.max(fileLimit * 2, fileLimit + 4));
+  const fams = kept.map((g) => versionInfo(g.filename).family).filter(Boolean);
+  if (new Set(fams).size < fams.length) {
+    const { data: dated, error } = await adminClient.from('knowledge_files').select('id, last_modified_at').in('id', kept.map((g) => g.fileId));
+    const at = new Map<string, string | null>(error ? [] : ((dated ?? []) as Array<{ id: string; last_modified_at: string | null }>).map((r) => [r.id, r.last_modified_at]));
+    kept = preferCurrentVersion(kept, query, (g) => ({ filename: g.filename, modifiedAt: at.get(g.fileId) ?? null }));
+  }
+
+  return kept.slice(0, fileLimit);
+}
+
+/** A name affinity (lib/knowledge/rank.ts nameAffinity) at or above this is a STRONG name match. */
+const STRONG_NAME = 0.5;
+/** The RRF constant hybrid_search_knowledge fuses with — the name list uses the same scale. */
+const RRF_K = 60;
+
+function toGroup(fileId: string, filename: string, summary: string | null, similarity: number, chunks: Array<{ heading: string | null; content: string; citation: string }>): FileChunkGroup {
+  return {
+    fileId, filename, summary, similarity,
+    topCitation: chunks[0]?.citation ?? filename,
+    chunks: chunks.map((c) => ({ heading: c.heading, content: c.content, citation: c.citation })),
+    contextText: chunks.map((c) => `${c.citation}\n${c.content}`).join('\n\n'),
+  };
+}
+
+/** Files whose NAME matches the query's distinctive words but that no chunk surfaced — with their
+ *  leading chunks (or, for a file indexed without chunks, its summary) as content. Never throws. */
+async function nameCandidates(
+  userId: string, query: string, have: Set<string>, maxChunksPerFile: number, adminClient: SupabaseClient,
+): Promise<FileChunkGroup[]> {
+  try {
+    const toks = queryContentTokens(query).flatMap((t) => nameTokens(t.replace(/&/g, ' ')))
+      .filter((t) => /^[\p{L}\p{N}]+$/u.test(t) && (t.length >= 3 || /\d/.test(t)));
+    const uniq = [...new Set(toks)].slice(0, 6);
+    if (!uniq.length) return [];
+    const { data, error } = await adminClient.from('knowledge_files').select('id, filename, summary')
+      .eq('user_id', userId).or(uniq.map((t) => `filename.ilike.%${t}%`).join(',')).limit(40);
+    if (error || !data?.length) return [];
+    const picks = (data as Array<{ id: string; filename: string; summary: string | null }>)
+      .filter((f) => !have.has(f.id) && nameAffinity(query, f.filename) >= STRONG_NAME)
+      .sort((a, b) => nameAffinity(query, b.filename) - nameAffinity(query, a.filename)).slice(0, 4);
+    if (!picks.length) return [];
+    const { data: chunks, error: cErr } = await adminClient.from('knowledge_chunks').select('file_id, heading, content, chunk_index')
+      .in('file_id', picks.map((p) => p.id)).lt('chunk_index', maxChunksPerFile).order('chunk_index', { ascending: true });
+    const byFile = new Map<string, Array<{ heading: string | null; content: string; chunk_index: number }>>();
+    for (const c of (cErr ? [] : chunks ?? []) as Array<{ file_id: string; heading: string | null; content: string; chunk_index: number }>) {
+      byFile.set(c.file_id, [...(byFile.get(c.file_id) ?? []), c]);
+    }
+    return picks.map((f) => {
+      const cs = byFile.get(f.id) ?? (f.summary ? [{ heading: null, content: f.summary, chunk_index: 0 }] : []);
+      return toGroup(f.id, f.filename, f.summary, 0, cs.map((c) => ({ heading: c.heading, content: c.content, citation: buildCitation(f.filename, c.heading, c.chunk_index) })));
+    }).filter((g) => g.chunks.length);
+  } catch {
+    return [];
+  }
 }
 
 /**

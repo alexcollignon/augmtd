@@ -8,7 +8,7 @@ const sb: SupabaseClient = createClient(
 
 const SRC = '08fe4449-e5eb-431d-9156-02e9324e5903';
 const SRC_FOLDER = 'cb6a203a-1a0a-4e5a-a4f6-f4a6016996a9';
-const THORSTEN = '9d3921b2-5a52-4b5b-9815-bc49d37ce0a7';
+const JORDAN = '9d3921b2-5a52-4b5b-9815-bc49d37ce0a7';
 const DUMMY = 'de4e8824-9795-4876-995c-c0740b8f07ee';
 
 (async () => {
@@ -60,11 +60,11 @@ const DUMMY = 'de4e8824-9795-4876-995c-c0740b8f07ee';
     .eq('user_id', SRC).in('kind', ['tender_member_manifest', 'profile_manifest', 'match_seen']);
   console.log('SRC item_plans (manifest/seen):', JSON.stringify(plans));
 
-  // 5. targets: folders named AHK Member companies
-  for (const [label, uid] of [['THORSTEN', THORSTEN], ['DUMMY', DUMMY]] as const) {
+  // 5. targets: folders named Chamber Member companies
+  for (const [label, uid] of [['JORDAN', JORDAN], ['DUMMY', DUMMY]] as const) {
     const { data: folders } = await sb.from('drive_folders').select('id, name').eq('user_id', uid);
-    const match = (folders ?? []).find((f: any) => f.name?.toLowerCase() === 'ahk member companies');
-    console.log(`${label} folder 'AHK Member companies':`, match ? JSON.stringify(match) : 'NONE', `| total folders: ${folders?.length}`);
+    const match = (folders ?? []).find((f: any) => f.name?.toLowerCase() === 'chamber member companies');
+    console.log(`${label} folder 'Chamber Member companies':`, match ? JSON.stringify(match) : 'NONE', `| total folders: ${folders?.length}`);
     if (match) {
       const { count } = await sb.from('knowledge_files').select('id', { count: 'exact', head: true })
         .eq('user_id', uid).eq('folder_id', (match as any).id);

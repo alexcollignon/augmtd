@@ -7,7 +7,7 @@
 //   1. AN APPLICATION COMES IN     → three doors on the parent: the mail door (zero-AI filters:
 //      sender domain + subject contains "application"), the FILE door (a judged "the file is a
 //      candidate CV" — the door this seed exercises, three times), and the LOOP door (the child's
-//      delivery re-fires the triage — René's cycle, by composition).
+//      delivery re-fires the triage — Sam's cycle, by composition).
 //   2. AUGMTD LINKS IT TO THE OPENING → the `case` station files each application under the job
 //      opening it names. Two applications name the SAME opening, so run 2 MATCHES run 1's record:
 //      that accumulation is what the comparison then reads.
@@ -39,7 +39,7 @@ import { runWorkflow } from '../lib/workflows/run-workflow';
 const DEMO_TAG = 'demo: processes walk';
 /** Every knowledge doc this demo seeds wears this provider_file_id prefix — the teardown's handle. */
 const DEMO_KB_PREFIX = 'demo-cv-triage/';
-const OWNER_EMAIL = 'alextcollignon@gmail.com';
+const OWNER_EMAIL = process.env.OWNER_EMAIL ?? '';
 const RILEY_EMAIL = 'riley.demo@augmtd-internal.test';
 
 const PARENT_NAME = 'CV Triage — Acme Group';
@@ -288,7 +288,7 @@ async function main() {
         { field: 'subject', op: 'contains', value: 'application' },
       ] },
       { type: 'reaction', source: 'file', when: 'the file is a candidate CV' },
-      // THE LOOP DOOR (René's cycle, by composition): the child's delivery re-fires the triage.
+      // THE LOOP DOOR (Sam's cycle, by composition): the child's delivery re-fires the triage.
       { type: 'reaction', source: 'workflow', workflow_id: wfFChild,
         label: 'When the interview process delivers' },
     ],

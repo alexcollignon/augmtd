@@ -898,7 +898,7 @@ const GATE_KIT_STATES: ThreadItem[] = [
         approveLabel: 'Approve — deliver it', onApprove: noop, rejectLabel: 'Hold back', onReject: noop,
       },
       { kind: 'input', id: 'ASK_BUSY', state: 'busy', ask: 'Paste the signed addendum.', items: ['The signed addendum'], onAttach: noop },
-      { kind: 'input', id: 'ASK_SETTLED', state: 'settled', ask: 'Paste the signed addendum.', settledLine: 'Sent — the run picked up from there.' },
+      { kind: 'input', id: 'ASK_SETTLED', state: 'settled', ask: 'Paste the signed addendum.', settledLine: 'Answer added — the run continued.' },
       { kind: 'input', id: 'ASK_ERROR', state: 'open', ask: 'Paste the signed addendum.', items: ['The signed addendum'], onAttach: noop, error: 'That didn’t go through — try it again in a moment.' },
     ],
   },

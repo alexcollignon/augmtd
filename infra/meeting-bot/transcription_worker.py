@@ -24,6 +24,52 @@ WHISPER_URL = os.getenv('WHISPER_SERVICE_URL', 'http://whisper:8000')
 AUGMTD_BASE_URL = os.getenv('AUGMTD_WEBHOOK_BASE_URL', '')
 BOT_SECRET = os.getenv('BOT_SECRET', '')
 
+# THE NAME VOCABULARY (Oct 1). Whisper misspells proper nouns it has never heard ("Acme" → "Akme");
+# the app sends the user's company, the meeting's attendees and active entity names, and we append
+# them to the punctuated seed prompt. Bounded: Whisper keeps only the last ~224 prompt tokens, so the
+# list is capped by count, per-term length and total characters (same caps as the app side,
+# lib/integrations/meeting-bot/transcription-vocabulary.ts). The seed sentence ALWAYS leads — the
+# turbo model needs a punctuated prompt or it emits lowercase, punctuation-free text.
+_SEED_PROMPT = 'Okay, let us begin.'
+_VOCAB_MAX_TERMS = 40
+_VOCAB_MAX_TERM_CHARS = 48
+_VOCAB_MAX_CHARS = 400  # ≈100–130 tokens: seed + names stay inside Whisper's 223-token prompt half
+# `hotwords` (in the server's openapi schema — faster-whisper's hotwords) re-injects the names into EVERY
+# 30-s window; the `prompt` only conditions the first window (later windows condition on the previous
+# text, and the initial prompt's head drops out). On by default; WHISPER_VOCAB_HOTWORDS=0 turns it off
+# with a container restart, no rebuild (if scripts/eval-transcription.ts shows decoy leakage).
+_VOCAB_HOTWORDS = os.getenv('WHISPER_VOCAB_HOTWORDS', '1') != '0'
+
+
+def compose_vocabulary(vocabulary: list[str] | None) -> list[str]:
+    import re
+    terms: list[str] = []
+    seen: set[str] = set()
+    chars = 0
+    for raw in vocabulary or []:
+        if not isinstance(raw, str):
+            continue
+        term = re.sub(r'\s+', ' ', re.sub(r'[\x00-\x1f<>{}\[\]"]', ' ', raw)).strip()
+        if len(term) < 2 or len(term) > _VOCAB_MAX_TERM_CHARS:
+            continue
+        if re.search(r'@|://|^www\.', term, re.I) or re.fullmatch(r'[\d\s.,:/-]+', term):
+            continue
+        key = term.lower()
+        if key in seen:
+            continue
+        cost = len(term) + 2
+        if len(terms) >= _VOCAB_MAX_TERMS or chars + cost > _VOCAB_MAX_CHARS:
+            break
+        seen.add(key)
+        terms.append(term)
+        chars += cost
+    return terms
+
+
+def build_whisper_prompt(vocabulary: list[str] | None) -> str:
+    terms = compose_vocabulary(vocabulary)
+    return f'{_SEED_PROMPT} Names: {", ".join(terms)}.' if terms else _SEED_PROMPT
+
 
 async def run_transcription(
     storage_path: str,
@@ -31,6 +77,7 @@ async def run_transcription(
     user_id: str,
     source: str = 'recording',
     transcript_id: str | None = None,  # required in practice — the caller pre-inserts the row
+    vocabulary: list[str] | None = None,  # proper nouns for the prompt (optional; bounded)
 ) -> None:
     """
     Background task: transcribe audio and update the caller's pre-inserted meeting_transcripts row.
@@ -122,8 +169,20 @@ async def run_transcription(
         # Portuguese/German meeting is transcribed in its own language instead of being
         # forced through English (the old hardcode).
         # `prompt` seeds punctuated decoding — turbo without it emits lowercase,
-        # punctuation-free text (verified on this box).
+        # punctuation-free text (verified on this box). `prompt` IS in the server's openapi schema
+        # (it maps to faster-whisper's initial_prompt), so the name vocabulary rides on it.
         import asyncio as _asyncio
+        whisper_prompt = build_whisper_prompt(vocabulary)
+        vocab_terms = compose_vocabulary(vocabulary)
+        whisper_fields = {
+            'model': 'deepdml/faster-whisper-large-v3-turbo-ct2',
+            'response_format': 'verbose_json',
+            'vad_filter': 'true',
+            'prompt': whisper_prompt,
+        }
+        if vocab_terms and _VOCAB_HOTWORDS:
+            whisper_fields['hotwords'] = ', '.join(vocab_terms)
+        logger.info(f'[Transcription] vocabulary {len(vocab_terms)}/{len(vocabulary or [])} terms · prompt {len(whisper_prompt)} chars · hotwords {"on" if "hotwords" in whisper_fields else "off"}')
         filename = storage_path.split('/')[-1]
         _MAX_WHISPER_RETRIES = 3
         whisper_data = None
@@ -133,12 +192,7 @@ async def run_transcription(
                     whisper_resp = await client.post(
                         f'{WHISPER_URL}/v1/audio/transcriptions',
                         files={'file': (filename, audio_bytes, 'audio/webm')},
-                        data={
-                            'model': 'deepdml/faster-whisper-large-v3-turbo-ct2',
-                            'response_format': 'verbose_json',
-                            'vad_filter': 'true',
-                            'prompt': 'Okay, let us begin.',
-                        },
+                        data=whisper_fields,
                     )
                     whisper_resp.raise_for_status()
                     whisper_data = whisper_resp.json()

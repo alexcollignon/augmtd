@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useUserZone } from '@/context/user-zone-context';
+import { dateIn } from '@/lib/core/user-zone';
 import { CalendarIcon, ClockIcon, UserGroupIcon, CheckIcon } from '@heroicons/react/24/outline';
 
 interface MeetingSuggestion {
@@ -24,18 +26,9 @@ interface MeetingProposalCardProps {
 
 type CardState = 'idle' | 'sending' | 'sent' | 'error';
 
-function formatProposedTime(isoString: string): string {
-  try {
-    return new Date(isoString).toLocaleString('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-  } catch {
-    return isoString;
-  }
+// THE READER'S ZONE (law `one-reader-zone`): a proposed time reads in the user's zone.
+function formatProposedTime(isoString: string, zone: string): string {
+  return dateIn(isoString, zone, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) || isoString;
 }
 
 function addMinutes(isoString: string, minutes: number): string {
@@ -51,6 +44,7 @@ function providerLabel(provider: string): string {
 }
 
 export default function MeetingProposalCard({ suggestion, connectionId }: MeetingProposalCardProps) {
+  const zone = useUserZone();
   const [selectedTime, setSelectedTime] = useState(suggestion.proposed_times[0] ?? '');
   const [state, setState] = useState<CardState>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -81,7 +75,7 @@ export default function MeetingProposalCard({ suggestion, connectionId }: Meetin
     setScopeProvider(null);
 
     try {
-      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const timezone = zone;
       const endTime = addMinutes(selectedTime, suggestion.duration_minutes);
 
       const res = await fetch('/api/meetings/create', {
@@ -156,7 +150,7 @@ export default function MeetingProposalCard({ suggestion, connectionId }: Meetin
                     : 'bg-white text-indigo-700 border-indigo-300 hover:border-indigo-500'
                 }`}
               >
-                {formatProposedTime(t)}
+                {formatProposedTime(t, zone)}
               </button>
             ))}
           </div>

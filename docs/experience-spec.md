@@ -92,7 +92,7 @@ right on another; a menu click answered with a question; a reply materialized as
 
 - **unjudged** — spotted, no verdict. May deck; claims nothing. A judgment older than the
   staleness floor (48h) with nothing landed and nobody asked derives BACK to unjudged — the
-  machine claims nothing rather than parading an old verdict as activity (the René find:
+  machine claims nothing rather than parading an old verdict as activity (the Sam find:
   "preparing" stood for 17 days on a real account).
 - **preparing** — judged actionable; no preparation landed yet AND no ask stands. Transient
   (one pass cycle); renders as honest "in motion", never as bare work.

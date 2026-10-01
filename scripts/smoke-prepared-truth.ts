@@ -56,8 +56,8 @@ console.log('\nA · a proposal honors the stated window and the clock');
   const slots = pickFreeSlots({ todayStr: '2026-09-21', tz: 'UTC', busy: [], count: 3, nowMs });
   gate('A3 pickFreeSlots never proposes a slot behind the clock', slots.length === 3 && slots.every((s) => Date.parse(s.startISO) > nowMs) && slotInPast('2026-09-22T10:00:00Z', nowMs));
   const fake = { from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ gte: () => ({ lte: () => ({ limit: async () => ({ data: [] }) }) }) }) }) }) }) } as never;
-  const p = proposeFreeSlots(fake, 'u', { tz: 'UTC', todayStr: '2026-09-23', fromDayStr: '2026-09-30', toDayStr: '2026-10-01', count: 3 });
-  const closed = proposeFreeSlots(fake, 'u', { tz: 'UTC', todayStr: '2026-09-23', fromDayStr: '2026-09-15', toDayStr: '2026-09-16', count: 3 });
+  const p = proposeFreeSlots(fake, 'u', { tz: 'UTC', todayStr: '2026-09-23', fromDayStr: '2026-09-30', toDayStr: '2026-10-01', count: 3, nowMs: Date.parse('2026-09-23T12:00:00Z') });
+  const closed = proposeFreeSlots(fake, 'u', { tz: 'UTC', todayStr: '2026-09-23', fromDayStr: '2026-09-15', toDayStr: '2026-09-16', count: 3, nowMs: Date.parse('2026-09-23T12:00:00Z') });
   // (async gates resolve below)
   const pass_ = src('lib/prepare/pass.ts');
   gate('A4 the pass\'s calendar fallback is CONFINED to the stated window (the ONE confinement returns it; fromDayStr/toDayStr) and stamps proposedFrom',
@@ -219,8 +219,12 @@ console.log('\nF · W5c: hidden artifacts re-prepare, leave the brief, and never
   // which the real clock passed on Sep 23 — it then read EXPIRED (a different non-live class) instead
   // of WITHDRAWN-for-the-window, and F5 went red with no code change. It now sits AFTER the stated
   // window (still outside it, never in the past), so F1/F5 keep asserting the window law itself.
-  const outside = stampTruth(poolRowsToArtifacts([inviteRow('2026-10-15T09:00:00Z')], 'commitment'), facts);
-  const liveInv = stampTruth(poolRowsToArtifacts([inviteRow('2026-09-30T09:00:00Z')], 'commitment'), facts);
+  // ⟲ RE-POINTED (W28, Sep 30 — the same rot, cured at the root): the live invite on Sep 30 passed
+  // the real clock too. The scene now runs on a PINNED clock (the day the ask was made), so no date
+  // here can rot again; the fixture dates and every assertion are unchanged.
+  const sceneNow = Date.parse('2026-09-22T18:00:00Z');
+  const outside = stampTruth(poolRowsToArtifacts([inviteRow('2026-10-15T09:00:00Z')], 'commitment', sceneNow), facts);
+  const liveInv = stampTruth(poolRowsToArtifacts([inviteRow('2026-09-30T09:00:00Z')], 'commitment', sceneNow), facts);
   const st = (arts: typeof outside) => ({ all: arts, live: arts.filter(isLiveArtifact), expired: arts.filter((a) => a.expired), badge: badgeOf(arts) });
   gate('F1 pure: THE RE-PREPARE KEY — an out-of-window (or expired) invite is a NON-LIVE kind; a live one is not',
     [...nonLiveKindsOf(st(outside))].join() === 'invite' && nonLiveKindsOf(st(liveInv)).size === 0

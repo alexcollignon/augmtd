@@ -203,7 +203,7 @@ Each step carries an **executor** resolved from WHO:
 **Prepared-action-per-step (the AUGMTD invariant).** A `[System]`/`[Coworker]` committable step does
 NOT fire blind. It **pre-fills the concrete action** and surfaces it for review/edit/approve, e.g.:
 
-> **Send invite** — Thu 10:00 to Alexandre  ·  [edit] [Send]
+> **Send invite** — Thu 10:00 to Alexander  ·  [edit] [Send]
 
 This is exactly the shape of `ComposePanel` (pre-filled To/Subject/body, user edits, clicks Send) and
 `meeting-proposal-card.tsx` (pre-filled time/attendees, user picks, clicks Send Invitation). The plan

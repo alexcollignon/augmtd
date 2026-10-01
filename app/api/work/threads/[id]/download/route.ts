@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getFileExt, getMimeType } from '@/lib/artifacts/builders';
-import { DeliverableType } from '@/lib/types/inbox';
+import { downloadHeaders } from '@/lib/artifacts/download-name';
 
 // GET /api/work/threads/[id]/download — download generated file from Supabase Storage
 // Optional query param: ?artifactId=<uuid> — download a specific version; defaults to latest
@@ -62,14 +61,14 @@ export async function GET(
     }
 
     const buffer = Buffer.from(await fileData.arrayBuffer());
-    const safeTitle = (artifact.title || 'document').replace(/[^a-z0-9\s-_]/gi, '').trim() || 'document';
-    const ext = getFileExt(artifact.type as DeliverableType);
-    const mime = getMimeType(artifact.type as DeliverableType);
+    // W38: the stored bytes' own extension names the file, and the title keeps its letters
+    // (lib/artifacts/download-name.ts — the one place a served filename is decided).
+    const h = downloadHeaders(artifact.title, artifact.type, artifact.storage_path);
 
     return new Response(buffer, {
       headers: {
-        'Content-Type': mime,
-        'Content-Disposition': `attachment; filename="${safeTitle}.${ext}"`,
+        'Content-Type': h.mime,
+        'Content-Disposition': h.disposition,
         'Content-Length': buffer.length.toString(),
       },
     });

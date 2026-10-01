@@ -87,10 +87,30 @@ export function isPersistedOpener(row: { role: string; text?: string | null; key
 /** The dangling question: the exchange ends on the reader's words and nothing is in flight. The
  *  surface renders one quiet "No answer was saved — Ask again" line under it; it never silently ends
  *  on the reader's words. */
-export function orphanQuestion<T extends { role: string }>(turns: readonly T[], busy: boolean): T | null {
+export function orphanQuestion<T extends { role: string; deed?: true }>(turns: readonly T[], busy: boolean): T | null {
   if (busy || !turns.length) return null;
   const last = turns[turns.length - 1];
-  return last.role === 'user' ? last : null;
+  // W39c · a DEED on an ask (a typed answer, a go-ahead) is answered by the WORK (the action card),
+  // never by a chat reply — "No answer was saved" under it was a false line beside a drafted reply.
+  return last.role === 'user' && !last.deed ? last : null;
+}
+
+/** W39c · the dedupe keys the ask doors write the reader's own deed turns under
+ *  (app/api/room/asks: `supply:<turn>:<require key>` · `proceed:<turn>`). Pure. */
+export function isAskDeedKey(key: string | null | undefined): boolean {
+  return /^(?:supply|proceed):/.test(String(key ?? ''));
+}
+
+/** W39c · THE ANSWER FOLLOWS ITS QUESTION — the item page's action card is placed AFTER the reader's
+ *  exchange when the reader's own deed produced it (a draft made from their typed answer / go-ahead):
+ *  their words stay in order above the work that answers them. An ask, a gate or a decision card is
+ *  never moved (it asks; the reader's words answer it below). Pure. */
+export function actionFollowsExchange(
+  artifact: string | null | undefined,
+  exchange: ReadonlyArray<{ role: string; deed?: true }>,
+): boolean {
+  if (!artifact || ['ask', 'input_gate', 'gate', 'decision', 'looks_done', 'booked_event'].includes(artifact)) return false;
+  return exchange.some((t) => t.role === 'user' && t.deed === true);
 }
 
 export const ORPHAN_LINE = 'No answer was saved';

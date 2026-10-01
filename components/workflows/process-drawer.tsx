@@ -346,7 +346,7 @@ export default function ProcessDrawer({
     setDecidedAt(Date.now());
     void loadRun();
     toast.success(outcome === 'supplied'
-      ? `Sent — "${process.workflowName}" picked up from there.`
+      ? `Answer added — "${process.workflowName}" continued.`
       : GATE_OUTCOME_WORDS.rejected.line);
     onDecided?.();
   }, [process.workflowName, onDecided, loadRun]);
@@ -833,7 +833,7 @@ function DecisionOutcome({
         </span>
       </div>
       <div className="mt-1 text-[12px] text-neutral-500">
-        {decided === 'supplied' ? 'It picked up from where it stopped.' : 'It picked up from your approval.'}
+        {decided === 'supplied' ? 'It continued with your answer.' : 'It continued from your approval.'}
       </div>
     </div>
   );

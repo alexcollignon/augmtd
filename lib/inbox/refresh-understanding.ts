@@ -229,14 +229,16 @@ export async function refreshUnderstandingForArrival(params: {
     // is usually the longest thing in it: judged on the raw body, the re-derivation dutifully
     // reproduces the frozen label it was sent to replace (observed exactly this way on the reference
     // account: a message whose own words were two words came back saying what the June message said).
-    // `topMessageOf` is the house's structural reply-convention parser; the clip ends on a boundary
-    // and declares itself (the excerpt-honesty law). An unparseable body falls back whole — showing
-    // the trail costs less than judging on nothing.
+    // `topMessageOf` is the house's structural reply-convention parser (W27: a short reply's own
+    // words now stand — "Thanks!" is judged as "Thanks!", never as the trail beneath it). An
+    // unparseable body falls back whole — showing the trail costs less than judging on nothing.
+    // W27 · NO HEAD-CUT HERE: the seam used to clip the own words to their first 2,000 chars before
+    // the judge ever saw them, dropping an ask at the end of a long message. The one assembler
+    // (computeUnderstanding) now clips — two-ended, declared, the newest lines kept.
     const { topMessageOf } = await import('@/lib/inbox/top-message');
-    const { clipForPrompt } = await import('@/lib/utils/clip-for-prompt');
     const rawBody = String(message.body ?? '');
-    const own = topMessageOf(rawBody).trim();
-    const bodyForJudgment = clipForPrompt(own || rawBody, 2000);
+    const own = topMessageOf(rawBody, { subject: String(message.subject ?? sd.subject ?? '') }).trim();
+    const bodyForJudgment = own || rawBody;
 
     const { computeUnderstanding } = await import('@/lib/ai/email-processor');
     const fresh = await computeUnderstanding({

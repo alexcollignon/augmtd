@@ -1280,8 +1280,14 @@ async function main() {
     const railSrc = await readSrc('components/home/item-rail.tsx');
     const itemDetailSrc = await readSrc('components/home/item-detail.tsx');
     ok('H17g the room shell knows nothing of handoffs', !/handoff/i.test(shellSrc), 'a handoff reference reached the shell');
+    // ⟲ RE-POINTED W25 (stale since W16, 5628c95c — not a W19–W25 regression): W16 gave the rail a
+    // KIND-AGNOSTIC `gate` slot (a parked run's gate node, mounted by the host) whose DOC COMMENT names
+    // the handoff as its example. The law is about CODE — the rail must not branch on a handoff or
+    // on a gated decision — so the prose is stripped before the scan; any executable `handoff`
+    // reference or `hasGatedDecision` still fails.
+    const railCode = railSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
     ok('H17g the rail gained NO gated-decision branch (the fact travels through the view)',
-      !/hasGatedDecision/.test(railSrc) && !/handoff/i.test(railSrc), 'the rail learned a kind');
+      !/hasGatedDecision/.test(railCode) && !/handoff/i.test(railCode), 'the rail learned a kind');
     ok('H17g the DOOR hands the fact to the one table, over the view it already passes',
       /applyPanelPlan\(view as RailView, panelPlan\(\{ hasDecision: false, hasGatedDecision: isHandoff && handoffOpen \}\)\)/
         .test(itemDetailSrc), 'the door stopped consulting the table');
@@ -1339,8 +1345,13 @@ async function main() {
     // ── H17i — THE FALSE LINE ──────────────────────────────────────────────────────────────────
     const falseLineCount = (itemDetailSrc.match(/No linked source to show/g) ?? []).length;
     ok('H17i the "no linked source" line exists exactly ONCE', falseLineCount === 1, String(falseLineCount));
+    // ⟲ RE-POINTED W25 (stale since W7, 922af70c — not a W19–W25 regression): the loose door's
+    // embedded-only rule joined the same ternary — `(isHandoff && handoff) || !embedded ? null :` —
+    // so the served-handoff guard is a DISJUNCT of the null branch. The law is unchanged: a served
+    // handoff never reaches the false line. Both shapes are accepted; dropping the guard still fails.
     ok('H17i …and renders only behind the not-a-served-handoff guard',
-      /isHandoff && handoff \? null :/.test(itemDetailSrc), 'the guard is gone — the false line can stand again');
+      /(?:\(isHandoff && handoff\)(?: \|\| !embedded)?|isHandoff && handoff) \? null :/.test(itemDetailSrc),
+      'the guard is gone — the false line can stand again');
 
     // ── H17j — ACCESS, NOT ABSENCE ─────────────────────────────────────────────────────────────
     const drawerSrc = await readSrc('components/workflows/run-record-drawer.tsx');

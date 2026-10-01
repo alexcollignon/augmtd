@@ -15,7 +15,7 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 async function reinitialize() {
   const userId = 'f2c3451e-6d33-4c04-9343-765e2f8012ab';
-  const fullName = 'Alexandre Collignon';
+  const fullName = 'Alexander Morgan';
   const role = 'Founder';
   const email = 'alex@augmtd.ai';
 

@@ -1,3 +1,5 @@
+// W28 — ONE CONDUCT (lib/ai/conduct.ts `document`) rides every content step of the document pipeline.
+import { conductBlock } from '@/lib/ai/conduct';
 import OpenAI from 'openai';
 import { randomUUID } from 'crypto';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
@@ -334,7 +336,7 @@ Execute this step now. Write only the output — no introduction, no commentary.
     model,
     max_tokens: maxTokens,
     messages: [
-      { role: 'system', content: `You are executing a single step in a professional workflow${userContext ? ` for a ${userContext}` : ''}. Perform the task described and output the results directly. No preamble, no meta-commentary — only the output of the work itself. Begin your response with the actual content immediately. When drawing on source material sections, cite inline as [Source: filename § section].${skillReasoning ? `\n\n${skillReasoning}` : ''}` },
+      { role: 'system', content: `You are executing a single step in a professional workflow${userContext ? ` for a ${userContext}` : ''}. Perform the task described and output the results directly. No preamble, no meta-commentary — only the output of the work itself. Begin your response with the actual content immediately. When drawing on source material sections, cite inline as [Source: filename § section].${skillReasoning ? `\n\n${skillReasoning}` : ''}\n\n${conductBlock('document')}` },
       { role: 'user', content: userPrompt },
     ],
   });

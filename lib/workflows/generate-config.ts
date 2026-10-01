@@ -1,4 +1,5 @@
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { toReaderVoice } from '@/lib/workflows/reader-voice';
 import { logAIUsage } from '@/lib/ai/log-usage';
 import { parseModelJSON } from '@/lib/ai/parse-json';
 import { makeStepId } from '@/lib/workflows/types';
@@ -60,7 +61,7 @@ Respond with ONLY valid JSON — no markdown, no explanation.
 JSON shape:
 {
   "name": "Short name (3–6 words)",
-  "description": "One sentence — what this produces",
+  "description": "One sentence — what this produces, spoken TO the reader in the second person (\"your documents\", never \"the user's documents\")",
   "trigger": { "type": "manual" },
   "triggers": [],
   "fire_limit": null,
@@ -68,8 +69,11 @@ JSON shape:
   "steps": [],
   "output_config": { "destination": "message", "report_mode": "each_run" },
   "worker_instructions": null,
-  "overlap_note": null
+  "overlap_note": null,
+  "unsupported": []
 }
+
+"unsupported" is [] by default — see WHAT THIS PLATFORM CANNOT DO below.
 
 "overlap_note" is null by default. Only set it when an [EXISTING TASKS] block is provided AND the request substantially overlaps one of those tasks (same deliverable + same or overlapping schedule/topic): one short sentence naming the existing task, e.g. "Overlaps 'Weekly market briefing' (every Monday) — consider updating that task instead of running two." Still generate the full workflow either way — the note informs, it never blocks.
 
@@ -223,6 +227,11 @@ approval first", "let me check before it goes out"), place ONE approval step dir
 the delivery. When the user says it should run fully automatically, use none. When neither is
 said and the output goes to EXTERNAL recipients (not the user themselves), prefer including it
 — a held send is recoverable, an unwanted one is not.
+RULE — A GATE REVIEWS SOMETHING THAT EXISTS: an approval step approves the output of the step
+right before it. When the user approves a thing at a point ("I confirm the screening criteria",
+"I validate the shortlist"), a step before that gate must PRODUCE that thing (an ai step that
+proposes the criteria from the material, an ai step that selects the shortlist) — never a gate
+with nothing to approve.
 RULE — THE USER'S OWN GATES ARE FIXED POINTS: when the request itself PLACES approval at
 multiple distinct points (e.g. a numbered process with "3. Human Approval: confirm the
 criteria" AND "8. Human Approval: validate the shortlist"), the pipeline MUST contain one
@@ -296,6 +305,23 @@ read_kb_folder      — reads EVERY file in a named knowledge-base FOLDER, in fu
 slack_read_channel  — reads recent messages from a Slack channel (to summarize/digest/act on). config: { "channel": "#name or id", "limit": 30, "days": 7 } — days is an optional time window (omit for no limit). ONLY if Slack is connected.
 slack_send          — posts a message to a Slack channel, written from an instruction + the pipeline's output (to notify a team after producing something, tag people). config: { "channel": "#name or id", "instruction": "what to say / who to tag" }. Place AFTER the content steps. ONLY if Slack is connected.
 
+━━━ WHAT THIS PLATFORM CANNOT DO ━━━
+
+The tools above, the step types and the output homes are EVERYTHING that exists. There is no tool for an
+outside system that is not listed (accounting/ERP such as Xero or SAP, payments, banking, CRMs, e-signature,
+Instagram/TikTok/X or any social network beyond the LinkedIn drafting step, SMS/WhatsApp/phone), and no
+step ever pays, signs, publishes or sends on its own beyond the listed delivery homes.
+When the request asks for something like that:
+- NEVER fake it: no step, label, prompt, name or description may say or imply that it happens ("enter it
+  into Xero", "auto-pay", "approved for automatic payment", "post to Instagram"). An ai step only writes.
+- Build the part that IS possible (read, extract, compare, draft, prepare it for the user to act on), and
+  name the workflow for what it really does.
+- List each impossible part in "unsupported", a few words each in the request's own terms (e.g.
+  ["entering invoices into Xero", "paying invoices"]). The system tells the user, in its own sentence,
+  that those parts stay with them. Never list something the workflow does do.
+- The same holds for delivery: a home that is not connected (see the connected-tools line) is not a
+  home — deliver to "message" or "document" and list "sending it to <the recipient>" as unsupported.
+
 ━━━ OUTPUT CONFIG ━━━
 
 Pick ONE home for the deliverable (the app always keeps a record regardless):
@@ -324,7 +350,7 @@ Default to "document" for scheduled reports and "message" for quick output. Use 
 
 1. Use as many tool steps as the task requires — a news briefing typically needs 4–12 tool steps.
 2. Group related sources into steps by theme (e.g. one rss_feed step per language or topic area).
-3. For tasks requiring current external data, prefer rss_feed and web_search over relying on the AI step alone.
+3. For tasks requiring current external data, prefer rss_feed and web_search over relying on the AI step alone. A feed or page URL must be one the user gave or one you are CERTAIN exists — never a guessed path; when unsure, use a web_search step with a targeted query instead.
 4. End with exactly one ai step that synthesises everything from the previous steps.
 5. The ai step prompt must be specific: state the output structure, language, tone, and what to write if input is sparse.
 6. Each step id must be unique: "step_001", "step_002", etc.
@@ -738,6 +764,15 @@ export async function generateWorkflowConfig(
   if (options?.companyName) {
     parts.push(`User's company: ${options.companyName}`);
   }
+
+  // THE CLOCK AND THE ZONE (W37, found by the build.workflow eval: schedules were set in a guessed zone
+  // the account does not use, and search queries carried a stale year). The user's own zone is the
+  // default; a request that names a place or zone still wins, and the label says which.
+  try {
+    const { userTimezone, localNow } = await import('@/lib/utils/user-time');
+    const tz = await userTimezone(supabase, userId);
+    parts.push(`Today: ${localNow(tz).pretty}. The user's time zone: ${tz}. Schedules use it unless the request names another place or zone (then use that one). Never put a year in a search query or prompt as "current" — runs happen later; let date discipline in the ai step handle recency.`);
+  } catch { /* non-fatal */ }
 
   // Integration-aware: tell the model which delivery tools are actually connected,
   // so "post to #marketing" / "email it" can resolve to a slack/email home.
@@ -1252,6 +1287,33 @@ export async function generateWorkflowConfig(
   // placed or not, no config leaves this function wearing the wire token.
   sweepSentinel(steps);
 
+  // ── THE UNSUPPORTED PARTS (W37, found by the build.workflow eval: "enter it into Xero and pay it"
+  // was built as an "auto-pay" workflow — a faked capability, no word to the user). The JUDGMENT is the
+  // model's (which asked-for parts no building block can do); the SENTENCE is code's, so the user is
+  // always told, in one fixed shape, what stays with them. Short phrases only, never a paragraph.
+  {
+    const { unsupportedNote } = await import('@/lib/workflows/authoring-honesty');
+    const note = unsupportedNote((generated as Record<string, unknown>).unsupported);
+    if (note) stepNotes.push(note);
+  }
+
+  // THE SOURCES THE MODEL CHOSE ARE SAID (W37, the build.workflow eval's last recurring gap: feed and page
+  // addresses the request never gave, presented as working). Code lists every rss_feed / fetch_url host
+  // that is not in the user's own words, so the user checks them before the first run.
+  {
+    const asked = description.toLowerCase();
+    const hosts = new Set<string>();
+    for (const st of steps) {
+      if (st.type !== 'tool' || !['rss_feed', 'fetch_url', 'browser_fetch'].includes(String(st.tool))) continue;
+      const cfg = (st.config ?? {}) as { feeds?: unknown; urls?: unknown; url?: unknown };
+      const urls = [cfg.feeds, cfg.urls, cfg.url].flat().filter((u): u is string => typeof u === 'string');
+      for (const u of urls) {
+        try { const h = new URL(u).hostname.replace(/^www\./, ''); if (!asked.includes(h)) hosts.add(h); } catch { /* not a URL */ }
+      }
+    }
+    if (hosts.size) stepNotes.push(`I chose these sources myself — check they are the right ones before the first run: ${[...hosts].slice(0, 6).join(', ')}.`);
+  }
+
   const needsStepNote: string | null = stepNote(stepNotes);
 
   // ── THE THROTTLE (relay canvas W3b) — a stated pace becomes a real number, CLAMPED CODE-SIDE.
@@ -1300,7 +1362,8 @@ export async function generateWorkflowConfig(
 
   return {
     name: noSentinel(String(generated.name)),
-    description: typeof generated.description === 'string' ? (noSentinel(generated.description) || null) : null,
+    // W39 · THE READER IS "YOU" (lib/workflows/reader-voice) — the description is spoken to its reader.
+    description: typeof generated.description === 'string' ? (toReaderVoice(noSentinel(generated.description)) || null) : null,
     trigger: (generated.trigger as Record<string, unknown>) ?? { type: 'manual' },
     triggers: doors,
     steps,

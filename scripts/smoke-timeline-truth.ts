@@ -157,8 +157,14 @@ console.log('F · a promised re-date needs a date stated for THAT deed');
     !deedScopedDate('I\'ll send an invite for Oct 12.', '2026-10-12', 'Send the signed update offer'));
   gate('F4 "Oct. 12" stays inside its sentence', sentencesOf('Meet Monday, Oct. 12 at 9:30. Thanks').length === 2);
   const ful = src('lib/commitments/fulfillment.ts');
+  // ⟲ RE-POINTED W27 (THE QUOTED SENTENCE — the agnostic clause): the floor now also takes the judge's
+  // verbatim due_quote, so a PT/FR/DE re-date can scope without an English stem. The law is unchanged:
+  // the deed-scoped check still rides beside the stated-date check on the promised branch.
   gate('F5 the promised branch requires the deed-scoped date beside the stated-date check',
-    /dateStatedInText\(body, nd\)\n\s*&& deedScopedDate\(body, nd, obligation\.description\)/.test(ful));
+    /dateStatedInText\(body, nd\)\n\s*&& deedScopedDate\(body, nd, obligation\.description, \{ quote: dueQuote \}\)/.test(ful));
+  gate('F6 a PT promise scopes through its verbatim quote; a quoted meeting line (a time of day) never does',
+    deedScopedDate('Envio tudo até 2026-10-01. Obrigado.', '2026-10-01', 'Send the signed update offer', { quote: 'Envio tudo até 2026-10-01.' })
+    && !deedScopedDate(meetingReply, '2026-10-12', 'Send the signed update offer', { quote: "Let's catch up on Monday, Oct. 12 at 9:30 CET to go through it." }));
 }
 
 console.log(`\nsmoke-timeline-truth: ${pass}/${pass + failures.length}`);

@@ -5,7 +5,7 @@
 // assert an English report with evidenced matches + profile links, confirm email_sends is UNCHANGED,
 // then DELETE the clone (+ its runs/threads/messages) in finally.
 //
-//   npx tsx --env-file=.env.local scripts/tmp-clone-proof.ts [--target thorsten|dummy]
+//   npx tsx --env-file=.env.local scripts/tmp-clone-proof.ts [--target jordan|dummy]
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { config } from 'dotenv'; config({ path: '.env.local' });
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
@@ -15,7 +15,7 @@ const sb: SupabaseClient = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
-const THORSTEN = '9d3921b2-5a52-4b5b-9815-bc49d37ce0a7';
+const JORDAN = '9d3921b2-5a52-4b5b-9815-bc49d37ce0a7';
 const DUMMY = 'de4e8824-9795-4876-995c-c0740b8f07ee';
 const targetArg = (() => { const i = process.argv.indexOf('--target'); return i >= 0 ? process.argv[i + 1] : null; })();
 
@@ -28,7 +28,7 @@ async function proveOne(label: string, userId: string) {
   console.log(`\n════════ PROOF ${label} · ${userId}`);
   // Resolve the live tender workflow (READ ONLY).
   const { data: live } = await sb.from('workflows').select('id, name, steps, output_config, agent_id')
-    .eq('user_id', userId).eq('name', 'AHK Tender Matching').maybeSingle();
+    .eq('user_id', userId).eq('name', 'Chamber Tender Matching').maybeSingle();
   if (!live) { console.log('  LIVE tender workflow NOT FOUND — skipping'); return; }
   const liveId = (live as any).id;
   console.log(`  live workflow: ${liveId} (read-only)`);
@@ -45,7 +45,7 @@ async function proveOne(label: string, userId: string) {
   try {
     const { data: clone, error } = await sb.from('workflows').insert({
       user_id: userId,
-      name: `__proof AHK Tender Matching (${label})`,
+      name: `__proof Chamber Tender Matching (${label})`,
       description: 'tmp-clone-proof fixture (deleted on exit)',
       status: 'active',
       steps: steps as never,
@@ -75,12 +75,12 @@ async function proveOne(label: string, userId: string) {
     // report evidence
     const headerLine = text.split('\n').find((l) => l.trim().length > 0) ?? '(empty)';
     console.log(`  ── report header: ${headerLine.trim().slice(0, 140)}`);
-    const profileLinks = (text.match(/https?:\/\/portalahk\.ccila-portugal\.com\/home\/profile\/\d+/g) ?? []);
+    const profileLinks = (text.match(/https?:\/\/portal\.chamber\.example\/home\/profile\/\d+/g) ?? []);
     const anyLinks = (text.match(/https?:\/\/\S+/g) ?? []).length;
     console.log(`  ── portal profile links: ${profileLinks.length} | total links: ${anyLinks}`);
     console.log(`  ── report length: ${text.length} chars`);
     // dump for inspection
-    const dump = `/tmp/ahk-proof-${label}.md`;
+    const dump = `/tmp/chamber-proof-${label}.md`;
     const { writeFileSync } = await import('node:fs');
     writeFileSync(dump, text, 'utf8');
     console.log(`  ── full report written to ${dump}`);
@@ -107,8 +107,8 @@ async function proveOne(label: string, userId: string) {
 }
 
 (async () => {
-  const chosen: [string, string][] = targetArg === 'thorsten' ? [['thorsten', THORSTEN]]
+  const chosen: [string, string][] = targetArg === 'jordan' ? [['jordan', JORDAN]]
     : targetArg === 'dummy' ? [['dummy', DUMMY]]
-    : [['thorsten', THORSTEN], ['dummy', DUMMY]];
+    : [['jordan', JORDAN], ['dummy', DUMMY]];
   for (const [label, uid] of chosen) await proveOne(label, uid);
 })().catch((e) => { console.error('\nFAILED:', e); process.exit(1); });

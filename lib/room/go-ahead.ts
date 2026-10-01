@@ -82,17 +82,17 @@ export function goAheadLabel(labels: string[]): string {
 // cheapest honest answer in the product, and its absence was why the go-ahead door got clicked on
 // asks it could not serve (the Sep 14 walk that wrote the law above).
 //
-// So: THREE DOORS ON EVERY ROW, ALWAYS — options stay open, the owner's words. What changes per row
-// is only which one LEADS. That order is deterministic and code-owned:
+// So the row's SHAPE picks its doors. Deterministic and code-owned:
 //
 //   'document' — the label names a THING that has to be retrieved (a statement, a contract, a CV,
-//                a scan). Attach leads; Type it stays, quieter, because a reader may well have the
-//                one number that document was wanted FOR.
-//   'fact'     — everything else. Type it leads.
+//                a scan). Attach leads, Point me to it follows; NO Type it (W39 — walk, Oct 1: a
+//                signed contract is only ever the file). A figure that LIVES on a document ("the
+//                invoice number") names a value, not the file — FACT_WORDS make it a fact.
+//   'fact'     — everything else. Type it leads; Attach and Point me to it stay.
 //
 // A WORD TABLE, NOT A MODEL. A judgment here costs a round-trip on every render of every ask, in a
 // leaf that must stay client-safe and free — and the failure mode is mild in both directions (a
-// mis-shaped row still carries all three doors, only in the other order). It is the same
+// mis-shaped document row still carries Attach and Point me to it, and the composer still takes words). It is the same
 // four-language reach as the rest of the room's deterministic tables (EN · PT · DE · FR), matched
 // on DIACRITIC-STRIPPED tokens so "relatório" and "relatorio" are one word.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -134,11 +134,31 @@ function shapeTokens(raw: string): string[] {
 
 /**
  * askItemShape — which door LEADS on this row. Deterministic, dependency-free, client-safe.
- * Never gates a door: all three always render (the owner's "keeping options open").
+ * W39 (walk, Oct 1 — "Type it" offered for a signed contract): a DOCUMENT row is answered by the
+ * file itself, so it offers Attach · Point me to it and no Type it (components/thread/ask-rows.tsx);
+ * a FACT row keeps all three. An engine-stated `answer` row is always a fact (lib/prepare/input-kind).
  */
 export function askItemShape(label: string): AskItemShape {
-  return shapeTokens(label).some((t) => DOCUMENT_WORDS.has(t)) ? 'document' : 'fact';
+  const toks = shapeTokens(label);
+  // A FIGURE ON A DOCUMENT IS A FACT (W39): "the invoice number", "o número da fatura", "le montant
+  // du contrat" name a thing the reader can SAY — the document word only says where it lives.
+  if (toks.some((t) => FACT_WORDS.has(t))) return 'fact';
+  return toks.some((t) => DOCUMENT_WORDS.has(t)) ? 'document' : 'fact';
 }
+
+/** Words that name a value someone can just say, even when it sits on a document. */
+const FACT_WORDS = new Set([
+  // EN
+  'number', 'amount', 'figure', 'total', 'price', 'reference', 'ref', 'iban', 'date', 'value',
+  // PT
+  'numero', 'montante', 'valor', 'preco', 'referencia',
+  // DE
+  'nummer', 'betrag', 'summe', 'preis', 'referenz', 'datum', 'wert',
+  // FR
+  'montant', 'prix', 'reference', 'valeur',
+  // ES
+  'importe', 'precio', 'fecha',
+]);
 
 // (The door's WORDS stay in the kit beside "Attach" and "Point me to it" — this file owns the law,
 // never the vocabulary; a second spelling of a label here is how vocabularies fork.)

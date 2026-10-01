@@ -93,7 +93,7 @@ describe('deriveState — the one ladder', () => {
     expect(result.state).not.toBe('awaiting_decision');
   });
 
-  it('a live ask OUTRANKS a staged send (René sweep — 12 of 19 live asks demoted behind Send)', () => {
+  it('a live ask OUTRANKS a staged send (Sam sweep — 12 of 19 live asks demoted behind Send)', () => {
     const result = deriveState(base({
       liveAsk: true,
       prepared: [artifact({ kind: 'reply_draft' })],

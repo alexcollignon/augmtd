@@ -76,7 +76,7 @@ export const normPerson = (s: string): string => {
   return local.replace(/[._\-]+/g, ' ').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
 };
 
-/** Era-proof set-membership key: spaces stripped, so "jean marie lambert" ≡ "jeanmarie lambert"
+/** Era-proof set-membership key: spaces stripped, so "pat martin" ≡ "patmartin"
  *  (older fingerprints normalized hyphens differently — matching must not care). */
 export const personKey = (s: string): string => s.replace(/\s+/g, '');
 
@@ -130,7 +130,7 @@ export const entityEmbedText = (name: string, summary: string | null, people: st
  *  shares a distinctive person is ALWAYS a candidate (so the judge sees it even if the topic is lukewarm). */
 export function recallCandidates(itemEmb: number[], entities: RecogEntity[], k = 5, people: string[] = []): RecogEntity[] {
   // Era-proof matching: tokens compare on personKey (spaces stripped), so fingerprints written under an
-  // older normalization ("jeanmarie lambert") still match today's forms ("jean marie lambert"). The same
+  // older normalization ("patmartin") still match today's forms ("pat martin"). The same
   // set carries name forms, full emails, AND "@domain" company tokens — one mechanism, rarity-weighted:
   // an internal domain that appears on everything scores ~0 rarity and is never distinctive, while an
   // external client's domain is rare → a NEW person from that company still force-recalls the deal
@@ -272,9 +272,15 @@ export async function extractNamedEngagement(
   } catch { return null; }
 }
 
+// W27 · THE TOKENIZER READS EVERY ALPHABET (the agnostic clause — found by the eval): the old
+// `split(/[^a-z0-9]+/)` shredded accented names ("Zoé" → "zo", dropped as too short; "Müller" →
+// "m", "ller") and vetoed correct targets. Both sides are folded (diacritics stripped, lowercased) and
+// split on anything that is not a Unicode letter or digit, so "Zoé", "Zoe" and "ZOÉ" meet.
+const foldName = (s: string) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
 export function namesOverlap(named: string, entityText: string): boolean {
-  const hay = entityText.toLowerCase();
-  const tokens = named.toLowerCase().split(/[^a-z0-9]+/)
+  const hay = foldName(entityText);
+  const tokens = foldName(named).split(/[^\p{L}\p{N}]+/u)
     .filter((t) => t.length >= 3 && !GENERIC_WORK_WORDS.has(t) && !/^(ai|ia|ml)$/.test(t));
   if (!tokens.length) return true; // the name is all-generic ("AI Assessment") — no veto signal, trust the judge
   return tokens.some((t) => hay.includes(t));

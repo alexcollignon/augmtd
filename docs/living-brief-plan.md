@@ -15,7 +15,7 @@ from — with delegation to the AI coworkers as a first-class action.
 
 ## The model
 1. **Readable + executable.** A narrative with **inline, grounded action affordances**: read
-   *"Madalena needs the refund by July 10 —"* and right there: **[Send draft] · [Done] · [Hand to Clara]**,
+   *"Maya needs the refund by July 10 —"* and right there: **[Send draft] · [Done] · [Hand to Clara]**,
    anchored to the real item id. Read and run the day from one surface. Grounding is sacred — every action
    maps to a real id (the `[Rn]/[Kn]` tag scheme), never AI-invented. The AI writes the story; the system
    guarantees the buttons are real.

@@ -85,7 +85,7 @@ Bare chips stay actionless (glance preserved). Reuse the existing `useExit` fade
 - **Fold** past ~6 with the two-way "Show N more / See less" (the shared toggle just built for the Home).
 - **Unify Dismiss → the persistent mute.** Replace the session-only `dismissedCache` with `/api/initiatives/mute`; the muted initiative is already filtered by the spine, so it drops from suggestions AND In-motion on next load. Undo via toast. (Removes the reload-reappear surprise.)
 
-## Phasing (smoke-test across users — Alexandre + Rene + Madalena — before each)
+## Phasing (smoke-test across users — Alexander + Sam + Maya — before each)
 - **P1 — spine + store:** migration, `muted-initiatives.ts`, suppression+revive in `getActiveInitiatives`. Smoke: mute a key by hand → it drops from In-motion AND suggestions for that user; simulate a newer touchpoint → it revives. Verify other users unaffected.
 - **P2 — APIs + activity + restore:** mute/unmute routes, accept-suggestion logging, restore wiring. Smoke: mute → `activity_events` row → restore un-mutes + busts cache.
 - **P3 — In-motion expand actions + deep-link.** Manual QA (streaming/UI).

@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { useUserZone } from '@/context/user-zone-context';
+import { calendarDateIn } from '@/lib/core/user-zone';
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { IconButton } from '@/components/ui';
 import type { CalendarEvent } from '@/lib/types/meetings';
@@ -36,7 +38,8 @@ export default function MonthCalendar({
   onNewMeeting,
   compact = false,
 }: MonthCalendarProps) {
-  const today = new Date();
+  const zone = useUserZone();
+  const today = calendarDateIn(Date.now(), zone);
   const todayStr = today.toDateString();
   const [monthOffset, setMonthOffset] = useState(0);
   const [internalDateStr, setInternalDateStr] = useState(todayStr);
@@ -61,7 +64,7 @@ export default function MonthCalendar({
 
   const meetingsByDate = new Map<string, CalendarEvent[]>();
   for (const m of meetings) {
-    const key = new Date(m.start_time).toDateString();
+    const key = calendarDateIn(m.start_time, zone).toDateString();
     if (!meetingsByDate.has(key)) meetingsByDate.set(key, []);
     meetingsByDate.get(key)!.push(m);
   }

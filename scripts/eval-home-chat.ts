@@ -49,6 +49,8 @@
 //               actually used are printed. Judge ground truth = that user's inbox/commitment/calendar
 //               COUNTS. A loud banner prints first.
 //        --no-persist — the same write guard on the probe host (implied by --user).
+//        --probe-host std=k | eu=k (W30) — run on that provisioned pool account instead of probe #1 (e.g.
+//               one carrying a candidate model override); the models actually used are printed.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { config } from 'dotenv';
 config({ path: '.env.local' });
@@ -58,13 +60,15 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { PACKS, selectScenarios } from './eval-home-chat.fixtures';
 import { readFileSync } from 'fs';
 import {
-  type Scenario, type SystemAdapter, type JudgeAdapter, type ChatTurn, type TurnOutput, type TurnSignals, type SystemId,
+  type Scenario, type SystemAdapter, type JudgeAdapter, type ChatTurn, type TurnOutput, type SystemId,
   type EstimateRates, type EvalResult, DEFAULT_RATES, SYSTEM_IDS, estimateCost, runEval, renderReport, buildJudgePrompt, parseJudge,
   mergeResults, parityVerdict, statsFor, recheckResult,
 } from './lib/eval/home-chat-harness';
 import { installMeter, metered, orphanCalls, meterAdapterClient, currentBucket, EVAL_PRICING, type MeterBucket, type StubFn } from './lib/eval/meter';
 import { installNoPersistGuard } from './lib/eval/no-persist';
 import { runSelfCheck } from './lib/eval/self-check';
+import { signalsOf } from './lib/eval/home-chat-signals';
+import { parseProbeHostSpec } from './lib/eval/engine/probes';
 
 // ── args ─────────────────────────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -91,6 +95,16 @@ const packName = opt('pack') ?? 'core';
 if (!PACKS[packName]) { console.error(`--pack must be one of: ${Object.keys(PACKS).join(', ')}`); process.exit(2); }
 const pack = PACKS[packName];
 const realUser = opt('user');
+// W30 — --probe-host std=k | eu=k: run on ONE named, provisioned pool account instead of probe #1.
+const probeHost = (() => { try { return probeHostOf(); } catch (e) { console.error((e as Error).message); process.exit(2); } })();
+function probeHostOf(): { tier: 'standard' | 'eu'; k: number } | null {
+  const spec = parseProbeHostSpec(opt('probe-host'));
+  const named = Object.entries(spec) as Array<['standard' | 'eu', number]>;
+  if (!named.length) return null;
+  if (named.length > 1) throw new Error('--probe-host: the Home-chat eval runs on ONE host — name one tier (std=k or eu=k)');
+  if (realUser) throw new Error('--probe-host and --user are exclusive');
+  return { tier: named[0][0], k: named[0][1] };
+}
 if (argv.includes('--user') && !realUser) { console.error('--user needs a user id'); process.exit(2); }
 if (realUser && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(realUser)) { console.error('--user must be a user uuid'); process.exit(2); }
 if (realUser && opt('client') === 'rls') { console.error('--user never mints a session for a real user: --client rls is refused (admin is implied)'); process.exit(2); }
@@ -240,21 +254,9 @@ async function price(bucket: MeterBucket, from = 0): Promise<Priced> {
 /** Every bucket a turn used, so calls that land AFTER the turn returned are still billed at the end. */
 const buckets: Array<{ label: string; bucket: MeterBucket; counted: number }> = [];
 
-const CARD_KEYS = ['invite', 'emailDraft', 'bulkDeed', 'collection', 'event', 'change', 'workflowDraft', 'artifact', 'artifacts', 'files', 'options'];
-/** What rode beside the answer — read loosely, so the rebuilt core's shape changes do not break the eval. */
-export function signalsOf(turn: Record<string, unknown>): TurnSignals {
-  const present = (v: unknown) => (Array.isArray(v) ? v.length > 0 : !!v);
-  const cards = CARD_KEYS.filter((k) => present(turn[k]));
-  const stage = turn.openStage as { stage?: string } | null | undefined;
-  if (stage?.stage) cards.push(`openStage:${stage.stage}`);
-  const sideEffects: string[] = [];
-  const commit = turn.commit as { kind?: string } | null | undefined;
-  if (commit) sideEffects.push(`commit:${commit.kind ?? 'unknown'}`);
-  for (const a of (Array.isArray(turn.applied) ? turn.applied : []) as Array<{ tool?: string }>) sideEffects.push(`applied:${a?.tool ?? 'unknown'}`);
-  const del = turn.delegated as { agentName?: string } | null | undefined;
-  if (del) sideEffects.push(`delegated:${del.agentName ?? 'coworker'}`);
-  return { cards, sideEffects };
-}
+// W26 — the signal reader moved to scripts/lib/eval/home-chat-signals.ts (shared with the engine's
+// conversation.home-chat adapter); re-exported here so nothing that imported it breaks.
+export { signalsOf } from './lib/eval/home-chat-signals';
 
 // ── the systems ──────────────────────────────────────────────────────────────────────────────────
 type LooseConverse = (client: SupabaseClient, userId: string, scope: { kind: 'global' }, text: string,
@@ -469,11 +471,21 @@ async function main() {
     userId = realUser;
     session = { client: admin!, mode: 'admin', note: 'REAL USER — service-role, no session minted, no-persist guard armed' };
   } else {
-    const { resolveProbeUser, PROBE_EMAIL } = await import('./probe-user');
-    userId = await resolveProbeUser(admin!);
-    session = clientMode === 'rls' ? await probeRlsClient(admin!, PROBE_EMAIL) : { client: admin!, mode: 'admin' as const, note: 'requested' };
+    let email: string;
+    if (probeHost) {
+      // W30 — a NAMED pool account (e.g. one carrying a candidate model's tenant_configs override).
+      const { resolveProbePool } = await import('./lib/eval/engine/probes');
+      const r = await resolveProbePool(admin!, { spec: { [probeHost.tier]: [probeHost.k] }, create: false });
+      const acct = r.accounts[0];
+      if (r.problems.length || r.missing.length || !acct) throw new Error(`probe host ${probeHost.tier}#${probeHost.k} not ready: ${[...r.problems, ...r.missing].join('; ') || 'not found'} (provision with scripts/probe-pool.ts --create)`);
+      userId = acct.userId; email = acct.email;
+    } else {
+      const { resolveProbeUser, PROBE_EMAIL } = await import('./probe-user');
+      userId = await resolveProbeUser(admin!); email = PROBE_EMAIL;
+    }
+    session = clientMode === 'rls' ? await probeRlsClient(admin!, email) : { client: admin!, mode: 'admin' as const, note: 'requested' };
   }
-  console.log(`\n${realUser ? `REAL USER ${userId.slice(0, 8)}` : `probe host ${userId.slice(0, 8)}`} · converse client: ${session.mode}${session.note ? ` (${session.note})` : ''}${noPersist ? ' · no-persist' : ''}${wire ? ' · MODEL STUBBED at the transport (zero AI)' : ''}`);
+  console.log(`\n${realUser ? `REAL USER ${userId.slice(0, 8)}` : `probe host ${probeHost ? `${probeHost.tier}#${probeHost.k} ` : ''}${userId.slice(0, 8)}`} · converse client: ${session.mode}${session.note ? ` (${session.note})` : ''}${noPersist ? ' · no-persist' : ''}${wire ? ' · MODEL STUBBED at the transport (zero AI)' : ''}`);
 
   const systems: SystemAdapter[] = [];
   if (systemIds.includes('augmtd')) systems.push(await augmtdSystem(session.client, userId));

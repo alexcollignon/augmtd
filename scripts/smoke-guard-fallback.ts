@@ -3,7 +3,7 @@
 //
 // `guardFeaturePage(feature)` redirects a member whose workspace has that feature off to the front
 // door, /home. But /home was ITSELF guarded by a feature key ('home'), so a workspace with
-// features.home:false made /home redirect to /home — forever. Found live on the AHK workshop
+// features.home:false made /home redirect to /home — forever. Found live on the Chamber workshop
 // (sovereign) workspace: the browser hammered `GET /home` ~3-4×/sec, the (main) layout stayed
 // mounted so the sidebar looked healthy, and the page segment never rendered — a blank main column.
 // Chrome eventually gave ERR_TOO_MANY_REDIRECTS.

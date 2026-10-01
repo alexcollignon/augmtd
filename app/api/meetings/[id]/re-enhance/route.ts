@@ -20,6 +20,9 @@ export async function POST(
 
   try {
     const result = await reEnhanceTranscript(user.id, eventId, templateId, supabase);
+    // W35 · FAILURE HONESTY: a failed re-run is said (the notes that stood are untouched and the failure
+    // is recorded on the transcript for the page and the automatic retry).
+    if (result.failed) return NextResponse.json({ success: false, error: 'Notes couldn’t be generated — try again in a moment.' }, { status: 502 });
     return NextResponse.json({ success: true });
   } catch (err: any) {
     console.error('[ReEnhance] Error:', err);

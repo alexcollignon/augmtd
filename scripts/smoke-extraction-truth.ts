@@ -138,5 +138,54 @@ ok('the weekday floor\'s may rule is exported once and shared with the window pa
 // string (every wave appends); the law is "rides the board before smoke-laws", not string adjacency.
 ok('the gate rides the board', (() => { const b = src('package.json'); const i = b.indexOf('scripts/smoke-extraction-truth.ts'); const j = b.indexOf('scripts/smoke-laws.ts'); return i > 0 && j > i; })());
 
-console.log(`\n${pass} passed · ${fail} failed`);
-if (fail) process.exit(1);
+// ── W27 · THE LOSS-DIAGNOSIS FLOORS (the W26 eval found them; zero AI) ─────────────────────────────
+// TIME TRUTH in any language (the weekday snap, the stated past date), NO SILENT CAPS at the extraction
+// call, THE WATERMARK LAW's short reply, THE SEAT LAW's group ask + the role mailbox, and THE
+// DISTINCTIVE-TOKEN LAW's Unicode tokenizer — each asserted on the production function.
+async function w27(): Promise<void> {
+  console.log('\nW27 · the loss-diagnosis floors:');
+  const { snapWeekdayDue, weekdaysNamedIn } = await import('../lib/commitments/extraction-truth');
+  const { dueFloorAgainstSource, extractWithRetry } = await import('../lib/commitments/extract');
+  const { topMessageOf } = await import('../lib/inbox/top-message');
+  const { isNeedsReply } = await import('../lib/inbox/needs-reply');
+  const { matchesAutomatedSenderPatterns } = await import('../lib/core/senders');
+  const { namesOverlap } = await import('../lib/entities/recognize');
+  const A = '2026-09-29T10:00:00Z'; // a Tuesday
+  ok('W1 THE WEEKDAY SNAP: "by Saturday" resolved a day early is corrected by code (EN) — and in PT/FR/DE',
+    snapWeekdayDue('2026-10-02', { sourceText: 'Could you send it by Saturday?', anchorIso: A }) === '2026-10-03'
+    && snapWeekdayDue('2026-10-03', { sourceText: 'Envia até sexta-feira, por favor.', anchorIso: A }) === '2026-10-02'
+    && weekdaysNamedIn('avant vendredi').has(5) && weekdaysNamedIn('bis Donnerstag').has(4));
+  ok('W2 …a date the source spells out, or several weekdays with no quote to choose, are never rewritten',
+    snapWeekdayDue('2026-10-02', { sourceText: 'by Saturday, Oct 2', anchorIso: A }) === '2026-10-02'
+    && snapWeekdayDue('2026-10-02', { sourceText: 'Monday or Saturday', anchorIso: A }) === '2026-10-02');
+  ok('W3 a past due the source itself states survives the due-before-source floor (an invented one still floors)',
+    dueFloorAgainstSource('2026-09-17', A, 'Pay the overdue invoice', 'The invoice was due on 17 September.').due === '2026-09-17'
+    && dueFloorAgainstSource('2026-09-17', A, 'Share the report', 'Please share the report.').due === null);
+  const cut = '{"commitments":[{"direction":"you_owe","description":"Send part 1","quote":"I will send part 1"},{"direction":"you_ow';
+  const whole = '{"commitments":[{"direction":"you_owe","description":"Send part 1"},{"direction":"you_owe","description":"Send part 2"}]}';
+  let calls = 0;
+  const retried = await extractWithRetry(async () => (++calls === 1 ? { content: cut, finish: 'length' } : { content: whole, finish: 'stop' }));
+  const stuck = await extractWithRetry(async () => ({ content: cut, finish: 'length' }));
+  ok('W4 NO SILENT CAPS: a cut extraction retries once; a second cut keeps what is complete and REPORTS the rest',
+    retried.list.length === 2 && retried.leftBehind === null && calls === 2 && stuck.list.length === 1 && /truncated/.test(stuck.leftBehind ?? ''));
+  ok('W5 the writer passes the source text to the floor and reports a left-behind extraction',
+    /dueFloorAgainstSource\(due, (?:meta\.anchorAt \?\? null|dayAnchor), c\.description, meta\.sourceText \?\? null\)/.test(src('lib/commitments/extract.ts'))
+    && /extraction LEFT BEHIND/.test(src('lib/commitments/extract.ts')));
+  ok('W6 THE WATERMARK LAW: "Thanks!" above a reply attribution is judged as "Thanks!"',
+    topMessageOf('Thanks!\n\nOn Mon, Sep 21, 2026 at 10:00 AM, Sam <sam@example.com> wrote:\n> Could you send the contract?\n> Sam') === 'Thanks!');
+  const u = (o: Record<string, unknown>, from = 'sam@acme.example') => ({ source: 'email', source_data: { from, understanding: { language: 'en', ...o } } });
+  ok('W7 THE SEAT LAW: a group ask the user owes is theirs; a list broadcast is not',
+    isNeedsReply(u({ role: 'one_of_many', relevance: 'reply', ownership: 'you_owe' }))
+    && !isNeedsReply(u({ role: 'one_of_many', relevance: 'reply', bulk: true })));
+  ok('W8 a staffed role mailbox asking the user is a real ask; the unreachable family never is',
+    isNeedsReply(u({ role: 'addressed', relevance: 'reply', ownership: 'you_owe' }, 'billing@acme.example'))
+    && !matchesAutomatedSenderPatterns('billing@acme.example', 'Acme Billing', 'Your IBAN for the refund')
+    && matchesAutomatedSenderPatterns('no-reply@acme.example', null, null));
+  ok('W9 THE DISTINCTIVE-TOKEN LAW reads every alphabet ("Zoé" is not shredded to "zo")',
+    namesOverlap('Zoé', 'Validation du devis — zoe') && !namesOverlap('Zoé', 'an unrelated subject'));
+}
+
+w27().then(() => {
+  console.log(`\n${pass} passed · ${fail} failed`);
+  if (fail) process.exit(1);
+}).catch((e) => { console.error(e); process.exit(1); });

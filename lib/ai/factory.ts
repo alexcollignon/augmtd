@@ -3,7 +3,12 @@ import type { Chat } from 'openai/resources'
 import { SupabaseClient } from '@supabase/supabase-js'
 import type { TaskType, TierType, ModelEndpoint, TenantConfig, ResolvedClient } from './types'
 import { TIER_DEFAULTS } from './defaults'
+import { resolveModelChoice, modelOverrideProblems, type ModelSource } from './model-choice'
 import { createBedrockAdapter } from './bedrock-adapter'
+import {
+  CLAUDE_NO_SAMPLING_RE, OPENAI_REASONING_RE, OPENAI_NO_MINIMAL_RE, openaiReasoningFloor, openaiReasoningValue, applyEffort, callerStatedEffort, effortOf, slotEffort, stampUsageEffort, producerEffort, type AIEffort,
+  type EffortProducer,
+} from './effort'
 
 // ─── Tenant config cache ────────────────────────────────────────────────────────
 // Module-level cache — persists for the lifetime of the server process.
@@ -52,6 +57,10 @@ async function getTenantConfig(userId: string, supabase: SupabaseClient): Promis
     modelVersionPinning: tcData?.model_version_pinning ?? false,
   }
 
+  // W36 — a model_overrides key nothing reads (a typo, a retired producer) is said, never silently kept.
+  const problems = modelOverrideProblems(config.modelOverrides)
+  if (problems.length) console.warn(`[AI] tenant_configs.model_overrides for user ${userId.slice(0, 8)}: ${problems.join(' · ')}`)
+
   configCache.set(userId, { config, expiresAt: Date.now() + CONFIG_TTL_MS })
   return config
 }
@@ -61,12 +70,46 @@ async function getTenantConfig(userId: string, supabase: SupabaseClient): Promis
 
 const clientCache = new Map<string, OpenAI>()
 
+// ─── THE SLOT-BOUND EFFORT (W27.C) ──────────────────────────────────────────────────────────────
+// A slot with an effort (SLOT_EFFORT, or the eval-only override) gets a thin view of the cached client
+// whose chat.completions.create applies that effort to every request that states none — so the ~100
+// sites that call create() directly (and aiCreate) honour it without an edit. A slot with no effort
+// gets the cached client itself: the default path is untouched. The view shares the base client's
+// transport (`_client`), so the meter, the floor and the retries are the same objects.
+const BASE_CLIENT = Symbol.for('augmtd.ai.baseClient')
+const BOUND_EFFORT = Symbol.for('augmtd.ai.boundEffort')
+
+function bindEffort(base: OpenAI, effort: AIEffort): OpenAI {
+  const comps = base.chat.completions as unknown as { create: (p: unknown, o?: unknown) => unknown }
+  const create = (params: unknown, opts?: unknown) =>
+    comps.create(params && !callerStatedEffort(params) ? applyEffort(params as object, effort).params : params, opts)
+  const completions = Object.create(comps, { create: { value: create, writable: true, configurable: true } })
+  const chat = Object.create(base.chat, { completions: { value: completions, writable: true, configurable: true } })
+  return Object.create(base, {
+    chat: { value: chat, writable: true, configurable: true },
+    [BASE_CLIENT]: { value: base },
+    [BOUND_EFFORT]: { value: effort },
+  }) as OpenAI
+}
+
+/** The cached transport under a slot-bound view (the client itself when unbound). The eval's
+ *  same-model column and its meter use it so a slot effort never leaks into a plain column. */
+export function unboundClient(client: OpenAI): OpenAI {
+  return ((client as unknown as Record<symbol, OpenAI | undefined>)[BASE_CLIENT]) ?? client
+}
+
+/** The effort a client view is bound to (undefined = the floor). */
+export function boundEffortOf(client: unknown): AIEffort | undefined {
+  return (client as Record<symbol, AIEffort | undefined> | null)?.[BOUND_EFFORT]
+}
+
 // ─── THE MODEL PARAM FLOOR (Aug 31) ─────────────────────────────────────────────
 // Current-generation models reject the classic completion params, and 23 call sites
 // invoke chat.completions.create directly (streaming included) — so the rewrite lives
 // on the client itself, not in aiCreate: one transport-layer fix for every site, the
 // same pattern as the response_format strip. Two families, proven live:
-//  • gpt-5 family: `max_tokens` must be `max_completion_tokens`; `temperature`/`top_p`
+//  • gpt-5 / gpt-6 family (W30 adds gpt-6: 'minimal' → 'none', sampling kept only at 'none'):
+//    `max_tokens` must be `max_completion_tokens`; `temperature`/`top_p`
 //    are fixed (400 on any non-default); reasons by default — on JSON-shaped prompts
 //    with small budgets the reasoning channel eats the tokens and content comes back
 //    empty (the Kimi lesson, lib/ai/call.ts), so `reasoning_effort` defaults to
@@ -75,21 +118,30 @@ const clientCache = new Map<string, OpenAI>()
 //  • Claude 4.7+/5 family (sonnet-5, opus-5/4-8/4-7, fable-5): sampling params were
 //    removed — `temperature` returns 400 "deprecated for this model" (observed live
 //    on claude-sonnet-5, Aug 31). Haiku 4.5 / Sonnet 4.6 still accept them.
-const CLAUDE_NO_SAMPLING_RE = /^claude-(sonnet-5|opus-5|opus-4-[78]|fable-5)/
+// (W27.C) The floor stays the DEFAULT: a caller or slot that states an effort (THE EFFORT LEVER,
+// lib/ai/effort.ts) writes its own `reasoning_effort` — which the floor already respects — plus the
+// output-budget headroom that keeps a thinking model from starving; nothing stated = byte-identical.
 function withModelParamFloor(client: OpenAI): OpenAI {
   const completions = client.chat.completions
   const orig = completions.create.bind(completions)
   ;(completions as { create: unknown }).create = (params: { model?: unknown; [k: string]: unknown }, opts?: unknown) => {
     const model = typeof params?.model === 'string' ? params.model : ''
-    if (model.startsWith('gpt-5')) {
+    if (OPENAI_REASONING_RE.test(model)) {
       const p = { ...params }
       if (p.max_tokens != null && p.max_completion_tokens == null) {
         p.max_completion_tokens = p.max_tokens
-        delete p.max_tokens
       }
-      delete p.temperature
-      delete p.top_p
-      if (p.reasoning_effort == null) p.reasoning_effort = 'minimal'
+      delete p.max_tokens
+      if (p.reasoning_effort == null) p.reasoning_effort = openaiReasoningFloor(model)
+      // W30 — REJECT-SAFE on gpt-6 (live Sep 30, gpt-6-luna): 'minimal' is a 400 there, so a caller's
+      // 'minimal' becomes 'none' (the same intent); and sampling is accepted ONLY at 'none', so it is
+      // kept there (the determinism judgments are tuned on) and dropped at any other effort. gpt-5
+      // keeps its behaviour byte-for-byte: sampling always dropped.
+      if (typeof p.reasoning_effort === 'string') p.reasoning_effort = openaiReasoningValue(model, p.reasoning_effort)
+      if (!(OPENAI_NO_MINIMAL_RE.test(model) && p.reasoning_effort === 'none')) {
+        delete p.temperature
+        delete p.top_p
+      }
       return (orig as (p: unknown, o?: unknown) => unknown)(p, opts)
     }
     if (CLAUDE_NO_SAMPLING_RE.test(model)) {
@@ -170,14 +222,17 @@ function resolveApiKey(endpoint: ModelEndpoint, config: TenantConfig): string {
 }
 
 // ─── Endpoint resolution ────────────────────────────────────────────────────────
-// Merges tier default with tenant overrides and dynamic endpoints.
+// W36 — THE PRODUCER MODEL: the model comes from ONE pure resolver (lib/ai/model-choice.ts) with one
+// precedence — tenant producer override > tier producer default (PRODUCER_MODEL) > tenant slot override
+// > tier slot default — and THE PERIMETER (an EU tier never resolves outside EU-resident Bedrock; a
+// refused level is logged and the next one serves). Then the tenant's dynamic endpoints are merged in.
 
-function resolveEndpoint(task: TaskType, config: TenantConfig): ModelEndpoint {
-  const tierDefault = TIER_DEFAULTS[config.tier][task]
-  const override = config.modelOverrides?.[task] ?? {}
-
-  // Merge: override wins over tier default
-  const endpoint: ModelEndpoint = { ...tierDefault, ...override }
+function resolveEndpoint(task: TaskType, config: TenantConfig, producer?: EffortProducer): { endpoint: ModelEndpoint; source: ModelSource } {
+  const choice = resolveModelChoice({ tier: config.tier, task, overrides: config.modelOverrides, producer })
+  for (const r of choice.refused) {
+    console.error(`[AI] REFUSED ${r.source} model ${r.provider}:${r.model || '(none)'} for ${producer ?? task} (tier ${config.tier}, user ${config.userId.slice(0, 8)}): ${r.reason} — serving ${choice.source}`)
+  }
+  const endpoint: ModelEndpoint = choice.endpoint
 
   // For private tiers without a baked-in baseURL, inject from tenant endpoints config
   // (never for Bedrock — it has no baseURL; SigV4 + region, built in buildClient).
@@ -187,7 +242,14 @@ function resolveEndpoint(task: TaskType, config: TenantConfig): ModelEndpoint {
       : config.endpoints.ai
   }
 
-  return endpoint
+  return { endpoint, source: choice.source }
+}
+
+/** W36 — options a caller may state when resolving its client. */
+export type AIClientOpts = {
+  /** THE PRODUCER MODEL + THE PRODUCER EFFORT: the producer names itself (lib/ai/effort.ts EFFORT_PRODUCERS);
+   *  its model may differ from its slot's (lib/ai/model-choice.ts). Absent = the slot resolution. */
+  producer?: EffortProducer
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────────
@@ -206,13 +268,19 @@ function resolveEndpoint(task: TaskType, config: TenantConfig): ModelEndpoint {
 export async function getAIClient(
   userId: string,
   task: TaskType,
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  opts: AIClientOpts = {},
 ): Promise<ResolvedClient> {
   const config = await getTenantConfig(userId, supabase)
-  const endpoint = resolveEndpoint(task, config)
-  const client = buildClient(endpoint, config)
-  console.log(`[AI] task=${task} tier=${config.tier} model=${endpoint.model} user=${userId.slice(0, 8)}`)
-  return { client, model: endpoint.model, endpoint, tier: config.tier }
+  const { endpoint, source } = resolveEndpoint(task, config, opts.producer)
+  const base = buildClient(endpoint, config)
+  const effort = slotEffort(task)
+  const prod = opts.producer ? ` producer=${opts.producer}${source !== 'tier-slot' && source !== 'tenant-slot' ? `(${source})` : ''}` : ''
+  console.log(`[AI] task=${task} tier=${config.tier} model=${endpoint.model} user=${userId.slice(0, 8)}${prod}${effort ? ` effort=${effort}` : ''}`)
+  return {
+    client: effort ? bindEffort(base, effort) : base, model: endpoint.model, endpoint, tier: config.tier,
+    ...(effort ? { effort } : {}), ...(opts.producer ? { producer: opts.producer } : {}), modelSource: source,
+  }
 }
 
 /**
@@ -225,8 +293,7 @@ export async function getAIClient(
  * premise the company's `ai_tier` exists to keep. `scripts/smoke-tier-routing.ts` allowlists the
  * files that may call this; adding a caller = adding it there, with the reason.
  */
-export function getSystemClient(task: TaskType): ResolvedClient {
-  const endpoint = TIER_DEFAULTS['standard'][task]
+export function getSystemClient(task: TaskType, opts: AIClientOpts = {}): ResolvedClient {
   const fakeConfig: TenantConfig = {
     userId: 'system',
     tier: 'standard',
@@ -236,8 +303,14 @@ export function getSystemClient(task: TaskType): ResolvedClient {
     auditLogging: false,
     modelVersionPinning: false,
   }
-  const client = buildClient(endpoint, fakeConfig)
-  return { client, model: endpoint.model, endpoint, tier: 'standard' }
+  // W36: the standard tier's producer default applies here too (no tenant, so no override level).
+  const { endpoint, source } = resolveEndpoint(task, fakeConfig, opts.producer)
+  const base = buildClient(endpoint, fakeConfig)
+  const effort = slotEffort(task)
+  return {
+    client: effort ? bindEffort(base, effort) : base, model: endpoint.model, endpoint, tier: 'standard',
+    ...(effort ? { effort } : {}), ...(opts.producer ? { producer: opts.producer } : {}), modelSource: source,
+  }
 }
 
 /**
@@ -284,6 +357,14 @@ export const isAITimeout = (e: unknown): e is AITimeoutError =>
   e instanceof AITimeoutError || (e as { name?: string } | null)?.name === 'AITimeoutError'
 
 export type AICallBudget = {
+  /** W27.C — THE EFFORT LEVER, per call (lib/ai/effort.ts): how much the model may think. Wins over the
+   *  client's slot effort; absent (and no slot effort) = the param floor, unchanged. Not a time budget —
+   *  it rides this options bag so every aiCreate caller can state it without a new parameter. */
+  effort?: AIEffort
+  /** W28 — THE PRODUCER EFFORT (lib/ai/effort.ts PRODUCER_EFFORT): the producer names itself and the
+   *  producer × model-family config decides its effort. `effort` above wins; an unresolved producer
+   *  falls through to the slot's effort / the floor. */
+  producer?: EffortProducer
   /** Ceiling for ONE attempt, in ms. */
   timeoutMs?: number
   /** Absolute epoch-ms deadline for the whole call, retries included. */
@@ -416,19 +497,29 @@ export async function aiCreate(
     delete (params as { response_format?: unknown }).response_format
   }
 
+  // W27.C — THE EFFORT LEVER: a per-call effort (or the client's slot effort, when the params state
+  // none) is applied HERE, once, with its output headroom; the stamp lets logAIUsage record it.
+  const stated = budget?.effort
+    ?? (callerStatedEffort(params) ? undefined
+      : (producerEffort(budget?.producer, String((params as { model?: unknown }).model ?? '')) ?? boundEffortOf(client)))
+  if (stated) params = applyEffort(params, stated).params
+  const appliedEffort = effortOf(params)
+
   const once = () => withAttemptBudget((signal) => (budget
     ? (client.chat.completions.create as (p: unknown, o?: unknown) => Promise<unknown>)({ ...params, stream: false }, signal ? { signal } : undefined)
     : client.chat.completions.create({ ...params, stream: false })) as Promise<OpenAI.Chat.ChatCompletion>, budget)
 
+  const stamped = async () => { const res = await once(); stampUsageEffort(res, appliedEffort); return res }
+
   while (true) {
     try {
-      return await once()
+      return await stamped()
     } catch (err: any) {
       if (isAITimeout(err) || isAIAborted(err)) throw err
       if (err?.status === 529 || err?.status === 500) {
         if (!retryFits(budget, 5000)) throw budget ? new AITimeoutError() : err
         await new Promise((r) => setTimeout(r, 5000))
-        return await once()
+        return await stamped()
       }
       if (err?.status === 429 && attempt < MAX_429_RETRIES) {
         attempt++

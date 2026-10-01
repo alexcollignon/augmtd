@@ -25,7 +25,12 @@ export async function POST(request: NextRequest) {
       // says: there are no bytes to show.
       if (f.storage_path) {
         const signed = await signedUrlForKbFile(admin, f);
-        if (signed) return NextResponse.json({ url: signed.url, mime: f.mime_type ?? null, name: f.filename });
+        // A TYPE THE BROWSER CANNOT SHOW INLINE (a .docx the team generated, a sheet) also carries its
+        // extracted text (UI walk, Oct 1): the library's preview said "opens outside the preview" for
+        // a document the chat pane had just rendered. The bytes stay one click away (url).
+        const inline = /^(image\/|application\/pdf)/i.test(String(f.mime_type ?? '')) || /\.(pdf|png|jpe?g|gif|webp|svg)$/i.test(String(f.filename ?? ''));
+        const text = inline ? null : String(f.extracted_text ?? '').slice(0, 20000) || null;
+        if (signed) return NextResponse.json({ url: signed.url, mime: f.mime_type ?? null, name: f.filename, ...(text ? { text } : {}) });
       }
       return NextResponse.json({ text: String(f.extracted_text ?? '').slice(0, 20000) || null, name: f.filename });
     }

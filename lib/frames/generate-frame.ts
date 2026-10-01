@@ -104,6 +104,10 @@ export function isThinFrameSource(
   if ((args.computedFacts ?? '').trim().length > 0) return false;
   const text = (args.content ?? '').trim();
   if (/^\[[^\n\]]*\]$/.test(text)) return true;            // a lone gate/marker line
+  // W29 — NUMERIC ROWS ARE DATA, WHATEVER THEIR LENGTH (eval: a two-carrier comparison — two lines, three
+  // figures each — was declined as "thin"): two or more lines each carrying two or more figures are a table.
+  const dataRows = text.split('\n').filter((l) => (l.match(/\d+(?:[.,]\d+)?/g) ?? []).length >= 2).length;
+  if (dataRows >= 2) return false;
   return text.replace(/\s+/g, ' ').trim().length < FRAME_MIN_CONTENT_CHARS;
 }
 

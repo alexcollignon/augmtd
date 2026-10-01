@@ -5,6 +5,20 @@ import { ThreadTimeline, ThreadComposer, type ThreadItem } from '@/components/th
 import { useCosSeat } from '@/hooks/use-cos-seat';
 import { ChatBubbleLeftRightIcon, ChevronRightIcon, CalendarIcon } from '@heroicons/react/24/outline';
 
+/** The sidebar route's machine tokens (REPLY_DRAFT, ACTION, OPEN_WORKFLOW, KB_REFS …) are instructions for
+ *  the panels that open cards. This panel opens none, so A CLAIM RENDERS here: a drafted email's body is
+ *  shown as text (the prose above it says "here's a draft"), every other token is kept out of the prose,
+ *  and a token still streaming is cut until it completes. Pure. */
+function stripMachineTokens(raw: string): string {
+  let out = raw.replace(/\n?KB_REFS:[^\n]*/g, '');
+  out = out.replace(/\b(?:REPLY_DRAFT|OPEN_COMPOSE|UPDATE_DRAFT):(\{[\s\S]*?\})(?=\s*(?:\n|$))/g, (m, json: string) => {
+    try { const body = (JSON.parse(json) as { body?: unknown }).body; return typeof body === 'string' && body.trim() ? `\n${body.trim()}` : ''; } catch { return m; }
+  });
+  return out
+    .replace(/\n?\b(?:ACTION|REPLY_DRAFT|OPEN_COMPOSE|UPDATE_DRAFT|MEETING_SUGGESTION|OPEN_WORKFLOW|OPEN_PROCESS|UPDATE_MEETING)[:(][\s\S]*$/, '')
+    .trim();
+}
+
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -57,35 +71,21 @@ export default function ChatSidebar({ isOpen, onClose, context, inline = false, 
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let buffer = '';
-
+      // The route streams PLAIN TEXT (app/api/assistant/chat — a ReadableStream of the model's words, not
+      // SSE frames). This panel used to parse `data:` lines and so rendered an empty bubble for every
+      // answer. It shows the words as they arrive, with the route's machine tokens (cards this generic
+      // panel does not open) kept out of the prose.
+      let raw = '';
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6).trim();
-          if (data === '[DONE]') break;
-          try {
-            const parsed = JSON.parse(data);
-            const delta = parsed.choices?.[0]?.delta?.content ?? '';
-            if (delta) {
-              setMessages((prev) => {
-                const updated = [...prev];
-                updated[updated.length - 1] = {
-                  role: 'assistant',
-                  content: (updated[updated.length - 1].content ?? '') + delta,
-                };
-                return updated;
-              });
-            }
-          } catch {
-            // ignore parse errors
-          }
-        }
+        raw += decoder.decode(value, { stream: true });
+        const shown = stripMachineTokens(raw);
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[updated.length - 1] = { role: 'assistant', content: shown };
+          return updated;
+        });
       }
     } catch {
       setMessages((prev) => {

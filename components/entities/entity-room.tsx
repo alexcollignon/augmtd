@@ -744,18 +744,18 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
   const [drawerOpen, setDrawerOpen] = useState(initialTab === 'work' || initialTab === 'timeline');
   // THE ONE SHELL (R2): a focused artifact renders INSIDE the room's main card — the header, rail
   // and per-deal conversation stay put; a breadcrumb steps back to the room's first paint.
-  const [focused, setFocused] = useState<FocusItem | null>(null);
+  const [focused, seNorthwinded] = useState<FocusItem | null>(null);
   // The stage INTENT riding a focus (the merged action card / a chat stage verb): the embedded
   // item raises that stage on arrival — Open lands on the PREPARED thing, never the bare thread.
   // The NONCE makes the intent re-fireable (a second click after ✕ must raise again — the same
   // state value fired nothing; found live Aug 7).
-  const [focusStage, setFocusStage] = useState<'reply' | 'forward' | 'invite' | null>(null);
+  const [focusStage, seNorthwindStage] = useState<'reply' | 'forward' | 'invite' | null>(null);
   const [stageNonce, setStageNonce] = useState(0);
   // THE PLACEMENT TABLE (experience-spec "THE MACHINE"): the focused item's decision is an EXCHANGE
   // component, so it renders in the room's CONVERSATION pane — the embedded item reports it up and
   // the room's own rail hosts it. The stage used to grow a second card here (found live: left on
   // the deep-dive, right in the project room — one component, two seats).
-  const [focusDecision, setFocusDecision] = useState<ReportedDecision | null>(null);
+  const [focusDecision, seNorthwindDecision] = useState<ReportedDecision | null>(null);
   // A decision transition lands its draft in the ITEM's lane — the embedded detail holds its
   // own fetches, so the room INJECTS the fresh draft down (found on the walked journey: the
   // draft existed while the composer sat empty; a remount raced the item's loads and lost focus).
@@ -766,7 +766,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
   // room's opening (brief · MOVE · offers) now says everything; a focus is spatial, not speech.
   const openHref = (href: string | null, _narrate = false) => {
     const f = focusFromHref(href);
-    setFocusStage(null); // a plain focus carries no stage intent (onStage re-sets after)
+    seNorthwindStage(null); // a plain focus carries no stage intent (onStage re-sets after)
     // THE SAME DOOR SHOWS THE SAME VIEW, EVERY TIME (owner walk, Sep 14: click 1 gave the raw
     // thread, click 2 gave the thread plus a floating composer). The stage state used to SURVIVE a
     // plain focus — the embedded item keeps its mount (same key), so an intent from an earlier
@@ -774,7 +774,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
     // the pair (intent, signal) fully determines the view: no intent means stages down.
     setStageNonce((n) => n + 1);
     setInjectedDraft(null); // an injected draft belongs to the item it was made for
-    if (f) setFocused(f);
+    if (f) seNorthwinded(f);
     else if (href) router.push(href);
   };
   const [adding, setAdding] = useState(false);
@@ -1054,7 +1054,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
   ];
   const openPrepared = (r: BoardItem, lane: BoardLane) => {
     if (isWaitingNudge(lane, r) && r.preparedRef) {
-      setFocused({ kind: 'deliverable', id: r.preparedRef, title: preparedCardLabel(lane, r, clipLabel(r.title, 52)) });
+      seNorthwinded({ kind: 'deliverable', id: r.preparedRef, title: preparedCardLabel(lane, r, clipLabel(r.title, 52)) });
       return;
     }
     openHref(r.href, false);
@@ -1250,7 +1250,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
               if (outcome.draft) { refresh(); setInjectedDraft((p) => ({ body: String(outcome.draft), v: (p?.v ?? 0) + 1 })); }
               pushDealTurn(entityId, outcome.say, { key: `decide:${focused.id}` });
             },
-            onDismiss: () => setFocusDecision(null),
+            onDismiss: () => seNorthwindDecision(null),
           } : null}
           // THE ROOM'S ARTIFACT CARDS (Aug 4): prepared work renders in the CARD grammar here too
           // (it showed as bare text links while item rooms showed cards — same info, different
@@ -1334,7 +1334,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
             const href = stageDoorHref(itemId, laneRows.map(({ r }) => r), roomMove?.ref ?? null);
             openHref(href, false);
             if (stage === 'reply' || !href.includes('kind=email')) return true;
-            setFocusStage(stage === 'forward' ? 'forward' : 'invite');
+            seNorthwindStage(stage === 'forward' ? 'forward' : 'invite');
             setStageNonce((n) => n + 1);
             return true;
           }}
@@ -1349,7 +1349,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
             {/* Breadcrumb — you never left the room; one tap back to its first paint. */}
             <div className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2 border-b border-neutral-100">
-              <button onClick={() => { setFocused(null); refresh(); }} className="inline-flex items-center gap-1 text-[12.5px] font-medium text-neutral-500 hover:text-neutral-800 transition-colors">
+              <button onClick={() => { seNorthwinded(null); refresh(); }} className="inline-flex items-center gap-1 text-[12.5px] font-medium text-neutral-500 hover:text-neutral-800 transition-colors">
                 <ChevronLeftIcon className="w-3.5 h-3.5" />{e.name}
               </button>
               <span className="text-[12px] text-neutral-300">›</span>
@@ -1369,7 +1369,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
                 hideArtifactCards={railCoversItem(rail?.move?.ref, focused.id) || cardRowId === focused.id}
                 // The decision rides UP to the room's rail (the placement table) — never a second
                 // card on this stage.
-                onDecision={setFocusDecision} />
+                onDecision={seNorthwindDecision} />
             )}
           </div>
         </div>
@@ -1446,7 +1446,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
                   {adding && <AddItemPicker anchorRef={addAnchorRef} onClose={() => setAdding(false)} onPick={(it) => { setAdding(false); setMembership(it.id, it.kind, entityId); }} />}
                 </div>
                 <TaskList board={d.board} onRefresh={refresh} onDetach={detachItem} entityId={entityId} onOpen={(href) => { setDrawerOpen(false); openHref(href); }}
-                  onPreviewDeliverable={(name, id) => { setDrawerOpen(false); setFocused({ kind: 'deliverable', id, title: name }); }} />
+                  onPreviewDeliverable={(name, id) => { setDrawerOpen(false); seNorthwinded({ kind: 'deliverable', id, title: name }); }} />
 
                 {/* "Might belong here" — the JUDGE's membership verdicts AND the room's standing
                     bring-in proposal, beside the list they join. ONE AGENDA PER ROOM (Sep 7): the
@@ -1496,7 +1496,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
               node: (
                 <div className="space-y-1.5">
                   {d.meetings.map((mt) => (
-                    <button key={mt.id} onClick={() => { setDrawerOpen(false); setFocused({ kind: 'meeting', id: mt.id }); }} className="block w-full text-left rounded-lg border border-neutral-200/60 px-3 py-2 hover:border-neutral-300 hover:bg-neutral-50/60 transition-all">
+                    <button key={mt.id} onClick={() => { setDrawerOpen(false); seNorthwinded({ kind: 'meeting', id: mt.id }); }} className="block w-full text-left rounded-lg border border-neutral-200/60 px-3 py-2 hover:border-neutral-300 hover:bg-neutral-50/60 transition-all">
                       <p className="text-[12.5px] text-neutral-700 truncate">{mt.title}</p>
                       {mt.date && <p className="text-[11px] text-neutral-400 mt-0.5 tabular-nums">{mt.date}</p>}
                     </button>
@@ -1543,7 +1543,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
                         <GroupHeader icon={EnvelopeIcon} label="Email threads" count={threads.length} />
                         <div className="space-y-0.5">
                           {threads.map((c) => (
-                            <button key={c.id} onClick={() => { setDrawerOpen(false); setFocused({ kind: 'email', id: c.id }); }} className="group/c w-full text-left flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-neutral-50/70 transition-colors motion-reduce:transition-none">
+                            <button key={c.id} onClick={() => { setDrawerOpen(false); seNorthwinded({ kind: 'email', id: c.id }); }} className="group/c w-full text-left flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-neutral-50/70 transition-colors motion-reduce:transition-none">
                               <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${c.open ? 'bg-indigo-400' : 'bg-neutral-200'}`} title={c.open ? 'Open' : 'Handled'} />
                               <span className="min-w-0 flex-1 text-[12.5px] text-neutral-700 truncate group-hover/c:text-indigo-700 transition-colors motion-reduce:transition-none">{c.subject}</span>
                               {c.who && <span className="flex-shrink-0 text-[11px] text-neutral-400 truncate max-w-[120px]">{c.who.split('<')[0].trim()}</span>}
@@ -1557,7 +1557,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
                       <div>
                         <GroupHeader icon={DocumentTextIcon} label="Deliverables" count={produced.length} />
                         <DeliverableRows deliverables={produced}
-                          onPreviewDeliverable={(name, ref) => { setDrawerOpen(false); setFocused({ kind: 'deliverable', id: ref, title: name }); }} />
+                          onPreviewDeliverable={(name, ref) => { setDrawerOpen(false); seNorthwinded({ kind: 'deliverable', id: ref, title: name }); }} />
                       </div>
                     )}
                   </div>

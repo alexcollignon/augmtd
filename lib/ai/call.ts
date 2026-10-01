@@ -27,12 +27,21 @@ import type OpenAI from 'openai';
 import type { TaskType, TierType } from './types';
 import { getAIClient, getSystemClient, aiCreate } from './factory';
 import { parseModelJSON } from './parse-json';
+import { effortThinks, producerEffort, type AIEffort, type EffortProducer } from './effort';
 import { logAIUsage, type AIUsageSource } from './log-usage';
 
 export type CallShape = {
   output: 'json' | 'text';
   /** Does this call genuinely benefit from chain-of-thought? Default 'none'. */
   reasoning?: 'none' | 'deep';
+  /** W27.C — THE EFFORT LEVER (lib/ai/effort.ts): how much the chosen model may think before answering.
+   *  Absent = the slot's effort (SLOT_EFFORT / the eval-only override), else the param floor (gpt-5
+   *  'minimal', Claude-5 'none', thinking off) — unchanged. An effort above 'minimal' on a model that
+   *  thinks widens the output budget and arms the empty-content retry, so a judgment never starves. */
+  effort?: AIEffort;
+  /** W28 — THE PRODUCER EFFORT: the producer names itself; lib/ai/effort.ts PRODUCER_EFFORT decides its
+   *  effort per model family (and the eval-only override can A/B it by this key). `effort` wins. */
+  effortProducer?: EffortProducer;
   /** Interactive (user waiting) vs background. Informational today; reserved for latency-aware routing. */
   latency?: 'interactive' | 'background';
   /** Generation in the user's voice (drafts, replies) — routes to the strongest generator. */
@@ -113,13 +122,16 @@ export interface AICallResult<T> {
  */
 export async function aiCall<T = unknown>(opts: AICallOpts): Promise<AICallResult<T>> {
   const shape = opts.shape;
-  const resolve = async (slot: TaskType) =>
-    opts.userId && opts.supabase ? getAIClient(opts.userId, slot, opts.supabase) : getSystemClient(slot);
+  // W36 — THE PRODUCER MODEL: a named producer resolves its OWN model (lib/ai/model-choice.ts precedence);
+  // the tier probe and the empty-content fallback stay the plain slot resolution.
+  const producerOpts = shape.effortProducer ? { producer: shape.effortProducer } : {};
+  const resolve = async (slot: TaskType, o: { producer?: EffortProducer } = {}) =>
+    opts.userId && opts.supabase ? getAIClient(opts.userId, slot, opts.supabase, o) : getSystemClient(slot, o);
 
   const tierProbe = await resolve('classification'); // cheap: config is cached; gives us the tier
   const tier = tierProbe.tier as TierType;
   const slot = slotForShape(tier, shape);
-  let resolved = slot === 'classification' ? tierProbe : await resolve(slot);
+  let resolved = shape.effortProducer ? await resolve(slot, producerOpts) : slot === 'classification' ? tierProbe : await resolve(slot);
 
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = opts.messages
     ?? [...(opts.system ? [{ role: 'system' as const, content: opts.system }] : []), { role: 'user' as const, content: opts.prompt ?? '' }];
@@ -127,34 +139,44 @@ export async function aiCall<T = unknown>(opts: AICallOpts): Promise<AICallResul
   // Per-shape token budget: a reasoning-channel model needs room to think AND emit — the trap was
   // starving it. A caller's explicit size is respected EXCEPT when it would starve a reasoning model's
   // JSON emission (the exact bug this router exists to make unexpressible).
-  const reasoningModel = hasReasoningChannel(resolved.model);
-  const defaultBudget = shape.reasoning === 'deep' || reasoningModel ? 8192 : 2048;
+  // W27.C: gpt-5 / Claude at an effort above 'minimal' thinks too — its headroom is added by the
+  // transport (aiCreate → applyEffort), and it gets the same empty-content safety net below.
+  const effort: AIEffort | undefined = shape.effort ?? producerEffort(shape.effortProducer, resolved.model) ?? resolved.effort;
+  const channel = hasReasoningChannel(resolved.model);
+  const reasoningModel = channel || effortThinks(resolved.model, effort);
+  const defaultBudget = shape.reasoning === 'deep' || channel ? 8192 : 2048;
   let maxTokens = opts.maxTokens ?? defaultBudget;
-  if (reasoningModel && shape.output === 'json' && maxTokens < 8192) maxTokens = 8192;
+  if (channel && shape.output === 'json' && maxTokens < 8192) maxTokens = 8192;
 
-  const run = async (client: OpenAI, model: string, budget: number) => {
+  let usedEffort: AIEffort | undefined = effort;
+  const run = async (client: OpenAI, model: string, budget: number, eff: AIEffort | undefined = effort) => {
+    usedEffort = eff;
     const res = await aiCreate(client, {
       model,
       messages,
       max_tokens: budget,
       temperature: opts.temperature ?? 0,
       ...(shape.output === 'json' ? { response_format: { type: 'json_object' as const } } : {}),
-    });
+    }, eff ? { effort: eff } : undefined);
     return { text: res.choices?.[0]?.message?.content?.trim() ?? '', usage: res.usage };
   };
 
   let { text, usage } = await run(resolved.client, resolved.model, maxTokens);
 
   // Empty-content safety net (the trap, made structurally survivable): a reasoning model that returned
-  // nothing gets one bigger-budget retry, then falls back to the tier's non-reasoning JSON model.
+  // nothing gets one bigger-budget retry, then falls back to the tier's non-reasoning JSON model — or,
+  // when it only thought because of a stated effort, to the SAME model at the floor ('minimal').
   if (!text && shape.output === 'json' && reasoningModel) {
     ({ text, usage } = await run(resolved.client, resolved.model, maxTokens * 2));
-    if (!text) {
+    if (!text && !channel) {
+      console.warn(`[aiCall] ${resolved.model} at effort ${effort} returned empty JSON twice — retrying at the floor`);
+      ({ text, usage } = await run(resolved.client, resolved.model, maxTokens, 'minimal'));
+    } else if (!text) {
       const fb = slot === 'classification' ? tierProbe : await resolve('classification');
       if (fb.model !== resolved.model) {
         console.warn(`[aiCall] reasoning model ${resolved.model} returned empty JSON twice — falling back to ${fb.model}`);
         resolved = fb;
-        ({ text, usage } = await run(fb.client, fb.model, 2048));
+        ({ text, usage } = await run(fb.client, fb.model, 2048, producerEffort(shape.effortProducer, fb.model) ?? fb.effort));
       }
     }
   }
@@ -162,7 +184,7 @@ export async function aiCall<T = unknown>(opts: AICallOpts): Promise<AICallResul
   if (opts.source && opts.userId && opts.supabase) {
     logAIUsage(opts.supabase, {
       userId: opts.userId, source: opts.source, provider: resolved.endpoint.provider,
-      model: resolved.model, tier, taskType: slot, usage,
+      model: resolved.model, tier, taskType: slot, usage, effort: usedEffort,
     }).catch(() => {});
   }
 

@@ -384,7 +384,7 @@ export async function settleApprovalAsk(
       await writeRoomTurn(admin, String(c.user_id), roomKey, {
         role: 'system',
         text: args.approved
-          ? (args.supplied ? 'You sent it — the run picked up from there.' : 'You approved — the run continued.')
+          ? (args.supplied ? 'You answered — the run continued.' : 'You approved — the run continued.')
           : 'You held this back — nothing was delivered.',
         dedupeKey: `approval-decided:${args.runId}`,
       });

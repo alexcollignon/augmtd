@@ -7,7 +7,7 @@ import { createClient } from '@supabase/supabase-js';
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
 (async () => {
-  for (const email of ['alextcollignon@gmail.com', 'rene@zeroto100.ai']) {
+  for (const email of (process.env.PROBE_EMAILS ?? '').split(',').map((s) => s.trim()).filter(Boolean)) {
     const { data: p } = await sb.from('profiles').select('id').ilike('email', email).maybeSingle();
     if (!p) { console.log(`${email}: no profile`); continue; }
     const uid = p.id as string;

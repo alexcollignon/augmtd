@@ -8,7 +8,6 @@
 import { config } from 'dotenv'; config({ path: '.env.local' });
 import { createClient } from '@supabase/supabase-js';
 import { getAIClient, aiCreate } from '../lib/ai/factory';
-import { answerEntityQuestion } from '../lib/entities/ask';
 import { isAutomatedSender, isCalendarSystemSubject } from '../lib/inbox/automated';
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
@@ -93,11 +92,8 @@ async function railFor(uid: string, itemId: string, entityId: string) {
       check(`${label} · verb-first asks cover the visible deck`, ok, `${withAsk.length}/${actionable.length} actionable items carry an ask`);
     }
 
-    // Grounded answer from the deal's own memory (the composer's question path).
-    try {
-      const { answer, refs } = await answerEntityQuestion(sb, uid, picked.entityId, 'Where does this stand right now, and what is the next move?');
-      check(`${label} · grounded answer from the deal's memory`, answer.length > 20, `${answer.slice(0, 80)}… (${refs.length} refs)`);
-    } catch (e) { check(`${label} · grounded answer`, false, String(e).slice(0, 60)); }
+    // (W37: the deal-memory question path, answerEntityQuestion, was removed — room questions are answered by
+    // the converse room chat, measured by eval-surfaces room.chat.)
   }
 
   // The intent split — question vs correction (the composer's router). Live classification, user A.

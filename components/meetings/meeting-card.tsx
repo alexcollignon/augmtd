@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import { VideoCameraIcon, MapPinIcon, PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
+import { useUserZone } from '@/context/user-zone-context';
 import { formatMeetingTime, calculateDuration, isUserOrganizer } from '@/lib/types/meetings';
 import MeetingDetailPanel from './meeting-detail-panel';
 import NewMeetingModal from './new-meeting-modal';
@@ -16,12 +17,13 @@ interface MeetingCardProps {
 }
 
 export default function MeetingCard({ event, userEmail, onRefresh }: MeetingCardProps) {
+  const zone = useUserZone();
   const [showDetail, setShowDetail] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const { primary } = formatMeetingTime(event.start_time, event.end_time);
+  const { primary } = formatMeetingTime(event.start_time, event.end_time, zone);
   const duration = calculateDuration(event.start_time, event.end_time);
   const isOrganizer = isUserOrganizer(event, userEmail);
 

@@ -23,7 +23,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // item_plans.version in the Identified-tasks engine). Without this, editing the prompt has
 // no effect until a goal is touched or the 12h TTL expires — confusing ("why isn't this
 // updating?") since nothing about the STORED cache key changed.
-export const ALIGNMENT_PROMPT_VERSION = 4;
+export const ALIGNMENT_PROMPT_VERSION = 6;
 
 /** A broad goal (especially the North Star) usually has more than one real avenue — capping
  *  to exactly one suggestion per goal was too thin for an admin/exec audience. Capped (not
@@ -85,7 +85,7 @@ export async function synthesizeAlignment(
         .map(t => `${t.name} ×${t.count}${t.grounded ? '' : ' (insight/generative, not automation)'}`)
         .join('; ') || 'none';
       const tools = row.topTools.map(t => `${t.name} ×${t.count}`).join('; ') || 'none';
-      return `- ${row.name}: used by ${row.distinctUsers} of ${summary.memberCount} team members, ${row.runs} runs, ${row.messages} chat messages — tasks: ${tasks} — tools: ${tools}`;
+      return `- ${row.name}: used by ${row.distinctUsers} of ${summary.memberCount} team members (${Math.max(0, summary.memberCount - row.distinctUsers)} members not using it), ${row.runs} runs, ${row.messages} chat messages — tasks: ${tasks} — tools: ${tools}`;
     })
     .join('\n');
 
@@ -97,7 +97,18 @@ export async function synthesizeAlignment(
     ? summary.costBySource.slice(0, 5).map(s => `${s.label} (€${s.costEur.toFixed(2)})`).join(', ')
     : 'no spend data yet';
 
-  const prompt = `You are advising a company admin/exec who does NOT personally operate the AI coworkers
+  // W37 — THE GOALS' LANGUAGE, stated up front (the eval: EU Haiku answered Portuguese goals in English
+  // under a rule buried at the end). Code names it when it can read it; otherwise the model must declare
+  // it in the JSON BEFORE writing a word (a declared field it then writes in).
+  const { detectLanguage } = await import('@/lib/inbox/detect-language');
+  const goalsLang = detectLanguage(goals.map(g => `${g.title}. ${g.description ?? ''}`).join(' '));
+  const langLine = goalsLang
+    ? `LANGUAGE: the goals are written in ${goalsLang} — write every "text" and "suggestion" in ${goalsLang}.`
+    : `LANGUAGE: write every "text" and "suggestion" in the language the GOALS below are written in (not the language of these instructions); state it first in the JSON "language" field.`;
+
+  const prompt = `${langLine}
+
+You are advising a company admin/exec who does NOT personally operate the AI coworkers
 day-to-day — each coworker (Clara, Max, etc.) is a separate assistant belonging to whichever individual
 team member uses it. The admin's real lever is ORGANIZATIONAL: rolling out a standard workflow across the
 team, following up with whichever members are under-using (or over-relying on) a coworker, or setting an
@@ -130,10 +141,14 @@ adoption gap across members). For each suggestion:
 - If there's no clear activity signal for this goal at all, tone="opportunity" and text="" — the
   suggestion is a specific, realistic starting point to roll out to the team (name the coworker, the
   trigger, the output — but as something to introduce team-wide, not something the admin does themself).
+Judge each goal on its OWN evidence: a goal is "aligned" only when the activity listed is the work that goal
+needs (e.g. proposal drafting for a proposal-speed goal); a goal whose relevant work is used by few members is
+"drift" (an adoption gap) even when other activity is strong. Quote counts with their real labels (tasks are
+tasks, runs are runs). Write "text" and "suggestion" in the language the goals are written in.
 Ground text/suggestions in the real activity data above wherever there's a signal — do not fabricate
 activity that didn't happen, but DO propose real, actionable ideas even for a goal with no current signal.
 Return JSON only, no prose:
-{"observations": [{"goalId": "<id from GOALS>", "tone": "aligned"|"drift"|"opportunity", "text": "one sentence grounded in real activity, or empty string if opportunity", "suggestion": "one concrete, specific, organizational next step"}]}`;
+{"language": "<the goals' language>", "observations": [{"goalId": "<id from GOALS>", "tone": "aligned"|"drift"|"opportunity", "text": "one sentence grounded in real activity, or empty string if opportunity", "suggestion": "one concrete, specific, organizational next step"}]}`;
 
   try {
     const res = await aiCreate(client, {
@@ -155,6 +170,13 @@ Return JSON only, no prose:
         !!o && goalIds.has(o.goalId) && (o.tone === 'aligned' || o.tone === 'drift' || o.tone === 'opportunity')
         && typeof o.text === 'string' && typeof o.suggestion === 'string' && o.suggestion.length > 0,
     );
+
+    // NO ACTIVITY, NO DRIFT (W37: with zero coworker activity the model tagged goals 'drift' and wrote
+    // observations of usage that never happened). With no activity at all, every observation is an
+    // opportunity and carries no observation text — enforced in code, whatever the model wrote.
+    if (!summary.agentWork.length || summary.adoptionUsers === 0) {
+      for (const o of observations) { o.tone = 'opportunity'; o.text = ''; }
+    }
 
     // Defensive cap — the prompt asks for at most MAX_SUGGESTIONS_PER_GOAL, but never trust a
     // model to honor a count instruction exactly.

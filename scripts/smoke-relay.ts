@@ -37,7 +37,7 @@
 // station's OWN step output (so the run parks AGAIN at a later gate, passing none), test mode
 // asking nobody, and the four-door parity of the new primitive.
 //
-// W3 (its own banner further down): SP the subprocess station · RL René's loop.
+// W3 (its own banner further down): SP the subprocess station · RL Sam's loop.
 // W3b (THE THROTTLE, NEVER A SHREDDER): TL the clamp + the store · TD live deferral · TR the drain
 // and its atomic claim · TB the drain/backstop partition · TS the serving + parity floors.
 //
@@ -1625,7 +1625,7 @@ async function main() {
   //       passes NO human gate, the atomic claim that fences a second completion, the honest
   //       failure, test mode's stand-in, the three door refusals VERBATIM, the stranded-park sweep,
   //       and THE STALE-CHILD BATON (a re-fired child carries the link row's stored context).
-  //   RL  RENÉ'S LOOP — two linear pipelines composing into a CYCLE with no loop engine: A parks on
+  //   RL  SAM'S LOOP — two linear pipelines composing into a CYCLE with no loop engine: A parks on
   //       B, B's delivery both RESUMES A and fires A's "when another workflow delivers" door.
   //       ⚠️ THE CEILING IS THE THROTTLE, NOT A CYCLE DETECTOR — asserted live (W3b: at the limit
   //       the next lap is RECORDED and QUEUED, never dropped).
@@ -2034,15 +2034,15 @@ async function main() {
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
-    // RL — RENÉ'S LOOP (the finale): two linear pipelines, one cycle, no loop engine.
+    // RL — SAM'S LOOP (the finale): two linear pipelines, one cycle, no loop engine.
     // ════════════════════════════════════════════════════════════════════════════════════════════
-    console.log(`\nRL — RENÉ'S LOOP [mode: ${HAS_COLUMN ? 'LIVE (stored doors — the full cycle runs)' : 'SUBPROCESS HALF ONLY (workflows.triggers absent — the door cannot be stored)'}]:`);
+    console.log(`\nRL — SAM'S LOOP [mode: ${HAS_COLUMN ? 'LIVE (stored doors — the full cycle runs)' : 'SUBPROCESS HALF ONLY (workflows.triggers absent — the door cannot be stored)'}]:`);
     {
-      const bName = `${WPFX} rene interview`;
+      const bName = `${WPFX} sam interview`;
       const bId = await mkW3(bName, [aiStep('b1', 'Interview', ECHO_CHILD)]);
       // A parks on B (⧉) AND opens its door on B's delivery — the SAME two pipelines forming the
       // cycle. A carries no ai step of its own: its deliverable IS the station's output.
-      const aId = await mkW3(`${WPFX} rene triage`, [stationStep('a1', bName, bId!)], {
+      const aId = await mkW3(`${WPFX} sam triage`, [stationStep('a1', bName, bId!)], {
         triggers: [{ type: 'reaction', source: 'workflow', workflow_id: bId! }] as ReactionDoor[],
       });
 
@@ -2106,7 +2106,7 @@ async function main() {
 
           // ── THE CYCLE DEFERS AT THE THROTTLE (W3b — re-pointed from "the cycle stops at the
           // cap"). Same law, LOSSLESS form: nothing in the engine detects "A → B → A", and what
-          // bounds René's loop is the per-workflow daily THROTTLE on door fires. At the limit the
+          // bounds Sam's loop is the per-workflow daily THROTTLE on door fires. At the limit the
           // next lap is still RECORDED and still QUEUED — it just doesn't start today.
           const { data: firesToday } = await admin.from('item_plans').select('entity_id')
             .eq('user_id', userId).eq('kind', 'reaction_fire').like('entity_id', `${aId}:%`);
@@ -4543,9 +4543,22 @@ async function main() {
     const cfgR = await generateWorkflowConfig(RUBRIC, userId, admin as never);
     const stepsR = cfgR?.steps ?? [];
     const promptsR = stepsR.map((s) => String((s as { prompt?: string }).prompt ?? ''));
+    // ⟲ RE-POINTED W25 (a live 0/3 on Sep 29 — generate-config / author-doors unchanged since W16.4,
+    // so not a W19–W25 regression): this fixture DECLARES its inputs ("Inputs:" header), and THE
+    // DECLARED INPUTS law (same Aug 25 commit) homes each one — the station is THE DEFAULT home, and
+    // THE INCOHERENCE RULE says a workflow with a station suppresses the accept_material sheet, so
+    // `accept_material: true` beside stations is a door the user is never shown. The model now
+    // reliably takes the default: a station for the job description AND one for the resumes, no
+    // sheet. The law this line protects is the Aug 25 incident — a rubric authored a machine with
+    // NO way for its material to reach the run. That still fails here: a real door, the sheet, or a
+    // station for EVERY declared placeholder (both of them — one is not enough) must stand.
+    const stationAsksR = stepsR.filter((s) => s.type === 'input')
+      .map((s) => String((s as { ask?: string }).ask ?? ''));
+    const everyDeclaredStationed = stationAsksR.some((a) => /job description/i.test(a))
+      && stationAsksR.some((a) => /resume/i.test(a));
     ok('GR: A RUBRIC AUTHORS A MACHINE — at least one door for what arrives',
-      (cfgR?.triggers ?? []).length > 0 || cfgR?.inputs?.acceptMaterial === true,
-      JSON.stringify({ triggers: cfgR?.triggers, inputs: cfgR?.inputs }));
+      (cfgR?.triggers ?? []).length > 0 || cfgR?.inputs?.acceptMaterial === true || everyDeclaredStationed,
+      JSON.stringify({ triggers: cfgR?.triggers, inputs: cfgR?.inputs, stations: stationAsksR }));
     ok('…and the HUMAN GATE the rubric\'s own words demand ("a human recruiter decides")',
       stepsR.some((s) => s.type === 'approval' || s.type === 'handoff'),
       stepsR.map((s) => s.type).join(','));

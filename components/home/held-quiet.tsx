@@ -540,7 +540,11 @@ export function HeldQuietView({ ledger, deckHeld, warmHeld = [], servedDay = nul
   // one header line, the column narrows to the card's own width, and the rest of the account stays
   // REACHABLE by one quiet word (and returns whole the moment the deck is closed). Nothing is
   // unmounted and nothing is lost: this is a fold, not a different page.
-  const focus = deckShown;
+  // FOCUS NEEDS A DECK TO FOCUS ON (UI walk, Oct 1): an account that landed with NOTHING waiting
+  // renders no band at all — so folding the title, the intro and the way back behind the deck left
+  // a blank page holding one faint "The rest of the account" and no exit. With the account read
+  // and empty, the page is the ledger: its title, its intro sentence, its way Home.
+  const focus = deckShown && (waitingRows.length > 0 || !ledger);
 
   return (
     <div className={`mx-auto w-full pb-16 ${focus ? 'max-w-[640px] pt-6' : 'max-w-[720px] pt-2'}`}>

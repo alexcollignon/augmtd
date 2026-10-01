@@ -36,7 +36,7 @@ export type IngestParams = {
   via?: { itemKind: 'inbox_item' | 'meeting' | 'commitment'; itemId: string } | null;
 };
 
-const MAX_CHUNKS = 24; // Tier-1 cap — deep coverage is Tier-2's job
+const MAX_CHUNKS = 64; // Tier-1 cap (≈ 77k chars, the coverage 24 × 3,200 had) — deep coverage is Tier-2's job
 
 /** The origin jsonb this ingest writes — provenance of the SOURCE (kind/ref) and of the BYTES
  *  (bucket). One producer, so the two writers below can never disagree. */
@@ -110,8 +110,10 @@ export async function ingestFile(admin: SupabaseClient, p: IngestParams): Promis
   }
   if (!fileId) return { fileId: null, deduped: false };
 
-  // Tier-1 chunks: raw-content embeddings (searchable), NO summaries.
-  if (clean && clean.length > 400) {
+  // Tier-1 chunks: raw-content embeddings (searchable), NO summaries. EVERY file with text gets at
+  // least one chunk (Oct 1): search reads chunks only, so a short attachment (< 400 chars — a one-page
+  // note, a short letter) used to be invisible to every KB search. Same floor as indexUploadedFile.
+  if (clean && clean.length > 10) {
     try {
       const chunks = chunkText(clean, p.filename).slice(0, MAX_CHUNKS);
       const headers = chunks.map((c) => `${p.filename}${c.heading ? ` — ${c.heading}` : ''}`);

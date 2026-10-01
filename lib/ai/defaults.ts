@@ -1,4 +1,5 @@
 import type { TaskType, TierType, ModelEndpoint } from './types'
+import type { EffortProducer } from './effort'
 
 // ─── Tier defaults ──────────────────────────────────────────────────────────────
 // One model per task per tier. These are the baseline — tenant modelOverrides
@@ -109,3 +110,43 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
     conversation:  { provider: 'openai_compatible', model: 'llama-3.1-70b' },
   },
 }
+
+// ─── THE PRODUCER MODEL (W36) — the model is a PRODUCER'S choice where a slot is too coarse ────────
+// A task slot serves many producers ('classification' carries the understanding, the work judge, the
+// fulfillment judge and the room brief alike), and the measured model A/Bs split them: a cheaper model
+// can be ≥ on one judgment and < on its neighbour. So a producer that NAMES ITSELF on its call (the same
+// key as THE PRODUCER EFFORT — lib/ai/effort.ts EFFORT_PRODUCERS; aiCall's `shape.effortProducer`,
+// getAIClient's `{ producer }` option) may be routed to its own model, per tier.
+//
+// THE PRECEDENCE (highest first; lib/ai/model-choice.ts resolveModelChoice is the one resolver):
+//   1. tenant producer override — tenant_configs.model_overrides["producer:<key>"]
+//   2. tier producer default    — PRODUCER_MODEL[tier][<key>] (below)
+//   3. tenant slot override     — tenant_configs.model_overrides[<slot>]
+//   4. tier slot default        — TIER_DEFAULTS[tier][<slot>]
+// Each level layers over the ones beneath it (a `{ model }` entry keeps the slot's provider/baseURL); a
+// producer-level entry that names ANOTHER provider starts fresh (never inherits a foreign baseURL).
+// THE PERIMETER: on the EU tiers (bedrock_private, bedrock_optimised) a level whose resolved endpoint is
+// not an EU-resident Bedrock model (lib/ai/bedrock-residency.ts) is REFUSED and the next level serves —
+// no configuration can route an EU tenant's content out of the perimeter. The effort follows the
+// RESOLVED model's family (PRODUCER_EFFORT is keyed by family), never the slot's.
+//
+// EMPTY on every tier: no production change. Adopting an entry is a measured, one-line decision
+// (scripts/eval-outputs.ts on a probe account carrying the tenant producer override first).
+export const PRODUCER_MODEL: Readonly<Record<TierType, Readonly<Partial<Record<EffortProducer, Partial<ModelEndpoint>>>>>> = Object.freeze({
+  // W36 (Oct 1, owner-approved, measured — scratchpad/w36-split-std.md): Luna ≥ gpt-5-mini on fulfillment
+  // (err .000 vs .042) and commitment extraction (F1 .974 vs .957), 2–5× cheaper; work.judge / room.brief stay.
+  standard: Object.freeze({
+    'commitments.fulfillment': { provider: 'openai' as const, model: 'gpt-6-luna' },
+    'commitments.extract': { provider: 'openai' as const, model: 'gpt-6-luna' },
+  }),
+  professional: Object.freeze({}),
+  bedrock_private: Object.freeze({}),
+  // W36 (owner-approved, measured — scratchpad/w36-split-eu.md): gpt-oss-120b in-region Frankfurt beats
+  // Haiku 4.5 on the work judge (work-verdict err .029 vs .091, input-ask .065 vs .195), ~5× cheaper.
+  // Understanding (.939 on Haiku), fulfillment, extraction and room.brief stay on Haiku.
+  bedrock_optimised: Object.freeze({
+    'work.judge': { provider: 'bedrock' as const, model: 'openai.gpt-oss-120b-1:0' },
+  }),
+  private_client: Object.freeze({}),
+  on_prem: Object.freeze({}),
+})

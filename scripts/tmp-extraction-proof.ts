@@ -26,7 +26,7 @@ No structured hand-over here — just what the last step wrote.
 
 (async () => {
   const out = await executeMatchToProfiles(
-    { profiles_folder: 'AHK Member companies', max_matches_per_item: 3, language: 'en', dedupe: false },
+    { profiles_folder: 'Chamber Member companies', max_matches_per_item: 3, language: 'en', dedupe: false },
     { userId: OWNER, supabase: sb, previousOutputs: [{ output: PROSE }] },
   );
   console.log('\n──────── the report, first 14 lines ────────');

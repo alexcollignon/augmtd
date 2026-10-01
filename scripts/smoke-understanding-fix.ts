@@ -2,7 +2,7 @@
 //   A) recalibrated `action` bar — re-run computeUnderstanding on a sample of items CURRENTLY tagged
 //      relevance='action' and report how many flip to awareness (the 344-flood should shrink).
 //   B) FYA-vs-Newsletters split — simulate the new isBulk routing over the whole noted pool and report
-//      the real-correspondence vs bulk counts; locate Rene specifically.
+//      the real-correspondence vs bulk counts; locate Sam specifically.
 //   C) user-rule respect — assert no item with an actionable type_override lands in FYA.
 //
 //   npx tsx scripts/smoke-understanding-fix.ts
@@ -106,12 +106,12 @@ async function main() {
     const u = coerceUnderstanding(sd.understanding);
     const real = u && u.relevance === 'awareness' && !isBulk(sd);
     if (real) fyaFromNoted++; else bulk++;
-    if (/zeroto100|fees for/i.test(String(it.work_title || '') + ' ' + String(sd.from_name || '') + ' ' + String(sd.from || ''))) {
+    if (/acme-ventures|fees for/i.test(String(it.work_title || '') + ' ' + String(sd.from_name || '') + ' ' + String(sd.from || ''))) {
       reneRows.push({ title: it.work_title, from: sd.from_name || sd.from, relevance: u?.relevance, role: u?.role, unsub: !!sd.has_unsubscribe, bulk: isBulk(sd), route: real ? 'FOR-YOUR-AWARENESS' : 'newsletters' });
     }
   }
   console.log(`\n=== B) noted pool: ${noted.length} total → ${fyaFromNoted} real-correspondence (FYA), ${bulk} bulk (newsletters) ===`);
-  console.log('Rene rows:', JSON.stringify(reneRows, null, 2));
+  console.log('Sam rows:', JSON.stringify(reneRows, null, 2));
 
   // ── FYA from the actionable pool (awareness understanding, not bulk, no actionable override).
   const USER_ACTIONABLE = new Set(['needs_reply', 'to_do', 'waiting_on']);

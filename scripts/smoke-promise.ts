@@ -32,8 +32,8 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
 (async () => {
   PERSONAL = await resolveProbeUser(sb);
   const { data: uidRows } = await sb.from('work_entities').select('user_id').limit(2000);
-  const rene = [...new Set(((uidRows ?? []) as Array<{ user_id: string }>).map((r) => r.user_id))].find((u) => u.startsWith('ae306f38')) ?? null;
-  const USERS: Array<[string, string]> = [[A, 'user A'], [B, 'user B'], ...(rene ? [[rene, 'user C'] as [string, string]] : []), [PERSONAL, 'personal']];
+  const sam = [...new Set(((uidRows ?? []) as Array<{ user_id: string }>).map((r) => r.user_id))].find((u) => u.startsWith('ae306f38')) ?? null;
+  const USERS: Array<[string, string]> = [[A, 'user A'], [B, 'user B'], ...(sam ? [[sam, 'user C'] as [string, string]] : []), [PERSONAL, 'personal']];
 
   // ═══ P1 · IT NEVER MANUFACTURES WORK — no noise item carries a prepared draft (live, per user) ═══
   for (const [uid, label] of USERS) {
@@ -1676,7 +1676,7 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     // 1 — THE DECOY (the exact shipped bug, deterministic — provenance rejects before any AI):
     // a topically-adjacent cross-provenance KB file on a LOOSE item must never stage.
     const decoy = await pickArtifacts(sb, PERSONAL, {
-      itemTitle: 'Generate EGBANK cohort reports and ALP allocation sheet', entityId: null,
+      itemTitle: 'Generate GLOBEX BANK cohort reports and ALP allocation sheet', entityId: null,
       emailExcerpt: 'Could you please share the Organizational Report, Individual Report, and the ALP group allocation Excel sheet for the attached cohort?',
       perLabel: [{
         label: 'Individual Report',
@@ -1688,11 +1688,11 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     // 2 — the LAWFUL match: same body of work + the file plainly IS the artifact → stages WITH
     // code-verified evidence.
     const lawful = await pickArtifacts(sb, PERSONAL, {
-      itemTitle: 'Generate EGBANK cohort reports and ALP allocation sheet', entityId: 'ent-egbank',
+      itemTitle: 'Generate GLOBEX BANK cohort reports and ALP allocation sheet', entityId: 'ent-globexbank',
       emailExcerpt: 'Could you please share the Individual Report for the attached cohort?',
       perLabel: [{
         label: 'Individual Report',
-        candidates: [{ source: 'kb', id: 'real-1', filename: 'EGBANK Individual Report - Cohort 3.pdf', snippet: 'Individual report for EGBANK cohort 3 participants: per-participant scores and rankings.', entityId: 'ent-egbank', originKind: 'generated', score: 0.82 }],
+        candidates: [{ source: 'kb', id: 'real-1', filename: 'GLOBEX BANK Individual Report - Cohort 3.pdf', snippet: 'Individual report for GLOBEX BANK cohort 3 participants: per-participant scores and rankings.', entityId: 'ent-globexbank', originKind: 'generated', score: 0.82 }],
       }],
     });
     check('P26 live · a SAME-DEAL exact artifact stages WITH code-verified quoted evidence',
@@ -1710,8 +1710,8 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       `matched=${ambiguous.filter((p) => p.candidate).length}/2`);
     // 4 — the truncation floor is mechanical: a mid-word cutoff is caught with zero AI.
     const cut = await evaluateDeliverable(sb, PERSONAL, {
-      content: ('The STC Bahrain assessment shows strong readiness across departments. '.repeat(8) + 'Section 2 — Gap: Cloud-native da'),
-      task: 'Write the STC Bahrain assessment report', recipient: null, entityId: null, kind: 'deliverable',
+      content: ('The Globex Telecom assessment shows strong readiness across departments. '.repeat(8) + 'Section 2 — Gap: Cloud-native da'),
+      task: 'Write the Globex Telecom assessment report', recipient: null, entityId: null, kind: 'deliverable',
     });
     check('P26 live · a mid-sentence truncation is CAUGHT mechanically (revise, never handed over)',
       cut.verdict === 'revise' && /cut off/i.test(cut.objection ?? ''), `${cut.verdict} · "${(cut.objection ?? '').slice(0, 50)}"`);
@@ -1828,7 +1828,7 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       `"${fixed.description.slice(0, 60)}"`);
   }
 
-  // ═══ P28 · THE BRAIN HAS A CLIENT MAP (proactive-team R-class — found LIVE: an "STC Bahrain"
+  // ═══ P28 · THE BRAIN HAS A CLIENT MAP (proactive-team R-class — found LIVE: an "Globex Telecom"
   // email filed under "Arcapita AI Assessment": the same partner-org people broker BOTH, so
   // people-matching merges what must stay separate). Same people ≠ same deal: the item's own named
   // engagement outranks the people match, checked by CODE against the entity's IDENTITY (name +
@@ -1842,7 +1842,7 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
       src('lib/entities/recognize.ts').includes('${hit.name} ${(hit.aliases ?? []).join(\' \')}') &&
       src('scripts/sweep-recognition-subjects.ts').includes('namesOverlap'));
     check('P28 unit · distinctive-token identity match (generic work-words prove nothing; a proper name decides)',
-      namesOverlap('STC Bahrain', 'Arcapita AI Assessment') === false &&
+      namesOverlap('Globex Telecom', 'Arcapita AI Assessment') === false &&
       namesOverlap('AI Assessment', 'Arcapita AI Assessment') === true &&   // all-generic → no veto signal
       namesOverlap('Arcapita launch', 'Arcapita AI Assessment') === true);
     const broker = [{
@@ -2171,7 +2171,7 @@ const isNoiseRow = (it: Record<string, unknown>): boolean => {
     const { data: D } = await sb.from('work_entities').insert({
       user_id: PERSONAL, kind: 'initiative', name: 'ZZ Kiteschool Pilot', aliases: ['ZZ Kiteschool Pilot'], tracked: false, status: 'active',
     }).select('id').maybeSingle();
-    // GENERIC-TOKEN DECOYS (found live: "the STC Bahrain assessment" recalled three OTHER
+    // GENERIC-TOKEN DECOYS (found live: "the Globex Telecom assessment" recalled three OTHER
     // assessments and never the named one — "assessment" matched everything and filled the cap).
     const { data: dec } = await sb.from('work_entities').insert([
       { user_id: PERSONAL, kind: 'initiative', name: 'ZZ Alpha Assessment', aliases: [], tracked: false, status: 'active' },

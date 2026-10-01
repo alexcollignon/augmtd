@@ -1,8 +1,8 @@
 // ONE BRAIN — RECOGNITION INTEGRITY (trust gate). Two invariants, cross-user, cross-project, must be ZERO:
 //   1. PROVENANCE CONSISTENCY — every derived commitment sits in the SAME entity as its source meeting/email.
-//      (A violation = the same-topic cross-deal over-merge that put iScore's GPU commitment into Galp.)
+//      (A violation = the same-topic cross-deal over-merge that put Bureau's GPU commitment into Acme Oil.)
 //   2. NO ORPHAN SCATTER — a meeting's commitments never split across multiple entities.
-// Prints the Galp entity for eyeball. Read-only.
+// Prints the Acme Oil entity for eyeball. Read-only.
 import { config } from 'dotenv'; config({ path: '.env.local' });
 import { createClient } from '@supabase/supabase-js';
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);

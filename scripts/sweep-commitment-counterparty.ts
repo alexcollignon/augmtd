@@ -54,7 +54,7 @@ const attendeeLabel = (a: unknown): string | null => {
 
 (async () => {
   const { data: users } = await sb.auth.admin.listUsers();
-  const targets = ALL ? users!.users : users!.users.filter((u) => u.email === (userArg ?? 'alextcollignon@gmail.com'));
+  const targets = ALL ? users!.users : users!.users.filter((u) => u.email === (userArg ?? process.env.OWNER_EMAIL ?? ''));
   // The two skips are told apart on purpose: a meeting with NO surviving roster is a data gap, a
   // meeting with several people is a genuine 1:1 refusal. Collapsing them would hide which is which.
   let scanned = 0, resolved = 0, emptyRoster = 0, crowded = 0, noMeeting = 0, self = 0, written = 0;

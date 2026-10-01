@@ -65,9 +65,11 @@ def get_emails(
     from_sender: Optional[str] = None,
     topic: Optional[str] = None,
     limit: int = 15,
+    email_id: Optional[str] = None,
 ) -> str:
     """Read the user's inbox. Use for "what's in my inbox", "any emails from X",
-    "urgent emails", or to gather material before drafting.
+    "urgent emails", or to gather material before drafting. Listings show short
+    snippets and each email's id; pass email_id to open ONE email in full.
 
     Args:
         mode: "recent" or "urgent".
@@ -76,7 +78,10 @@ def get_emails(
         from_sender: Filter by sender name/email substring.
         topic: Keyword/topic to match.
         limit: Max emails (1-50).
+        email_id: Open one email (id from a listing) — its whole thread, newest message in full.
     """
+    if email_id:
+        return _call("get_emails", run_context, {"email_id": email_id})
     config = {"mode": mode, "since": since, "unread_only": unread_only, "limit": limit}
     if from_sender:
         config["from"] = from_sender
@@ -92,16 +97,21 @@ def get_meeting_context(
     include: str = "summaries",
     with_person: Optional[str] = None,
     include_upcoming: bool = True,
+    meeting_id: Optional[str] = None,
 ) -> str:
     """Read the user's calendar and past meeting notes. Use to prep for meetings,
-    recall what was discussed, or find meetings with a person.
+    recall what was discussed, or find meetings with a person. Listings show each
+    meeting's id; pass meeting_id to open ONE meeting in full.
 
     Args:
         since: Lookback window, e.g. "30d".
         include: "summaries" or "transcripts".
         with_person: Filter to meetings with this person.
         include_upcoming: Also include upcoming calendar events for the next 7 days. Default: true.
+        meeting_id: Open one recorded meeting (id from a listing) — summary, decisions, action items, notes in full.
     """
+    if meeting_id:
+        return _call("get_meeting_context", run_context, {"meeting_id": meeting_id})
     config = {"since": since, "include": include, "include_upcoming": include_upcoming}
     if with_person:
         config["with_person"] = with_person

@@ -77,3 +77,5 @@ export { CONVERSATION_DELTA_VERSION } from '@/lib/work/conversation-delta';
 export { CIRCLE_VERSION } from '@/lib/evidence/circle';
 /** Commitment extraction (W15.4 THE QUOTE LAW: every commitment quotes its source; a user-authored you_owe is an explicit first-person promise). */
 export { COMMITMENT_EXTRACTION_VERSION } from '@/lib/commitments/extract';
+/** W28 — the shared conduct rules every producer composes (not a cache key; for eval runs to cite). */
+export { CONDUCT_VERSION } from '@/lib/ai/conduct';

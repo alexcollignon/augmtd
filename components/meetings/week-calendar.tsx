@@ -5,6 +5,9 @@ import { ChevronLeftIcon, ChevronRightIcon, XMarkIcon, VideoCameraIcon, PencilSq
 import { toast } from 'sonner';
 import { Button, IconButton, Input, Select } from '@/components/ui';
 import type { CalendarEvent } from '@/lib/types/meetings';
+import { useUserZone } from '@/context/user-zone-context';
+import { clockIn, dateIn, dayKeyIn, dayKeyOfLocalDate, zonedClock } from '@/lib/core/user-zone';
+import { wallTimeToUtc } from '@/lib/core/zoned-time';
 import { isUserOrganizer, formatMeetingTime, calculateDuration } from '@/lib/types/meetings';
 import NewMeetingModal from './new-meeting-modal';
 import AttendeeInput, { type AttendeeChip } from './attendee-input';
@@ -32,6 +35,12 @@ interface QuickCreate {
   clientY: number;
   dayStr: string;
   ghostTop: number;
+}
+
+/** A grid cell's WALL clock (a picked slot, not an instant) — "9:30 AM", from the Date's own fields. */
+function wallClock12(d: Date): string {
+  const h = d.getHours();
+  return `${h % 12 === 0 ? 12 : h % 12}:${String(d.getMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
 }
 
 function getWeekStart(date: Date): Date {
@@ -99,6 +108,7 @@ interface QuickCreatePopoverProps {
 }
 
 function QuickCreatePopover({ quickCreate, onClose, onSuccess, style }: QuickCreatePopoverProps) {
+  const zone = useUserZone();
   const d = quickCreate.date;
   const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -148,9 +158,12 @@ function QuickCreatePopover({ quickCreate, onClose, onSuccess, style }: QuickCre
     setSending(true);
     setError(null);
     try {
-      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const startTime = new Date(`${form.date}T${form.time}`).toISOString();
-      const endTime = new Date(new Date(`${form.date}T${form.time}`).getTime() + form.duration * 60000).toISOString();
+      // THE READER'S ZONE (law `one-reader-zone`): the grid shows the user's zone, so the clicked wall
+      // time is read in that zone too — never the device's.
+      const timezone = zone;
+      const [hh, mm] = form.time.split(':').map(Number);
+      const startTime = wallTimeToUtc(form.date, hh, mm, zone) ?? new Date(`${form.date}T${form.time}`).toISOString();
+      const endTime = new Date(new Date(startTime).getTime() + form.duration * 60000).toISOString();
       const res = await fetch('/api/meetings/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -308,11 +321,12 @@ interface EventPopoverProps {
 }
 
 function EventPopover({ event, userEmail, style, onClose, onEdit, onDeleted }: EventPopoverProps) {
+  const zone = useUserZone();
   const ref = useRef<HTMLDivElement>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const isUpcoming = event.meeting_status !== 'completed';
-  const { primary } = formatMeetingTime(event.start_time, event.end_time);
+  const { primary } = formatMeetingTime(event.start_time, event.end_time, zone);
   const duration = calculateDuration(event.start_time, event.end_time);
 
   useEffect(() => {
@@ -380,7 +394,7 @@ function EventPopover({ event, userEmail, style, onClose, onEdit, onDeleted }: E
         <div className="flex items-start gap-2 text-[13px] text-neutral-600">
           <CalendarIcon className="w-4 h-4 text-neutral-400 flex-shrink-0 mt-0.5" />
           <div>
-            <div>{new Date(event.start_time).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+            <div>{dateIn(event.start_time, zone, { weekday: 'long', month: 'long', day: 'numeric' })}</div>
             <div className="text-neutral-400 mt-0.5">{primary} · {duration}min</div>
           </div>
         </div>
@@ -433,6 +447,7 @@ export default function WeekCalendar({
   userEmail,
   onRefresh,
 }: WeekCalendarProps) {
+  const zone = useUserZone();
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedEvent, setSelectedEvent] = useState<{ event: CalendarEvent; clientX: number; clientY: number } | null>(null);
   const [editEvent, setEditEvent] = useState<CalendarEvent | null>(null);
@@ -454,7 +469,8 @@ export default function WeekCalendar({
 
   useEffect(() => {
     if (!scrollRef.current || !isCurrentWeek) return;
-    const nowMinutes = (now.getHours() - START_HOUR) * 60 + now.getMinutes();
+    const nc = zonedClock(now, zone);
+    const nowMinutes = ((nc?.hour ?? now.getHours()) - START_HOUR) * 60 + (nc?.minute ?? now.getMinutes());
     const top = Math.max(0, (nowMinutes / 60) * HOUR_HEIGHT - 120);
     scrollRef.current.scrollTop = top;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -467,7 +483,8 @@ export default function WeekCalendar({
   })();
 
   const hours = Array.from({ length: TOTAL_HOURS }, (_, i) => START_HOUR + i);
-  const nowMinutesFromStart = (now.getHours() - START_HOUR) * 60 + now.getMinutes();
+  const nowClock = zonedClock(now, zone);
+  const nowMinutesFromStart = ((nowClock?.hour ?? 0) - START_HOUR) * 60 + (nowClock?.minute ?? 0);
   const nowTop = (nowMinutesFromStart / 60) * HOUR_HEIGHT;
   const showNowLine = isCurrentWeek && nowMinutesFromStart >= 0 && nowMinutesFromStart <= TOTAL_HOURS * 60;
 
@@ -546,9 +563,10 @@ export default function WeekCalendar({
             )}
 
             {days.map((day) => {
-              const dayStr = day.toDateString();
-              const isToday = dayStr === now.toDateString();
-              const dayEvents = meetings.filter(m => new Date(m.start_time).toDateString() === dayStr);
+              // Grid columns are calendar days; an event sits on the day and hour it has IN THE USER'S ZONE.
+              const dayStr = dayKeyOfLocalDate(day);
+              const isToday = dayStr === dayKeyIn(now, zone);
+              const dayEvents = meetings.filter(m => dayKeyIn(m.start_time, zone) === dayStr);
               const laid = layoutEvents(dayEvents);
               const isGhostDay = quickCreate?.dayStr === dayStr;
 
@@ -580,7 +598,7 @@ export default function WeekCalendar({
                     >
                       <p className="text-[11px] text-indigo-600 font-medium px-1.5 pt-0.5 truncate leading-tight">New meeting</p>
                       <p className="text-[10px] text-indigo-400 px-1.5 truncate">
-                        {quickCreate!.date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                        {wallClock12(quickCreate!.date)}
                       </p>
                     </div>
                   )}
@@ -588,7 +606,8 @@ export default function WeekCalendar({
                   {laid.map(({ event, col, numCols }) => {
                     const startDate = new Date(event.start_time);
                     const endDate = new Date(event.end_time);
-                    const startMins = (startDate.getHours() - START_HOUR) * 60 + startDate.getMinutes();
+                    const sc = zonedClock(startDate, zone);
+                    const startMins = ((sc?.hour ?? 0) - START_HOUR) * 60 + (sc?.minute ?? 0);
                     const durationMins = Math.max(15, (endDate.getTime() - startDate.getTime()) / 60000);
                     const top = (startMins / 60) * HOUR_HEIGHT;
                     const height = Math.max(20, (durationMins / 60) * HOUR_HEIGHT - 2);
@@ -610,7 +629,7 @@ export default function WeekCalendar({
                           <p className="text-[11px] font-semibold leading-tight truncate">{event.title}</p>
                           {height > 32 && (
                             <p className="text-[10px] leading-tight opacity-70 truncate mt-0.5">
-                              {startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                              {clockIn(startDate, zone, '12h')}
                             </p>
                           )}
                         </div>

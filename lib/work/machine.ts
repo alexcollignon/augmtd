@@ -251,7 +251,7 @@ export function deriveState(input: DeriveInputs): WorkMachineState {
   // TIME TRUTH (W2.1): an invite past its proposed start is not live either — `isLiveArtifact`
   // is the reader's ONE predicate, so the machine and every chip agree on what "prepared" means.
   const live = input.prepared.filter(isLiveArtifact);
-  // René sweep (Aug 13): an invite with no time / a forward with no recipient is staged work the
+  // Sam sweep (Aug 13): an invite with no time / a forward with no recipient is staged work the
   // send door hard-rejects — NOT send-shaped (a Send primary that cannot fire is a lie).
   const SEND_KINDS = ['reply_draft', 'nudge_draft', 'invite', 'forward'];
   // W16 · A BOOKED MEETING MOOTS A STAGED INVITE (owner walk, Sep 24 — a call already booked and
@@ -265,7 +265,7 @@ export function deriveState(input: DeriveInputs): WorkMachineState {
   // class). It is deliberately absent from SEND_KINDS — nothing here could fire.
   const document = live.find((p) => (p.kind === 'deliverable' || p.kind === 'paste_pack') && !p.decision);
   const superseded = input.prepared.some((p) => p.stale);
-  // René sweep: the deep-dive's decision card falls back to the VERDICT's own validated options —
+  // Sam sweep: the deep-dive's decision card falls back to the VERDICT's own validated options —
   // the machine must see the same material, or door and machine disagree (6 of 6 decide items on
   // a real account read "preparing" for 17 days while the door showed a live decision).
   const decisionMaterial = !!decisionBrief || (Array.isArray(v.options) && v.options.length >= 2);
@@ -276,7 +276,7 @@ export function deriveState(input: DeriveInputs): WorkMachineState {
   // ── The ladder (most-specific first; the spec's order). W14.1: every rung that rests on an artifact
   // names its kind (`leadKind`) — the row's receipt is worded by the rung, never by a second ranking. ──
   if (v.work === 'decide' && decisionMaterial && !sendShaped) return { state: 'awaiting_decision', verdictWork: v.work, primary: 'decide', leadKind: 'decision' };
-  // René sweep: the OPEN ASK outranks a staged send — the system itself says inputs are missing;
+  // Sam sweep: the OPEN ASK outranks a staged send — the system itself says inputs are missing;
   // offering Send as the primary invites sending work with known holes (12 of 19 live asks on a
   // real account sat demoted behind a Send button). The draft stays available on the door.
   if (input.liveAsk) return { state: 'awaiting_input', verdictWork: v.work, primary: 'supply', leadKind: null };
@@ -293,7 +293,7 @@ export function deriveState(input: DeriveInputs): WorkMachineState {
   // THE GROUND LAW: superseded work with nothing fresh yet = honest motion (the pass is
   // re-preparing from the new inbound) — never the staleness downgrade below.
   if (superseded) return { state: 'preparing', verdictWork: v.work, primary: 'none' };
-  // René sweep: `preparing` is TRANSIENT by spec (one pass cycle). A judgment older than 48h with
+  // Sam sweep: `preparing` is TRANSIENT by spec (one pass cycle). A judgment older than 48h with
   // nothing landed and nobody asked is not "in motion" — the machine claims nothing (unjudged)
   // rather than parading a 17-day-old verdict as activity; the verb still rides for renderers.
   if (input.judgedAt && Date.now() - Date.parse(input.judgedAt) > 48 * 3_600_000) {
@@ -453,7 +453,7 @@ export async function workStateOf(
       itemTitle = sd.subject || null;
       // A commitment-lane row (historical mirror) carries the OBLIGATION as its title — not an inbound.
       if (String(it?.source ?? '') === 'commitment') askKind = 'commitment';
-      // KNOWN GAP (René sweep): commitments carry no sent stamp anywhere yet — a sent commitment
+      // KNOWN GAP (Sam sweep): commitments carry no sent stamp anywhere yet — a sent commitment
       // nudge settles via the resolver instead of passing through `committed`.
     } else {
       const c = held?.row !== undefined

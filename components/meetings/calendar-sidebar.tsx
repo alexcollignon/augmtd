@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { useUserZone } from '@/context/user-zone-context';
+import { calendarDateIn } from '@/lib/core/user-zone';
 import Link from 'next/link';
 import { ChevronDownIcon, ChevronUpIcon, CalendarDaysIcon, ChatBubbleLeftIcon, ChevronRightIcon, ChevronLeftIcon, PlusIcon } from '@heroicons/react/24/outline';
 import { IconButton } from '@/components/ui';
@@ -65,13 +67,14 @@ function RollingWeekView({
   onRefresh?: () => void;
   focusDateStr?: string;
 }) {
+  const zone = useUserZone();
   const now = new Date();
-  const todayStr = now.toDateString();
+  const todayStr = calendarDateIn(now, zone).toDateString();
   const isFocused = focusDateStr && focusDateStr !== todayStr;
 
   if (isFocused) {
     const dayMeetings = meetings.filter(m =>
-      new Date(m.start_time).toDateString() === focusDateStr
+      calendarDateIn(m.start_time, zone).toDateString() === focusDateStr
     );
     const focusDate = new Date(focusDateStr!);
     const label = focusDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
@@ -96,8 +99,8 @@ function RollingWeekView({
   }
 
   const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(now);
-    d.setDate(now.getDate() + i);
+    const d = calendarDateIn(now, zone);
+    d.setDate(d.getDate() + i);
     d.setHours(0, 0, 0, 0);
     return d;
   });
@@ -111,7 +114,7 @@ function RollingWeekView({
   for (const m of meetings) {
     if (inProgress.includes(m)) continue;
     if (new Date(m.end_time) <= now) continue;
-    const key = new Date(m.start_time).toDateString();
+    const key = calendarDateIn(m.start_time, zone).toDateString();
     if (!byDay.has(key)) byDay.set(key, []);
     byDay.get(key)!.push(m);
   }
@@ -172,8 +175,9 @@ export default function CalendarSidebar({
   onOpenChat,
   showViewToggle,
 }: CalendarSidebarProps) {
+  const zone = useUserZone();
   const now = new Date();
-  const todayStr = now.toDateString();
+  const todayStr = calendarDateIn(now, zone).toDateString();
   const [selectedDateStr, setSelectedDateStr] = useState(todayStr);
   const [calendarView, setCalendarView] = useState<'month' | 'week'>('month');
   const [weekClosing, setWeekClosing] = useState(false);
@@ -185,7 +189,7 @@ export default function CalendarSidebar({
 
   const completedToday = meetings.filter(m =>
     m.meeting_status === 'completed' &&
-    new Date(m.end_time).toDateString() === todayStr
+    calendarDateIn(m.end_time, zone).toDateString() === todayStr
   );
 
   return (

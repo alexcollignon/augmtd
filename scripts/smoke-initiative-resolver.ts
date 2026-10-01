@@ -11,8 +11,8 @@ import { buildInitiativeMap, resolveInitiative, initiativeKey, type ResolvableAt
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 const USERS: Array<{ id: string; who: string }> = [
-  { id: '08fe4449-e5eb-431d-9156-02e9324e5903', who: 'Alexandre' },
-  { id: 'ae306f38-f312-4bf3-aef4-562331a07fab', who: 'Rene' },
+  { id: '08fe4449-e5eb-431d-9156-02e9324e5903', who: 'Alexander' },
+  { id: 'ae306f38-f312-4bf3-aef4-562331a07fab', who: 'Sam' },
 ];
 
 const CANCELED = /^canceled event:/i;

@@ -64,13 +64,88 @@ export function prepTurnText(title: string, when: string, brief: string | null |
   return `Prep for "${title}" (${when}):\n${t}`;
 }
 
+/**
+ * THE MEETING PREP COMPOSE — one reasoned pass over the room's page for one upcoming meeting (the pass
+ * below calls it; the eval measures it in-process). Returns the turn text (null = clean silence, the
+ * NOTHING sentinel) and the ONE resolved time; null when the room has no page to ground on.
+ */
+export async function composeMeetingPrep(
+  client: DBClient, userId: string, ev: { title: string; start_time: string }, entityId: string, tz: string,
+): Promise<{ text: string | null; when: string } | null> {
+  const { assembleRoomGrounding } = await import('@/lib/room/grounding');
+  const { GROUND_EVIDENCE_RULE } = await import('@/lib/room/ground-evidence');
+  const { clipForPrompt, EXCERPT_RULE } = await import('@/lib/utils/clip-for-prompt');
+  const { NARRATION_TRUTH_RULES } = await import('@/lib/entities/state');
+  const { dayStrip } = await import('@/lib/core/relative-time');
+  const g = await assembleRoomGrounding(client, userId, { kind: 'entity', entityId });
+  if (!g?.text) return null;
+  // THE ONE resolved time — the header below and the prompt here read the SAME value.
+  const when = meetingWhenLabel(ev.start_time, tz);
+  const { aiCall } = await import('@/lib/ai/call');
+  const prompt =
+      `You prepare a colleague for a meeting. Meeting: "${ev.title}" · ${when}.\n\n` +
+      // THE STATED TIME IS A FACT, NOT A QUESTION (W4 census fix #1). The clock is resolved in
+      // code, in the user's own zone; the model may never re-derive it, doubt it, or turn it
+      // into a chore. "Confirm the time" is not preparation — it is our own bug, spoken.
+      `THE MEETING'S TIME IS SETTLED: ${when} (${tz} — the user's own timezone, already ` +
+      `converted from the calendar). Treat it as the calendar's word. Never restate it ` +
+      `differently, never question it, and never write a line asking anyone to confirm, check ` +
+      `or verify the meeting's time, date, or place.\n\n` +
+      // W37 (eval prep.anticipate) · the page rode a raw 3,500-char head cut: the threads' own words sit
+      // BELOW the board, so the prep never saw "94% (target 98%)" and called the rollout on track. The page
+      // rides whole up to a real budget, clipped under the excerpt law.
+      `The next days: ${dayStrip(new Date(), tz, 14)}.\n\n` +
+      `THE ROOM'S CURRENT PAGE (ground every line here; never invent):\n${clipForPrompt(g.text.replace(/\[(?:L|F)\d+\]\s?/g, ''), 9000)}\n\n` +
+      // ONE LAW, ONE COPY (Sep 8): a meeting prep that raises a thing the user already did
+      // is the same standing lie the room's brief was told to stop telling.
+      `${GROUND_EVIDENCE_RULE}\n${EXCERPT_RULE}\n\n` +
+      `Write a SHORT prep (4-6 lines, plain prose): where this work stands, what they owe / are owed, ` +
+      `the one thing to raise (only when the page has one — else say there is nothing to raise), any open ask. Skip anything the page doesn't support. The header already ` +
+      `names the meeting and its time — do not restate them.\n` +
+      `${NARRATION_TRUTH_RULES}\n` +
+      `- THE ONE THING TO RAISE comes from the page: an open ask, a debt either way, an unresolved conflict ` +
+      `or a missed target. Never manufacture one — "ask for a status", "check whether anything is missing", ` +
+      `"confirm next steps", "ask them to send it sooner" are not preparation. A promise the other side made ` +
+      `that is not yet due (a summary coming on a date) is status, not something to raise or chase.\n` +
+      `- Skip any part that is empty — never write a "none" line, an "open ask: none" or filler.\n` +
+      // CLEAN SILENCE: the explicit nothing-path. A prep that has to invent a chore to exist
+      // should not exist.
+      `If the page holds nothing worth preparing — no open ask, nothing owed either way, no conflict, ` +
+      `a routine recurring sync, or the other side said nothing is needed from the user — answer exactly ` +
+      `{"brief": "${PREP_NOTHING}"}. Saying nothing is a correct answer; never invent a task to fill the space.\n` +
+      `JSON only: {"open": ["<each open ask, debt either way, unresolved conflict or missed target on the page, in a few words — a promise not yet due is NOT open>"], "brief": "<the prep>"}`;
+  const res = await aiCall<{ open?: unknown; brief?: string }>({
+    userId, supabase: client, shape: { output: 'json' }, temperature: 0.2, maxTokens: 600, source: 'brain_synthesis', prompt,
+  });
+  // W37 · CLEAN SILENCE, two keys: the model lists what is open on the page; an explicit empty list is
+  // silence in code — a prep that names nothing open has nothing to prepare (eval prep.anticipate, an-quiet:
+  // the model filled the "thing to raise" slot with "review the summary when it arrives").
+  const open = res.json?.open;
+  if (Array.isArray(open) && open.filter((x) => String(x ?? '').trim()).length === 0) return { text: null, when };
+  // W37 · THE FIGURES ARE STATED BY CODE (the same line the room opening carries), and a prep that adopts one of
+  // two on-record figures ("budget is set at €45,000") is re-asked once (the figures floor, adoption half).
+  let brief = String(res.json?.brief ?? '').trim();
+  const { figuresOnRecordLine, adoptsOneFigure } = await import('@/lib/entities/state');
+  const adopted = brief ? adoptsOneFigure(g.text, brief) : null;
+  if (adopted) {
+    const fix = await aiCall<{ open?: unknown; brief?: string }>({
+      userId, supabase: client, shape: { output: 'json' }, temperature: 0.2, maxTokens: 600, source: 'brain_synthesis',
+      prompt: `${prompt}\n\nYOUR PREVIOUS PREP said "${adopted}" — that treats one of two figures on record as settled. Nothing on the page settles it unless a line says one replaces the other. If they are values for the same thing, name both with who stated each and make settling which holds (with whoever stated them) the thing to raise. Same JSON.`,
+    });
+    const again = String(fix.json?.brief ?? '').trim();
+    if (again && !adoptsOneFigure(g.text, again)) brief = again;
+  }
+  const figLine = brief ? figuresOnRecordLine(g.text, brief) : null;
+  return { text: prepTurnText(ev.title, when, figLine ? `${brief}\n${figLine}` : brief), when };
+}
+
 const KIND = 'anticipation';
 /** THE PREP PROMPT'S VERSION (W2.5 — every AI cache carries a version). The meeting fire record is
  *  an exactly-once DEED key (`meeting:<id>:<start>` — lib/home/day.ts reads it by that key), so the
  *  version rides the record's payload, not its key: a record stamped under an older prompt counts
  *  as not-yet-fired and the brief is re-authored once, replacing its turn in place (the dedupe key
  *  is unchanged). Records written before the stamp read as v1. */
-export const ANTICIPATION_BRIEF_VERSION = 1;
+export const ANTICIPATION_BRIEF_VERSION = 3; // 3: W37 — the open-items key (an empty list is silence).  2: W37 — the page whole (clipped by law, not a 3,500 head cut), the narration truth rules, no manufactured "thing to raise".
 const RUN_TTL_MS = 6 * 60 * 60_000;
 // W0.5 TIME BUDGET: a short in-flight guard, NOT the 6h TTL — a killed invocation used to claim the
 // full 6h window up front (line below, pre-fix) and silently skip meeting pre-briefs/chases for 6h.
@@ -173,38 +248,10 @@ export async function runAnticipationPass(client: DBClient, userId: string): Pro
       if (!entityId) continue;
 
       try {
-        const { assembleRoomGrounding } = await import('@/lib/room/grounding');
-        const { GROUND_EVIDENCE_RULE } = await import('@/lib/room/ground-evidence');
-        const g = await assembleRoomGrounding(client, userId, { kind: 'entity', entityId });
-        if (!g?.text) continue;
-        // THE ONE resolved time — the header below and the prompt here read the SAME value.
-        const when = meetingWhenLabel(ev.start_time, tz);
-        const { aiCall } = await import('@/lib/ai/call');
-        const res = await aiCall<{ brief?: string }>({
-          userId, supabase: client, shape: { output: 'json' }, temperature: 0.2, maxTokens: 600, source: 'brain_synthesis',
-          prompt:
-            `You prepare a colleague for a meeting. Meeting: "${ev.title}" · ${when}.\n\n` +
-            // THE STATED TIME IS A FACT, NOT A QUESTION (W4 census fix #1). The clock is resolved in
-            // code, in the user's own zone; the model may never re-derive it, doubt it, or turn it
-            // into a chore. "Confirm the time" is not preparation — it is our own bug, spoken.
-            `THE MEETING'S TIME IS SETTLED: ${when} (${tz} — the user's own timezone, already ` +
-            `converted from the calendar). Treat it as the calendar's word. Never restate it ` +
-            `differently, never question it, and never write a line asking anyone to confirm, check ` +
-            `or verify the meeting's time, date, or place.\n\n` +
-            `THE ROOM'S CURRENT PAGE (ground every line here; never invent):\n${g.text.replace(/\[(?:L|F)\d+\]\s?/g, '').slice(0, 3500)}\n\n` +
-            // ONE LAW, ONE COPY (Sep 8): a meeting prep that raises a thing the user already did
-            // is the same standing lie the room's brief was told to stop telling.
-            `${GROUND_EVIDENCE_RULE}\n\n` +
-            `Write a SHORT prep (4-6 lines, plain prose): where this work stands, what they owe / are owed, ` +
-            `the one thing to raise, any open ask. Skip anything the page doesn't support.\n` +
-            // CLEAN SILENCE: the explicit nothing-path. A prep that has to invent a chore to exist
-            // should not exist.
-            `If the page holds nothing worth preparing — no open ask, nothing owed either way, a ` +
-            `routine recurring sync — answer exactly {"brief": "${PREP_NOTHING}"}. Saying nothing is ` +
-            `a correct answer; never invent a task to fill the space.\n` +
-            `JSON only: {"brief": "<the prep>"}`,
-        });
-        const text = prepTurnText(ev.title, when, res.json?.brief);
+        const composed = await composeMeetingPrep(client, userId, ev, entityId, tz);
+        if (!composed) continue;
+        const { when } = composed;
+        const text = composed.text;
         if (!text) {
           // Nothing to prepare — and nothing written. The fire record still stamps, so a quiet
           // meeting is not re-judged (and re-spent) every six hours until it starts.

@@ -1180,7 +1180,8 @@ console.log('\nT8 · THE CALM HOME — one sentence, five whispers, one door');
     && (() => {
       const i = home.indexOf('function CalmGreeting(');
       const seg = home.slice(i, home.indexOf('/** ONE WHISPERED LINE'));
-      return /\{new Date\(\)\.toLocaleDateString\(/.test(seg) && /<h1 /.test(seg) && !/<p className="text-\[13px\]/.test(seg);
+      // ⟲ RE-POINTED (W39 · ONE READER ZONE): the date paints in the USER's zone (lib/core/user-zone dateIn) — still the client's own clock, still at the first paint.
+      return /\{dateIn\(new Date\(\), zone, /.test(seg) && /<h1 /.test(seg) && !/<p className="text-\[13px\]/.test(seg);
     })()
     // the rows come from the capped pick — never a hand-sliced list
     && /pickWhispers\(flatRows\.map\(\(r\) => r\.item\), CALM_MAX_WHISPERS\)/.test(home)
@@ -1786,7 +1787,8 @@ console.log('\nT13 · THE ASK SPEAKS CONSEQUENCE — one accent, named faces');
   gate('T13.9 the LABEL still renders VERBATIM in its row (the judged inventory is never rewritten by the speech)',
     // ⟲ RE-POINTED (W13.6): the state also carries the offered base (`base: baseFiles`) — the labels
     // themselves are still written verbatim.
-    !!req && /state: \{ items: uncovered\.map\(\(m2\) => m2\.label\), taskId: null, \.\.\.\(baseFiles\.length \? \{ base: baseFiles \} : \{\}\) \}/.test(req));
+    // ⟲ RE-POINTED (W35 · INPUTS HAVE A KIND): …and marks its ANSWER rows (state.answer), labels verbatim.
+    !!req && /state: \{ items: uncovered\.map\(\(m2\) => m2\.label\), taskId: null, \.\.\.\(baseFiles\.length \? \{ base: baseFiles \} : \{\}\),/.test(req));
 
   // 2 — THE CHAT FEEL: one accent per room, the kit's own input-card grammar.
   gate('T13.10 NO amber/orange anywhere in the rail’s markup (the ask was a second focus point)',
@@ -2439,7 +2441,9 @@ console.log('\nT16 · THE INVITE CARD — filled, selectable in-card, committed 
     && /dateStatedInText\(text, parts\.dateStr\) && timesInText\(text\)\.includes\(parts\.hhmm\)/.test(preparer)
     // The check moved INSIDE the one grounding (`groundInviteFromText`) when the chat lane joined
     // it — same strictness, one seat: whatever the source text is, every candidate passes it.
-    && /if \(!statedSlot\(sourceText, s, timezone\)\) continue;/.test(preparer));
+    // ⟲ RE-POINTED W27: the check now reads the words in the zone the slot was STATED in (the user's
+    // zone unless the source names another — W27.B wall-clock conversion); same strictness, one seat.
+    && /if \(!statedSlot\(sourceText, s, slotZone\)\) continue;/.test(preparer));
   gate('T16.10 the alternatives ride the preparer’s OUTPUT (its judgment is one pass, unchanged) and survive the stored artifact round-trip',
     !!preparer && /alternatives\?: InviteSlot\[\]/.test(preparer)
     && /Array\.isArray\(stored\.alternatives\)/.test(preparer));
@@ -3299,7 +3303,8 @@ console.log('\nT21 · THE HOME PAINTS FIRST — the read path carries only the r
     && !/\[0, 1, 2, 3, 4\]\.map/.test(home)
     && !/h-\[52px\] rounded-2xl border border-neutral-200\/70 bg-white\/60 animate-pulse/.test(home)
     // the facts the client already holds still paint with the first stagger step; only claims wait
-    && /toLocaleDateString\('en-US', \{ weekday: 'long', month: 'long', day: 'numeric' \}\)/.test(home)
+    // ⟲ RE-POINTED (W39 · ONE READER ZONE): the same date, formatted in the user's zone
+    && /dateIn\(new Date\(\), zone, \{ weekday: 'long', month: 'long', day: 'numeric' \}\)/.test(home)
     && /\{greeting\(\)\}/.test(home)
     && /entrance\.veil\(0\)/.test(home));
 }
@@ -3383,7 +3388,6 @@ console.log('\nT22 · THE GROUND EVIDENCE + ONE AGENDA AT THE RENDER — the roo
   {
     const FRAME_SITES: Array<[string, string]> = [
       ['lib/room/brief.ts', 'the room’s composed opening'],
-      ['lib/entities/ask.ts', 'answerEntityQuestion — the room’s Q&A'],
       ['lib/home/ask.ts', 'the Home ask’s FOCUSED WORK block (answerHomeQuestion + converse’s global grounding)'],
       ['lib/converse/index.ts', 'the chief’s agent loop'],
       ['lib/work/worker-grounding.ts', 'a coworker’s focused project page'],
@@ -3522,7 +3526,7 @@ console.log('\nT23 · THE ROOM THAT KEPT ASKING — the world is read, the settl
       })());
     gate('T23.2 ONE CLIPPER — every ledger consumer routes through it; no raw head-cut of a ledger line survives',
       !!now && /export function clipLedgerLine\(/.test(now) && /export function nowClause\(/.test(now)
-      && !!state && state.includes('clipLedgerLine(l.text, 200)') && !/l\.text\.slice\(0, 200\)/.test(state)
+      && !!state && /clipLedgerLine\(l\.text, (?:200|LEDGER_GIST_CHARS \+ 120)\)/.test(state) && !/l\.text\.slice\(0, \d+\)/.test(state) /* W37: the state reads a wider, named width */
       && !!grounding && grounding.includes('clipLedgerLine(l.text, 200)') && !/l\.text\.slice\(0, 200\)/.test(grounding));
     gate('T23.2b the clause has ONE author — the marker and the sentence live beside the read that makes them',
       !!now && /export const NOW_CLAUSE_MARK =/.test(now)
@@ -4337,7 +4341,7 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
 
   gate('T27.11 THE AGNOSTIC CLAUSE — the lane names no sender, token, vendor or language',
     !!exp && !/augmtd|gmail|outlook|@[a-z0-9-]+\.(com|pt|de)/i.test(exp.replace(/@\/lib\/[a-z-/]+/g, ''))
-    && !/\b(condominium|invoice number|AHK|iScore)\b/i.test(exp));
+    && !/\b(condominium|invoice number|Chamber|Bureau)\b/i.test(exp));
 
   gate('T27.12 RETRO-REPAIR BY LAW — the same lane over the backlog, dry-run by default, guarded',
     (() => {
@@ -4523,7 +4527,7 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
       const i = rail!.indexOf('const focusCard = (key: string) => {');
       const seg = rail!.slice(i, i + 460);
       return /setPulseCard\(key\)/.test(seg) && /scrollIntoView/.test(seg)
-        && !/setFocus|onStage|router\.push/.test(seg);
+        && !/seNorthwind|onStage|router\.push/.test(seg);
     })());
 
   // 3 — THE ROOM SPEAKS ONCE (the retirements, asserted from the room's side too)
@@ -4626,7 +4630,7 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     && /if \(stage === 'reply' \|\| !href\.includes\('kind=email'\)\) return true;/.test(room)
     && /THE ROOM NEVER RAISES A REPLY COMPOSER/.test(room)
     // …and the only remaining stage intents are the two whose cards are not in the thread yet
-    && /setFocusStage\(stage === 'forward' \? 'forward' : 'invite'\)/.test(room));
+    && /seNorthwindStage\(stage === 'forward' \? 'forward' : 'invite'\)/.test(room));
   gate('T28.31 THE SHAPE RIDES THE KEY — a room payload’s shape change invalidates every cached envelope (no stale-shape first open)',
     (() => {
       const warm = read('lib/room/warm-room.ts') ?? '';
@@ -5216,7 +5220,10 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
       return i > 0
         // the pinned branch carries NO preamble and NO subject — just the forward question
         // ⟲ RE-POINTED W19: the invitation is the ONE producer's constant (OPENER_INVITE).
-        && /if \(pinned\) return \/\\\?\\s\*\$\/\.test\(pinned\.trim\(\)\) \? null : OPENER_INVITE;/.test(seg)
+        // ⟲ RE-POINTED (UI walk, Oct 1): the summary is a pinned position too — whatever STANDS
+        // pinned (the brief, else the summary the seat speaks), the opener is purely the invitation.
+        && /const standing = pinned \|\| sum;/.test(seg)
+        && /if \(standing\) return \/\\\?\\s\*\$\/\.test\(standing\.trim\(\)\) \? null : OPENER_INVITE;/.test(seg)
         && /export const OPENER_INVITE = 'What do you want to pick up\?';/.test(read('components/home/room-chat.ts') ?? '')
         // …and it is still derived, with no second composed voice behind it
         && !/fetch\(/.test(seg) && !/await /.test(seg)
@@ -6973,6 +6980,8 @@ console.log('\nT39 · THE TYPE-IT DOOR — an ask answered by saying the fact');
       ['PT', 'O IBAN da conta'], ['PT', 'A morada de entrega'], ['PT', 'O número de contribuinte'],
       ['DE', 'Die IBAN'], ['DE', 'Die Lieferadresse'], ['DE', 'Der Ansprechpartner'],
       ['FR', 'L’IBAN'], ['FR', 'Le montant exact'], ['FR', 'La date de livraison'],
+      // W39 · a figure ON a document is a fact (said, not attached)
+      ['EN', 'The invoice number'], ['PT', 'O número da fatura'], ['DE', 'Der Rechnungsbetrag'], ['FR', 'Le montant du contrat'],
     ];
     const wrongDoc = DOCS.filter(([, l]) => askItemShape(l) !== 'document').map(([g, l]) => `${g}:${l}`);
     const wrongFact = FACTS.filter(([, l]) => askItemShape(l) !== 'fact').map(([g, l]) => `${g}:${l}`);
@@ -6991,13 +7000,16 @@ console.log('\nT39 · THE TYPE-IT DOOR — an ask answered by saying the fact');
       && saidItLabels(['The IBAN'], '').length === 0);
   }
 
-  gate('T39.10 OPTIONS STAY OPEN — `lead` only REORDERS: Attach and Type it are in BOTH branches of the row’s door list, and nothing in the leaf can drop a door the host handed over',
+  // ⟲ RE-POINTED (W39, walk Oct 1 — "Type it" offered for a signed contract): the INPUT'S KIND
+  // drives the doors. A fact row keeps all three; a document row is answered by the file — Attach ·
+  // Point me to it, and Type it only when no other door stands (never a dead row).
+  gate('T39.10 THE KIND DRIVES THE DOORS — a fact row offers Type it · Attach · Point me to it; a document row offers Attach · Point me to it and no Type it while either stands',
     (() => {
       const list = (rows.match(/const doorList = [\s\S]*?\: \[\];/) ?? [''])[0];
       const fact = (list.match(/d\.lead === 'fact'[\s\S]*?\]\s*\n\s*\/\/ A DOCUMENT/) ?? [''])[0];
       const doc = list.slice(list.indexOf('// A DOCUMENT'));
       return /canType \?/.test(fact) && /d\.onAttach \?/.test(fact)
-        && /canType \?/.test(doc) && /d\.onAttach \?/.test(doc)
+        && /canType && !d\.onAttach && !d\.onPointToIt \?/.test(doc) && /d\.onAttach \?/.test(doc)
         && /d\.onPointToIt \?/.test(fact) && /d\.onPointToIt \?/.test(doc);
     })());
 
@@ -7006,7 +7018,8 @@ console.log('\nT39 · THE TYPE-IT DOOR — an ask answered by saying the fact');
     && /<AskRows rows=\{card\.items\} \{\.\.\.\(card\.rowDoors \? \{ doors: card\.rowDoors \} : \{\}\)\} \/>/.test(cards)
     && /spec\.items\.length\s*\?\s*\{ rowDoors \}/.test(host)
     // the host still hands a shaped lead per row, from the ONE predicate
-    && /lead: askItemShape\(label\)/.test(host));
+    // ⟲ RE-POINTED (W35): an engine-judged ANSWER row leads with the type-it door; every other row by the ONE predicate
+    && /lead: spec\.answers\?\.includes\(label\) \? 'fact' : askItemShape\(label\)/.test(host));
 
   gate('T39.12 THE ROWS LEAF STAYS PRESENTATIONAL — a field and a callback, never a fetch, a router or a client of its own',
     !/fetch\(|supabase|useRouter|next\/navigation/.test(rows)

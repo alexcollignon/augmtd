@@ -15,6 +15,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { getPersonEntities, resolveIdentity } from '@/lib/entities/people';
 import { vetDraft } from '@/lib/prepare/truth';
+import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 
 export type EvalVerdict = {
   verdict: 'pass' | 'revise' | 'flag' | 'needs_input';
@@ -77,6 +78,10 @@ export async function evaluateDeliverable(admin: SupabaseClient, userId: string,
    *  them. Absent → the floor is off (a heuristic never speaks without its facts). */
   obligationOpen?: boolean;
   staged?: boolean;
+  /** W28.5 · THE REVIEWER READS THE BRIEF (eval: hand-offs filled table cells and posts with facts the
+   *  notes never gave, and the review — which saw only the artifact — passed them). The brief the author
+   *  was handed (its task + material); a fact the artifact adds beyond it is "invents a fact". */
+  brief?: string | null;
 }): Promise<EvalVerdict> {
   try {
     // Structural, before the review; the caller's capped revision regenerates it complete (or it
@@ -148,12 +153,20 @@ export async function evaluateDeliverable(admin: SupabaseClient, userId: string,
     }
 
     const res = await aiCall<{ verdict?: string; objection?: string; missing?: unknown[] }>({
-      userId, supabase: admin, shape: { output: 'json' }, temperature: 0, maxTokens: 200, source: 'task_preparation',
+      userId, supabase: admin, // W28.6 — a review AGAINST A BRIEF is a fact check (every figure, cause, timing, quote in the
+      // artifact traced to the brief): it runs on the tier's strongest reasoner, not the fast JSON slot
+      // (eval: the fast slot passed posts that added a before-state and a timing the brief never gave).
+      shape: args.brief ? { output: 'json', reasoning: 'deep' } : { output: 'json' }, temperature: 0, maxTokens: args.brief ? 600 : 200, source: 'task_preparation',
       prompt: `You are a chief of staff reviewing a colleague's prepared ${args.kind} before it reaches your principal's desk.\n\n` +
         `PREPARED FOR THE TASK: ${args.task.slice(0, 160)}\n` +
         (args.recipient ? `INTENDED RECIPIENT: ${args.recipient.slice(0, 120)}\n` : '') +
         (dealBlock ? `${dealBlock}` : '') +
-        `\nTHE ARTIFACT:\n${args.content.slice(0, 2500)}\n\n` +
+        (args.brief ? `\nTHE BRIEF THE AUTHOR WAS GIVEN (its task and material — ${EXCERPT_RULE}):\n${clipForPrompt(args.brief, 8000)}\n` +
+          `A fact in the artifact (a figure, price, feature, cause, timing, quote or event) that this brief does not support is "invents a fact" — unless the brief asked for research and the fact names its source.\n` : '') +
+        // W28.7 — the artifact reaches the reviewer through the excerpt law (a boundary cut that SAYS it
+        // was cut, a real budget): the raw 2,500-char slice ended long tables mid-row with no mark, and the
+        // reviewer then "found" the deliverable cut off and sent it back (the mis-firing cut-off objection).
+        `\nTHE ARTIFACT:\n${clipForPrompt(args.content, 12000)}\n(${EXCERPT_RULE})\n\n` +
         `Judge it:\n` +
         `- "pass" — it serves the task, fits the recipient, respects the deal's rules. The BAR IS USEFUL, not perfect: style nits are a pass.\n` +
         `- "revise" — a fixable substantive problem (wrong recipient/framing, violates a stated rule, misses the task, invents a fact). State the ONE objection to fix.\n` +

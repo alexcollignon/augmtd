@@ -1,7 +1,7 @@
 {
  "$schema_note": "THE LAWS REGISTRY (W1.4, Sep 22 2026). Machine-readable source of truth; docs/laws-registry.md is rendered from it; scripts/smoke-laws.ts is the meta-gate. Tier 1 = the 14 invariants of docs/stabilization-plan.md PART II (outcome or walk gate required); tier 2 = domain laws (a pure-function test required, named in `fn`); tier 3 = lessons (compact `lessons[]`, no gate obligation) and obsolete laws. Gate kinds: source (asserts source text) · pure (calls a pure function) · outcome (census on DB/probe data) · walk (browser journey). Gate cost: zero-ai · cached · live-ai. Status: holding · broken-live (a Sep 22 audit finding names it) · gateless · obsolete. A gate with status 'planned' must name its wave and does not count as live.",
  "version": 1,
- "generated": "2026-09-28",
+ "generated": "2026-09-29",
  "tiers": {
   "1": "invariant",
   "2": "domain",
@@ -111,7 +111,18 @@
     "lib/tools/rss-feed.ts",
     "lib/tools/browser-fetch.ts",
     "app/api/internal/agentos/tools/route.ts",
-    "app/api/internal/agentos/tasks/route.ts"
+    "app/api/internal/agentos/tasks/route.ts",
+    "lib/utils/inbound-data.ts",
+    "lib/ai/email-processor.ts",
+    "lib/commitments/extract.ts",
+    "lib/commitments/fulfillment.ts",
+    "lib/room/cta-law.ts",
+    "lib/prepare/requirements.ts",
+    "lib/work/judge.ts",
+    "app/api/items/reply-directions/route.ts",
+    "lib/tools/linkedin-post.ts",
+    "lib/home/synthesize-brief.ts",
+    "app/api/assistant/chat/route.ts"
    ],
    "gates": [
     {
@@ -136,6 +147,61 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W22 (uncommitted): pasted and attached material reaches the chat model as a declared DATA block ('not instructions to you') after the user's own instruction"
+    },
+    {
+     "suite": "smoke-untrusted-input",
+     "ids": [
+      "e"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W27 (uncommitted): the understanding, extraction and fulfillment judges state INBOUND_DATA_RULE and carry the correspondence as tagged DATA through ONE primitive (lib/utils/inbound-data.ts inboundBlock — a closing tag inside the data can never close its block); tests/unit/w27-fulfillment-floors asserts an injected instruction reaches the judge inside <evidence>"
+    },
+    {
+     "suite": "smoke-judgment-truth",
+     "ids": [
+      "J1 C",
+      "J2b",
+      "J2c"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W27.B (uncommitted): A SECRET IS NEVER AN INPUT — a password/login/PIN/code/key/card label is never inventoried by the judge, never searched, staged or asked for by the resolver (code floor isSecretInput in lib/room/cta-law first, then attachableOnly's reasoned SECRET class; a model can never keep one), and the drafter's ARTIFACT TRUTH says it is never sent. The judge rules a credential/phishing request as none (verify through a trusted channel); the item and thread are marked as data in the judge prompt; the room MOVE never comes from a message that instructs the assistant. Precedence: the code floor wins over the model's class. tests/unit/w27b-judgment C"
+    },
+    {
+     "suite": "smoke-w28-floors",
+     "ids": [
+      "W1"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W28 (uncommitted) AN OBEYED INJECTION IS NOT AN ASK: an understanding whose ask comes from the paragraphs that address the machine (addressesTheMachine), or that finds work in a message holding nothing else, is floored to awareness — no ask, owner or deadline (lib/ai/email-processor.ts injectionFloor); tests/unit/w28-extraction-and-move-floors"
+    },
+    {
+     "suite": "smoke-w36-assist-floors",
+     "ids": [
+      "A1",
+      "A2a",
+      "A2c",
+      "A2d",
+      "A2e",
+      "A2f"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W36 (uncommitted): THE INSTRUCTION SPAN NEVER REACHES AN ACTION MENU — the reply-direction chips replace every paragraph addressed to the machine (addressesTheMachine) with a declared note (lib/utils/inbound-data.ts withholdMachineParagraphs) and carry the email as an inboundBlock under INBOUND_DATA_RULE; the Home synthesis marks sender snippets as data and states the risky-ask rule; the LinkedIn workflow step carries the upstream step's content as a declared <source_content> block; the sidebar clips the focused email under the excerpt law as data. Precedence: the code floor wins over the prompt rule. tests/unit/w36-assist-floors. Measured by eval-surfaces (reply.directions rd-injected/rd-bank, home.synthesis hs-injected, workflow.linkedin li-injected, sidebar.chat sb-injection)."
+    },
+    {
+     "suite": "smoke-w36-sent-floors",
+     "ids": [
+      "S1",
+      "S2a",
+      "S2f",
+      "S2g"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W36 SENT IN THE USER'S NAME: a sentence addressed to the assistant/AI/system is removed (declared mark) from the thread, document and Slack material a writer reads (withoutMachineAddressed); tests/unit/w36-sent-floors"
     }
    ],
    "version_key": null,
@@ -524,7 +590,7 @@
    ],
    "tier": 1,
    "domain": "truth",
-   "statement": "Nothing — chip, brief, narration, chat answer — claims prepared work that no surface renders; a claim without a card does not compose. W14.1: the inbox reader's obligation is the understanding's (`inboxTruthFacts` — you_owe opens the completion and chase vets, as on a you_owe commitment), and a machine reply draft's attachment on an inbox item is re-proven like a commitment doc-send's (an unstamped file match no current-law resolver row proves is withdrawn, and the re-prepare trip re-verifies it).",
+   "statement": "Nothing — chip, brief, narration, chat answer — claims prepared work that no surface renders; a claim without a card does not compose. W14.1: the inbox reader's obligation is the understanding's (`inboxTruthFacts` — you_owe opens the completion and chase vets, as on a you_owe commitment), and a machine reply draft's attachment on an inbox item is re-proven like a commitment doc-send's (an unstamped file match no current-law resolver row proves is withdrawn, and the re-prepare trip re-verifies it). W39: the item page's own exchange (narration and answers after the reader's first word) passes a render-time net — a sentence claiming a prepared thing (first person, a named actor, or the passive \"is drafted / ready to review\") whose kind the action seat does not render is withheld, and the host makes one seat-only re-read (lib/room/seat-claims.ts dropUnseatedClaims).",
    "homes": [
     "app/api/home/brief/route.ts",
     "components/home/item-detail.tsx",
@@ -552,7 +618,8 @@
     "components/home/home-ask.tsx",
     "lib/present/converse-stream.ts",
     "lib/skills/for-turn.ts",
-    "lib/skills/followed.ts"
+    "lib/skills/followed.ts",
+    "lib/room/seat-claims.ts"
    ],
    "gates": [
     {
@@ -720,6 +787,16 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W21 (uncommitted) SKILLS IN CHAT — A CLAIM RENDERS for skills: every chat answer (Home ask, item/project steer, coworker DM) resolves its skills through ONE resolver (lib/skills/for-turn.ts: the addressed actor's assigned skills — the chief is the cos seat's custom_agents row — plus this message's adds, minus its skips) and mounts them through ONE renderer (lib/work/worker-skills-context.ts renderSkillsBlock, clipped under the excerpt law, voiced as the user's own instructions); an answer's `skillsFollowed` is the model's [[skills_applied:…]] report FLOORED to the skills actually loaded into that prompt (lib/skills/followed.ts) — never a skill that was not loaded; the marker never reaches a surface (stream filter + answer-door strip); room answers record it in one companion row (a component would break the chat boundary). tests/unit/skills-chat drives both chief doors over an in-memory DB with the core stubbed"
+    },
+    {
+     "suite": "smoke-w39-walk-floors",
+     "ids": [
+      "W1",
+      "W2d"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W39: dropUnseatedClaims withholds a draft claim the seat does not render and keeps it once the card does; offers/questions untouched"
     }
    ],
    "version_key": null,
@@ -734,6 +811,10 @@
     {
      "law": "open-ask-outranks-staged-send",
      "precedence": "same chain: floor → ladder pick → single claim"
+    },
+    {
+     "law": "no-mutation-and-address",
+     "precedence": "W39: the claim yields to the seat — withheld while the seat is empty, shown once the empty-seat fill seats its card; never by swapping a painted widget"
     }
    ],
    "note": "W13.6 (owner walk after W13.5): the live engine ask said \"I have the details on slides 7&8 … ready to go\" over work nobody had started (the composer's words were never checked, and the doc-send lane re-posted an ARCHIVED ask's words); the ask did not render (the lane's generic label \"the document itself\" was mooted by the verdict-drift rule while the brief's grounding still read it as open); and \"Clara found the file and drafted the send\" stood live over a send already filed. Fixed by W13.6 (uncommitted). W19.2a (owner walk Sep 28): a project-room catch-up was routed to a 7-day recordings read; its zero-row card stood under a framing sentence that replaced the answer on reload. Fixed by W19.2a (uncommitted)."
@@ -841,7 +922,11 @@
     "app/api/cron/draft-sweep/route.ts",
     "app/api/cron/commitments-sweep/route.ts",
     "lib/deeds/held-words-bulk.ts",
-    "components/home/paste-material.ts"
+    "components/home/paste-material.ts",
+    "lib/commitments/extract.ts",
+    "lib/work/judge.ts",
+    "lib/prepare/requirements.ts",
+    "lib/work/surface-registry.ts"
    ],
    "gates": [
     {
@@ -933,6 +1018,27 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W22.B A LONG PASTE IS MATERIAL: a paste over 2,000 characters becomes a chip sent WHOLE as material (the `pasted` field + the attachments bridge); a paste over the 20,000-character limit is refused at the composer with its size and the limit stated — nothing is cut quietly"
+    },
+    {
+     "suite": "smoke-extraction-truth",
+     "ids": [
+      "W4",
+      "W5"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W27 (uncommitted): the commitment extraction call no longer reads a truncated/unparseable answer as 'no commitments' — budget 1600 → one retry at 3200 → complete items salvaged and the rest LOGGED as left behind (extractWithRetry, injected call)"
+    },
+    {
+     "suite": "smoke-judgment-truth",
+     "ids": [
+      "J1 D",
+      "J2b",
+      "J2c"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W27.B (uncommitted): the requires inventory had a silent `.slice(0, 5)` in the judge AND the resolver (an RFP listing 7 lost the 3 genuinely missing documents). One budget (REQUIRES_BUDGET = 12, lib/work/surface-registry) — the judge reports the remainder on the verdict (`requiresLeftBehind`), the resolver on its result (`leftBehind`) and in the ARTIFACT TRUTH ('NOT CHECKED … NOT in hand'). tests/unit/w27b-judgment D"
     }
    ],
    "version_key": null,
@@ -954,7 +1060,7 @@
    ],
    "tier": 1,
    "domain": "surfaces",
-   "statement": "The first paint is the truth — a served surface never changes in place while read (recompute lands on next open or as an append); and every thread owns a URL that survives refresh and never renders under an address that says otherwise.",
+   "statement": "The first paint is the truth — a served surface never changes in place while read (recompute lands on next open or as an append); and every thread owns a URL that survives refresh and never renders under an address that says otherwise. W39 (owner-approved, Oct 1 — the item room lost its draft after an answered ask): an EMPTY action seat (no draft, ask, decision or other action card painted) is a skeleton — a held landing may fill THAT SEAT ONLY (the fields that choose and carry the action widget), never the words the reader met, never a painted widget and never a reserved placeholder (lib/room/no-mutation.ts mayFillEmptySeat · fillEmptySeat; the rail reports the seat it painted). W39c: an EMPTY conversation (no turn painted) and a seat still being judged (machine state preparing/unjudged) are skeletons too — capped beats re-read until the first turn / the settled state lands (filling only, never replacing); the reader's own deed turns (a typed answer, a go-ahead) re-read the conversation at once, persist across refresh in order, are never read as an orphan question, and the work they produced is seated after them.",
    "homes": [
     "lib/room/no-mutation.ts",
     "lib/room/project-href.ts",
@@ -974,7 +1080,10 @@
     "lib/work-items/gantt-date.ts",
     "components/entities/gantt-chart.tsx",
     "components/thread/markdown-view.tsx",
-    "components/home/chat-flight.ts"
+    "components/home/chat-flight.ts",
+    "components/home/item-detail.tsx",
+    "components/home/item-rail.tsx",
+    "components/home/room-chat.ts"
    ],
    "gates": [
     {
@@ -1098,6 +1207,20 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W22.B THE STREAM NEVER REMOUNTS + NEVER A SILENT RING: every prefix of a streamed answer leaves its painted blocks identical (blocks keyed by position; only the last grows); the in-flight tokens and the seated answer share one renderer; the stage speaks in the one working line, 'still working' past 20 s, a 120 s client abort, and a stream without its done frame is a failure line with Retry — never a fake answer"
+    },
+    {
+     "suite": "smoke-w39-walk-floors",
+     "ids": [
+      "W1",
+      "W2a",
+      "W2b",
+      "W2c",
+      "W2e",
+      "W2m"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W39 THE EMPTY ACTION SEAT IS A SKELETON: tests/unit/w39-walk-floors calls mayFillEmptySeat/fillEmptySeat and composeItemPage on the filled view (the draft card seats; the opening keeps its words); the seats assert the item view's fill, the three doors' seat reports and the empty-draft seed"
     }
    ],
    "version_key": null,
@@ -1116,6 +1239,10 @@
     {
      "law": "one-production-door",
      "precedence": "replace-in-place is allowed only as the consequence of the user's own action on that surface; engine regeneration appends or versions"
+    },
+    {
+     "law": "a-claim-renders",
+     "precedence": "W39: an EMPTY seat yields to the truth — a held landing fills an empty action seat (seat fields only) so a claim and its card arrive together; a painted widget still never swaps, and a claim the seat cannot show is withheld until it can (lib/room/seat-claims.ts)"
     }
    ]
   },
@@ -1138,7 +1265,10 @@
     "lib/ai/defaults.ts",
     "lib/ai/bedrock-adapter.ts",
     "lib/ai/bedrock-embeddings.ts",
-    "lib/ai/call.ts"
+    "lib/ai/call.ts",
+    "lib/ai/bedrock-converse.ts",
+    "lib/ai/bedrock-residency.ts",
+    "lib/ai/model-choice.ts"
    ],
    "gates": [
     {
@@ -1163,6 +1293,26 @@
      "suite": "smoke-ai-routing",
      "kind": "outcome",
      "cost": "live-ai"
+    },
+    {
+     "suite": "smoke-bedrock-residency",
+     "ids": [
+      "R1",
+      "R2",
+      "R3"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W31 EU residency floor: bedrock tier defaults + documented override targets are in-region or eu. (never global./us.); an EU-region adapter refuses a non-EU profile before sending"
+    },
+    {
+     "suite": "smoke-producer-model",
+     "ids": [
+      "M2b"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W36 (uncommitted): every EU tier × slot × producer with every model level (tenant producer, tier producer, tenant slot) pointed out of the perimeter still resolves to EU-resident Bedrock — refused levels fall through, the resolver fails closed"
     }
    ],
    "version_key": null,
@@ -1188,7 +1338,8 @@
     "lib/utils/clip-for-prompt.ts",
     "lib/converse/index.ts",
     "lib/home/delegate.ts",
-    "lib/workflows/reactions.ts"
+    "lib/workflows/reactions.ts",
+    "lib/utils/inbound-data.ts"
    ],
    "gates": [
     {
@@ -1249,6 +1400,12 @@
      "kind": "source",
      "cost": "zero-ai",
      "note": "W22 (uncommitted): both chat doors cut long input with clipForPrompt (the raw 20k/8k slices are gone); the conversation's history beyond its budget is declared on the context page"
+    },
+    {
+     "suite": "smoke-excerpt-law",
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W27 (uncommitted): THE NEWEST WORDS SURVIVE THE CUT — clipEndsForPrompt keeps the opening and the END of a message under the ONE house mark (the head segment ends in it, so EXCERPT_RULE covers it verbatim); the census counts clipEndsForPrompt/inboundBlock callers; extract.ts + fulfillment.ts join the W2.7 ASSEMBLERS floor; the understanding pass's private '[... truncated for length ...]' head-cut and the refresh seam's pre-clip are gone. tests/unit/w27-understanding-extraction proves the closing ask survives"
     }
    ],
    "version_key": null,
@@ -1270,11 +1427,12 @@
     "T-CLASS",
     "THE CLOCK REACHES FRAME CHROME",
     "NEVER MODERNIZE",
-    "THE YEAR-TRANSPOSITION CLASS"
+    "THE YEAR-TRANSPOSITION CLASS",
+    "ONE READER ZONE"
    ],
    "tier": 1,
    "domain": "time",
-   "statement": "No served claim is false about time — no past slot proposed, no expired window treated as live, no year transposed, no date derived by a model where code can compute it.",
+   "statement": "No served claim is false about time — no past slot proposed, no expired window treated as live, no year transposed, no date derived by a model where code can compute it — and the same event never shows two times: every surface renders event times and days in the user's one zone (served by the shell; the device zone only when none is known), with one quiet hint when the device disagrees.",
    "homes": [
     "lib/calendar/schedule-window.ts",
     "lib/frames/generate-frame.ts",
@@ -1297,7 +1455,19 @@
     "lib/work/obligation-anchor.ts",
     "lib/core/zoned-time.ts",
     "lib/home/prepare-action.ts",
-    "lib/prepare/schedule-offer.ts"
+    "lib/prepare/schedule-offer.ts",
+    "lib/commitments/extraction-truth.ts",
+    "lib/room/voice.ts",
+    "lib/core/iso-dates.ts",
+    "components/thread/markdown-view.tsx",
+    "components/thread/thread-timeline.tsx",
+    "lib/core/user-zone.ts",
+    "context/user-zone-context.tsx",
+    "components/one/zone-hint.tsx",
+    "app/(main)/layout.tsx",
+    "components/meetings/meetings-home.tsx",
+    "components/meetings/week-calendar.tsx",
+    "lib/types/meetings.ts"
    ],
    "gates": [
     {
@@ -1394,6 +1564,15 @@
      "note": "W19.A: an overdue COUNT ('nine days overdue', '9 dias de atraso', 'seit 5 Tagen überfällig', '4 jours de retard') served on a later day is rewritten to its deadline's date ('overdue since Sep 18') or withheld when vague/unanchored; the compose-time belt dates it before storing; the entity state summary passes the floor where W19.A serves it"
     },
     {
+     "suite": "smoke-time-words",
+     "ids": [
+      "E1-E8"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W39 THE ISO-DATE FLOOR (browser walk Oct 1: 'asked on 2026-09-30'): an ISO date (YYYY-MM-DD, optional time + zone) in served model prose is rewritten into the reader's language and locale format — weekday + month names EN·FR·DE·PT·ES, the year only when not the serving year, a zoned instant in the reader's zone — never inside code, URLs/link targets, filenames/identifiers or quoted source (blockquotes, quoted spans). One home (lib/core/iso-dates localizeIsoDates), carried by serveTimeWords (so every served cached sentence passes: room brief, entity state, Home briefing + brief line), the anchor ask (spokenIsoDates delegates), and at render in the one chat markdown renderer and the thread's pinned/actor prose; tests/unit/iso-dates"
+    },
+    {
      "suite": "smoke-rib-class",
      "ids": [
       "C2",
@@ -1432,6 +1611,54 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W20.B (uncommitted) A STATED ZONE IS A PLACE + THE SCHEDULE OFFER (owner walk Sep 28: \"Oct 12, 9.30 am CET\" was stored 08:30Z; Paris is on CEST that day → 07:30Z; and the counterparty's stated call time got no invite because the item was judged chase): a named zone abbreviation (CET/CEST/WET/WEST/GMT/BST/EST/EDT/PT…) resolves through its IANA region ON THAT DATE (lib/core/zoned-time, DST-true across every edge) — the invite grounding's post-model floor (correctStatedZone) re-resolves the slot and its alternatives; a newest-inbound concrete future meeting time with nothing booked with the counterparty ±12h prepares an invite beside the verdict's work (lib/prepare/schedule-offer — deterministic, zero AI, idempotent, never over another invite or a booking, withdrawn when the thread moves), kept by the verdict's hygiene, and the item page leads with it as its ONE widget. tests/unit/zoned-time + tests/unit/schedule-offer"
+    },
+    {
+     "suite": "smoke-extraction-truth",
+     "ids": [
+      "W1",
+      "W2",
+      "W3"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W27 (uncommitted): THE WEEKDAY SNAP — a model due date within the coming week whose weekday the source never names is snapped by code to the ONE weekday the quote/own words name (Intl-generated EN/PT/DE/FR/ES/IT/NL names); a past due the source itself states (day number present, any language) survives the due-before-source floor instead of being erased"
+    },
+    {
+     "suite": "smoke-timeline-truth",
+     "ids": [
+      "F5",
+      "F6"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W27 (uncommitted): THE DEED-SCOPED DATE gains a language-agnostic path — the judge's verbatim due_quote, code-checked (in the message · states the date · no time of day = not a meeting line); PT/FR/DE re-dates no longer drop. Precedence: the stem test first, the quote path second, never a free model date"
+    },
+    {
+     "suite": "smoke-judgment-truth",
+     "ids": [
+      "J1 A",
+      "J1 B",
+      "J2a",
+      "J2e"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W27.B (uncommitted): THE WALL CLOCK IS THE MODEL'S, THE INSTANT IS CODE'S — the invite grounding's model reports start_local as stated + the zone the source names; code resolves that zone only when the source's words carry it (resolveStatedZone) and converts DST-true (wallClockToInstant), else the USER's zone — never the server's (the old offset-less `new Date()` read UTC on Vercel); a slot before now is refused (the honest partial); the source keeps its TAIL (newest words), declared. The schedule-offer trigger reads EN/FR/PT/DE/ES dates, weekdays, tomorrow/today, 24h + am/pm ('9:30' · '9.30' · '9h30' · '15h' · '15 Uhr'), never after a deadline word. TEAM_VOICE no longer teaches 'nine days ago'. tests/unit/w27b-judgment A/B/F"
+    },
+    {
+     "suite": "smoke-w28-floors",
+     "ids": [
+      "W1"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W28 (uncommitted) THE WEEKDAY SNAP HOLDS AT ANY HOUR: a list number (\"1.\") is never a date’s day number (dateStatedExplicitly), the quote’s one weekday is the deadline however far the model slipped (snapWeekdayDue), and the extraction prompt carries the coming seven days; every day-based date law (and the understanding's reference day) reads the source's LOCAL day in the user's zone (localDayAnchor, userDayString), never the UTC or server day on the snap’s own day basis; tests/unit/w28-extraction-and-move-floors"
+    },
+    {
+     "suite": "smoke-reader-zone",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "Oct 1 walk: Home 10:00 vs Meetings 11:00 for one event (server user zone vs device zone). One served zone (lib/utils/user-time servedUserTimezone → UserZoneProvider), one client formatter set (lib/core/user-zone), a render-site sweep that fails on device-zone event formatting, and the mismatch hint (components/one/zone-hint.tsx)."
     }
    ],
    "version_key": "JUDGE_VERSION",
@@ -1521,6 +1748,16 @@
      ],
      "kind": "outcome",
      "cost": "cached"
+    },
+    {
+     "suite": "smoke-timeline-truth",
+     "ids": [
+      "F5",
+      "F6"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "W27 (uncommitted, FULFILLMENT_LAW_VERSION 6): the evidence reads first as tagged data, the law as ordered tests, the question last; each email keeps its closing line (two-ended clip); today carries its weekday in the user's zone; THE DELIVERY QUOTE FLOOR — an email 'delivered' must carry verbatim handing-over words found in the evidence (quoteInText), else it is held as unclear. tests/unit/w27-fulfillment-floors runs the judge with the model stubbed"
     }
    ],
    "fn": "judgeCommitmentFulfillment (verdict parse) · dateStatedInText",
@@ -1770,7 +2007,8 @@
     "ONE-VOICE BRIEF",
     "NEVER ASSEMBLED FROM FIELDS",
     "THE LIVING BRIEF",
-    "OPENING'S SPEECH LAW"
+    "OPENING'S SPEECH LAW",
+    "THE OVERDUE DEBT OUTRANKS A FRESH ASK"
    ],
    "tier": 2,
    "domain": "rooms",
@@ -1780,7 +2018,8 @@
     "lib/room/grounding.ts",
     "components/home/item-rail.tsx",
     "lib/room/self-voice.ts",
-    "lib/room/opening-fallback.ts"
+    "lib/room/opening-fallback.ts",
+    "lib/room/cta-law.ts"
    ],
    "gates": [
     {
@@ -1811,6 +2050,27 @@
       "F1-F6"
      ],
      "note": "W16.2: the direction-true fallback over fixtures + the served origin"
+    },
+    {
+     "suite": "smoke-judgment-truth",
+     "ids": [
+      "J1 F",
+      "J2d"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W27.B (uncommitted) DECIDE, THEN WRITE (ROOM_BRIEF_VERSION 22): the MOVE ranks by a stated order (only-the-user-holds blocker → blocking decision → overdue then soonest own debt → prepared work → fresh undated ask) and EARNED CALM (move null) is a first-class answer; a calm-label move ('No urgent action') is null in code (moveDeclaresCalm); the JSON emits asks → move → brief → update → offers; the noise law leads; the grounding clip is declared at 6000; the budget is 700 with truncation detected (compositionTruncated) and retried once at 1200; the COHERENCE example names another coworker (never the seat in the third person). tests/unit/w27b-judgment F"
+    },
+    {
+     "suite": "smoke-w28-floors",
+     "ids": [
+      "W1",
+      "W2c"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "overdueDebtOutranks · isDueOwedDebt · moveLabelForWork",
+     "note": "W28 (uncommitted, ROOM_BRIEF_VERSION 24): rank (c) of the stated order in code — a move on a fresh/undated/later ask, an unlinked move or calm beside the user’s own unsettled debt whose date has come becomes that debt with a code-built label (a commitment’s imperative title); never over a move already on a due debt, never while a decision whose own date has come (or is unstated) holds the room; same-date debts break by the board's order; tests/unit/w28-extraction-and-move-floors"
     }
    ],
    "fn": "brief sig composition (board digest in the sig)",
@@ -2436,6 +2696,16 @@
      "suite": "smoke-deck-truth",
      "kind": "outcome",
      "cost": "zero-ai"
+    },
+    {
+     "suite": "smoke-extraction-truth",
+     "ids": [
+      "W7",
+      "W8"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W27 (uncommitted): THE GROUP ASK — isNeedsReply/isCcOnlyBystander honour the producer's contract (one_of_many + reply/action, not bulk = the user's); A ROLE MAILBOX IS NOT A MACHINE — billing@/invoices@/payments@/receipts@ count as automated only with a stronger signal (a machine phrase or a bulk-sending subdomain); matching is token-bounded"
     }
    ],
    "fn": "computeRecipientRole · isCcOnlyBystander",
@@ -2534,7 +2804,7 @@
    ],
    "tier": 2,
    "domain": "judge-prepare-deck",
-   "statement": "Only the item's own pool material or a same-entity file auto-stages; evidence is quoted and code-checked; a global hit becomes a named suggestion in the ask, never a staged attachment. W13.1: a staged file is the deliverable IN TIME and of the right KIND, or it is not staged. The requirement's kind (`existing` — a document sent as it is · `new_work` — new or revised content still to be produced, even INTO an existing document) is a reasoned field judged in the same pick that matches the file (a kind the judge's inventory states wins); the dates are code-checked against the REQUEST message (a commitment's source email): the file's effective date is the EARLIEST it can be (its own name's date, when we first saw it, its conversation's date). New work is never satisfied by a file from on or before the request — that file is offered as the BASE (staged as context under `base:<label>`, never `require:`), the requirement stays an ask/produce; an older file satisfies an existing-artifact ask only when the request names it. A resolver-staged row the law now refuses is unstaged through ONE writer (the pointer row goes, the user's file is never touched, the reason is recorded), and only on a positive demotion — an AI outage never unstages. W13.2: the law is VERSIONED and heals itself — the platform, never an operator. Every resolver-staged `require:` row carries the staging-law version it was verified under (`metadata.stagingLaw`, no migration); a row stamped with an older law, or unstamped, is never read as settled and is re-verified by THE ONE RESOLVER on its next touch (the prepare pass before its lanes, the judge's serving edge, the draft doors): its FILE is put first in the same reasoned pick (the kind rides that call), and the ruling is code's — the same file verified restamps in place (not new supply), another file replaces it, a demotion or a stale row the pick cleanly does not verify is unstaged through the one writer, and an unanswered pick holds (the row stands, still stale, still read as staged — an AI failure never unstages). Bounded: REVERIFY_PER_PASS items per pass (the rest counted and said), one item per open. The repair script is an optional accelerator that calls the same function. W13.6: the base is OFFERED, never lost — for new work the document the content goes into is the reasoned match (code then makes an older one the base), a stale row the current pick cannot verify on a new-work requirement becomes the base when the request names its older file, and the room's ask names it (\"Current version (to update): <file>\"). W14.1: the inbox doc-send writers stamp the draft's attachment (`stagingStamp()` on `source_data.draft`) and THE ONE READER re-proves an unstamped machine attachment (withdrawn unless a current-law resolver row stages the same file; the user's edit is never judged); and the resolver's standing-file lookup also reads the file carried by the item's own unstaged/withdrawn machine draft (`carriedDraftFiles`) — re-judged first by the same pick, made the base by the same rules (new work · predates the request · named by it), so the base is offered even when no `require:` row survived.",
+   "statement": "Only the item's own pool material or a same-entity file auto-stages; evidence is quoted and code-checked; a global hit becomes a named suggestion in the ask, never a staged attachment. W13.1: a staged file is the deliverable IN TIME and of the right KIND, or it is not staged. The requirement's kind (`existing` — a document sent as it is · `new_work` — new or revised content still to be produced, even INTO an existing document) is a reasoned field judged in the same pick that matches the file (a kind the judge's inventory states wins); the dates are code-checked against the REQUEST message (a commitment's source email): the file's effective date is the EARLIEST it can be (its own name's date, when we first saw it, its conversation's date). New work is never satisfied by a file from on or before the request — that file is offered as the BASE (staged as context under `base:<label>`, never `require:`), the requirement stays an ask/produce; an older file satisfies an existing-artifact ask only when the request names it. A resolver-staged row the law now refuses is unstaged through ONE writer (the pointer row goes, the user's file is never touched, the reason is recorded), and only on a positive demotion — an AI outage never unstages. W13.2: the law is VERSIONED and heals itself — the platform, never an operator. Every resolver-staged `require:` row carries the staging-law version it was verified under (`metadata.stagingLaw`, no migration); a row stamped with an older law, or unstamped, is never read as settled and is re-verified by THE ONE RESOLVER on its next touch (the prepare pass before its lanes, the judge's serving edge, the draft doors): its FILE is put first in the same reasoned pick (the kind rides that call), and the ruling is code's — the same file verified restamps in place (not new supply), another file replaces it, a demotion or a stale row the pick cleanly does not verify is unstaged through the one writer, and an unanswered pick holds (the row stands, still stale, still read as staged — an AI failure never unstages). Bounded: REVERIFY_PER_PASS items per pass (the rest counted and said), one item per open. The repair script is an optional accelerator that calls the same function. W13.6: the base is OFFERED, never lost — for new work the document the content goes into is the reasoned match (code then makes an older one the base), a stale row the current pick cannot verify on a new-work requirement becomes the base when the request names its older file, and the room's ask names it (\"Current version (to update): <file>\"). W14.1: the inbox doc-send writers stamp the draft's attachment (`stagingStamp()` on `source_data.draft`) and THE ONE READER re-proves an unstamped machine attachment (withdrawn unless a current-law resolver row stages the same file; the user's edit is never judged); and the resolver's standing-file lookup also reads the file carried by the item's own unstaged/withdrawn machine draft (`carriedDraftFiles`) — re-judged first by the same pick, made the base by the same rules (new work · predates the request · named by it), so the base is offered even when no `require:` row survived. W27.B: a company document — a knowledge-base file that belongs to NO body of work (a certificate, a registration, a CV, a policy) — may stage for any item through the same pick; a file of ANOTHER body of work never does (provenance guards against the other client, not against the user's own standing material).",
    "homes": [
     "app/api/items/judge/route.ts",
     "lib/knowledge/resolve.ts",
@@ -2625,6 +2895,16 @@
      ],
      "kind": "pure",
      "cost": "zero-ai"
+    },
+    {
+     "suite": "smoke-judgment-truth",
+     "ids": [
+      "J1 E",
+      "J2b"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W27.B (uncommitted): A COMPANY DOCUMENT COUNTS AS AVAILABLE — a knowledge-base file of NO body of work (isCompanyDocument) may stage for any item through the same evidence-quoting pick, one-file-one-label and staging role in time (an existing file that predates the request stages only when the request names it); another body of work's file and drive name hits stay suggestions. Found by the W26 eval: 245/246 input-ask runs staged nothing. STAGING_LAW_VERSION unchanged (eligibility only widens; no staged row changes meaning). tests/unit/w27b-judgment E"
     }
    ],
    "fn": "pickArtifacts · verifyArtifactMatch · stagingRole · stagedRowVerdict · unstageRequirement (tests/unit/staged-truth.test.ts) · W13.2: STAGING_LAW_VERSION · stagingLawStale · servingEdgeShouldResolve · reverifyDecision · reverifyStaleStaging · reverifyItemStaging (tests/unit/staging-self-heal.test.ts — resolveRequirements outcome over an in-memory pool with a stubbed model) · W13.5: writeRoomTurn releases an archived key (releaseArchivedKey · isUniqueViolation) · editorMaySettle (tests/unit/room-truth.test.ts — the ask stands over an archived one) · W13.6: standingAsBase · standingBaseRows · docSendAskLabels · baseOfferLine (tests/unit/ask-truth.test.ts — the unproven new-work row becomes the base row and the ask carries it) · proveStagingByPool · draftStagingStale · carriedDraftFileRows · labelForCarriedFile",
@@ -2791,6 +3071,15 @@
      "status": "planned",
      "wave": "W1.1",
      "fn": "topMessageOf"
+    },
+    {
+     "suite": "smoke-extraction-truth",
+     "ids": [
+      "W6"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W27 (uncommitted): A SHORT REPLY IS STILL ITS OWN WORDS — topMessageOf keeps the full text only for a FORWARD (no own words, a forward marker, or a forward subject); a short top above a reply attribution ('Thanks!') stands, so the quoted, already-handled ask is never judged again"
     }
    ],
    "fn": "topMessageOf",
@@ -3890,6 +4179,98 @@
     {
      "law": "workspace-feature-gating",
      "precedence": "the feature map still gates every chat verb; ONE stated exception in the core (PREPARE_ONLY_CHANNEL) offers prepare_calendar_invite when its SEND channel (the mailbox) is on though the calendar feature is off — a prepare-only card whose send door uses mail; a mail-off (sovereign) workspace never sees it"
+    }
+   ]
+  },
+  {
+   "id": "one-conduct-every-producer",
+   "name": "ONE CONDUCT, EVERY PRODUCER",
+   "aliases": [
+    "THE CONDUCT RULES",
+    "DELIVER FIRST EVERYWHERE",
+    "THE USER'S FORMAT IS THE CONTRACT EVERYWHERE"
+   ],
+   "tier": 2,
+   "domain": "chat",
+   "statement": "Every place a model writes prose or a deliverable for the user in answer to what they asked — the Home chat, project room and item rail, coworker DMs (native and AgentOS), the sidebar assistant, workflow and agent steps, hand-offs, documents, drafted emails, nudges, posts and Slack messages — composes its conduct from ONE module (lib/ai/conduct.ts): deliver first with stated defaults and [PLACEHOLDERS], one round of clarifying questions then the deliverable, one-question interviews that acknowledge then ask one thing, the user's format as the contract, one short ending line at most, profile knowledge used quietly, supplied material cross-checked (conflicting figures and undefined terms named with both values), missing material looked for first then named with every input, rewrites and summaries in plain text. A surface picks the profile that fits (a draft carries no interview rules; a step's declared format outranks the rules) and never carries a second, contradicting copy. Every file that calls a model is registered in lib/ai/conduct-registry.ts as a wired producer, a pending edit, or an exemption with its reason.",
+   "homes": [
+    "lib/ai/conduct.ts",
+    "lib/ai/conduct-registry.ts",
+    "lib/converse/conversation.ts",
+    "lib/work/chat-system-prompt.ts",
+    "app/api/work/threads/[id]/chat/route.ts",
+    "lib/work/agentos-bridge.ts",
+    "app/api/assistant/chat/route.ts",
+    "lib/workflows/execute-step.ts",
+    "lib/home/delegate.ts",
+    "lib/inbox/draft-reply.ts",
+    "app/api/compose/draft/route.ts",
+    "lib/tools/linkedin-post.ts",
+    "lib/workflows/slack-message.ts",
+    "lib/workflows/run-workflow.ts",
+    "lib/work/generate-thread-document.ts",
+    "lib/work/generate-pipeline.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-conduct",
+     "kind": "pure",
+     "cost": "zero-ai",
+     "ids": [
+      "K1-K5"
+     ],
+     "note": "W28 (uncommitted): K1 the Home persona composes the home_chat profile and is the W24 prompt byte for byte (pinned sha256); K2 every profile carries the format contract, drafts/steps carry no interview rules, frames explain why, rank against the surface's own contracts, say writing is never sending, and use no ALL-CAPS threat words; K3 the coworker chat prompt composes coworker_chat and the agent/hand-off step workflow_step, the contradicting 'never list multiple questions' / 'one focused question' wording is retired; K4 the real lib/+app/ tree: every model-calling file is registered (13 producers wired, 1 pending, the rest exempt with a reason), every producer's evidence needle is in place, nothing stale or doubled; K5 decoys: a new model-calling file and a producer that drops its conduct both FAIL. tests/unit/conduct.test.ts drives the pure audit on fixtures. Behaviour on live models is measured by the eval harness (live-AI, run by the orchestrator), not here."
+    },
+    {
+     "suite": "smoke-w36-assist-floors",
+     "ids": [
+      "A1",
+      "A2e"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W36 (uncommitted): RISKY ASKS ARE VERIFIED FIRST (CONDUCT_RULES.verify_risky_asks — a request to change payment details, move money, approve a payment or share credentials is never agreed to on its own word; verified through a known channel, never the sender) composed by the sidebar_chat profile, the reply-direction chips and the Home synthesis; the sidebar signs the user's messages with their profile name (user_voice_messages); the LinkedIn tool runs only as a workflow step and composes workflow_step. Collides with deliver_first (a draft that confirms a redirection is 'delivered' but unsafe): verify_risky_asks wins. tests/unit/w36-assist-floors."
+    },
+    {
+     "suite": "smoke-w36-sent-floors",
+     "ids": [
+      "S1",
+      "S2h"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W36: promises_as_given + correspondent_register are composed by the compose door only — kept OUT of the shared draft profile (A/B on draft.reply EU: dr-bank-change 2.83 with vs 4.42 without, dr-quote-missing 3.67 vs 4.58); tests/unit/w36-sent-floors"
+    }
+   ],
+   "fn": "conductBlock · conductRules · auditConduct",
+   "version_key": "CONDUCT_VERSION",
+   "status": "holding-uncommitted",
+   "fixed_by": "W28.1",
+   "broken_by": null,
+   "collides_with": [
+    {
+     "law": "human-in-the-loop",
+     "precedence": "human-in-the-loop wins: 'deliver first' means write the thing — a draft, card or document that waits for the user's click; no conduct rule sends, posts or books, and every chat/step frame says so"
+    },
+    {
+     "law": "untrusted-input-is-data",
+     "precedence": "untrusted-input wins: the cross-check reads supplied material as data to work on; following the user's instruction never extends to instructions written inside the material"
+    },
+    {
+     "law": "excerpt-honesty",
+     "precedence": "compatible: the conduct governs the ANSWER's shape; every INPUT clip stays a declared boundary clip, and the rule text itself is never clipped"
+    },
+    {
+     "law": "a-claim-renders",
+     "precedence": "a-claim-renders wins: where a tool renders the deliverable (a document, a post preview, an email draft card) the tool carries the thing and the conduct shapes only the words around it — never a claim of work no surface shows"
+    },
+    {
+     "law": "placed-gates-law",
+     "precedence": "compatible: a workflow step's own instructions and declared output format (and any gate the user placed) are the contract; the workflow_step conduct only shapes what they leave open, and the verify gate and JSON steps carry no conduct at all"
+    },
+    {
+     "law": "the-chat-answers-the-instruction",
+     "precedence": "the chat law owns the one loop and the truth rule; this law owns the conduct text the loop's persona composes (home_chat) and extends the same rules to every other producer"
     }
    ]
   },
@@ -5000,6 +5381,15 @@
      "status": "planned",
      "wave": "W1.1",
      "fn": "namesOverlap"
+    },
+    {
+     "suite": "smoke-extraction-truth",
+     "ids": [
+      "W9"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W27 (uncommitted): namesOverlap folds diacritics and splits on Unicode letters/digits ('Zoé' was shredded to 'zo')"
     }
    ],
    "fn": "namesOverlap · namesStatedIn",
@@ -6194,6 +6584,58 @@
    "collides_with": []
   },
   {
+   "id": "producer-model",
+   "name": "THE PRODUCER MODEL",
+   "aliases": [
+    "PRODUCER_MODEL",
+    "resolveModelChoice",
+    "producer:<key> overrides",
+    "THE MODEL PRECEDENCE"
+   ],
+   "tier": 2,
+   "domain": "platform",
+   "statement": "A producer that names itself (the EFFORT_PRODUCERS key it already passes for its effort) may run on its own model, per tier, through ONE pure resolver (lib/ai/model-choice.ts) with ONE precedence: tenant producer override (tenant_configs.model_overrides[\"producer:<key>\"]) > tier producer default (lib/ai/defaults.ts PRODUCER_MODEL) > tenant slot override > tier slot default. Each level layers over the one beneath (a { model } entry keeps the slot's provider and budget; another provider starts fresh). On the EU tiers every level is held to the EU Bedrock perimeter: a level outside it is refused, logged, and the next level serves; the tier default failing throws. The effort follows the RESOLVED model's family. PRODUCER_MODEL is empty on every tier until a measured split is adopted; unknown override keys are reported, never silently used.",
+   "homes": [
+    "lib/ai/model-choice.ts",
+    "lib/ai/defaults.ts",
+    "lib/ai/factory.ts",
+    "lib/ai/call.ts",
+    "lib/ai/types.ts",
+    "lib/ai/email-processor.ts",
+    "lib/commitments/extract.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-producer-model",
+     "ids": [
+      "M1",
+      "M2a",
+      "M2b",
+      "M2c",
+      "M3"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W36 (uncommitted): M1 tests/unit/model-choice (the resolver's four levels, layering, the perimeter at every level, getAIClient + aiCall route a named producer and its effort follows the resolved family); M2 an exhaustive hostile sweep (every EU tier × slot × producer with every level pointed out of the perimeter resolves inside it) + PRODUCER_MODEL empty; M3 the five measured producers name themselves where the model is resolved. Adoption of any entry is measured by scripts/eval-outputs.ts on a probe carrying the producer override."
+    }
+   ],
+   "fn": "resolveModelChoice · withinTierPerimeter · modelOverrideProblems",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W36.1",
+   "collides_with": [
+    {
+     "law": "tier-privacy",
+     "precedence": "tier-privacy wins: no producer choice (tenant or tier) can resolve an EU-tier call outside EU-resident Bedrock; a refused level falls to the next, and the Bedrock adapter re-checks at request time"
+    },
+    {
+     "law": "model-param-floor",
+     "precedence": "compatible: the resolver chooses the model, the floor then applies that model's family rules at the transport — a producer-routed model gets exactly the floor its family gets anywhere"
+    }
+   ]
+  },
+  {
    "id": "sovereign-door",
    "name": "THE SOVEREIGN DOOR",
    "aliases": [
@@ -6503,7 +6945,7 @@
      "cost": "zero-ai"
     },
     {
-     "suite": "smoke-ahk-editorial",
+     "suite": "smoke-chamber-editorial",
      "kind": "outcome",
      "cost": "live-ai"
     }
@@ -6533,11 +6975,11 @@
    "domain": "workflows",
    "statement": "A client briefing workflow observes and never advises, applies its stated market filter at selection and synthesis, removes third-country items unconditionally, and re-earns its editorial gate after every prompt edit — all as workflow configuration, never code.",
    "homes": [
-    "docs/ahk-briefing-v2-plan.md"
+    "docs/chamber-briefing-v2-plan.md"
    ],
    "gates": [
     {
-     "suite": "smoke-ahk-editorial",
+     "suite": "smoke-chamber-editorial",
      "kind": "outcome",
      "cost": "live-ai"
     }
@@ -6576,7 +7018,7 @@
    ],
    "gates": [
     {
-     "suite": "smoke-ahk-matching",
+     "suite": "smoke-chamber-matching",
      "kind": "outcome",
      "cost": "cached"
     }
@@ -6896,6 +7338,67 @@
      "precedence": "compatible: the date line is always stated (UTC fallback when the user's zone cannot be read) and recent facts come from a dated web result, never from training knowledge"
     }
    ]
+  },
+  {
+   "id": "the-hand-off-delivers",
+   "name": "THE HAND-OFF DELIVERS",
+   "aliases": [
+    "THE HAND-OFF LANDS LIVE",
+    "THE DELIVERABLE IS THE ANSWER",
+    "THE COWORKER SEARCHES"
+   ],
+   "tier": 2,
+   "domain": "chat",
+   "statement": "A background coworker hand-off from a chat carries an id; its result posts into the asking room under `handoff:<id>` (a failure under `handoff:<id>:failed`, never in the coworker's voice). While it is pending the open chat shows ONE quiet working line under the announcing answer, re-reads that room on the one polling primitive (bounded ~5 min, hidden tab and in-flight answer skipped) and APPENDS the landed turn at the foot — painted turns never move, nothing appends twice; a failure or a timeout is said, with Retry. The posted turn carries the deliverable: a produced file rides the chat's rendered `worker_cards` pointer (its card opens it in place), and with no file the coworker's accepted output itself is posted (markdown), never a summary of it. The delegation prompt states today's date and the chief's recent-facts rule plus a citation duty, and the native coworker step on the delegation path holds web_search + fetch_url (the one feature map, results as DATA, bounded loop).",
+   "homes": [
+    "components/home/home-ask.tsx",
+    "components/home/handoff-live.ts",
+    "lib/converse/index.ts",
+    "lib/converse/handoff-keys.ts",
+    "lib/home/delegate.ts",
+    "lib/workflows/execute-step.ts",
+    "lib/tools/research-tools.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-handoff-live",
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "ids": [
+      "H1-H4"
+     ],
+     "note": "W25 (uncommitted): pending → the working line, the room watched on useLiveRefresh (HANDOFF_BEAT) only while a hand-off in the open room is pending, the landed turn appended through the pure merge (appendLiveTurns — no reshuffle, no twin), failure/timeout lines with Retry; the posted turn is the full accepted output or the worker_cards file pointer (handoff_result retired); the delegation prompt carries RECENT_FACTS_RULE + today + Sources, and executeAgentStepDetailed offers web_search/fetch_url only under ctx.webResearch. tests/unit/handoff-live drives the core, the step and the pure watch with the model stubbed",
+     "fn": "settleHandOffs · appendLiveTurns · handOffSay · handOffComponent · researchToolDefs"
+    }
+   ],
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W25.1",
+   "collides_with": [
+    {
+     "law": "a-claim-renders",
+     "precedence": "strengthened: \"handed back / wrapped up\" composes only with the work itself — the file's rendered card or the full text; a rejected attempt speaks the honest report"
+    },
+    {
+     "law": "no-mutation-and-address",
+     "precedence": "the live landing only APPENDS at the foot; the transient working line is chrome (not a turn) and is replaced by the landed turn; a reload of the same address keeps watching from this tab's own record"
+    },
+    {
+     "law": "tier-privacy",
+     "precedence": "the coworker's web_search is the same Tavily executor the chief and the coworker DM hold, gated by the same TOOL_FEATURE map; the search query is the only user content that leaves"
+    },
+    {
+     "law": "untrusted-input-is-data",
+     "precedence": "untrusted-input wins: search and page results reach the coworker as a marked DATA block; the research tools are reads only"
+    },
+    {
+     "law": "the-turn-keeps-its-receipt",
+     "precedence": "one rule, two seats: the coworker's recent-facts rule IS the chief's RECENT_FACTS_RULE constant plus a citation duty"
+    }
+   ],
+   "fn": "settleHandOffs · appendLiveTurns · handOffSay · handOffComponent · researchToolDefs · DELEGATION_RECENT_FACTS_RULE",
+   "note": "Sep 29 (owner walk): \"hand this to Max: find the top 3 mobile operators … and write a short comparison\" — Clara said \"Handed to Max — I'll post here when it's ready.\"; Max's result appeared only after a reload; it was a one-line summary (the file card rode an unrendered handoff_result component); and it named two operators that merged years ago (the native delegation step held no tools). AgentOS box prompts are owner-gated: the rule rides the delegation prompt text, so the box receives it too; the box's own tool list is unchanged."
   },
   {
    "id": "tail-survives-truncation",
@@ -8987,6 +9490,716 @@
    "broken_by": null,
    "version_key": "FULFILLMENT_LAW_VERSION",
    "note": "Sep 25 (owner walk): \"Fix the incomplete survey question\" (Aug 10) stayed overdue in a 99-message conversation — the user's reply 14 minutes later and the counterparty's \"it's done\" 7 minutes after were crowded out of the three newest slots by a colleague's September mail; the record that did form (Sep 25, the colleague's Sep 3 message) was masked by the direction floor's none. Dry run (scripts/census-conversation-window.ts): 12 commitments + 1 inbox item gain same-conversation evidence on the owner account."
+  },
+  {
+   "id": "quote-names-its-actor",
+   "name": "THE QUOTE NAMES ITS ACTOR",
+   "aliases": [
+    "THE QUOTE SEPARATES",
+    "quoteDirectionFloor",
+    "mergeableByQuote",
+    "A SUGGESTION OWNS NOTHING"
+   ],
+   "tier": 2,
+   "domain": "judge-prepare-deck",
+   "statement": "An extracted commitment whose VERIFIED quote (it exists in the message’s own words) names its actor unambiguously takes its direction from that grammar, over the model’s doer: a first-person commissive (I/we will …, nous allons, wir werden, vamos enviar, enviaremos) is the AUTHOR’s; a request, a first-person need (I need, we are still waiting for) or a second-person obligation is the ADDRESSEE’s; a named subject with an assignment/future marker (“<Name> to send …”, “<Name> will …”) is the user when the name denotes the user, else that party; a first-person-plural SUGGESTION (we should, on devrait, wir sollten, deveríamos, deberíamos) has no owner and mints nothing; on received mail a request the sender addresses BY NAME to someone other than the user (“<Name>, please send …”) is theirs and mints nothing. A clause with no subject, a subordinate clause or disagreeing clauses change nothing. On a mail where the user only sits in CC and is not named, the sender’s own promise is made to the To: party and mints nothing (the seat law’s sibling). THE QUOTE SEPARATES: a mail’s asks quoted from different sentences or list lines never merge in the G1 consolidation (each keeps its own due and its own done); the meeting path keeps its reasoned check. Grammar (pronouns, auxiliaries, modals, request forms) in EN/FR/DE/PT/ES — never the vocabulary of a case.",
+   "homes": [
+    "lib/commitments/quote-actor.ts",
+    "lib/commitments/extract.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w28-floors",
+     "ids": [
+      "W1",
+      "W2a",
+      "W2b"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "fn": "quoteActor · quoteDirectionFloor · mergeableByQuote",
+     "note": "W28 (uncommitted): tests/unit/w28-extraction-and-move-floors — the actor over EN/FR/DE/PT/ES commissives, requests, needs, named subjects, suggestions and the unknowns (offers, subordinate clauses, mixed clauses); the direction mapping by authorship; the extraction wires it before the seat law; asks in different lines never merge. Measured by the eval (extraction.commitments, AUGMTD vs same/sonnet55/gpt56)."
+    }
+   ],
+   "fn": "quoteDirectionFloor",
+   "version_key": "COMMITMENT_EXTRACTION_VERSION",
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W28.1",
+   "collides_with": [
+    {
+     "law": "a-promise-is-quoted",
+     "precedence": "the quote floor proves the words exist; this law reads only such words (an unverified quote is left to the quote floor, which drops it)"
+    },
+    {
+     "law": "one-coherent-item",
+     "precedence": "the doer-based direction floor (directionFloor) runs first; a clear quote actor overrides it and rewrites the doer so the write door reads the same answer"
+    }
+   ]
+  },
+  {
+   "id": "bill-has-one-payer",
+   "name": "THE BILL HAS ONE PAYER",
+   "aliases": [
+    "PAYMENT_REQUEST_RULE",
+    "addressedNoticeDebt",
+    "THE PAYMENT-REQUEST LAW"
+   ],
+   "tier": 2,
+   "domain": "judge-prepare-deck",
+   "statement": "A payment request (an invoice, a payment reminder, a dunning notice, in any language) is the user's commitment ONLY when it asks the user to pay: addressed to them, not yet paid, not collected automatically, not CC-only — then exactly one you_owe \"Pay invoice …\" with its stated due (an overdue bill stays owed). Paid, a receipt, or auto-collected (direct debit, auto-pay, the card on file) → nothing owed, awareness (work none). When the message's own words name SOMEONE ELSE as the one who pays or processes it (a colleague, their finance or accounts team), it is not the user's debt: the work is the heads-up/forward to that person (the judge's forward verb), prepared for the user to send. The extraction gate lets a NOTICE the understanding reads as the user's own move (you_owe, addressed, not CC-only, never an unsolicited kind, never a broadcast footer) reach the extraction, whose prompt carries the ONE rule text; the judge states the same law in verbs.",
+   "homes": [
+    "lib/commitments/extract.ts",
+    "lib/work/judge.ts",
+    "lib/work/surface-registry.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w35-floors",
+     "ids": [
+      "V1",
+      "V2a",
+      "V2b"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W35 (uncommitted): tests/unit/w35-bill-inputs-figures — the gate's exception and its refusals (unsolicited kinds, a notice nobody owes, CC-only, footer, no understanding); the rule names every branch; the judge's clause + forward meaning. scripts/smoke-conversation-delta K5/K5b. Measured by the eval (extraction.commitments cx-15/36/37/38, judgment.work-verdict wv-45/46)."
+    }
+   ],
+   "fn": "addressedNoticeDebt · PAYMENT_REQUEST_RULE",
+   "version_key": "COMMITMENT_EXTRACTION_VERSION",
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W35.1",
+   "collides_with": [
+    {
+     "law": "notice-law",
+     "precedence": "the notice law keeps an automated sender from earning a reply; a notice the user owes (you_owe, addressed) now also mints the debt — the kind floor's NOTICE_KINDS exception, mirrored"
+    },
+    {
+     "law": "seat-law",
+     "precedence": "CC-only never mints a bill; the seat law runs first and this law never re-opens it"
+    }
+   ]
+  },
+  {
+   "id": "inputs-have-a-kind",
+   "name": "INPUTS HAVE A KIND",
+   "aliases": [
+    "settleInputKind",
+    "THE ANSWER ROW",
+    "answer vs attach"
+   ],
+   "tier": 2,
+   "domain": "judge-prepare-deck",
+   "statement": "Every requirement the judge lists names what it is: \"attach\" (a THING that can be retrieved and attached) or \"answer\" (a specific fact only the user holds, which the work must state and no message or file already states — a figure, the price to quote, their account details for a payment to them, contacts). The resolver's check VERIFIES the kind with the item's thread in view: a verified fact is an answer (never searched for; a fact the user already typed is in hand); a sign-off (a confirmation, approval, availability, a status) is nobody's input — the go-ahead carries it; a fact the thread already states is given; a secret is refused before any of this. On produce, a fact-shaped requirement is the work to write, never an ask. Both kinds flow into the SAME ask card (the input_checklist turn, answers marked in state.answer — existing JSON, no migration), whose answer rows lead with the type-it door; the drafter is told an answer still to come is never guessed. W39 (walk, Oct 1 — \"Type it\" offered for a signed contract): the kind drives the doors — a fact row offers Type it · Attach · Point me to it; a document row offers Attach · Point me to it and no Type it while either stands (a figure ON a document, \"the invoice number\", is a fact). W39b (walk, Oct 1 — a typed answer read as a \"ready to review\" deliverable no door mounts, and the go-ahead drafted nothing): a typed answer is the ask's ANSWER (`input: 'answer'`), an input never served as prepared work (lib/prepare/read isTypedAnswerRow); it matches its label across the judge's re-wordings (matchTypedLabel — exact key, else the one label sharing its content words, never a guess between two); its VALUE reaches every drafting lane in the artifact truth (never a placeholder over a given fact); and a reader's deed re-prepares the item it names (lib/prepare/prepare-by-id), never only when the deck's spine happens to carry it.",
+   "homes": [
+    "lib/prepare/input-kind.ts",
+    "lib/prepare/requirements.ts",
+    "lib/work/judge.ts",
+    "components/home/input-card.tsx",
+    "components/home/item-rail.tsx",
+    "components/thread/ask-rows.tsx",
+    "lib/room/go-ahead.ts",
+    "lib/prepare/prepare-by-id.ts",
+    "lib/prepare/read.ts",
+    "lib/prepare/supply.ts",
+    "app/api/room/asks/route.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w35-floors",
+     "ids": [
+      "V1",
+      "V2b",
+      "V2c",
+      "V2d"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W35 (uncommitted): tests/unit/w35-bill-inputs-figures — the judge keeps the stated kind; settleInputKind; applyAttachVerdict sorts attach/answer/sign-off and never keeps a secret; the ask speaks the right door; ARTIFACT TRUTH never guesses an answer. Measured by the eval (judgment.input-ask ia-07/17/20 answers scored)."
+    },
+    {
+     "suite": "smoke-w39-walk-floors",
+     "ids": [
+      "W1",
+      "W2g",
+      "W2l"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W39: the rendered rows leaf — a signed contract shows Attach and no Type it; the IBAN shows both; a document row with no other door keeps typing; W39b: the typed answer is never a deliverable, survives label re-wording, its value reaches the truth, and the go-ahead re-prepares the named item (W2l)"
+    }
+   ],
+   "fn": "settleInputKind · applyAttachVerdict · typedSupplyRows · matchTypedLabel · isTypedAnswerRow · prepareItemById",
+   "version_key": "JUDGE_VERSION",
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W35.2",
+   "collides_with": [
+    {
+     "law": "ask-direction-floor",
+     "precedence": "an answer row is still OUR ask to the user, answered by their typing or go-ahead — never the counterparty's debt"
+    },
+    {
+     "law": "asks-live-and-die-with-their-work",
+     "precedence": "an answer row lives and dies with its work exactly like an attach row; a typed supply settles it through the same door"
+    }
+   ]
+  },
+  {
+   "id": "meeting-notes-retry",
+   "name": "NOTES THAT FAILED ARE SAID, AND RETRIED",
+   "aliases": [
+    "insights_status",
+    "retryFailedMeetingInsights",
+    "THE BOUNDED NOTES RETRY"
+   ],
+   "tier": 2,
+   "domain": "meetings",
+   "statement": "When a meeting's insights call fails, the empty fallback is MARKED (never a judged \"nothing happened\"): the transcript records the failure in notes_structured.insights_status (existing JSON, no migration), a bounded sweep (10 min · 1 h · 6 h, then it stops; 2 per run, reported) re-runs the ONE existing re-run path, a failed re-run never overwrites the notes that stand, a success clears the stamp, and the meeting page says \"Notes couldn't be generated\" with a Retry. The audio (meeting-recordings bucket) and the transcript are never deleted or rewritten by any of it.",
+   "homes": [
+    "lib/meetings/insights-retry.ts",
+    "lib/integrations/meeting-bot/bot-manager.ts",
+    "app/api/cron/sync-calendar/route.ts",
+    "app/api/meetings/[id]/re-enhance/route.ts",
+    "app/api/meetings/notes/[id]/process/route.ts",
+    "components/meetings/inline-note-view.tsx"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w35-floors",
+     "ids": [
+      "V1",
+      "V2e"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W35 (uncommitted): tests/unit/w35-meeting-notes-retry — the stamp and its bounded backoff, due-ness, the page's words, the sweep's selection/bound/report with a fake client that proves no delete/storage call, and the seats."
+    }
+   ],
+   "fn": "insightsFailedStatus · insightsRetryDue · retryFailedMeetingInsights",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W35.3",
+   "collides_with": [
+    {
+     "law": "failure-honesty",
+     "precedence": "this is failure honesty on the meeting lane: a failed call is recorded and retried, never cached as an empty answer"
+    },
+    {
+     "law": "no-silent-caps",
+     "precedence": "the sweep's per-run bound stands; what it leaves is counted and logged"
+    }
+   ]
+  },
+  {
+   "id": "figures-on-record",
+   "name": "FIGURES ON RECORD",
+   "aliases": [
+    "figuresOnRecord",
+    "figuresBlock",
+    "TWO ASKS, BOTH NAMED",
+    "lastRevision"
+   ],
+   "tier": 2,
+   "domain": "rooms",
+   "statement": "Two values for one thing are a FACT before they are a rule: the room grounding carries the money amounts its messages state (code-read — currency symbols/ISO codes, any digit grouping, never vocabulary), with who stated each and when, whenever one currency holds two different amounts; a later message never replaces an earlier figure unless its own words say so, and the room's move never adopts one of two conflicting figures (settling which holds is the user's). The Home briefing composes the ONE conduct rule text (CONDUCT_RULES.conflicting_values) and marks, in code, a candidate from the same person as an earlier one, so two asks that pull different ways are named together. And the verify gate's deliverable is the model's LAST revision — a draft revised after a first verdict never ships the first verdict or its sentinel.",
+   "homes": [
+    "lib/room/figures.ts",
+    "lib/room/grounding.ts",
+    "lib/room/brief.ts",
+    "lib/briefing/compose.ts",
+    "lib/workflows/execute-step.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w35-floors",
+     "ids": [
+      "V1",
+      "V2f",
+      "V2g"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W35 (uncommitted): tests/unit/w35-bill-inputs-figures — amountOf/figuresOnRecord/figuresBlock, sameWhoAs, the briefing's conduct rule, lastRevision. Measured by eval-surfaces (room.opening open-conflict, briefing.home brief-conflict, gate.verify)."
+    }
+   ],
+   "fn": "figuresOnRecord · figuresBlock · sameWhoAs · lastRevision",
+   "version_key": "ROOM_BRIEF_VERSION",
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W35.4",
+   "collides_with": [
+    {
+     "law": "one-conduct-every-producer",
+     "precedence": "the conduct rule is the one wording; this law adds the code-read facts and the briefing's same-person mark beside it, never a second wording"
+    }
+   ]
+  },
+  {
+   "id": "sent-in-the-users-name",
+   "name": "THE WORDS SENT IN THE USER'S NAME",
+   "aliases": [
+    "THE THREAD'S PRESENT",
+    "A DATED PROMISE NAMES A DAY THE RECORDS GIVE",
+    "A GROUP PING IS THE INSTRUCTION'S",
+    "A STATED BULLET COUNT IS THE WHOLE MESSAGE",
+    "SLACK SPEAKS MRKDWN",
+    "THE COVER CHECKS, THEN WRITES",
+    "THEIR FORM OF ADDRESS",
+    "THE SIGNER IS NEVER 'me'"
+   ],
+   "tier": 2,
+   "domain": "workflows",
+   "statement": "Words that leave in the user's name — the compose door's email for a commitment, the cover email a task sends with its document, the Slack message a task posts — are written from the material's present and promise nothing it does not: the compose door reads the thread's recent messages (oldest first, tagged DATA, machine-addressed lines removed), not only the message a commitment was noted from; a draft that claims a day, a status, progress or a deed about the user's work that nothing on record shows (read in code, en·de·fr·pt·es) is regenerated once with those claims named, and if the rewrite still claims one the served words carry a NAMED SLOT in its place, never the invention (the sidebar's drafted cards pass the same floor); the reply's language and form of address (Sie/vous/usted) are read from the correspondents' own words; an account without a profile name signs as its own sent mail does, never as 'me'. The cover email writes a check (two values for one figure, the conditions it must keep, text addressed as an instruction) before the body, and only the body is sent. A posted Slack message keeps a group ping only when the task's instruction asks for one, holds a stated bullet count as the whole message, speaks mrkdwn, and is never cut mid-sentence. The reply drafter holds a payment-detail change in code (lib/prepare/risky-asks: the ask read from the email's own words, a safe-reply contract, one rewrite, then any sentence that agrees — now or once verified — commits a payment either way, or routes verification through the requester is dropped). A hand-off drops opening paragraphs that narrate its searching, and never presents the user's own context (their product, market, competitors) picked from search; the claims floor slots only concrete facts (a number, date, time, name or amount) and never quotes a span cut.",
+   "homes": [
+    "app/api/assistant/chat/route.ts",
+    "app/api/compose/draft/route.ts",
+    "lib/ai/conduct.ts",
+    "lib/context/draft-language.ts",
+    "lib/home/delegate.ts",
+    "lib/inbox/draft-reply.ts",
+    "lib/prepare/claims-floor.ts",
+    "lib/prepare/risky-asks.ts",
+    "lib/utils/inbound-data.ts",
+    "lib/workflows/report-back.ts",
+    "lib/workflows/run-workflow.ts",
+    "lib/workflows/slack-message.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w36-sent-floors",
+     "ids": [
+      "S1",
+      "S2a",
+      "S2b",
+      "S2c",
+      "S2d",
+      "S2e",
+      "S2f",
+      "S2g",
+      "S2h",
+      "S2i",
+      "S2j",
+      "S2k"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W36 (uncommitted): tests/unit/w36-sent-floors — neutraliseBroadcasts/statedBulletCount/holdBulletContract/toSlackMrkdwn, unsupportedPromiseTiming, withoutMachineAddressed, addressRegisterOf, coverBodyOf, the draft rules. Measured by eval-surfaces --surfaces sent (compose · cover · slack · report vs same model, Sonnet 5.5, GPT-5.6-terra; both tiers)."
+    }
+   ],
+   "fn": "unsupportedWorkClaims · slotUnsupportedWork · workClaimObjection · withoutMachineAddressed · addressRegisterOf · coverBodyOf · neutraliseBroadcasts · holdBulletContract · toSlackMrkdwn · asksPaymentDetailChange · riskyAgreementIn · dropRiskyAgreement · isConcreteClaim · stripAnnouncement",
+   "version_key": "CONDUCT_VERSION",
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W36.S",
+   "collides_with": [
+    {
+     "law": "untrusted-input-is-data",
+     "precedence": "untrusted-input wins: the thread and the document ride as DATA; the machine-addressed floor only removes words spoken to the assistant, it never acts on them"
+    },
+    {
+     "law": "one-conduct-every-producer",
+     "precedence": "the conduct rules are the one wording (promises_as_given, correspondent_register join the draft profile); the floors here hold in code what those rules ask"
+    },
+    {
+     "law": "excerpt-honesty",
+     "precedence": "every clip in these prompts goes through clipForPrompt / inboundBlock and declares itself"
+    }
+   ]
+  },
+  {
+   "id": "step-deliverable-floors",
+   "name": "THE WORKFLOW STEP'S FLOORS",
+   "aliases": [
+    "THE STEP'S CLOCK IS THE USER'S",
+    "THE REQUESTED COUNT IS THE CONTRACT",
+    "THE AGENT STEP'S CLAIMS FLOOR"
+   ],
+   "tier": 2,
+   "domain": "workflows",
+   "statement": "A workflow step runs on the user's clock and delivers what was asked, with nothing added: every AI and agent step (and the AgentOS lane) is told today's weekday and date in words in the user's own zone with the days around it, and a weekday↔date pair it writes is settled by code (the anchor law's precedence); an agent step that delivers more labelled variants than its instruction's explicit count keeps the first N; and a workflow agent step's prose passes the claims floor against everything the writer was given (concrete unsupported specifics removed or slotted by name, one rewrite when the floor would gut the work, unsupported status/progress/deed/dated-promise claims slotted, self-vouching dropped). The verify gate keeps its persona-free output untouched; the delegation path keeps its own floor.",
+   "homes": [
+    "lib/workflows/execute-step.ts",
+    "lib/utils/weekday-floor.ts",
+    "lib/prepare/claims-floor.ts",
+    "lib/core/relative-time.ts",
+    "lib/utils/user-time.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w37-step-floors",
+     "ids": [
+      "S1",
+      "S2a",
+      "S2b",
+      "S2c",
+      "S2d",
+      "S2e"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W37 (uncommitted): tests/unit/w37-step-floors — stepClockLine, enforceWeekdayDatePairs on a step header, requestedDeliverableCount/enforceRequestedCount. Measured by eval-surfaces --surfaces workflow.step (both tiers)."
+    }
+   ],
+   "fn": "stepClockLine · requestedDeliverableCount · enforceRequestedCount · enforceWeekdayDatePairs · groundClaims · slotUnsupportedWork",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W37.S",
+   "collides_with": [
+    {
+     "law": "time-truth",
+     "precedence": "domain instance — the step's clock is code's (user zone), never the server's UTC weekday"
+    },
+    {
+     "law": "anchor-law",
+     "precedence": "the weekday floor's own chain: the instruction's stated weekday, then the date, then untouched"
+    },
+    {
+     "law": "sent-in-the-users-name",
+     "precedence": "the same claims floor (concrete-only slots, named slots); words a task SENDS keep that law's floors, this one shapes the deliverable"
+    }
+   ],
+   "note": "Eval (Oct 1, W37): a pipeline summary headed 'Monday 30 September' on a Wednesday (the step's clock was a UTC weekday + ISO date; the agent step had none); Luca's workflow post invented a vote margin, the losing options, 'free checklist, link in the comments' and future plans, and delivered two posts when one was asked."
+  },
+  {
+   "id": "authoring-says-what-it-cannot",
+   "name": "THE BUILDER SAYS WHAT IT CANNOT BUILD",
+   "aliases": [
+    "THE UNSUPPORTED PARTS ARE SAID",
+    "THE PATCH KEEPS WHAT IT DID NOT TOUCH",
+    "A GATE REVIEWS SOMETHING THAT EXISTS"
+   ],
+   "tier": 2,
+   "domain": "workflows",
+   "statement": "The authoring doors never fake a capability and never lose what they did not touch: the task-authoring door (generateWorkflowConfig) builds the part of a request the platform can do and lists each asked-for part no building block can do (an outside system with no tool, a payment, a signature, an unconnected delivery home) in `unsupported`, which code speaks on the step-note channel in one fixed sentence — no step, name or prompt may claim it happens; an approval the user places reviews something a step before it produced; schedules default to the user's own zone. The Studio chat refuses an impossible ask with no patch, and its patch is merged over the workflow by step id in code (summary-only fields dropped, an ai prompt it only saw as a preview kept, a tool config merged key by key). The run-history suggestions read the steps themselves and parse a fenced answer. An email-born plan clips its email by the excerpt law, resolves dates from a day strip, keeps missing figures as pending inputs and leaves the user's own acts (signing, paying) to the user. A standing spec never ships a cron that restricts both day-of-month and day-of-week (cron ORs them): it is repaired, then falls back to the stated month day with code's own note.",
+   "homes": [
+    "lib/workflows/generate-config.ts",
+    "lib/workflows/authoring-honesty.ts",
+    "lib/workflows/merge-chat-patch.ts",
+    "app/api/workflows/[id]/chat/route.ts",
+    "app/api/workflows/[id]/suggestions/route.ts",
+    "app/api/inbox/[id]/open-workflow/route.ts",
+    "lib/work/standing-spec.ts",
+    "lib/company/synthesize-alignment.ts",
+    "lib/compute/document-compiler.ts",
+    "lib/home/item-plan.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w37-build-floors",
+     "ids": [
+      "S1",
+      "S2a",
+      "S2b",
+      "S2c",
+      "S2d",
+      "S2e",
+      "S2f",
+      "S2g",
+      "S2h",
+      "S2i",
+      "S2j",
+      "S2k",
+      "S2l"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W37 (uncommitted): tests/unit/w37-build-floors — unsupportedNote, mergePatchSteps, the eval's build checks. Measured by eval-surfaces --surfaces build,plan,compute (both tiers vs the plain models)."
+    }
+   ],
+   "fn": "unsupportedNote · mergePatchSteps · cronOrTrap · orTrapFallback",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W37.B",
+   "collides_with": [
+    {
+     "law": "placed-gates-law",
+     "precedence": "the placed gates stay fixed points; this law only adds that what a gate approves is produced before it"
+    },
+    {
+     "law": "excerpt-honesty",
+     "precedence": "domain instance — the email-born plan's excerpt is clipped by clipForPrompt and declares itself"
+    },
+    {
+     "law": "human-in-the-loop",
+     "precedence": "the invariant wins: an unsupported send/pay/sign is said, never built; the user keeps the act"
+    }
+   ],
+   "note": "Eval (Oct 1, W37): 'enter it into Xero and pay it if under €500' authored as an 'Auto-Pay' workflow (1.0/5 both tiers); the Studio chat added a fake Instagram step and returned ai steps carrying only their 200-character preview; the suggestions panel served nothing on every fenced answer; an email-born plan wrote 'Q1 2025', a day rate nobody gave, and a step that signs the NDA."
+  },
+  {
+   "id": "narration-truth",
+   "name": "THE NARRATION TELLS THE RECORD",
+   "aliases": [
+    "OWED ONLY FROM THE RECORD",
+    "UNMEASURED IS ABSENT",
+    "THE DAY A MESSAGE MEANT"
+   ],
+   "tier": 2,
+   "domain": "entities",
+   "statement": "Every narrator that says where work stands — the project state, the person state, the shared status update, the room's pre-meeting prep, the meeting panel brief and the agenda prep — reads ONE copy of the truth rules (NARRATION_TRUTH_RULES): something is owed only where a record states the ask, promise or open commitment; a result is told against its stated target; two different values for the same thing stay a named conflict until a line settles it in words (never the newer by default), and two asks that pull against each other are named together; nothing is filled in on the user's behalf; a scheduled fact is not a debt; past events are past and a lapsed prep points to a follow-up; dates are named, never counted. The narrators read the message's own words (quoted history and lines spoken to an assistant removed) with each message's day words resolved in code against the day it was sent (annotateMessageDays) and a named day strip; the ledger-based narrators borrow the threads and figures from the one grounding page (pickPageSections); the shared status update rides the voice slot and a figures floor (figuresLeftOut) retries once when it names one on-record amount and drops another. The room opening and the room prep state the on-record figures by code (figuresOnRecordLine: every amount with who stated it, when, in their words) and re-ask once when a composition adopts one of two (adoptsOneFigure); due dates on the room page carry their weekday and distance from today. A value never measured is absent, never a default number a reader can state as learned (the meeting profile's acceptance rate).",
+   "homes": [
+    "lib/entities/state.ts",
+    "lib/people/brain.ts",
+    "app/api/entities/[id]/status-update/route.ts",
+    "lib/home/anticipation.ts",
+    "app/api/meetings/[id]/prep/route.ts",
+    "lib/calendar/meeting-processor.ts",
+    "lib/core/relative-time.ts",
+    "lib/calendar/pattern-analyzer.ts",
+    "lib/context/build-user-context.ts",
+    "lib/room/brief.ts",
+    "lib/room/grounding.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w37-narration",
+     "ids": [
+      "N1",
+      "N2a",
+      "N2b",
+      "N2c",
+      "N2d",
+      "N2e",
+      "N2f",
+      "N2h",
+      "N2i",
+      "N2j"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W37 (uncommitted): tests/unit/w37-narration-floors — the rules copy, pickPageSections, figuresLeftOut, annotateMessageDays/dayStrip, prepTurnText silence, the user-context block's unmeasured floor. Measured by eval-surfaces --surfaces narrate,prep (both tiers vs the plain models)."
+    }
+   ],
+   "fn": "NARRATION_TRUTH_RULES · pickPageSections · figuresLeftOut · annotateMessageDays · dayStrip · withWeekday · figuresOnRecordLine · adoptsOneFigure",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W37.N",
+   "collides_with": [
+    {
+     "law": "time-truth",
+     "precedence": "domain instance — a message's day words resolve against the message's own date; the served state still passes the time floor"
+    },
+    {
+     "law": "figures-on-record",
+     "precedence": "the figures block is the input; this law adds the code check that a narration naming one figure names the others"
+    },
+    {
+     "law": "one-grounding",
+     "precedence": "the ledger narrators borrow the page's sections, never a parallel assembly of the threads"
+    },
+    {
+     "law": "untrusted-input-is-data",
+     "precedence": "the invariant wins: a line spoken to an assistant is removed before any narrator reads it"
+    }
+   ],
+   "note": "Eval (Oct 1, W37 narrate.*/prep.*): the status update called a pilot at 94% against a 98% target 'on track' and invented a proposed date; the project state chose one of two budgets; the person state read subjects only and told a delivered report as owed; the meeting panel brief never saw an email (it selected emails.snippet, a column that does not exist); the room prep read a 3,500-character head of its page; the agenda prep read subjects only and obeyed nothing but padded; 'by Monday' became 'Monday 30 September'."
+  },
+  {
+   "id": "delivered-file-truth",
+   "name": "A DELIVERED FILE OPENS AND CARRIES ITS SOURCE'S FIGURES",
+   "aliases": [
+    "THE ATTACHMENT IS THE DELIVERED FILE",
+    "THE BYTES NAME THE FILE",
+    "THE SHAPE FLOOR",
+    "THE TEXT-HYGIENE GATE",
+    "AN EXPLICIT OFFICE KIND BEATS THE WORD TRIGGER"
+   ],
+   "tier": 2,
+   "domain": "documents",
+   "statement": "Every file the product hands a user (a DM or delegated document, a workflow deliverable or its e-mail attachment, a compute output, a frame) opens as the format its name and MIME declare, carries the structure that was asked (headings as real heading styles, the sheet's columns, the deck's slides), states only figures that are raw values of its source or computed by code from it, and carries words, not syntax (no literal markdown, no character-art charts, no undefined/NaN/[object Object]). Mechanisms: an explicit office kind (the author's typed fence, a forced spreadsheet/presentation) beats the frame words; a builder always receives the shape it reads (docToSheets/docToSlides, else an honest document); character art is stripped at the door (stripCharacterArt); the compiler's validation runs the text-hygiene gate (officeHygieneProblems) beside the render gate; tabular material in a DM is shown to the author and aggregated in the sandbox first (tabularBlock + computeDataFacts); compute outputs carry their extension's MIME (outputMime); the served name comes from the stored bytes' extension and keeps the title's letters (downloadHeaders); an e-mail attachment is the stored delivered file (attachmentForArtifact).",
+   "homes": [
+    "lib/documents/materialize.ts",
+    "lib/documents/shape-floor.ts",
+    "lib/documents/office-hygiene.ts",
+    "lib/compute/document-compiler.ts",
+    "lib/compute/data-facts.ts",
+    "lib/compute/tabular.ts",
+    "lib/tools/compute.ts",
+    "lib/work/generate-thread-document.ts",
+    "lib/artifacts/download-name.ts",
+    "lib/artifacts/attachment.ts",
+    "lib/workflows/run-workflow.ts",
+    "app/api/work/threads/[id]/download/route.ts",
+    "lib/knowledge/indexer.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-generated-files",
+     "ids": [
+      "F1"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W38 (uncommitted): tests/unit/generated-files — the code checker (numbers, formulas, language, garbage, format), downloadHeaders, attachment shape checks, docToSheets/docToSlides, stripCharacterArt, tabularBlock, textHygieneProblems, outputMime, and the door's explicit-kind/shape cases called for real (theme null, zero AI). Measured live by scripts/verify-generated-files.ts (12 producers × both tiers on probe #3: real models, the real sandbox and bucket, every stored file opened and judged in code — zero judge; once per wave, ~€0.3/tier)."
+    },
+    {
+     "suite": "smoke-generated-files",
+     "ids": [
+      "F2a",
+      "F2b",
+      "F2c",
+      "F2d",
+      "F2e",
+      "F2f",
+      "F2g",
+      "F2h",
+      "F2i",
+      "F2j",
+      "F2k"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "each floor at its one seat"
+    }
+   ],
+   "fn": "readFileView · unsourcedFigures · evalFormula · downloadHeaders · attachmentForArtifact · docToSheets · docToSlides · stripCharacterArt · tabularBlock · officeHygieneProblems · outputMime · scriptErrorTail · getOrCreateAugmtdSource",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W38 (Oct 1)",
+   "collides_with": [
+    {
+     "law": "one-production-door",
+     "precedence": "domain instance — the floors ride the one door, so every actor's file upgrades at once; the door's tier ladder is unchanged"
+    },
+    {
+     "law": "content-floor",
+     "precedence": "the author's text is still the document's text — character art and leaked syntax are removed as non-content, never reworded"
+    },
+    {
+     "law": "facts-floor",
+     "precedence": "the facts floor now reaches the DM author before it writes (not only the compiler); a sandbox outage keeps the old path and the arithmetic floor still flags"
+    },
+    {
+     "law": "render-verification-gate",
+     "precedence": "both gates must pass; hygiene failures feed the same one reasoned repair, then the template tier is the floor"
+    }
+   ],
+   "note": "Found by the W38 live verifier (Oct 1): an Excel 'tracker' ask and a typed sheet titled 'tracker' shipped as .html frames; a forced sheet/deck over markdown threw in the builder (no file); the workflow e-mail re-rendered the attachment by the CONFIGURED kind (a sheet fed to the Word builder threw; compiled charts were lost); compute .xlsx/.docx outputs were stored as application/octet-stream and skipped by the KB indexer; computeDataFacts' 900-token codegen truncated every script (facts silently null product-wide); a DM deck stated quarter totals +5,000 and a 29,600 year total (true 13,600); a compiled .docx carried literal **bold**, an ASCII bar chart and no heading styles; served filenames lost every accented letter and DM titles were mid-word slices of the ask. The compiler's one reasoned repair was blind: it carried the HEAD of stderr (a screen of Fontconfig cache warnings), never the exception. Indexing a delivered file snowballed 'AUGMTD Files' sources: after one race left two rows, .maybeSingle() errored (ignored) and every later index inserted another (64 on one real account — census only, not swept)."
+  },
+  {
+   "id": "the-reader-is-you",
+   "name": "THE READER IS YOU",
+   "aliases": [
+    "toReaderVoice",
+    "SECOND-PERSON DESCRIPTIONS"
+   ],
+   "tier": 2,
+   "domain": "workflows",
+   "statement": "A model-authored line the app serves to its reader (a workflow's description) speaks TO them in the second person — \"your documents\", never \"the user's documents\": the builder prompt asks for it and a code floor enforces it where the description is written and where it is served.",
+   "homes": [
+    "lib/workflows/reader-voice.ts",
+    "lib/workflows/generate-config.ts",
+    "components/workflows/workflow-detail.tsx"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w39-walk-floors",
+     "ids": [
+      "W1",
+      "W2i"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "toReaderVoice rewrites the builder's third person; wired at write and serve"
+    }
+   ],
+   "fn": "toReaderVoice",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W39.1",
+   "collides_with": [
+    {
+     "law": "a-claim-renders",
+     "precedence": "voice only — the floor rewrites who is addressed, never what is claimed"
+    }
+   ]
+  },
+  {
+   "id": "active-means-alive",
+   "name": "ACTIVE MEANS ALIVE",
+   "aliases": [
+    "ACTIVE_STATES",
+    "THE DELIVERED LINE"
+   ],
+   "tier": 2,
+   "domain": "workflows",
+   "statement": "A list headed active carries only live work (needs you · waiting · running); a delivered run leaves it the moment it delivers — a fresh delivery is news said once in its own quiet line, never counted or listed as active.",
+   "homes": [
+    "components/workflows/workflows-ledger.tsx"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w39-walk-floors",
+     "ids": [
+      "W2j"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "the active strip filters to ACTIVE_STATES; the delivered count is its own line outside it"
+    }
+   ],
+   "fn": "ACTIVE_STATES filter over PROCESS_BUCKETS",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W39.1",
+   "collides_with": [
+    {
+     "law": "one-claim-per-row",
+     "precedence": "the state word stays the derivation's (processStateOf); this law only decides which states an ACTIVE list may carry"
+    }
+   ]
+  },
+  {
+   "id": "one-receipt-per-deed",
+   "name": "ONE RECEIPT PER DEED",
+   "aliases": [
+    "NO TOAST BESIDE A BANNER",
+    "Answer added"
+   ],
+   "tier": 2,
+   "domain": "surfaces",
+   "statement": "A deed is acknowledged once, where the reader is looking, in words that say what happened: a card that turns into its own receipt is not echoed by a toast (creating a workflow says it is live once), and a typed or attached answer reads \"Answer added — the run continued\", never \"Sent\" (the send word belongs to mail that left).",
+   "homes": [
+    "components/workflows/workflow-draft-card.tsx",
+    "lib/workflows/process-state.ts",
+    "lib/workflows/standing.ts",
+    "components/workflows/process-drawer.tsx",
+    "lib/tools/worker-tasks.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w39-walk-floors",
+     "ids": [
+      "W1",
+      "W2f",
+      "W2k"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "GATE_OUTCOME_WORDS.supplied says the answer was added; no answer surface says Sent; the draft card raises no live toast"
+    }
+   ],
+   "fn": "GATE_OUTCOME_WORDS.supplied",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W39.1",
+   "collides_with": [
+    {
+     "law": "human-in-the-loop",
+     "precedence": "a receipt never claims an external send that did not happen — the send word is reserved for the commit door's own deeds"
+    }
+   ]
   }
  ],
  "lessons": [

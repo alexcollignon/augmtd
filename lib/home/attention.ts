@@ -74,6 +74,9 @@ export type CalendarAdjacency = {
   /** Is that event TODAY (the user's own day)? `undefined` from a caller that has not computed it,
    *  which the rank treats as today — the honest default for a 48h window's near half. */
   today?: boolean;
+  /** TIME TRUTH (UI walk, Oct 1): the event's day in words when it is NOT today ("tomorrow",
+   *  "on Sat"). "Jo will ask at your 10:00" read as THIS morning for a meeting tomorrow. */
+  dayWord?: string | null;
 };
 
 export type WhyNowFacts = {
@@ -158,11 +161,18 @@ export function whyNowOf(f: WhyNowFacts, today: Date = new Date()): string {
   // 1 · CALENDAR ADJACENCY — the strongest why-now the clock can give.
   if (f.meeting) {
     const who = (f.who ?? '').trim();
-    const at = (f.meeting.localTime ?? '').trim();
+    // TIME TRUTH: a bare "your 10:00" means today. An adjacency in the 48h window's far half says
+    // its day ("at your 10:00 tomorrow"); a caller that did not compute the day keeps today's words.
+    // (An event of today's that already ended is `today: false` with no day words — still today.)
+    const dayWord = (f.meeting.dayWord ?? '').trim();
+    const notToday = f.meeting.today === false && !!dayWord;
+    const day = notToday ? dayWord : 'today';
+    const time = (f.meeting.localTime ?? '').trim();
+    const at = time && notToday ? `${time} ${day}` : time;
     if (who && at) return clipClause(`${who} will ask at your ${at}`);
     if (at) return clipClause(`this comes up at your ${at}`);
-    if (who) return clipClause(`${who} is on your calendar today`);
-    return clipClause('this is on your calendar today');
+    if (who) return clipClause(`${who} is on your calendar ${day}`);
+    return clipClause(`this is on your calendar ${day}`);
   }
   // 2 · THE PRIMARY — receipt, else the ask the machine is blocked on, else the why-you sentence.
   // THE NO-RESTATEMENT RULE (walk-found, Sep 17): the whisper row ALWAYS leads with the

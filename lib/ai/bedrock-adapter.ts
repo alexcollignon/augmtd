@@ -1,5 +1,7 @@
 /**
  * Bedrock Adapter — duck-types as OpenAI client for AWS Bedrock + Claude.
+ * (W31: non-Anthropic model ids — gpt-oss in-region, Nova/Qwen by config — dispatch to the
+ * Converse path in ./bedrock-converse.ts; the Claude path below is unchanged.)
  *
  * Translates OpenAI chat.completions.create() calls to Anthropic Messages API
  * format, using @anthropic-ai/bedrock-sdk for AWS SigV4 authentication.
@@ -10,7 +12,10 @@
 
 import AnthropicBedrock from '@anthropic-ai/bedrock-sdk'
 import type OpenAI from 'openai'
+import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime'
 import { createBedrockEmbeddings } from './bedrock-embeddings'
+import { isConverseModel, converseNonStreaming, converseStreaming, type ConverseSender } from './bedrock-converse'
+import { assertBedrockResidency } from './bedrock-residency'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -23,17 +28,38 @@ interface BedrockConfig {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-export function createBedrockAdapter(config: BedrockConfig): OpenAI {
+/** Test seam (W31): inject the transports. Absent = the real SDK clients (production). */
+export interface BedrockAdapterDeps {
+  anthropic?: AnthropicBedrock
+  converse?: ConverseSender
+}
+
+export function createBedrockAdapter(config: BedrockConfig, deps: BedrockAdapterDeps = {}): OpenAI {
   const opts: Record<string, any> = { awsRegion: config.awsRegion }
   if (config.awsAccessKey) opts.awsAccessKey = config.awsAccessKey
   if (config.awsSecretKey) opts.awsSecretKey = config.awsSecretKey
   if (config.awsSessionToken) opts.awsSessionToken = config.awsSessionToken
-  const bedrock = new AnthropicBedrock(opts as any)
+  const bedrock = deps.anthropic ?? new AnthropicBedrock(opts as any)
+
+  // W31 — THE CONVERSE PATH: non-Anthropic Bedrock models (gpt-oss in-region first; Nova/Qwen by
+  // config in bedrock-converse.ts). Built lazily, same region + credentials as the Claude client.
+  let converse: ConverseSender | undefined = deps.converse
+  const converseClient = (): ConverseSender => (converse ??= new BedrockRuntimeClient({
+    region: config.awsRegion,
+    ...(config.awsAccessKey && config.awsSecretKey
+      ? { credentials: { accessKeyId: config.awsAccessKey, secretAccessKey: config.awsSecretKey, ...(config.awsSessionToken ? { sessionToken: config.awsSessionToken } : {}) } }
+      : {}),
+  }) as unknown as ConverseSender)
 
   const adapter = {
     chat: {
       completions: {
-        create: (params: any) => {
+        create: (params: any, reqOpts?: { signal?: AbortSignal }) => {
+          // TIER PRIVACY (W31): an EU-region endpoint never addresses a non-EU inference profile.
+          try { assertBedrockResidency(String(params?.model ?? ''), config.awsRegion) } catch (e) { return Promise.reject(e) }
+          if (isConverseModel(params?.model)) {
+            return params.stream ? converseStreaming(converseClient(), params, reqOpts) : converseNonStreaming(converseClient(), params, reqOpts)
+          }
           if (params.stream) {
             return handleStreaming(bedrock, params)
           }
@@ -47,6 +73,24 @@ export function createBedrockAdapter(config: BedrockConfig): OpenAI {
   }
 
   return adapter as unknown as OpenAI
+}
+
+// ─── THE EFFORT LEVER on Bedrock (W27.C) ──────────────────────────────────────
+// Haiku 4.5 / Sonnet 4.5 think through the OLDER extended-thinking API: `thinking: { type: 'enabled',
+// budget_tokens }` (lib/ai/effort.ts maps an effort to it and already widened max_tokens past the
+// budget). Thinking forbids a non-default temperature, so sampling is dropped whenever thinking rides.
+// The model's thinking blocks are never surfaced as content (only text / tool_use blocks are read).
+// Absent `thinking` = byte-identical to before.
+export function thinkingOf(params: any): { type: 'enabled'; budget_tokens: number } | null {
+  const t = params?.thinking
+  return t && t.type === 'enabled' && Number.isFinite(t.budget_tokens) && t.budget_tokens >= 1024
+    ? { type: 'enabled', budget_tokens: Math.floor(t.budget_tokens) } : null
+}
+
+function samplingOrThinking(params: any): Record<string, unknown> {
+  const thinking = thinkingOf(params)
+  if (thinking) return { thinking }
+  return params.temperature != null ? { temperature: params.temperature } : {}
 }
 
 // ─── Non-streaming ────────────────────────────────────────────────────────────
@@ -66,12 +110,12 @@ async function handleNonStreaming(bedrock: AnthropicBedrock, params: any): Promi
     max_tokens: params.max_tokens ?? 4096,
     ...(systemFinal ? { system: systemFinal } : {}),
     messages,
-    ...(params.temperature != null ? { temperature: params.temperature } : {}),
+    ...samplingOrThinking(params),
     ...(translateTools(params.tools) ? { tools: translateTools(params.tools)! } : {}),
     ...(params.tool_choice ? { tool_choice: translateToolChoice(params.tool_choice) } : {}),
   })
 
-  return anthropicResponseToOpenAI(response, params.model)
+  return anthropicResponseToOpenAI(response, params.model, !!thinkingOf(params))
 }
 
 // ─── Streaming ────────────────────────────────────────────────────────────────
@@ -90,7 +134,7 @@ async function handleStreaming(bedrock: AnthropicBedrock, params: any): Promise<
     max_tokens: params.max_tokens ?? 4096,
     ...(systemFinal ? { system: systemFinal } : {}),
     messages,
-    ...(params.temperature != null ? { temperature: params.temperature } : {}),
+    ...samplingOrThinking(params),
     ...(translateTools(params.tools) ? { tools: translateTools(params.tools)! } : {}),
     ...(params.tool_choice ? { tool_choice: translateToolChoice(params.tool_choice) } : {}),
     stream: true,
@@ -188,7 +232,7 @@ function makeChunk(id: string, model: string, overrides: any): any {
 
 // ─── Response translator (non-streaming) ──────────────────────────────────────
 
-function anthropicResponseToOpenAI(response: any, model: string): any {
+function anthropicResponseToOpenAI(response: any, model: string, thinking = false): any {
   const textParts: string[] = []
   const toolCalls: any[] = []
 
@@ -228,6 +272,10 @@ function anthropicResponseToOpenAI(response: any, model: string): any {
       prompt_tokens: response.usage?.input_tokens ?? 0,
       completion_tokens: response.usage?.output_tokens ?? 0,
       total_tokens: (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0),
+      // W27.C: Anthropic bills thinking inside output_tokens and reports no split. With thinking on,
+      // the reasoning share is ESTIMATED as output − visible (~4 chars/token) — OpenAI's field name so
+      // one reader (the eval meter) sees both providers. Absent when thinking was off.
+      ...(thinking ? { completion_tokens_details: { reasoning_tokens: Math.max(0, (response.usage?.output_tokens ?? 0) - Math.ceil(((text ?? '').length + toolCalls.reduce((n: number, t: any) => n + t.function.arguments.length, 0)) / 4)), reasoning_estimated: true } } : {}),
     },
   }
 }

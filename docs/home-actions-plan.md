@@ -9,7 +9,7 @@ to start; the design stays channel-agnostic for Slack/doc later.
 ## The gap (from the user)
 The deep-dives show **context** but the actions are type-locked:
 - **Meeting → "follow up"**: shows summary, but no way to draft the follow-up email to the attendees.
-- **Commitment "you owe Madalena the refund details"**: only Done/Dismiss — no drafter to email Madalena.
+- **Commitment "you owe Maya the refund details"**: only Done/Dismiss — no drafter to email Maya.
 - Keep-an-eye-on items have a `>` but open **no** deep-dive.
 
 The system already knows the intent (the "suggested next step" / the commitment description) — it just
@@ -47,7 +47,7 @@ Wire the awareness rows to open `/item/[id]?kind=email` (or `awareness`) — rea
 The end state: a deep-dive doesn't show one button — it shows **what it takes to resolve this item**,
 decomposed into **tasks**, each tagged **[System]** (we can do it) or **[You]** (needs you), with the
 system tasks executable now and **handed to AI coworkers** later. Example — *"process the refund + share
-details with Madalena"* → pull refund status (system if we have access / you if external), draft the
+details with Maya"* → pull refund status (system if we have access / you if external), draft the
 update (system), send it (system/approve), process the refund in billing (you). The user sees the whole
 job **and what's already off their plate.**
 

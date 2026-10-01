@@ -196,7 +196,7 @@ the spine).
   detail work list + the Timeline station rows render the SAME component (laid out by entity / by time).
   Kill the per-surface row variants. Gantt keeps its dots (a chart, not a list) but its click-through
   opens the same object.
-- Smoke: the Madalena-parity smoke now runs against the DECK's own data path (finally testing what the
+- Smoke: the Maya-parity smoke now runs against the DECK's own data path (finally testing what the
   user sees); a cross-surface assertion — the same item id renders the same title/tokens on all lenses.
 
 ## P4 — CONTENT DISCIPLINE — ✅ SHIPPED (July 22)
@@ -456,7 +456,7 @@ Note" leaks as the gap line; the Home mixes three species again (expanded bundle
 cards / item rows) with literal duplicate rows and lost ✓/✕ on peeks + deal cards; the deep-dive's
 left pane is flat/flush while inbox is rounded-card-on-gutter; the action bar hides below the fold.
 **The verdict shared with the user: don't redesign the container again — fix the three content
-sources and unify the species. The card/row grammar (the Madalena list form) stays.**
+sources and unify the species. The card/row grammar (the Maya list form) stays.**
 
 ## P5a — VOICE: the entity-state synthesis gets the briefing's laws (the biggest lever — one prompt,
 every surface)

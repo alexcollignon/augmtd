@@ -64,6 +64,8 @@ Write the skill. Requirements:
 - name: short and clear, max ~6 words.
 - when_to_use: ONE line for when a coworker should apply this (used for auto-selection), e.g. "When drafting LinkedIn posts".
 - content: the actual instruction block — imperative, concrete, scannable (short rules / bullets). For voice, derive specific do/don't from the samples and answers (real words, sentence shapes, opener/closer habits), NOT vague adjectives. For domain, state the facts plainly so they can be quoted. NEVER invent facts the user didn't give.
+- When the user gave NO facts for something the skill needs (prices, names, figures, their method), never refuse and never invent — not a figure, and not a formula, method or house rule either: open the content with one line saying the specifics are still to be provided, then give a short skeleton of what to fill in, with clearly named placeholders ([DAY_RATE], [MINIMUM_FEE] …), and a rule to ask for or insert the real figures.
+- Write the skill in the language the user wrote the objective and answers in.
 - Keep it tight — no preamble, no meta-commentary.
 
 Return ONLY JSON, no prose:

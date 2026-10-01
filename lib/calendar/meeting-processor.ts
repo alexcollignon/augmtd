@@ -6,9 +6,14 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
-import { getAIClient } from '@/lib/ai/factory';
+import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { INBOUND_DATA_RULE, inboundBlock, attrValue, withoutMachineAddressed } from '@/lib/utils/inbound-data';
+import { topMessageOf } from '@/lib/inbox/top-message';
+import { dayRelativeTo, annotateMessageDays, dayStrip } from '@/lib/core/relative-time';
+import { userTimezone } from '@/lib/utils/user-time';
 
-interface CalendarEvent {
+export interface CalendarEvent {
   id: string;
   user_id: string;
   title: string;
@@ -26,7 +31,7 @@ interface CalendarEvent {
   provider: string;
 }
 
-interface MeetingContext {
+export interface MeetingContext {
   event: CalendarEvent;
   isOrganizer: boolean;
   userEmail: string;
@@ -49,10 +54,20 @@ interface MeetingContext {
 /**
  * Process calendar events and create meeting prep inbox items
  */
+/**
+ * W37 · OWNER DECISION (Oct 1): the agenda prep this processor writes (calendar_events.metadata.prep) is
+ * shown by NO surface, yet the sync crons paid a model call for every upcoming meeting (A CLAIM RENDERS —
+ * nothing prepares work no surface renders). Gated OFF by default; the code path stays callable
+ * (buildMeetingContext / generateMeetingPrep, measured by eval-surfaces prep.agenda). Set
+ * MEETING_AGENDA_PREP_ENABLED=true once a surface renders it. No stored prep is deleted.
+ */
+export const meetingAgendaPrepEnabled = (): boolean => process.env.MEETING_AGENDA_PREP_ENABLED === 'true';
+
 export async function processMeetingsForUser(
   userId: string,
   supabase: SupabaseClient
 ): Promise<{ processed: number; created: number }> {
+  if (!meetingAgendaPrepEnabled()) return { processed: 0, created: 0 };
   console.log(`[MeetingProcessor] Processing meetings for user ${userId}`);
 
   // Get user's email for organizer detection
@@ -156,7 +171,7 @@ export async function processMeetingsForUser(
 /**
  * Build context for a meeting
  */
-async function buildMeetingContext(
+export async function buildMeetingContext(
   event: CalendarEvent,
   userEmail: string,
   supabase: SupabaseClient
@@ -196,7 +211,8 @@ async function buildMeetingContext(
 
   const recentEmailThreads = (recentEmails || []).map(email => ({
     subject: email.subject || '(no subject)',
-    lastMessage: email.body?.substring(0, 200) || '',
+    // W37 · the message's own words (quoted history off), clipped under the excerpt law — the prep reads them.
+    lastMessage: clipForPrompt(annotateMessageDays(topMessageOf(String(email.body || '')) || String(email.body || ''), email.received_at).replace(/\s+/g, ' ').trim(), 600),
     participants: [email.from_address, ...(email.to_addresses || [])],
     date: email.received_at,
   }));
@@ -217,7 +233,7 @@ async function buildMeetingContext(
 /**
  * Generate meeting prep using AI
  */
-async function generateMeetingPrep(context: MeetingContext, userId: string, supabase: SupabaseClient): Promise<{
+export async function generateMeetingPrep(context: MeetingContext, userId: string, supabase: SupabaseClient): Promise<{
   title: string;
   agenda: string;
   context: string;
@@ -232,58 +248,76 @@ async function generateMeetingPrep(context: MeetingContext, userId: string, supa
     .filter((topic, index, self) => self.indexOf(topic) === index)
     .slice(0, 5);
 
+  // W37 (eval prep.agenda) · the prep saw only subjects, a server-zone clock and no "today", so it padded the
+  // agenda with invented topics ("training completion rates") and missed what the mail actually said; the
+  // invite description is someone else's text and rode as an instruction. Now: the mail's own words as dated
+  // DATA in the user's zone, the description as data, and only what the records carry.
+  const tz = await userTimezone(supabase, userId).catch(() => 'UTC');
+  const now = new Date();
+  const localTime = (iso: string) => { try { return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz }).format(new Date(iso)); } catch { return iso.slice(11, 16); } };
+  const today = dayRelativeTo(now, now, tz).replace(/^today \((.*)\)$/, '$1');
+
   const prompt = `You are preparing someone for an upcoming meeting. Be concise and actionable.
+
+TODAY: ${today} (${tz}). The next days: ${dayStrip(now, tz, 10)}.
 
 MEETING DETAILS:
 Title: ${event.title}
-When: ${new Date(event.start_time).toLocaleString()} (in ${Math.round(hoursUntilMeeting)} hours)
+When: ${dayRelativeTo(event.start_time, now, tz)} at ${localTime(event.start_time)} (in ${Math.round(hoursUntilMeeting)} hours)
 Duration: ${calculateDuration(event.start_time, event.end_time)} minutes
 ${event.meeting_link ? `Link: ${event.meeting_link}` : ''}
 ${event.location ? `Location: ${event.location}` : ''}
 
 ATTENDEES (${attendeeRelationships.length}):
 ${attendeeRelationships.slice(0, 5).map(a =>
-  `- ${a.name || a.email}${a.importance > 80 ? ' (VIP)' : ''}`
+  `- ${a.name ? `${a.name} <${a.email}>` : a.email}${a.importance > 80 ? ' (VIP)' : ''}`
 ).join('\n')}
 
 ${vipAttendees.length > 0 ? `\nVIP ATTENDEES: ${vipAttendees.map(a => a.name || a.email).join(', ')}` : ''}
 
 ${recentTopics.length > 0 ? `\nRECENT TOPICS WITH ATTENDEES:\n${recentTopics.map(t => `- ${t}`).join('\n')}` : ''}
 
-${recentEmailThreads.length > 0 ? `\nRECENT EMAIL THREADS:\n${recentEmailThreads.slice(0, 3).map(t =>
-  `- ${t.subject} (${new Date(t.date).toLocaleDateString()})`
-).join('\n')}` : ''}
+${recentEmailThreads.length > 0 ? `\nRECENT EMAILS WITH THE ATTENDEES (newest first):\n${recentEmailThreads.slice(0, 4).map(t =>
+  inboundBlock('email', withoutMachineAddressed(t.lastMessage), 700, { attrs: `subject="${attrValue(t.subject)}" date="${attrValue(dayRelativeTo(t.date, now, tz))}"` })
+).join('\n')}` : '\nRECENT EMAILS WITH THE ATTENDEES: none on record.'}
 
-${event.description ? `\nMEETING DESCRIPTION:\n${event.description.substring(0, 500)}` : ''}
+${event.description ? `\nMEETING DESCRIPTION (from the invite):\n${inboundBlock('description', withoutMachineAddressed(event.description), 500)}` : ''}
 
 Generate a brief meeting prep with:
-1. AGENDA: 2-3 bullet points of likely topics based on context
+1. AGENDA: 2-3 bullet points of likely topics, each grounded in the emails, the description or the title above
 2. CONTEXT: 1-2 sentences on why this meeting matters (relationships, recent topics, etc.)
 
-Keep it concise and actionable. Use bullet points.`;
+Rules: only what the records above carry — never invent figures, history, projects or topics; when there is
+little on record (a first contact), say so and keep the agenda to what the title and emails support. A result
+stated with a target is reported with it. ${EXCERPT_RULE} ${INBOUND_DATA_RULE}
+Keep it concise and actionable. Use bullet points. Write the two headings exactly as "AGENDA:" and "CONTEXT:", once each.`;
 
   try {
-    const response = await openai.chat.completions.create({
+    const response = await aiCreate(openai, {
       model: defaultModel,
       messages: [
         {
           role: 'system',
-          content: 'You are a meeting prep assistant. Be concise, bullet-pointed, and focus on actionable insights.',
+          content: 'You are a meeting prep assistant. Be concise, bullet-pointed, and focus on actionable insights grounded in the records you are given.',
         },
         {
           role: 'user',
           content: prompt,
         },
       ],
-      temperature: 0.7,
-      max_tokens: 300,
+      temperature: 0.3,
+      max_tokens: 500,
+      stream: false as const,
     });
 
-    const prepText = response.choices[0].message.content || '';
+    const prepText = String((response as { choices?: Array<{ message?: { content?: string | null } }> }).choices?.[0]?.message?.content || '').replace(/\*\*|^#+\s*/gm, '');
 
     // Parse the response
-    const agendaMatch = prepText.match(/AGENDA:?\s*([\s\S]*?)(?=CONTEXT:|$)/i);
-    const contextMatch = prepText.match(/CONTEXT:?\s*([\s\S]*?)$/i);
+    // The headings may arrive as "1. AGENDA:", "AGENDA" or "Context:" — split at the context heading, so
+    // the context never lands inside the agenda too (the first context heading ends the agenda).
+    const ctxAt = prepText.search(/(^|\n)\s*(?:\d\.\s*)?CONTEXT:?\s*(?=\S)/i);
+    const agendaMatch = (ctxAt >= 0 ? prepText.slice(0, ctxAt) : prepText).match(/AGENDA:?\s*([\s\S]*)$/i);
+    const contextMatch = ctxAt >= 0 ? prepText.slice(ctxAt).match(/CONTEXT:?\s*([\s\S]*?)$/i) : null;
 
     const agenda = agendaMatch?.[1]?.trim() || prepText.trim();
     const contextText = contextMatch?.[1]?.trim() ||

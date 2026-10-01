@@ -45,6 +45,7 @@ import {
 import { buildConnectedIntegrationsBlock } from '@/lib/integrations/connection';
 // THE WEEKDAY FLOOR (Wave 1) — deterministic, applied at the assistant-message persist seam below.
 import { enforceWeekdayDatePairs } from '@/lib/utils/weekday-floor';
+import { clipForPrompt as clipForPromptSync, EXCERPT_MARK as EXCERPT_MARK_SYNC, EXCERPT_RULE as EXCERPT_RULE_SYNC } from '@/lib/utils/clip-for-prompt';
 // THE MARKERS NEVER REACH THE BUBBLE + THE CHIP IS OURS (Sep 22, WAVE 0) — one implementation each,
 // shared with the AgentOS bridge so the two coworker lanes cannot disagree.
 import { stripChatMarkers } from '@/lib/work/chat-markers';
@@ -528,10 +529,10 @@ export async function POST(
             `[TEAM]\nYou work alongside other coworkers. To build on a teammate's output (e.g. research another coworker did), use find_team_work to locate it (by topic, or by coworker name like "Max") and read_team_work to read it — then do your part. Don't ask the user to fetch a teammate's work; get it yourself. The user talks to whoever owns the result they want — so if they ask you for a deliverable that needs a colleague's input, pull it.`,
             ...(features.meetings ? [`[MEETINGS]\nWhen the user asks to set up, schedule or book a meeting or call, call prepare_calendar_invite — it hands them a FILLED, editable invite card (attendees and time grounded in this conversation) that they review and send themselves. You NEVER send an invite and never say one was sent; keep your reply to one short line, because the card carries the detail.`] : []),
             `[EMAIL]\nYou can draft and send email as yourself (from your own address). When the user asks you to email someone, call compose_email with to/subject/body — it shows the user an EDITABLE draft to review and send. You NEVER send directly and NEVER say it's sent ("I've drafted it — review and hit Send"). Recipients can be anyone; for "me"/"us" use the user's own address from [YOUR EMAIL ADDRESSES]. The email is **FROM YOU** (the coworker, e.g. your @team.augmtd.ai address) — NOT from the user, so do NOT mimic the user's email style or sign off with the user's name (no "Best, {user}"). Write in your own voice; a signature with your name, role, and address is appended automatically, so **end the body with no sign-off**. If compose_email reports email is off, tell them to enable Email in your Tools tab.`,
-            `[LINKEDIN POST]\nWhenever you write a LinkedIn post for the user, deliver it by calling present_linkedin_post (put the post text in the tool, 1–3 variants only if you genuinely drafted alternatives). It renders a real LinkedIn-style preview card — with the character count and the "see more" fold — instead of a wall of text. After calling it, keep your chat reply to a short intro line; don't also paste the full post into the chat.`,
+            `[LINKEDIN POST]\nWhenever you write a LinkedIn post for the user, deliver it by calling present_linkedin_post (put the post text in the tool, 1–3 variants only if you genuinely drafted alternatives). It renders a real LinkedIn-style preview card — with the character count and the "see more" fold — instead of a wall of text. After calling it, keep your chat reply to a short intro line; don't also paste the full post into the chat. Every fact in a post comes from the user's material or records — the story's colour comes from wording and rhythm, never from an added event, timing, cause, quote or result; where the post would want a detail you don't have, leave a [DETAIL] slot.`,
             `[SKILLS]\nSkills are reusable instructions for how to handle a kind of work — a method, process, format, structure, or style. Any skill assigned to you is already in your context above — apply the matching one automatically. If the user asks you to follow an approach or named skill you don't see assigned, call list_skills to check the library, then apply_skill to pull and follow it. When creating or updating a task, pass skill_names to create_task/update_task to enforce specific skills on that task's output (omit to use your assigned skills); use list_skills first if you're unsure of the exact names.`,
             `Understand intent before acting. "Prepare a weekly X", "every Monday do Y", "set up X for me", or anything you'll be asked to repeat = the user wants a reusable task — call create_task immediately (with a schedule if given, otherwise it's run on demand), confirm, done. "What's X?" or "find me X" or "draft X" = do it now with your tools. Never confuse the two. A human colleague would know the difference instantly.`,
-            `Speak like a capable colleague, not a software system. Say "Got it, I'll have that ready every Monday" not "I can create a scheduled automation task." Say "I'm on it" not "I don't have direct access to." When a task is clear, do it. One focused question maximum if truly blocked.`,
+            `Speak like a capable colleague, not a software system. Say "Got it, I'll have that ready every Monday" not "I can create a scheduled automation task." Say "I'm on it" not "I don't have direct access to." When a task is clear, do it.`,
           ].filter(Boolean).join('\n\n')
         // Standard agent prompt
         : [
@@ -540,7 +541,8 @@ export async function POST(
               ? `Your instructions:\n${agent.instructions.trim()}`
               : '',
             `Stay in this role for the entire conversation. Do not describe yourself as a general-purpose assistant.`,
-            `Approach: when context is incomplete, make a reasonable assumption, state it briefly, and attempt the task. The user wants output. If you must ask, ask ONE focused question — never a list of questions.`,
+            // W28 — the approach ("assume, attempt, ask one thing") is the shared conduct block now, composed by
+            // buildChatSystemPrompt below (lib/ai/conduct.ts `coworker_chat`) — never a second, older copy here.
             agent.web_enabled
               ? `You have access to web_search and fetch_url tools. Use them proactively — do not answer from memory when fresh information is available online.`
               : '',
@@ -592,9 +594,9 @@ export async function POST(
       }
 
       // Append base capabilities so the agent still has tools/format knowledge
-      contextParts.push(buildChatSystemPrompt(modelFamily));
+      contextParts.push(buildChatSystemPrompt(modelFamily, 'coworker_chat'));
     } else {
-      contextParts.push(buildChatSystemPrompt(modelFamily));
+      contextParts.push(buildChatSystemPrompt(modelFamily, 'coworker_chat'));
     }
     // A non-worker conversation (a plain thread or a custom agent) still honours the message's pick.
     if (!isWorker && turnSkills.block) contextParts.push(turnSkills.block);
@@ -710,9 +712,20 @@ export async function POST(
     }
 
     // Build tools based on heuristic route — model gets full tool set unless trivially conversational
-    const tools = routeMode === 'no_tools'
+    const toolsAll = routeMode === 'no_tools'
       ? []
       : buildChatTools(sources, chatEndpoint.provider, modelFamily, isWorker, features);
+    // W28 · RECORDS FIRST, IN CODE (lib/work/web-gate.ts): a turn that names what the user's own records hold,
+    // and asks nothing public, is answered from the records — the web tools are not offered this turn.
+    let recordsFirst: { offerWeb: boolean; entity: string | null } = { offerWeb: true, entity: null };
+    try {
+      const { namedEntities, namesInRecords, recordsFirstDecision } = await import('@/lib/work/web-gate');
+      const names = namedEntities(content);
+      if (names.length) recordsFirst = recordsFirstDecision({ userText: content, resolved: await namesInRecords(supabase, user.id, names) });
+    } catch { /* the gate is an enhancement — the web stays on */ }
+    const { WEB_TOOL_NAMES } = await import('@/lib/work/web-gate');
+    const tools = recordsFirst.offerWeb ? toolsAll
+      : toolsAll.filter((t) => !(WEB_TOOL_NAMES as readonly string[]).includes((t as { function?: { name?: string } }).function?.name ?? ''));
 
     // Build message history — system goes first, then conversation.
     // History was loaded in parallel with the insert so excludes the current message;
@@ -733,7 +746,7 @@ export async function POST(
     // ── Deep research: execute before messages are built so findings go into system context ──
     let preResearchCitations: string[] = [];
     let ranPreResearch = false;
-    if (sources.includes('research') && content?.trim()) {
+    if (sources.includes('research') && content?.trim() && recordsFirst.offerWeb) {
       try {
         const researchOut = await executeDeepResearch(
           { focus: content.trim(), queries: [content.trim()], model: 'fast' },
@@ -752,6 +765,9 @@ export async function POST(
       }
     }
 
+    if (!recordsFirst.offerWeb && recordsFirst.entity) {
+      contextParts.push(`[RECORDS FIRST — THIS TURN] "${recordsFirst.entity}" is in the user's own records (their inbox or files). Answer from those records: read them with your inbox/file tools. The web tools are not available on this turn; if public information would help, offer it as one next step.`);
+    }
     let systemFinal = tools.length === 0
       ? contextParts.join('\n\n') + '\n\nNo tools are available. Do not output any XML, function calls, or <function_calls> blocks. Answer directly from the context above.'
       : contextParts.join('\n\n');
@@ -887,12 +903,14 @@ export async function POST(
       features,
       // THE THREAD ITSELF — what the invite preparer reads (FILLED FROM THE ONE GROUNDING). Same
       // history the model sees, rendered plainly and tail-bounded.
-      conversation: rawHistory.slice(-10)
-        .map((m: { role: string; content: string }) => `[${m.role === 'user' ? 'user' : 'you'}] ${String(m.content ?? '').slice(0, 900)}`)
-        .join('\n'),
+      // W28 — each turn through the excerpt law with a real budget (was a raw 900-char slice: a pasted brief
+      // lost its second half before the invite preparer and the claims floor read it); the rule rides once.
+      conversation: renderConversationForTools(rawHistory),
       // THE USER'S OWN WORDS — the bulk status deed decides its direction and its "all" from THESE
       // in code, never from the model's extraction (the EXPLICIT_SEND floor's idiom).
       userText: content,
+      // W28.7 — what the tools returned this turn (the claims floor's material beside the user's words).
+      toolTexts: [] as string[],
     };
 
     // ── Stream ────────────────────────────────────────────────────────────────
@@ -1006,7 +1024,7 @@ export async function POST(
         }
 
         // ── Deep research: run directly before AI loop, don't rely on model to invoke it ──
-        if (sources.includes('research') && content?.trim()) {
+        if (sources.includes('research') && content?.trim() && recordsFirst.offerWeb) {
           send({ type: 'tool_start', name: 'deep_research', id: 'pre-research', label: 'Researching…' });
           try {
             const researchResult = await executeDeepResearch(
@@ -1213,6 +1231,7 @@ export async function POST(
 
                     send({ type: 'tool_start', name: tc.function.name, id: tc.id, label: toolLabel(tc.function.name) });
                     const { result, summary, artifact, citations, clarification, stopStream, emailDraft, cardArtifact, workflowDraft, inviteCard, collection, eventCard, change, deed } = await executeChatTool(tc.function.name, toolInput, sources, runContext);
+                    runContext.toolTexts?.push(String(result ?? ''));
                     if (deed) deedLedger.push(deed);
                     const ok = toolResultOk(tc.function.name, result);
                     traceCalls.push({ name: tc.function.name, ok });
@@ -1332,6 +1351,7 @@ export async function POST(
                     sources,
                     runContext
                   );
+                  runContext.toolTexts?.push(String(result ?? ''));
                   // THE DEED LEDGER (Sep 21): what this mutation actually did, as the executor
                   // OBSERVED it — never re-read out of the prose it returned.
                   if (deed) deedLedger.push(deed);
@@ -1679,6 +1699,16 @@ interface RunContext {
   /** THIS turn's user message, verbatim — for the deterministic argument floors (which direction a
    *  bulk status deed takes, and whether "all" was actually said). */
   userText?: string;
+  /** W28.7 — tool results of this turn (the claims floor reads them as material). */
+  toolTexts?: string[];
+}
+
+/** W28 — the thread as the tools read it: the last 10 turns, each clipped at a boundary (declared). Pure. */
+const CONVERSATION_TURN_CHARS = 4000;
+function renderConversationForTools(rawHistory: Array<{ role: string; content: string }>): string {
+  const lines = rawHistory.slice(-10).map((m) => `[${m.role === 'user' ? 'user' : 'you'}] ${clipForPromptSync(String(m.content ?? ''), CONVERSATION_TURN_CHARS)}`);
+  const text = lines.join('\n');
+  return text.includes(EXCERPT_MARK_SYNC) ? `(${EXCERPT_RULE_SYNC})\n${text}` : text;
 }
 
 // ── Clarification validator ───────────────────────────────────────────────────
@@ -1812,6 +1842,13 @@ async function executeChatTool(
         })
         .filter((v) => v.text);
       if (!variants.length) return { result: 'No post text provided.', summary: 'No post' };
+      // W28.7 · THE CLAIMS FLOOR: a specific the user's material does not supply (a timeframe, a before-state,
+      // a number, an anecdote) becomes a [PLACEHOLDER] in the card before the user sees it.
+      try {
+        const { groundClaims } = await import('@/lib/prepare/claims-floor');
+        const material = [ctx.conversation ?? '', ctx.userText ?? '', ctx.kbContext ?? '', ...(ctx.toolTexts ?? [])].filter(Boolean).join('\n\n');
+        for (const v of variants) v.text = (await groundClaims(ctx.adminClient, ctx.userId, { draft: v.text, material })).text;
+      } catch { /* the floor is an enhancement */ }
       return {
         result: `Presented the LinkedIn post${variants.length > 1 ? ` (${variants.length} variants)` : ''} to the user for review.`,
         summary: 'Presented LinkedIn post',
@@ -1916,34 +1953,37 @@ async function executeChatTool(
       }
       const fileId = input.file_id as string;
       const filename = (input.filename as string) || 'document';
-      const MAX_CHARS = 12000;
-      const { data: chunks } = await ctx.adminClient
+      // W28 — the whole document on demand, scoped to THIS user (the chunk read took any file id the model
+      // named), falling back to the file's own extracted text when it has no chunks, and cut only through
+      // the excerpt law (was: a raw slice + "…[truncated]").
+      const { clipForPrompt: clipDoc, EXCERPT_RULE: DOC_RULE } = await import('@/lib/utils/clip-for-prompt');
+      const DOC_READ_CHARS = 24000;
+      const { data: chunks, error: chErr } = await ctx.adminClient
         .from('knowledge_chunks')
         .select('heading, content, chunk_index')
         .eq('file_id', fileId)
+        .eq('user_id', ctx.userId)
         .order('chunk_index', { ascending: true })
-        .limit(50);
-      if (!chunks || chunks.length === 0) {
+        .limit(80);
+      let body = !chErr && chunks?.length
+        ? (chunks as Array<{ heading: string | null; content: string }>).map((c) => (c.heading ? `## ${c.heading}\n${c.content}` : c.content)).join('\n\n')
+        : '';
+      if (!body) {
+        const { data: kf, error: kfErr } = await ctx.adminClient.from('knowledge_files').select('extracted_text')
+          .eq('id', fileId).eq('user_id', ctx.userId).maybeSingle();
+        if (!kfErr) body = String((kf as { extracted_text?: string | null } | null)?.extracted_text ?? '');
+      }
+      if (!body.trim()) {
         return { result: `No content found for "${filename}".`, summary: 'Document not found' };
       }
-      let totalChars = 0;
-      const sections: string[] = [];
-      for (const chunk of chunks) {
-        const text = chunk.heading ? `## ${chunk.heading}\n${chunk.content}` : chunk.content;
-        if (totalChars + text.length > MAX_CHARS) {
-          sections.push(text.slice(0, MAX_CHARS - totalChars) + '\n…[truncated]');
-          break;
-        }
-        sections.push(text);
-        totalChars += text.length;
-      }
-      const fullText = `[${filename}]\n\n${sections.join('\n\n')}`;
+      const clipped = clipDoc(body, DOC_READ_CHARS);
+      const fullText = `[${filename}]\n\n${clipped}${clipped.length < body.length ? `\n(${DOC_RULE})` : ''}`;
       // Also accumulate as KB context for grounding generation
       ctx.kbContext = ctx.kbContext ? `${ctx.kbContext}\n\n${fullText}` : fullText;
       if (!ctx.kbSources.some(s => s.id === fileId)) {
         ctx.kbSources.push({ id: fileId, title: filename, type: 'kb' });
       }
-      return { result: fullText, summary: `Read "${filename}" (${chunks.length} sections)`, citations: [filename] };
+      return { result: fullText, summary: `Read "${filename}"`, citations: [filename] };
     }
 
     case 'get_emails': {
@@ -1966,26 +2006,13 @@ async function executeChatTool(
       if (!ctx.features.email) {
         return { result: 'Email access is not enabled for this workspace.', summary: 'Email module disabled' };
       }
-      const emailId = input.email_id as string;
-      const { data: item } = await ctx.supabase
-        .from('inbox_items')
-        .select('source_data, created_at')
-        .eq('id', emailId)
-        .eq('user_id', ctx.userId)
-        .single();
-      if (!item) {
-        return { result: `Email not found: ${emailId}`, summary: 'Email not found' };
-      }
-      const sd = item.source_data as Record<string, unknown>;
-      const from = sd?.from_name ? `${sd.from_name} <${sd.from_address || ''}>` : (sd?.from as string || 'Unknown');
-      const subject = (sd?.subject as string) || '(no subject)';
-      const date = new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      const rawBody = (sd?.body as string) ||
-        (sd?.html_body ? (sd.html_body as string).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : '') ||
-        (sd?.snippet as string) || '';
-      const body = rawBody.slice(0, 8000);
-      const result = `From: ${from}\nSubject: ${subject}\nDate: ${date}\n\n${body}${rawBody.length > 8000 ? '\n…[truncated]' : ''}`;
-      return { result, summary: `Read email: "${subject}"` };
+      // W28 — the ONE open-an-email reader (lib/tools/get-emails.ts readEmailThread): the thread oldest first,
+      // the newest message whole, cut only through the excerpt law (was: a raw 8,000-char slice of one body).
+      const { readEmailThread } = await import('@/lib/tools/get-emails');
+      const emailId = String(input.email_id ?? '');
+      const result = emailId ? await readEmailThread(ctx.supabase, ctx.userId, emailId) : null;
+      if (!result) return { result: `Email not found: ${emailId}`, summary: 'Email not found' };
+      return { result, summary: 'Read an email' };
     }
 
     case 'get_meeting_context': {

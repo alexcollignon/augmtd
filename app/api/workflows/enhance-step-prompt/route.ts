@@ -30,6 +30,16 @@ export async function POST(request: NextRequest) {
   const wfName = workflow_name?.trim() || '[unnamed workflow]';
   const stepName = step_label?.trim() || '[unnamed step]';
 
+  // W37 — THE HELPER'S FLOOR (found by the build.step-prompt eval): the rewrites invented inputs ("OCR
+  // text, metadata"), business rules and fake values ("UNKNOWN", 0.00) the user never implied, stamped a
+  // stale year on search queries, and answered Portuguese drafts in English. Shared by every step kind.
+  const floor = `Rules for the rewrite:
+- Never put a date, date range or year into the text: the step runs again on other days (say "the past week", not its dates).
+- Keep the user's intent exactly; make it clearer, never broader. Do not invent inputs, data sources, fields, filters, thresholds or business rules the draft does not imply.
+- A missing value is null (or "not stated") — never a made-up placeholder value like "UNKNOWN" or 0.
+- A workflow step only produces its output: it never sends, posts or waits for approval itself (approval and delivery are separate steps of the workflow). If the draft mentions sending or approving, the instruction produces the thing to be approved/sent and says nothing that makes the step send it.
+- Write in the same language as the user's draft.`;
+
   let systemPrompt: string;
 
   if (step_type === 'tool' && tool_type === 'web_search') {
@@ -41,7 +51,9 @@ Step: "${stepName}"
 The user's draft query:
 "${prompt.trim()}"
 
-Rewrite this as an optimised web search query. Make it specific, well-scoped, and likely to find high-quality and current results. You may use multiple lines if the query covers multiple sources or angles. Keep it to the point — no filler words, no instructions, just the query terms and any useful site/date filters.
+Rewrite this as an optimised web search query. Make it specific, well-scoped, and likely to find high-quality and current results: use the subject's proper official names and acronyms. One query, or at most three short lines when the subject has distinct angles. No year unless the user gave one (the search is run on the day; a hard-coded year goes stale), and a site: filter only for a domain you are certain of. Keep it to the point — no filler words, no instructions, just the query terms.
+
+${floor}
 
 Respond with only the query text — no explanation, no quotes.`;
 
@@ -60,13 +72,15 @@ Rewrite this as a clear, specific task description in 3–5 sentences. The agent
 - Any scope constraints or rules to follow
 - What to do if the input is empty or irrelevant
 
+${floor}
+
 Respond with only the task text — no preamble, no explanation, no quotes.`;
 
   } else {
     // AI step — tailor to output format
     const formatGuidance =
       output_format === 'json'
-        ? 'The output format is structured JSON. Include in the instruction which exact field names to use, what each field should contain, and what value to use when a field is not available.'
+        ? 'The output format is structured JSON. Include in the instruction which exact field names to use (only the fields the draft implies — a compact flat schema, no nested extras), what each field should contain, null when a field is not available, and what to return when the input holds nothing to extract.'
         : output_format === 'text'
         ? 'The output format is plain text. The instruction should produce clean prose with no markdown, headers, or bullet points.'
         : 'The output format is formatted markdown. The instruction should produce well-structured output with headers and bullet points where appropriate.';
@@ -90,6 +104,8 @@ Rewrite this as a clear, specific, actionable instruction in 3–5 sentences. Th
 - The structure and format of the output (consistent with the output format above)
 - Any filtering, scope, or prioritisation rules
 - What to do if the input is empty or irrelevant
+
+${floor}
 
 Respond with only the instruction text — no preamble, no explanation, no quotes.`;
   }

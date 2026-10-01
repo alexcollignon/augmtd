@@ -42,7 +42,7 @@ export default function AddToWorkControl({ kind, id, compact }: { kind: string; 
   const q = query.trim().toLowerCase();
   const filtered = q ? entities.filter((e) => e.name.toLowerCase().includes(q)) : entities;
 
-  // Found + attach in one motion (the "this is actually EG Bank" correction). Human creation (R4);
+  // Found + attach in one motion (the "this is actually Globex Bank" correction). Human creation (R4);
   // the server narrates existing members into the new project's room; the attach is locked.
   const createAndAttach = async () => {
     const n = newName.trim();

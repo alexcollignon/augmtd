@@ -1,3 +1,4 @@
+import { measuredMeetingProfile } from '@/lib/context/build-user-context'
 import { getSystemClient, getAIClient, aiCreate } from '@/lib/ai/factory'
 import { logAIUsage } from '@/lib/ai/log-usage'
 import { SupabaseClient } from '@supabase/supabase-js'
@@ -65,9 +66,15 @@ export async function renderProfile(
     messages: [
       {
         role: 'system',
-        content: 'You convert structured profile data into clear, factual 1-3 sentence descriptions. No preamble, no filler phrases like "Based on the data" or "This person". Write directly.',
+        content: 'You convert structured profile data into clear, factual 1-3 sentence descriptions. No preamble, no filler phrases like "Based on the data" or "This person". Write directly. ' +
+          // W37 (eval decoration.memory-render): "to keep meetings focused", "Expert in…", an industry recast as a
+          // scope ("overseeing logistics operations"), "about 30 minutes" for 30 — the card is the user\'s own record.
+          'State ONLY what the data says, with its figures exact: never add a motive or purpose ("to keep…", "to ensure…"), ' +
+          'a scope or specialty the data does not state, seniority or praise ("expert", "seasoned", "experienced"), or ' +
+          'restate a preference as observed behaviour. A field\'s value is reported as that field (an industry is the industry).',
       },
-      { role: 'user', content: buildPrompt(profileType, profileData) },
+      // W37 · UNMEASURED IS ABSENT: an acceptance rate with no RSVP sample never reaches the card.
+      { role: 'user', content: buildPrompt(profileType, profileType === 'meeting_behavior' ? measuredMeetingProfile(profileData) : profileData) },
     ],
   })
   if (logCtx) {
@@ -76,7 +83,16 @@ export async function renderProfile(
     }).catch(() => {})
   }
 
-  return completion.choices[0]?.message?.content?.trim() ?? null
+  return cleanRendered(completion.choices[0]?.message?.content ?? '')
+}
+
+/** W37 (eval decoration.memory-render, EU): "This person works in…" / "Based on the data, …" opened the card
+ *  despite the prompt — the card is the user's own record, so the preamble is cut in code. Pure. */
+export function cleanRendered(raw: string): string | null {
+  let t = String(raw ?? '').trim()
+  t = t.replace(/^(based on (the|this) (data|profile)[^,]*,\s*)/i, '').replace(/^this person\s+/i, '').replace(/^(here is|here's)[^:]*:\s*/i, '').trim()
+  if (!t) return null
+  return t.charAt(0).toUpperCase() + t.slice(1)
 }
 
 export async function renderAllProfiles(userId: string, supabase: SupabaseClient): Promise<void> {

@@ -84,6 +84,14 @@ inline. THE WORD IS THE DEED: never say a document was created unless generate_d
 actually called in this response — a claimed-but-absent document is the worst possible outcome."""
 
 
+# ─── THE CONDUCT RULES (W28 — ONE CONDUCT, EVERY PRODUCER) ──────────────────────
+# Deliver first, clarify-then-deliver, one-question interviews, the format contract, short endings,
+# cross-checks… are NOT copied into these static prompts. They live once in lib/ai/conduct.ts and the
+# bridge (lib/work/agentos-bridge.ts) appends them to every run's dependencies.user_context —
+# `coworker_chat` for a DM turn, `workflow_step` for a task step — so they are live without a box
+# redeploy and can never drift from the native loop. Do not paste them here (that would stack two
+# copies once the box is redeployed).
+
 # ─── Worker catalog (mirrors buildWorkers() in init/route.ts) ──────────────────
 
 WORKER_DEFS = [

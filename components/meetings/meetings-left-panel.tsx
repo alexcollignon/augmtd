@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useMemo, useRef } from 'react';
+import { useUserZone } from '@/context/user-zone-context';
+import { dateIn } from '@/lib/core/user-zone';
 import {
   MagnifyingGlassIcon,
   FolderIcon,
@@ -125,6 +127,7 @@ export default function MeetingsLeftPanel({
   recordingTitle,
   onNavigateToRecording,
 }: MeetingsLeftPanelProps) {
+  const zone = useUserZone();
   const [searchQuery, setSearchQuery] = useState('');
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
@@ -234,7 +237,7 @@ export default function MeetingsLeftPanel({
                 >
                   <p className="text-[12px] font-medium text-neutral-800 truncate">{t.title}</p>
                   <p className="text-[10px] text-neutral-400">
-                    {new Date(t.startTime).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                    {dateIn(t.startTime, zone, { day: 'numeric', month: 'short' }, 'en-GB')}
                     {(t.attendees?.length ?? 0) > 0 && (
                       <span> · {firstName(t.attendees![0])}</span>
                     )}

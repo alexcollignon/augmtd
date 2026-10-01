@@ -1,6 +1,6 @@
 // THE NAMED-SUBJECT REPAIR (proactive-team R-class). Links made before the channel-contact law can
 // carry the over-merge: an item filed into an entity whose people all match but whose NAMED
-// engagement differs (the "STC Bahrain filed under Arcapita" class — partner-org contacts broker
+// engagement differs (the "Globex Telecom filed under Arcapita" class — partner-org contacts broker
 // several end clients). This sweep re-checks recognized links with the SAME law the judge now
 // applies (named_engagement extraction + the code-side distinctive-token veto) and, on a mismatch,
 // unlinks + re-recognizes — the item then founds/joins its true body of work through the one

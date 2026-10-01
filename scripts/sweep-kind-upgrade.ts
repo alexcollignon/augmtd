@@ -24,7 +24,7 @@ const userArg = process.argv.includes('--user') ? process.argv[process.argv.inde
 
 (async () => {
   const { data: users } = await sb.auth.admin.listUsers();
-  const targets = ALL ? users!.users : users!.users.filter((u) => u.email === (userArg ?? 'alextcollignon@gmail.com'));
+  const targets = ALL ? users!.users : users!.users.filter((u) => u.email === (userArg ?? process.env.OWNER_EMAIL ?? ''));
   let candidates = 0, upgraded = 0, confirmed = 0, failed = 0;
 
   for (const u of targets) {

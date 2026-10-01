@@ -6,20 +6,32 @@ import { synthesizeVoiceProfile } from './voice-profile';
  * a single prompt-ready block. Called by planning, generation, and inbox chat routes.
  * Gracefully omits any section that has no meaningful data.
  */
+/** W37 · UNMEASURED IS ABSENT: a meeting profile's acceptance rate counts only with the RSVP sample it was
+ *  measured from (`acceptanceRateFrom` > 0) — legacy rows carry a stored default (0.85) that was never measured.
+ *  Every reader of the profile (this block, the memory card) drops it otherwise. Pure; never writes. */
+export function measuredMeetingProfile<T extends Record<string, unknown>>(data: T): T {
+  if (!data || typeof data !== 'object' || !('acceptanceRate' in data)) return data;
+  if (typeof data.acceptanceRate === 'number' && Number(data.acceptanceRateFrom) > 0) return data;
+  const { acceptanceRate: _drop, ...rest } = data as Record<string, unknown>;
+  void _drop;
+  return rest as T;
+}
+
 export async function buildUserContextBlock(
   userId: string,
   supabase: SupabaseClient
 ): Promise<string> {
   const { data: profiles } = await supabase
     .from('context_profiles')
-    .select('profile_type, profile_data')
+    .select('profile_type, profile_data, learned_from_count')
     .eq('user_id', userId)
     .in('profile_type', ['identity', 'email_communication', 'meeting_behavior', 'work_patterns']);
 
   if (!profiles?.length) return '';
 
   const byType: Record<string, any> = {};
-  for (const p of profiles) byType[p.profile_type] = p.profile_data;
+  // W37 · a profile learned from nothing (the seeded defaults: learned_from_count 0) states nothing as learned.
+  for (const p of profiles) byType[p.profile_type] = p.profile_type === 'meeting_behavior' && !Number((p as { learned_from_count?: number | null }).learned_from_count) ? null : p.profile_data;
 
   const sections: string[] = [];
 
@@ -92,7 +104,9 @@ export async function buildUserContextBlock(
     if (meeting.schedulingPatterns?.bufferTime) {
       lines.push(`Buffer between meetings: ${meeting.schedulingPatterns.bufferTime} min`);
     }
-    if (meeting.acceptanceRate != null) {
+    // UNMEASURED IS ABSENT: a rate is stated only when it was measured from RSVPs (legacy rows carry a
+    // stored default, 0.85, that was never measured).
+    if (typeof measuredMeetingProfile(meeting).acceptanceRate === 'number') {
       lines.push(`Acceptance rate: ${Math.round(meeting.acceptanceRate * 100)}%`);
     }
     if (lines.length > 1) sections.push(lines.join('\n'));

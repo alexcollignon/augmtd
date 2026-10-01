@@ -39,6 +39,25 @@ export const proposeStandingTaskDefinition = {
   },
 };
 
+/** W37 · THE CRON OR-TRAP (found by the plan.standing eval: "the first Monday of each month at 9" became
+ *  `0 9 1-7 * 1`, which standard cron reads as "days 1–7 OR every Monday" — a weekly schedule with a first
+ *  run on a Friday, and every model, plain or not, wrote it). A cron that restricts BOTH day-of-month and
+ *  day-of-week fires on either; it is never what a person asked for, so it is refused and repaired. Pure. */
+export function cronOrTrap(cron: string): boolean {
+  const f = String(cron ?? '').trim().split(/\s+/);
+  return f.length === 5 && f[2] !== '*' && f[2] !== '?' && f[4] !== '*' && f[4] !== '?';
+}
+
+/** The honest fallback when the repair still ORs its days: keep the month day (its first value), drop the
+ *  weekday, and SAY so in code's own words — a schedule that runs on a stated date beats no card. Pure. */
+export function orTrapFallback(cron: string): { cron: string; note: string } | null {
+  if (!cronOrTrap(cron)) return null;
+  const f = cron.trim().split(/\s+/);
+  const day = Number(f[2].split(/[-,/]/)[0]);
+  if (!Number.isInteger(day) || day < 1 || day > 28) return null;
+  return { cron: [f[0], f[1], String(day), f[3], '*'].join(' '), note: `runs on day ${day} of the month — a schedule can't name a weekday within the month` };
+}
+
 export async function buildStandingSpec(
   admin: SupabaseClient, userId: string, request: string,
 ): Promise<StandingSpec | { error: string }> {
@@ -59,18 +78,26 @@ export async function buildStandingSpec(
         `own intent (never embellished); "cron" = standard 5-field cron matching the STATED cadence ` +
         `(unstated time of day → 08:00; unstated weekday for "weekly" → Monday); "cadence_label" = the ` +
         `human phrasing ("every Monday 08:00"); "owner_role" = the team role whose CRAFT fits (research → ` +
-        `research_analyst, writing/reports/admin/prep → personal_assistant, LinkedIn/social presence → branding_expert).` +
+        `research_analyst, writing/reports/admin/prep → personal_assistant, LinkedIn/social presence → branding_expert). ` +
+        `What has to be FOUND OUT decides it: a deliverable about competitors, markets, news, prices or regulation is research ` +
+        `(research_analyst) even when it arrives as a report; a report built from the user's own material is personal_assistant.` +
+        `\nStandard cron ORs day-of-month and day-of-week, so never restrict both; a cadence cron cannot say ` +
+        `exactly ("the first Monday of the month") gets the closest honest cron (e.g. the 1st of each month) and ` +
+        `a cadence_label that says so ("monthly on the 1st, 09:00 — cron can't say 'first Monday'"). Write ` +
+        `cadence_label and name in the user's language. The cron is in the user's LOCAL time: the stated hour goes in as said, never converted to UTC.` +
         (repair ? `\nYOUR PREVIOUS CRON WAS INVALID (${repair}) — fix it.` : '') +
         `\nJSON only: {"name":"…","deliverable":"…","cron":"0 8 * * 1","cadence_label":"…","owner_role":"…"}`,
     });
 
     let res = await ask();
     let cron = (res.json?.cron ?? '').trim();
-    let first = cron ? nextRunFromTrigger({ type: 'schedule', cron }) : null;
+    let first = cron && !cronOrTrap(cron) ? nextRunFromTrigger({ type: 'schedule', cron }) : null;
     if (!first) {
-      res = await ask(cron || 'missing');
+      res = await ask(cron ? (cronOrTrap(cron) ? `${cron} restricts both day-of-month and day-of-week, which cron ORs` : cron) : 'missing');
       cron = (res.json?.cron ?? '').trim();
-      first = cron ? nextRunFromTrigger({ type: 'schedule', cron }) : null;
+      const fb = orTrapFallback(cron);
+      if (fb) { cron = fb.cron; res = { ...res, json: { ...(res.json ?? {}), cron: fb.cron, cadence_label: `${String(res.json?.cadence_label ?? '').trim() || fb.cron} (${fb.note})` } }; }
+      first = cron && !cronOrTrap(cron) ? nextRunFromTrigger({ type: 'schedule', cron }) : null;
       if (!first) return { error: 'could not derive a valid schedule from the request' };
     }
     const j = res.json ?? {};
@@ -81,7 +108,7 @@ export async function buildStandingSpec(
     if (!name || !deliverable) return { error: 'could not derive the deliverable from the request' };
     return {
       name, deliverable, cron,
-      cadenceLabel: String(j.cadence_label ?? cron).slice(0, 60),
+      cadenceLabel: String(j.cadence_label ?? cron).slice(0, 140),
       ownerName: String(owner.name), ownerRole: String(owner.worker_role ?? ''), agentId: String(owner.id),
       firstRun: first.toISOString(),
     };

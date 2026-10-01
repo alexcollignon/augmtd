@@ -229,7 +229,7 @@ export async function POST(request: NextRequest) {
     const base = existing?.profile_data ?? {
       preferredTimes: [], noMeetingDays: [], avgMeetingLength: 0,
       schedulingPatterns: { bufferTime: 0, backToBackTolerance: 0, advanceBookingDays: 0 },
-      participationStyle: 'balanced', organizerRate: 0, acceptanceRate: 0, meetingTypes: {},
+      participationStyle: 'balanced', organizerRate: 0, acceptanceRate: null, meetingTypes: {},
     };
     await adminSupabase.from('context_profiles').upsert(
       {

@@ -22,7 +22,7 @@ type PS = { person_key: string; display_name: string | null; emails: unknown; or
     const list = (rows ?? []) as PS[];
 
     // ── Deterministic clustering: same canonical display-name OR same email localpart → one candidate human.
-    // Diacritic-folded ("René" ≡ "Rene" — THE deck-dup case) before canonicalizing. ──
+    // Diacritic-folded ("Sam" ≡ "Sam" — THE deck-dup case) before canonicalizing. ──
     const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
     const clusters = new Map<string, PS[]>();
     for (const r of list) {
@@ -37,7 +37,7 @@ type PS = { person_key: string; display_name: string | null; emails: unknown; or
     // How strongly does a member's ADDRESS bear the cluster's name? (identity facts, tiered)
     //   2 = strong (localpart IS the name: joined / initials / first+last) — the name is theirs.
     //   1 = weak (shares one name word — could be a different human with a shared first/surname).
-    //   0 = none (catarina.mascarenhas@ under "René Bohnsack" — a mislabeled contact row).
+    //   0 = none (pat.martin@ under "Sam Rivera" — a mislabeled contact row).
     const denoteStrength = (m: PS, name: string): 0 | 1 | 2 => {
       const local = emailLocalpart(m.person_key) || '';
       if (!local) return 1;

@@ -13,13 +13,16 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { readPlans, asRawResult } from '@/lib/store/item-plans';
 import { aiCall } from '@/lib/ai/call';
 import { isAutomatedSender } from '@/lib/inbox/automated';
-import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
-import { serveTimeWords, absolutizeTimeWords } from '@/lib/core/relative-time';
+import { clipForPrompt, clipForDisplay, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { serveTimeWords, absolutizeTimeWords, annotateMessageDays, dayStrip, shortDay } from '@/lib/core/relative-time';
+import { withoutMachineAddressed } from '@/lib/utils/inbound-data';
+import { topMessageOf } from '@/lib/inbox/top-message';
+import { figuresIn } from '@/lib/room/figures';
 
 // VOICE (P5a): bump whenever the synthesis prompt/voice changes — threaded into the stored sig so every
 // cached state regenerates through the existing sig-gated paths (the alignment-cache lesson: a
 // prompt-driven cache must invalidate on the prompt itself, not only on the data).
-export const STATE_PROMPT_VERSION = 9; // 9: THE SETTLED LINE IS HISTORY — a (handled)/DONE line, or one whose NOW clause says THE USER spoke last, may not appear in whoOwes.you, blocking OR next_move (found live: the synthesis ran after the resolutions, read both signals, demanded the settled deed anyway, and froze on a matching sig); rides with THE WATERMARK SURVIVES THE CLIP, which changes the ledger TEXT — so every stale state re-synthesizes lawfully through the existing sig gate. 8: THE ONE-CLAIM LAW — the judge's standing verdicts are FACTS the prose must not contradict ("no reply needed yet" stood for days under a headline saying "confirm or propose" — two caches, one page, neither able to invalidate the other; found live). 7: THE EXCERPT-HONESTY LAW — clipped gists declare themselves; a clip marker is never source truncation. 6: LAW 6 — settled ledger lines speak history-grammar, never open-debt grammar. 5: THE DEIXIS LAW — no relative day-words in cached prose; pre-today ledger events are the past. 4: the reasoned `scope` verdict.
+export const STATE_PROMPT_VERSION = 10; // 10: W37 (eval narrate.state) — the ledger gist carries the message's own words at LEDGER_GIST_CHARS (a 90-char gist cut the target off "94% (target 98%)" and the synthesis called the rollout "on track"), and THE NARRATION TRUTH RULES (owes only from a stated ask/promise/commitment · results against their stated targets · conflicting values both named · lapsed prep for a past event is not due ahead). 9: THE SETTLED LINE IS HISTORY — a (handled)/DONE line, or one whose NOW clause says THE USER spoke last, may not appear in whoOwes.you, blocking OR next_move (found live: the synthesis ran after the resolutions, read both signals, demanded the settled deed anyway, and froze on a matching sig); rides with THE WATERMARK SURVIVES THE CLIP, which changes the ledger TEXT — so every stale state re-synthesizes lawfully through the existing sig gate. 8: THE ONE-CLAIM LAW — the judge's standing verdicts are FACTS the prose must not contradict ("no reply needed yet" stood for days under a headline saying "confirm or propose" — two caches, one page, neither able to invalidate the other; found live). 7: THE EXCERPT-HONESTY LAW — clipped gists declare themselves; a clip marker is never source truncation. 6: LAW 6 — settled ledger lines speak history-grammar, never open-debt grammar. 5: THE DEIXIS LAW — no relative day-words in cached prose; pre-today ledger events are the past. 4: the reasoned `scope` verdict.
 
 // The BANNED machinery register — the system describing its own bookkeeping instead of the matter.
 // ONE definition: the synthesis self-checks against it (with a corrective retry) and the voice smoke
@@ -53,6 +56,131 @@ export type EntityNextMove = {
 export type EntityPriority = { weight: number; reason: string };
 
 export type LedgerLine = { at: string; kind: string; who: string | null; text: string; ref: string };
+
+/** W37 · the ledger gist width (the message's own words): wide enough to keep a figure with its target. */
+export const LEDGER_GIST_CHARS = 260;
+/** W37 · the state synthesis' reasoning effort (lib/ai/effort.ts applies it per model family). */
+export const STATE_EFFORT = 'low' as const;
+
+/**
+ * W37 · THE NARRATION TRUTH RULES (eval narrate.* / prep.*: the state, person, status and prep narrators all
+ * invented "they owe: confirm X", called a pilot at 94% against a 98% target "on track", silently picked one of
+ * two budgets, and demanded prep for a workshop that had already happened). ONE copy, read by every narrator
+ * that speaks where work stands (lib/entities/state.ts, lib/people/brain.ts, the status update, the meeting
+ * preps). Pure text.
+ */
+export const NARRATION_TRUTH_RULES =
+  `TRUTH RULES (each one checked before you answer):\n` +
+  `- OWED ONLY FROM THE RECORD: something is owed — by the user or by them — only where a line states it: an ask put to someone, a promise someone made, an open commitment. Never infer an acknowledgement, a confirmation, a "response" or an "update" as owed. When the user's own message delivered the thing (sent it, attached it) or the other side said nothing more is needed, nothing is owed for it.\n` +
+  `- RESULTS AGAINST THEIR TARGETS: a result stated with a target is reported with it ("94% against a 98% target"); a missed target is never "on track".\n` +
+  `- CONFLICTING VALUES: when lines give different values for the same thing (a budget, a date, a count), name both with who said each. They stay a conflict — never choose one, not even the newer — until a line settles it in words ("moves to", "change of plan", "this replaces"); then use the new value and say it changed. While it is open, settling it (asking which holds) comes before any step that would use the figure.\n` +
+  `- ASKS THAT PULL AGAINST EACH OTHER: two open asks that cannot both be honoured as written (confirm a payment / hold all payments) are named together, and the move is one reply that settles both.\n` +
+  `- NOTHING FILLED IN FOR THE USER: never propose a date, figure, option or wording on the user's behalf that the records do not contain — what the user still has to decide is named as theirs to decide.\n` +
+  `- A SCHEDULED FACT IS NOT A DEBT: "the station arrives on 6 October", "training is booked" are facts about the work, not things a person owes.\n` +
+  `- DATES AS WRITTEN: a day a message names relative to itself ("on Monday", "by Friday") belongs to that message's own date (each line shows its weekday) — "Monday" in a message sent on a Monday is the NEXT Monday. Keep it in the message's words, or resolve it from the message's date; never invent a calendar date for it. Name dates, never a count of days you worked out yourself ("by Mon 5 Oct", not "2 days left").\n` +
+  `- PAST IS PAST: anything dated before today has happened or lapsed. A preparation owed for an event that has already taken place is no longer due ahead — say its status is unconfirmed, and make the move a follow-up on how the event went and what comes next; never present it as upcoming, and never leave a just-past event with no move.`;
+
+/** W37 · the sections of the ONE grounding page (lib/room/grounding.ts) a ledger-based narrator also needs:
+ *  the threads' own newest words and the code-read figures — an item's envelope follows its NEWEST message,
+ *  so an earlier figure on the same thread (a €40,000 approval before a €45,000 request) never reached the
+ *  ledger. Picks the named top-level sections out of the page text. Pure. */
+export const PAGE_SECTION_HEADS = ['THE LEDGER NOW', 'THE LIVE BOARD', 'FIGURES ON RECORD', 'THE THREADS THEMSELVES', 'THE SYNTHESIS (', 'GOALS:', 'RULES:', 'STANDING PRODUCTION', 'OPEN ASKS TO THE USER', 'HISTORY (', 'FILES on this work', 'THE CONVERSATION'] as const;
+export function pickPageSections(page: string, heads: readonly string[]): string {
+  const text = String(page ?? '');
+  const starts = PAGE_SECTION_HEADS.map((h) => ({ h, i: text.startsWith(h) ? 0 : text.indexOf(`\n\n${h}`) }))
+    .filter((x) => x.i >= 0).map((x) => ({ h: x.h, i: x.i === 0 ? 0 : x.i + 2 })).sort((a, b) => a.i - b.i);
+  return starts.filter((x) => heads.includes(x.h)).map((x) => {
+    const next = starts.find((y) => y.i > x.i);
+    return text.slice(x.i, next ? next.i : undefined).trim();
+  }).join('\n\n');
+}
+
+/**
+ * W37 · THE FIGURES FLOOR (two keys: the model writes, code checks). The page's FIGURES ON RECORD block lists
+ * the different amounts the messages state in one currency; a narration that names one of them and leaves
+ * another out has silently picked a figure (eval narrate.status: "€45,000, which supersedes the €40,000" was
+ * the good case; the bad one never said €40,000 at all). Returns the on-record amounts (as written) the text
+ * leaves out — only when the text names at least one of them (a narration about something else is not
+ * checked). Pure.
+ */
+export function figuresLeftOut(page: string, text: string): string[] {
+  const block = pickPageSections(page, ['FIGURES ON RECORD']);
+  if (!block) return [];
+  // The block's lines read "- €40,000 — Lee, 2026-09-26: "clause"" — the amount is the line head.
+  const heads = block.split('\n').slice(1).map((l) => l.replace(/^-\s*/, '').split(' — ')[0]).filter(Boolean);
+  const onRecord = figuresIn(heads.map((h) => ({ who: '', at: null, text: h })));
+  const written = figuresIn([{ who: '', at: null, text: String(text ?? '') }]);
+  const has = (f: { currency: string; value: number }) => written.some((w) => w.currency === f.currency && Math.abs(w.value - f.value) < 0.005);
+  if (!onRecord.some(has)) return [];
+  return [...new Set(onRecord.filter((f) => !has(f)).map((f) => f.raw))];
+}
+
+/** W37 · an ISO day with its weekday ("Mon 2026-09-28") — so a narrator can place "by Monday" written in
+ *  that message (a bare ISO date made models resolve a message's weekday to the wrong day). Pure. */
+export function withWeekday(iso: string | null | undefined): string {
+  const day = String(iso ?? '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
+  return `${new Date(`${day}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' })} ${day}`;
+}
+
+/** W37 · the page's FIGURES ON RECORD block, parsed back into its facts (amount · who · day · their words). Pure. */
+export type PageFigure = { raw: string; who: string; at: string | null; clause: string };
+export function figuresFromPage(page: string): PageFigure[] {
+  const block = pickPageSections(page, ['FIGURES ON RECORD']);
+  if (!block) return [];
+  const out: PageFigure[] = [];
+  for (const line of block.split('\n').slice(1)) {
+    const m = /^-\s*(.+?) — (.+?)(?:, (\d{4}-\d{2}-\d{2}))?: "(.*)"\s*$/.exec(line.trim());
+    if (m) out.push({ raw: m[1].trim(), who: m[2].trim(), at: m[3] ?? null, clause: m[4].trim() });
+  }
+  return out;
+}
+
+/**
+ * W37 · THE FIGURES ARE STATED BY CODE (eval room.opening / prep.anticipate: the composer named both budgets
+ * but dropped WHAT each one was — "finance approved, incl. two workshops" vs "the CFO's plan figure" — or kept
+ * only one). When a composed text names any amount on the page's FIGURES ON RECORD, this returns ONE code-built
+ * line stating every on-record amount with who stated it, when, and in their own words — the composer's prose
+ * stays, the facts ride beside it verbatim. null when the text names none of them (a narration about something
+ * else is never decorated). Pure.
+ */
+export function figuresOnRecordLine(page: string, text: string): string | null {
+  const figs = figuresFromPage(page);
+  if (figs.length < 2) return null;
+  const written = figuresIn([{ who: '', at: null, text: String(text ?? '') }]);
+  const named = figs.some((f) => figuresIn([{ who: '', at: null, text: f.raw }]).some((x) => written.some((w) => w.currency === x.currency && Math.abs(w.value - x.value) < 0.005)));
+  if (!named) return null;
+  // Already said: every figure named AND its source's own words carried (most of its content words) — the
+  // composer did the job; a second copy is repetition, not a fact.
+  const lower = String(text ?? '').toLowerCase();
+  const covered = (f: PageFigure) => {
+    const toks = [...new Set((f.clause.toLowerCase().match(/[\p{L}]{5,}/gu) ?? []))];
+    return toks.length > 0 && toks.filter((t) => lower.includes(t)).length / toks.length >= 0.34;
+  };
+  if (!figuresLeftOut(page, text).length && figs.every(covered)) return null;
+  const day = (at: string | null) => (at ? `, ${shortDay(at)}` : '');
+  return `On record: ${figs.slice(0, 4).map((f) => `${f.raw} — ${f.who}${day(f.at)}: "${clipForDisplay(f.clause, 140)}"`).join('; ')}.`;
+}
+
+/** W37 · ADOPTION GRAMMAR: a narration that treats one of two on-record amounts as settled ("budget is set at
+ *  €45,000", "updated from €40,000", "build the deck with the €45,000 figure"). Returns the adopting phrase, or
+ *  null. Only when the page carries two or more figures. Pure. */
+const ADOPTS = /\b(?:is (?:now |set )?(?:at )?|set at|confirmed(?: at)?|should be|updated (?:to|from)|revised (?:to|from)|updating (?:the )?(?:earlier|previous|old)|replac\w*|supersed\w*|locked(?: in)?|final(?:ised|ized)?|go(?:es|ing)? with|use the|with the|stick with|proceed with|budgeted|per \w+'s (?:latest|update)|latest figure)\b/i;
+const AMOUNT = /(?:R\$|€|\$|£)\s?\d[\d.,\s]*(?:\s?[kKmM]\b)?|\d[\d.,]*\s?(?:[kKmM]\b\s?)?(?:€|EUR|USD|GBP)/g;
+export function adoptsOneFigure(page: string, text: string): string | null {
+  const figs = figuresFromPage(page);
+  if (figs.length < 2) return null;
+  const onRecord = figuresIn(figs.map((f) => ({ who: '', at: null, text: f.raw })));
+  const t = String(text ?? '');
+  AMOUNT.lastIndex = 0;
+  for (let m = AMOUNT.exec(t); m; m = AMOUNT.exec(t)) {
+    const val = figuresIn([{ who: '', at: null, text: m[0].trim() }])[0];
+    if (!val || !onRecord.some((f) => f.currency === val.currency && Math.abs(f.value - val.value) < 0.005)) continue;
+    const win = t.slice(Math.max(0, m.index - 45), m.index + m[0].length + 14);
+    if (ADOPTS.test(win)) return win.trim();
+  }
+  return null;
+}
 
 const daysBetween = (a: string, b: number) => Math.floor((b - new Date(a).getTime()) / 86400000);
 
@@ -398,6 +526,8 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
     // reads the same watermark this ledger does. A fork of this one fact is how a room ends up
     // demanding a reply the user already sent — the very class the owner walked into.
     const { latestByThread, nowClause } = await import('@/lib/inbox/thread-now');
+    // W37 · a message's own day words are resolved against ITS date, in the user's zone (annotateMessageDays).
+    const ledgerTz = await import('@/lib/utils/user-time').then((m) => m.userTimezone(supabase, userId)).catch(() => 'UTC');
     const nowByThread = await latestByThread(supabase, userId, ((data ?? []) as Array<Record<string, any>>)
       .map((it) => (it.source_data?.thread_id as string) || '').filter(Boolean));
     for (const it of (data ?? []) as Array<Record<string, any>>) {
@@ -412,7 +542,9 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
       // subject — a title-only ledger made the brain confidently wrong about what an email contained
       // (the "no catalog yet" class). Every ledger consumer (state synthesis, entity ask, the
       // conversation loop's grounding) inherits this.
-      const gist = clipForPrompt(String(sd.body || '').replace(/\s+/g, ' ').trim(), 90);
+      // W37 · the gist is the message's OWN words (quoted history off), a line spoken to an assistant
+      // removed (UNTRUSTED INPUT IS DATA), at a width that keeps a figure with its target.
+      const gist = clipForPrompt(annotateMessageDays(withoutMachineAddressed(topMessageOf(String(sd.body || '')) || String(sd.body || '')), sd.received_at ?? it.created_at ?? null, ledgerTz).replace(/\s+/g, ' ').trim(), LEDGER_GIST_CHARS);
       const atts = Array.isArray(sd.attachments) ? (sd.attachments as Array<{ filename?: string }>).map((a) => a.filename).filter(Boolean) : [];
       totalEmails++;
       if (isAutomatedSender((sd.from_address as string) || null, (sd.from_name as string) || null, (sd.subject as string) || '')) automatedEmails++;
@@ -453,8 +585,8 @@ export async function assembleLedger(supabase: SupabaseClient, userId: string, e
       // as owed. Settled lines lead with DONE and put the date in the past tense.
       const isSettled = c.status === 'done' || c.status === 'dismissed';
       const text = isSettled
-        ? `DONE — ${c.status === 'dismissed' ? `dismissed${rr}` : 'delivered/handled'}: ${c.description}${c.due_date ? ` (was due ${c.due_date})` : ''}`
-        : `${owes}: ${c.description}${c.due_date ? ` (due ${c.due_date})` : ''}`;
+        ? `DONE — ${c.status === 'dismissed' ? `dismissed${rr}` : 'delivered/handled'}: ${c.description}${c.due_date ? ` (was due ${withWeekday(c.due_date)})` : ''}`
+        : `${owes}: ${c.description}${c.due_date ? ` (due ${withWeekday(c.due_date)})` : ''}`;
       ledger.push({ at: c.created_at ?? '', kind: 'commitment', who: c.counterparty ?? null, text, ref: `commit:${c.id}` });
     }
   }
@@ -566,10 +698,20 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
     if (!opts.force && ent.sig === sig) return; // unchanged ledger + verdicts + no event boundary → no AI
 
     const userName = await getUserName(supabase, userId);
+    // W37 · THE THREADS' OWN WORDS — the same sections the room page carries (one grounding, never a fork).
+    let threadWords = '';
+    let groundRule = '';
+    try {
+      const { assembleRoomGrounding } = await import('@/lib/room/grounding');
+      const { GROUND_EVIDENCE_RULE } = await import('@/lib/room/ground-evidence');
+      const g = await assembleRoomGrounding(supabase, userId, { kind: 'entity', entityId });
+      groundRule = GROUND_EVIDENCE_RULE;
+      threadWords = pickPageSections(g?.text ?? '', ['FIGURES ON RECORD', 'THE THREADS THEMSELVES', 'THE LEDGER NOW']);
+    } catch { /* the ledger still grounds */ }
     // THE WATERMARK SURVIVES THE CLIP (Sep 8): a plain 200-char cut removed the trailing NOW clause
     // from exactly the longest lines — the synthesis then re-argued a settled thread as open.
     const { clipLedgerLine } = await import('@/lib/inbox/thread-now');
-    const lines = ledger.map((l, i) => `[#${i + 1}] ${(l.at || '').slice(0, 10)} · ${l.kind}${l.who ? ` · ${l.who}` : ''}: ${clipLedgerLine(l.text, 200)}`).join('\n');
+    const lines = ledger.map((l, i) => `[#${i + 1}] ${withWeekday(l.at)} · ${l.kind}${l.who ? ` · ${l.who}` : ''}: ${clipLedgerLine(l.text, LEDGER_GIST_CHARS + 120)}`).join('\n');
     const prompt =
       `You are the user's chief of staff, keeping the live picture of ONE body of work — it can be anything ` +
       `bounded: a deal, a program, a hire, an operation, a personal matter. No funnel assumptions. From its ` +
@@ -577,7 +719,7 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
       (userName ? `The owner is ${userName} — address them as "you", never by name.\n` : '') +
       // THE DEIXIS LAW (T-class): this prose is CACHED and re-read for days — a relative day-word
       // decays into a lie, and anything already behind today's date is the PAST, not a plan.
-      `TODAY is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}. This text will be read for DAYS — never write relative day-words ("tomorrow", "next week", "later today"): name absolute dates ("Jul 28"). Anything in the ledger dated BEFORE today already HAPPENED — describe it as past ("they met Jul 28"), never as upcoming.\n` +
+      `TODAY is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}. The next days: ${dayStrip(new Date(), null, 14)}. This text will be read for DAYS — never write relative day-words ("tomorrow", "next week", "later today"): name absolute dates ("Jul 28"). Anything in the ledger dated BEFORE today already HAPPENED — describe it as past ("they met Jul 28"), never as upcoming.\n` +
       // EXCERPT-HONESTY (Aug 4): the ledger's quoted gists are clipped by US for length.
       `${EXCERPT_RULE} Never describe a message or document as truncated/cut-off/incomplete based on a clipped quote.\n` +
       // THE SETTLED LINE IS HISTORY (Sep 8, found live — root cause C1 of the room that kept
@@ -599,6 +741,7 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
       `- automated senders: ${facts.automatedEmails}/${facts.totalEmails} emails\n` +
       `- human counterparty present: ${facts.humanCounterparty ? 'yes' : 'no'}\n\n` +
       `Event ledger (most recent first — ALL you know; never invent beyond it):\n${lines}\n\n` +
+      (threadWords ? `${clipForPrompt(threadWords, 7000)}\n${groundRule}\n\n` : '') +
       `VOICE — this text renders on the user's cards and briefs; write like a sharp colleague, not a system:\n` +
       `- Speak about the MATTER: the people, the thing being done, what just happened, what's genuinely next. Plain words.\n` +
       `- NEVER describe this system's own bookkeeping or internal status: no "prepared for nudge", "draft ready", ` +
@@ -607,7 +750,8 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
       `machinery: reason with it, but the summary talks about the deal, never about us or our drafts.\n` +
       `- "summary": 1-2 short sentences, <=30 words, concrete and current — what you'd say if asked "where's ` +
       `this at?" over coffee. Name the real person or thing driving it. NO semicolon chains, NO status-report telegrams.\n` +
-      `- whoOwes entries: short human phrases as a colleague would say them ("send them your pricing", "their signed contract").\n\n` +
+      `- whoOwes entries: short human phrases as a colleague would say them ("send them your pricing", "their signed contract").\n` +
+      `${NARRATION_TRUTH_RULES}\n\n` +
       `Return ONLY JSON:\n` +
       `{"summary":"1-2 sentences, <=30 words, colleague voice",` +
       `"momentum":"active|needs_you|waiting|gone_quiet|stalled",` +
@@ -640,9 +784,18 @@ export async function refreshEntityState(supabase: SupabaseClient, userId: strin
       scope?: string;
       next_move?: { kind?: string; title?: string; reason?: string; covers?: unknown[] }; priority?: { weight?: number; reason?: string };
     };
-    const res = await aiCall<StateJson>({ userId, supabase, shape: { output: 'json' }, prompt, temperature: 0, maxTokens: 900, source: 'brain_synthesis' });
+    // W37 · THE STATE THINKS FIRST (eval narrate.state: at the param floor the fast model broke the rules it
+    // was given — a missed target "on track", a scheduled delivery as a debt, one of two budgets chosen). A
+    // short reasoning budget on the call; the sig gate keeps it to one call per ledger change.
+    const res = await aiCall<StateJson>({ userId, supabase, shape: { output: 'json', effort: STATE_EFFORT }, prompt, temperature: 0, maxTokens: 1400, source: 'brain_synthesis' });
     let p = res.json ?? {};
-    if (!p.summary) { console.warn('[state] synthesis returned no summary (likely truncation) — state left as-is'); return; }
+    // W37 · AN UNPARSEABLE STATE IS RETRIED, NEVER SILENT (eval EU: the thinking budget left a cut JSON): one
+    // retry at the param floor before last-good stands.
+    if (!p.summary && String(res.text ?? '').trim()) {
+      const again = await aiCall<StateJson>({ userId, supabase, shape: { output: 'json' }, prompt, temperature: 0, maxTokens: 1400, source: 'brain_synthesis' });
+      if (again.json?.summary) p = again.json;
+    }
+    if (!p.summary) { console.warn('[state] synthesis returned no summary (likely truncation) — state left as-is', String(res.text ?? '').slice(0, 160)); return; }
     // SELF-CORRECTION: temp-0 can repeat a banned phrase verbatim even when the prompt names it. One
     // corrective retry quoting the violation; if it persists, keep the retry's output (the smoke gate
     // reports any systemic leak). Costs one extra call ONLY on a violation — rare.

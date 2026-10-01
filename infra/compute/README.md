@@ -68,3 +68,12 @@ Vercel env: `COMPUTE_SERVICE_URL=http://46.224.176.245:8002` · `COMPUTE_SECRET=
 - `COMPUTE_JOBS_DIR` must be the SAME host path inside and outside the service container
   (bind-mount identity) so the job container's `-v` mounts resolve.
 - Job dirs are deleted after every run (success or failure) — nothing persists on the box.
+- W38 (Oct 1, NOT yet redeployed): `main.py` registers the Office MIME types (the slim image's `mimetypes`
+  returned `application/octet-stream` for .xlsx/.docx/.pptx). Not urgent — the TS caller already corrects by
+  extension (`lib/tools/compute.ts` `outputMime`); redeploy with the next box change.
+- Oct 1 (NOT yet redeployed): THE FORMULA RECALC STEP — after a successful script, any `.xlsx` output that
+  contains formulas is re-saved by LibreOffice-headless (already in the runner image) in a SECOND short locked-room
+  job (`recalc_xlsx.py`, shipped in the service image, mounted read-only), so the file carries computed values
+  (openpyxl caches none, xlsxwriter caches 0). Fidelity guard: a round-trip that loses a sheet/chart/image keeps the
+  original. Budgeted inside the caller's abort window (timeout_s + 25 s); skipped when < 12 s remain. The report is
+  the response's `recalc` field (stdout/stderr untouched). Costs ~4–8 s per job that writes formulas; no image growth.

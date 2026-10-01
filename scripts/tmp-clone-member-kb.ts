@@ -1,6 +1,6 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// CLONE the owner's already-synced "AHK Member companies" knowledge base to a target account.
-// PURE DB + STORAGE COPY — no AHK portal fetch, no classification/enrichment, NO re-embedding.
+// CLONE the owner's already-synced "Chamber Member companies" knowledge base to a target account.
+// PURE DB + STORAGE COPY — no Chamber portal fetch, no classification/enrichment, NO re-embedding.
 // Embeddings (knowledge_files.embedding + knowledge_chunks.embedding) are copied VERBATIM: the
 // platform runs ONE Bedrock/Cohere EU embedding space, so a copied vector is valid for the target.
 //
@@ -23,12 +23,12 @@ const sb: SupabaseClient = createClient(
 
 const SRC = '08fe4449-e5eb-431d-9156-02e9324e5903';
 const SRC_FOLDER = 'cb6a203a-1a0a-4e5a-a4f6-f4a6016996a9';
-const FOLDER_NAME = 'AHK Member companies';
+const FOLDER_NAME = 'Chamber Member companies';
 const KB_BUCKET = 'drive-uploads';
 const BATCH = 100;
 
 const TARGETS: Record<string, string> = {
-  thorsten: '9d3921b2-5a52-4b5b-9815-bc49d37ce0a7',
+  jordan: '9d3921b2-5a52-4b5b-9815-bc49d37ce0a7',
   dummy: 'de4e8824-9795-4876-995c-c0740b8f07ee',
 };
 
@@ -75,7 +75,7 @@ function extOf(path: string | null): string {
   return i >= 0 ? path.slice(i) : '.md';
 }
 
-// ── find-or-create the target's "AHK Member companies" drive folder ─────────────────────────────────
+// ── find-or-create the target's "Chamber Member companies" drive folder ─────────────────────────────────
 async function ensureFolder(userId: string): Promise<string> {
   const { data: folders } = await sb.from('drive_folders').select('id, name').eq('user_id', userId);
   const hit = (folders ?? []).find((f: { name: string }) => f.name?.toLowerCase() === FOLDER_NAME.toLowerCase());

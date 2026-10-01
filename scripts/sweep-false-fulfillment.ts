@@ -22,7 +22,7 @@ const userArg = process.argv.includes('--user') ? process.argv[process.argv.inde
 
 (async () => {
   const { data: users } = await sb.auth.admin.listUsers();
-  const targets = ALL ? users!.users : users!.users.filter((u) => u.email === (userArg ?? 'alextcollignon@gmail.com'));
+  const targets = ALL ? users!.users : users!.users.filter((u) => u.email === (userArg ?? process.env.OWNER_EMAIL ?? ''));
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
   let checked = 0, wrong = 0, reopened = 0;
 

@@ -71,7 +71,7 @@ describe('topMessageOf', () => {
   it('cuts at an inline Outlook header block (From/Sent/To, EN)', () => {
     const body =
       'Great, thanks for confirming — we will proceed as planned starting next Monday morning.\n' +
-      'From: Sam Reyes\nSent: Monday, September 21, 2026 10:00 AM\nTo: Alex Collignon\n\n' +
+      'From: Sam Reyes\nSent: Monday, September 21, 2026 10:00 AM\nTo: Alex Morgan\n\n' +
       'Can you confirm receipt of the attached invoice?';
     const top = topMessageOf(body);
     expect(top).toContain('proceed as planned');
@@ -81,7 +81,7 @@ describe('topMessageOf', () => {
   it('cuts at an Apple Mail / new Outlook header block (From/Date/To)', () => {
     const body =
       'Understood, I will forward this to the finance team for their review by end of week.\n' +
-      'From: Sam Reyes\nDate: Monday, September 21, 2026 at 10:00 AM\nTo: Alex Collignon\n\n' +
+      'From: Sam Reyes\nDate: Monday, September 21, 2026 at 10:00 AM\nTo: Alex Morgan\n\n' +
       'Here is the quarterly report you asked for.';
     const top = topMessageOf(body);
     expect(top).toContain('forward this to the finance team');
@@ -123,14 +123,25 @@ describe('topMessageOf', () => {
     expect(topMessageOf(body)).toBe(body.trim());
   });
 
-  it('the conservative floor: a near-empty top (pure forward) keeps the full text', () => {
+  // ⟲ RE-POINTED W27 (A SHORT REPLY IS STILL ITS OWN WORDS): the floor used to keep the full text for
+  // ANY top under 40 chars, so "Thanks!" above a reply attribution was judged on the quoted trail. The
+  // conservative floor now keys on a FORWARD (a forward marker, or no own words at all); a short top
+  // above a REPLY attribution ("On … wrote:") is the message's own words.
+  it('the conservative floor: a short preface above a FORWARDED block keeps the full text', () => {
+    const body =
+      'FYI\n\n' +
+      '---------- Forwarded message ---------\n' +
+      'From: Sam Reyes <sam@example.com>\nDate: Mon, Sep 21, 2026 at 10:00 AM\n\n' +
+      'the whole forwarded thread lives below this line, all of it truly relevant.';
+    expect(topMessageOf(body)).toBe(body);
+  });
+
+  it('a short top above a REPLY attribution is the message\'s own words (W27)', () => {
     const body =
       'FYI\n\n' +
       'On Mon, Sep 21, 2026 at 10:00 AM, Sam Reyes <sam@example.com> wrote:\n' +
-      '> the whole forwarded thread lives below this line, all of it truly relevant.';
-    const top = topMessageOf(body);
-    // "FYI" alone is under the 40-char floor, so the full text is kept rather than truncated to nothing.
-    expect(top).toBe(body);
+      '> the earlier message.';
+    expect(topMessageOf(body)).toBe('FYI');
   });
 
   it('handles an empty/undefined body without throwing', () => {

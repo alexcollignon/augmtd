@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { clipForPrompt, clipForDisplay, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { INBOUND_DATA_RULE, inboundBlock, attrValue, withoutMachineAddressed } from '@/lib/utils/inbound-data';
+import { dayRelativeTo, annotateMessageDays, dayStrip, localDayOf } from '@/lib/core/relative-time';
+import { userTimezone } from '@/lib/utils/user-time';
+
+/** The meeting's local clock time in the user's zone (HH:MM). */
+function meetingClock(startIso: string, tz: string): string {
+  try { return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz }).format(new Date(startIso)); } catch { return String(startIso).slice(11, 16); }
+}
 
 const GENERIC_DOMAINS = new Set(['gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com', 'me.com', 'live.com']);
 
@@ -87,7 +96,7 @@ export async function GET(
     // Emails FROM attendees (across all connected inboxes)
     supabase
       .from('emails')
-      .select('id, subject, from_address, from_name, received_at, snippet, body, thread_id')
+      .select('id, subject, from_address, from_name, received_at, body, thread_id, is_from_user')
       .eq('user_id', user.id)
       .in('from_address', attendeeEmails)
       .order('received_at', { ascending: false })
@@ -96,7 +105,7 @@ export async function GET(
     // Emails the user sent TO these attendees (any inbox)
     supabase
       .from('emails')
-      .select('id, subject, from_address, from_name, received_at, snippet, body, thread_id')
+      .select('id, subject, from_address, from_name, received_at, body, thread_id, is_from_user')
       .eq('user_id', user.id)
       .eq('is_from_user', true)
       .or(attendeeEmails.map(e => `to_addresses.cs.{"${e}"}`).join(','))
@@ -169,22 +178,30 @@ export async function GET(
     })).filter(i => i.title);
   }
 
+  // W37 · THE SILENT-COLUMN TRAP, closed: these reads selected `emails.snippet` — a column that does not
+  // exist — so PostgREST returned data:null and the brief never saw a single email (it ran only when a
+  // relationship row or a past transcript existed). Explicit columns; every error is said.
+  for (const [what, r] of [['emails from attendees', emailsFromResult], ['emails to attendees', emailsToResult], ['transcripts', transcriptsResult], ['relationships', relationshipsResult]] as const) {
+    const err = (r as { error?: { message?: string } | null }).error;
+    if (err) console.error(`[meetings/prep] ${what} read failed:`, err.message);
+  }
   // Merge emails from all inboxes, deduplicate by id, sort by date
   const allEmailsRaw = [
     ...((emailsFromResult as any).data ?? []),
     ...((emailsToResult as any).data ?? []),
   ];
   const seen = new Set<string>();
-  const recentEmails = allEmailsRaw
+  const mailRows = allEmailsRaw
     .filter(e => { if (seen.has(e.id)) return false; seen.add(e.id); return true; })
     .sort((a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime())
-    .slice(0, 8)
-    .map((e: any) => ({
-      subject: e.subject ?? '(no subject)',
-      from: e.from_name ?? e.from_address,
-      date: e.received_at,
-      snippet: e.snippet || (e.body ? e.body.replace(/<[^>]+>/g, '').slice(0, 200) : ''),
-    }));
+    .slice(0, 8);
+  const plainBody = (b: unknown) => String(b ?? '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const recentEmails = mailRows.map((e: any) => ({
+    subject: e.subject ?? '(no subject)',
+    from: e.is_from_user ? 'You' : (e.from_name ?? e.from_address),
+    date: e.received_at,
+    snippet: clipForDisplay(plainBody(e.body), 200),
+  }));
 
   const relationships = (relationshipsResult.data ?? []).map((r: any) => ({
     name: r.contact_name,
@@ -203,32 +220,38 @@ export async function GET(
     .slice(0, 3)
     .map((f: any) => ({ title: f.filename, snippet: f.summary ?? '' }));
 
-  // AI brief
+  // AI brief — W37 (eval prep.brief): the attendees' mail rides as DATED, CLIPPED DATA against the user's own
+  // today (a moved date was told as the old one: the lines carried no dates), and a line spoken to an assistant
+  // inside that mail never reaches the writer (UNTRUSTED INPUT IS DATA).
   let aiSummary: string | null = null;
   if (relationships.length > 0 || pastMeetings.length > 0 || recentEmails.length > 0) {
     try {
       const { client, model } = await getAIClient(user.id, 'generation', supabase);
+      const tz = await userTimezone(supabase, user.id);
+      const now = new Date();
+      const when = (at: string | null | undefined) => (at ? dayRelativeTo(at, now, tz) : 'date unknown');
 
       const userIdentity = (profileResult.data?.data as any) ?? null;
 
       const lines: string[] = [];
+      lines.push(`TODAY: ${when(now.toISOString()).replace(/^today \((.*)\)$/, '$1')} (${tz}). The next days: ${dayStrip(now, tz, 10)}.`);
 
       if (userIdentity?.name || userIdentity?.role) {
         lines.push(`You: ${[userIdentity.name, userIdentity.role, userIdentity.company].filter(Boolean).join(', ')}`);
       }
 
-      lines.push(`Upcoming meeting: "${event.title}" — ${new Date(event.start_time).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}`);
+      lines.push(`Upcoming meeting: "${event.title}" — ${when(event.start_time)} at ${meetingClock(event.start_time, tz)}`);
 
       const attendeeList = otherAttendees.map((a: any) => {
         const rel = relationships.find(r => r.email === a.email);
-        return `${a.name ?? a.email}${rel?.type ? ` (${rel.type})` : ''}`;
+        return `${a.name ?? a.email} <${a.email}>${rel?.type ? ` (${rel.type})` : ''}`;
       });
       if (attendeeList.length > 0) lines.push(`Attendees: ${attendeeList.join(', ')}`);
 
       if (pastMeetings.length > 0) {
         lines.push(`Past meetings with this group:`);
         pastMeetings.slice(0, 3).forEach(pm => {
-          lines.push(`- ${pm.title} (${new Date(pm.date).toLocaleDateString()}): ${pm.summary || 'no summary'}`);
+          lines.push(`- ${pm.title} (${when(pm.date)}): ${pm.summary ? clipForPrompt(pm.summary, 400) : 'no summary'}`);
           if (pm.decisions.length > 0) lines.push(`  Decisions: ${pm.decisions.slice(0, 2).join(', ')}`);
         });
       }
@@ -236,10 +259,11 @@ export async function GET(
         lines.push(`Still open: ${openActionItems.map(i => i.title).slice(0, 3).join(', ')}`);
       }
 
-      if (recentEmails.length > 0) {
-        lines.push(`Recent emails:`);
-        recentEmails.slice(0, 4).forEach((e: { subject: string; from: string; snippet: string }) => {
-          lines.push(`- "${e.subject}" from ${e.from}: ${e.snippet}`);
+      if (mailRows.length > 0) {
+        lines.push(`Recent emails with the attendees (newest first — when a later email changes a date or figure, the later one is current):`);
+        mailRows.slice(0, 5).forEach((e: any) => {
+          const from = e.is_from_user ? 'You' : (e.from_name ?? e.from_address);
+          lines.push(inboundBlock('email', annotateMessageDays(withoutMachineAddressed(plainBody(e.body)), e.received_at, tz, { day: localDayOf(event.start_time, tz) ?? '', name: 'meeting' }), 700, { attrs: `from="${attrValue(from)}" date="${attrValue(when(e.received_at))}" subject="${attrValue(e.subject ?? '')}"` }));
         });
       }
 
@@ -248,20 +272,22 @@ export async function GET(
         messages: [
           {
             role: 'system',
-            content: 'You write first-person meeting prep briefs for the user listed as "You". Be specific and direct. No bullet points — 2-3 sentences of prose. Never start with "Here is" or "Based on". Only use what is explicitly listed.',
+            content: 'You write meeting prep briefs for the user listed as "You", addressed to them as "you". Be specific and direct. No bullet points — 2-3 sentences of prose. Never start with "Here is" or "Based on". Only use what is explicitly listed: when the records hold little (a first contact), say so plainly instead of guessing at history or an agenda. State things as they stand now — when a later email changes a date or figure, use the new one; a result stated with a target is given with its target; where a record says something is not done yet (unsigned, under review), say so. Place every date against the date of the meeting: anything due after the meeting is still outstanding when you meet — never say you will have it by then. Say who they are (their organisation, from their signature or email domain) without guessing a role.\n' +
+              `${EXCERPT_RULE}\n${INBOUND_DATA_RULE}`,
           },
           {
             role: 'user',
             content: `${lines.join('\n')}\n\nWrite a 2-3 sentence brief: who you're meeting and what context matters going in.`,
           },
         ],
-        max_tokens: 180,
+        max_tokens: 300,
         temperature: 0.2,
         stream: false as const,
       });
-      aiSummary = (res as any).choices?.[0]?.message?.content?.trim() ?? null;
-    } catch {
-      // best-effort
+      aiSummary = (res as any).choices?.[0]?.message?.content?.trim() || null;
+    } catch (e) {
+      // best-effort — but never silent: a failed brief is logged, the panel still serves its lists.
+      console.error('[meetings/prep] brief failed:', (e as Error)?.message ?? e);
     }
   }
 

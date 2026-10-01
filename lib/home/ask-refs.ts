@@ -22,7 +22,7 @@
 //   · the "at most 5 tags" ceiling is ENFORCED IN CODE. It was prompt-only, and a prompt-only
 //     limit is a hope, not a contract.
 //
-// Pure, zero-IO, and imported by BOTH ends (lib/home/ask.ts + lib/entities/ask.ts serve through it;
+// Pure, zero-IO, and imported by BOTH ends (lib/home/ask.ts serves through it — the entity ask was removed in W37;
 // components/home/home-ask.tsx renders through it) — one grammar cannot be owned by two parsers.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 

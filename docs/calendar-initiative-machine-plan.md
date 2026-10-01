@@ -7,7 +7,7 @@ Projects is the object). Calendar becomes a first-class initiative signal so unr
 
 ## The core idea
 
-**An initiative is a people/org + topic cluster, not a text string.** The label ("Volta X Zero to 100") is
+**An initiative is a people/org + topic cluster, not a text string.** The label ("Volta X Acme Ventures") is
 its display name. Identity is anchored on **topic** (so distinct deals never merge) and **people** (so an
 atom with no/weak label can still be placed) — but *topic is authoritative*; people only place orphans.
 
@@ -58,7 +58,7 @@ Files: Home `app/api/home/brief/route.ts` · `lib/home/synthesize-brief.ts` · `
 `components/home/home-view.tsx`. Timeline `app/api/home/timeline/route.ts` · `components/timeline/timeline-view.tsx`.
 Projects `app/api/projects/*` · `components/projects/*`.
 
-## Sequence (each phase shippable + smoke-tested on TWO tenants — Alexandre & Rene)
+## Sequence (each phase shippable + smoke-tested on TWO tenants — Alexander & Sam)
 
 - **Phase 0 — Identity resolver (Layer 1, pure lib, no UI).** `identity.ts` (+ de-dup `extract.ts`) +
   `initiative-resolver.ts`. Read-only smoke: distinct deals stay separate, ambiguous stays loose, unambiguous

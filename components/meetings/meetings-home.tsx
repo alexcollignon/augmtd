@@ -15,6 +15,9 @@ import {
   PlusIcon,
 } from '@heroicons/react/24/outline';
 import type { CalendarEvent } from '@/lib/types/meetings';
+import { clockIn, dateIn, dayKeyIn } from '@/lib/core/user-zone';
+import { useUserZone } from '@/context/user-zone-context';
+import ZoneHint from '@/components/one/zone-hint';
 import { Badge, IconButton, SegmentedControl, EmptyState } from '@/components/ui';
 
 interface Transcript {
@@ -175,9 +178,12 @@ export default function MeetingsHome({
   const [renamingValue, setRenamingValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
 
+  // THE READER'S ZONE (law `one-reader-zone`): days and clock times in the user's zone — the same
+  // zone Home's day is composed in — never the device's own clock.
+  const zone = useUserZone();
   const now = new Date();
-  const todayStr = now.toDateString();
-  const tomorrowStr = new Date(now.getTime() + 86400000).toDateString();
+  const todayStr = dayKeyIn(now, zone);
+  const tomorrowStr = dayKeyIn(now.getTime() + 86400000, zone);
 
   // Close context menu on outside click
   useEffect(() => {
@@ -262,12 +268,12 @@ export default function MeetingsHome({
       })
       .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
     if (future.length === 0) return null;
-    const nearestDateStr = new Date(future[0].start_time).toDateString();
-    const events = future.filter((m) => new Date(m.start_time).toDateString() === nearestDateStr);
+    const nearestDateStr = dayKeyIn(future[0].start_time, zone);
+    const events = future.filter((m) => dayKeyIn(m.start_time, zone) === nearestDateStr);
     const label =
       nearestDateStr === todayStr ? 'Today'
       : nearestDateStr === tomorrowStr ? 'Tomorrow'
-      : new Date(nearestDateStr).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+      : dateIn(`${nearestDateStr}T12:00:00Z`, 'UTC', { weekday: 'long', month: 'long', day: 'numeric' });
     return { label, events };
   }, [upcoming]); // eslint-disable-line
 
@@ -321,11 +327,11 @@ export default function MeetingsHome({
       list = list.filter((t) => t.source === 'text');
     }
 
-    const yesterdayStr = new Date(now.getTime() - 86400000).toDateString();
+    const yesterdayStr = dayKeyIn(now.getTime() - 86400000, zone);
     const groups = new Map<string, Transcript[]>();
     const order: string[] = [];
     for (const t of list) {
-      const dateStr = new Date(t.startTime).toDateString();
+      const dateStr = dayKeyIn(t.startTime, zone);
       if (!groups.has(dateStr)) { groups.set(dateStr, []); order.push(dateStr); }
       groups.get(dateStr)!.push(t);
     }
@@ -333,7 +339,7 @@ export default function MeetingsHome({
       const label =
         dateStr === todayStr ? 'Today'
         : dateStr === yesterdayStr ? 'Yesterday'
-        : new Date(dateStr).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        : dateIn(`${dateStr}T12:00:00Z`, 'UTC', { weekday: 'short', month: 'short', day: 'numeric' });
       return { label, items: groups.get(dateStr)! };
     });
   }, [transcripts, filterPersonEmail, captureFilter]); // eslint-disable-line
@@ -353,6 +359,7 @@ export default function MeetingsHome({
             <h2 className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">Coming up</h2>
             <span className="text-[11px] text-neutral-400">{nearestDay.label}</span>
           </div>
+          <ZoneHint className="-mt-1.5 mb-3" />
           <div className="rounded-xl border border-neutral-100 overflow-visible">
             {nearestDay.events.map((event, i) => (
               <button
@@ -362,10 +369,10 @@ export default function MeetingsHome({
               >
                 <div className="text-right flex-shrink-0 w-14">
                   <p className="text-[12px] font-medium text-neutral-700">
-                    {new Date(event.start_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                    {clockIn(event.start_time, zone)}
                   </p>
                   <p className="text-[10px] text-neutral-400">
-                    {new Date(event.end_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                    {clockIn(event.end_time, zone)}
                   </p>
                 </div>
                 <div className="w-px h-8 bg-indigo-200 flex-shrink-0" />
@@ -406,7 +413,7 @@ export default function MeetingsHome({
                     </div>
                   </div>
                   <span className="text-[11px] text-neutral-400 flex-shrink-0 mr-1">
-                    {new Date(t.startTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                    {clockIn(t.startTime, zone)}
                   </span>
                 </button>
                 {confirmDeleteId === t.id ? (
@@ -466,7 +473,7 @@ export default function MeetingsHome({
                     </div>
                     <div className="flex-shrink-0">
                       <p className="text-[11px] text-neutral-400">
-                        {new Date(t.startTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                        {clockIn(t.startTime, zone)}
                       </p>
                     </div>
                   </button>
@@ -654,7 +661,7 @@ export default function MeetingsHome({
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
                         <p className="text-[11px] text-neutral-400">
-                          {new Date(t.startTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                          {clockIn(t.startTime, zone)}
                         </p>
                         {t.workItemsGenerated > 0 && (
                           <p className="text-[10px] text-blue-500 font-medium ml-1">{t.workItemsGenerated} items</p>

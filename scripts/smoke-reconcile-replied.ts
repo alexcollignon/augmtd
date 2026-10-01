@@ -10,15 +10,15 @@ import { computeThreadReplyState, type ThreadMessage } from '../lib/inbox/thread
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
 const USERS: Record<string, string> = {
-  Alexandre: '08fe4449-e5eb-431d-9156-02e9324e5903',
-  Rene: 'ae306f38-4ec9-4f5f-8b1e-3f8e2c1d6a7b', // resolved below by email if id is wrong
-  Madalena: 'c723c2f2-0000-0000-0000-000000000000',
+  Alexander: '08fe4449-e5eb-431d-9156-02e9324e5903',
+  Sam: 'ae306f38-4ec9-4f5f-8b1e-3f8e2c1d6a7b', // resolved below by email if id is wrong
+  Maya: 'c723c2f2-0000-0000-0000-000000000000',
   'ac@axyans': 'e009a499-0000-0000-0000-000000000000',
 };
 
 async function resolveUsers(): Promise<Record<string, string>> {
-  const out: Record<string, string> = { Alexandre: USERS.Alexandre };
-  for (const [name, pat] of [['Rene', '%zeroto100%'], ['Madalena', '%madalena%'], ['ac@axyans', '%axyans%']] as const) {
+  const out: Record<string, string> = { Alexander: USERS.Alexander };
+  for (const [name, pat] of [['Sam', '%acme-ventures%'], ['Maya', '%maya%'], ['ac@axyans', '%axyans%']] as const) {
     const { data } = await sb.from('profiles').select('id, email').ilike('email', pat).limit(1);
     if (data?.[0]) out[name] = data[0].id;
   }

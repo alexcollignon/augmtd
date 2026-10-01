@@ -5,8 +5,8 @@ import { createClient } from '@supabase/supabase-js';
 async function main() {
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
   const { data } = await sb.auth.admin.listUsers({ page: 1, perPage: 200 });
-  const u = data?.users?.find(x => x.email === 'rene@enbd.com');
-  if (!u) { console.log('no rene@enbd.com'); process.exit(1); }
+  const u = data?.users?.find(x => x.email === 'sam@globexbank.example');
+  if (!u) { console.log('no sam@globexbank.example'); process.exit(1); }
   const { data: wf } = await sb.from('workflows').select('id, name').eq('user_id', u.id).ilike('name', '%CV Screening%').maybeSingle();
   const { data: run } = await sb.from('workflow_runs').select('id, status, completed_at')
     .eq('workflow_id', wf!.id).eq('status', 'succeeded').order('completed_at', { ascending: false }).limit(1).maybeSingle();

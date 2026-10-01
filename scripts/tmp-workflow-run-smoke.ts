@@ -1,6 +1,6 @@
 // ─── TEMP SMOKE: THE WORKSHOP WORKFLOW, GENERATED AND EXECUTED — never committed ─────────────
 // The real instruction (counts matched to the halved kit: 5 CVs) → generateWorkflowConfig →
-// every step EXECUTED against the probe's seeded copy of the REAL Emirates NBD kit. Approval
+// every step EXECUTED against the probe's seeded copy of the REAL Globex Bank kit. Approval
 // gates are logged and simulated (the park/resume machinery is the UI dress rehearsal's job);
 // the verify gate runs for real with the producing step's prompt.
 // Run: npx tsx --env-file=.env.local scripts/tmp-workflow-run-smoke.ts
@@ -29,7 +29,7 @@ async function main() {
   const ok = (cond: boolean, label: string) => { console.log(`${cond ? '  ✓' : '  ✗ FAIL'} ${label}`); if (!cond) fails.push(label); };
 
   // ── 1. The probe wears the REAL kit (idempotent — cheap if already seeded). ──
-  const { data: co } = await sb.from('companies').select('id').eq('slug', 'emirates-nbd').maybeSingle();
+  const { data: co } = await sb.from('companies').select('id').eq('slug', process.env.PILOT_COMPANY_SLUG!).maybeSingle();
   const { seedKnowledgeForUser } = await import('../lib/workspace/seed-kb');
   const r = await seedKnowledgeForUser(sb, co!.id, uid);
   console.log(`probe kit: ${JSON.stringify(r)}`);

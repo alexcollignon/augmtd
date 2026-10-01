@@ -158,3 +158,17 @@ export async function draftInLanguage(
   if (second && !m2) return { body: second, verified: draftLanguageVerified(second, target), refused: null, attempts: 2 };
   return { body: '', verified: false, refused: m2 ?? m1, attempts: 2 };
 }
+
+/** W36 · THEIR FORM OF ADDRESS, READ IN CODE (eval sent.compose, EU: a German contact who wrote "Ihnen" was
+ *  answered "kannst du" three runs in a row, the rule notwithstanding). The T–V distinction of the languages
+ *  the product serves, read from the correspondents' own words: formal / informal / null (unknown or no
+ *  such distinction). Case-sensitive for German, where capitalised Sie/Ihnen is the formal pronoun. Pure. */
+export function addressRegisterOf(words: string): 'formal' | 'informal' | null {
+  const t = String(words ?? '');
+  const midSentenceSie = /[^.!?\n]\s+(Sie|Ihnen|Ihr|Ihre|Ihren|Ihrem|Ihrer)\b/.test(t);
+  const formal = midSentenceSie || /\b(vous|votre|vos|usted|ustedes|o senhor|a senhora)\b/i.test(t);
+  const informal = /\b(du|dich|dir|dein|deine|deinen|deinem|deiner|tu|toi|tes|tú)\b/i.test(t);
+  if (formal && !informal) return 'formal';
+  if (informal && !formal) return 'informal';
+  return null;
+}

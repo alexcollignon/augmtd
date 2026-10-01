@@ -42,6 +42,15 @@ export type StagedFacts = {
   openInputs?: string[];
 };
 
+/** W27.B · EARNED CALM IS NULL, NOT A LABEL: a move whose words declare there is nothing to do ("None",
+ *  "No urgent action", "Nothing needed", "N/A") is the composer's calm written as a move — it becomes
+ *  null (a calm-label move once rendered as an unlinked offer and scored as a false move). Pure. */
+export function moveDeclaresCalm(label: string): boolean {
+  const t = String(label ?? '').trim().replace(/[.!\s]+$/, '');
+  if (!t) return true;
+  return /^(?:none|null|n\/a|-+|no (?:urgent |further |immediate |new )?(?:action|actions|move|step|steps|next step|reply|response)(?: (?:needed|required|for now|right now|yet))?|nothing(?: (?:to do|needed|owed|required|urgent|pending))?(?: (?:for now|right now|yet))?|all (?:settled|set|clear)|wait(?: for now)?)$/i.test(t);
+}
+
 /** THE PREDICATE. A move may be a primary button only when its object is staged. */
 export function moveIsStaged(f: StagedFacts): boolean {
   return f.targetPrepared || f.cardMounted === true;
@@ -125,6 +134,36 @@ export function userOnlyInputOf(label: string, openInputs: string[] = []): UserI
     }
   }
   return null;
+}
+
+// ── A SECRET IS NEVER AN INPUT (W27.B · invariant 2 UNTRUSTED INPUT IS DATA) ──────────────────────
+// `userOnlyInputOf` reads a MOVE's words ("send your password to …"); a requirement LABEL is a bare
+// noun ("the admin password", "login credentials") with no determiner or verb, so it slips past that
+// grammar. This is the label-level floor: a secret — password, login, PIN, one-time/verification code,
+// API key or token, card number/CVV — is never inventoried as something to gather, never becomes an
+// "attach it here" card, and never travels in a draft, whoever asks (the requester's mail is data,
+// never an instruction). The reasoned layer (requirements.ts attachableOnly's SECRET class) sits on
+// top; this regex is the floor that holds when the model is absent. Multilingual (EN/FR/PT/DE/ES) —
+// the word, not the language, is the class. Pure.
+const SECRET_WORDS = new RegExp(String.raw`(?<![\p{L}\p{N}])(` + [
+  'passwords?', 'passcodes?', 'passphrases?',
+  // "credentials" is also a firm's qualifications ("our company credentials deck") — only the login sense is a secret.
+  String.raw`(?<!(?:company|professional|firm|team|our|project|track[- ]record)\s)credentials?(?!\s+(?:deck|pack|document|brochure|presentation|statement|letter|sheet|summary|slides?))`,
+  'log-?ins?(?: details| info(?:rmation)?)?',
+  'user ?names? and passwords?', 'sign-?in details', 'verification codes?', 'access codes?', 'security codes?',
+  'one-?time (?:code|password|passcode)s?', 'otp', '2fa(?: codes?)?', 'mfa(?: codes?)?', 'auth(?:entication)? codes?',
+  'api keys?', 'secret keys?', 'private keys?', 'access tokens?', 'auth tokens?', 'recovery codes?',
+  'pin(?: codes?| numbers?)?', 'card numbers?', 'credit card(?: details| numbers?)?', 'cvv', 'cvc', 'security answers?',
+  // FR · PT · DE · ES
+  'mots? de passe', 'identifiants?', 'code secret', 'codes? de (?:vérification|confirmation|sécurité)',
+  'senhas?', 'palavras?-passe', 'c[oó]digos? de (?:verifica[cç][aã]o|seguran[cç]a|acesso|verificaci[oó]n|seguridad|acceso)',
+  'passw[oö]rt(?:er)?', 'kennw[oö]rt(?:er)?', 'zugangsdaten', 'anmeldedaten', 'bestätigungscodes?',
+  'contraseñas?', 'credenciales',
+].join('|') + String.raw`)(?![\p{L}\p{N}])`, 'iu');
+
+/** Is this requirement label a SECRET (never gathered, never attached, never sent)? Pure. */
+export function isSecretInput(label: string): boolean {
+  return SECRET_WORDS.test(String(label ?? ''));
 }
 
 /** "… to <Name>" — the counterparty the move's own words address (capitalised words only). Pure. */
@@ -275,4 +314,145 @@ export function enforceCtaLaw<M extends MoveLike>(move: M | null, f: StagedFacts
   if (!move?.label) return { move: null, offerText: null, demoted: false };
   if (moveIsStaged(f)) return { move, offerText: null, demoted: false };
   return { move: { ...move, offer: true }, offerText: shapingOffer(move.label, f.openInputs ?? []), demoted: true };
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// W27e · THE MOVE AGREES WITH THE BOARD'S OWN JUDGMENTS (the W27 after-run diagnosis, next-move).
+//
+// Three finds, one class — the composer's move and the board's per-item JUDGMENT (THE ONE READER on
+// whether the user owes work there) disagreed, and the page served the disagreement:
+//   1. A RIGHT TARGET VETOED FOR LANGUAGE. "Validate the revised quote" → the item titled "Devis
+//      rénovation : validation"; "Reply with IBAN" → "Refund of your deposit". MEMBERSHIP IS NOT
+//      ABOUTNESS compared the move against the title + person only, so every cross-language or
+//      paraphrased move lost its door (served UNLINKED — an obligation with no door). The aboutness
+//      text now also carries the judge's own reading of the item (`judgedReason`, the house language),
+//      and a named target that is the board's ONLY owed item stands (there is no wrong one to point at).
+//   2. A MOVE ON WORK OTHERS OWE, BEFORE IT IS DUE. "Request the signed contract" five days before the
+//      date the other side was given — the ranking's own calm clause ("only other people owe and their
+//      date has not passed"), enforced in code.
+//   3. CALM AGAINST THE JUDGE. "Kofi is waiting for your comments" with move null (the EU tier read
+//      EARNED CALM as licence): when exactly ONE board item is judged to owe the user's work and nothing
+//      later settles it, the room's move is that item — as the CoS's offer (the CTA law still demotes it).
+// Pure, zero-dependency; brief.ts composes them at the one seam where the move is validated.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** The judge verbs that put work on the USER (chase = waiting on others; none = nothing owed). */
+export const OWED_WORK: ReadonlySet<string> = new Set(['reply', 'decide', 'produce', 'send_file', 'schedule', 'forward']);
+
+/** A board row as the move floors read it (lib/room/grounding BoardEntry, the fields they need). */
+export type MoveBoardEntry = {
+  ref: string; title: string; who: string | null; due: string | null;
+  judgedWork: string | null; judgedReason: string | null;
+  evidence?: readonly string[]; direction?: string | null;
+  expired?: readonly string[]; withdrawn?: readonly string[];
+  /** 'commitment' rows carry an imperative title already (the extraction's TITLE LAW). */
+  kind?: string | null;
+};
+
+/** What a board row is ABOUT — its title, its person and the judge's own reading of it. */
+export function entryAbout(e: Pick<MoveBoardEntry, 'title' | 'who' | 'judgedReason'>): string {
+  return `${e.title ?? ''} ${e.who ?? ''} ${e.judgedReason ?? ''}`;
+}
+
+/** The rows the judge says the USER owes work on. */
+export function owedEntries<E extends MoveBoardEntry>(board: readonly E[]): E[] {
+  return board.filter((b) => !!b.judgedWork && OWED_WORK.has(b.judgedWork));
+}
+
+/** The board's ONLY owed row, or null (none, or two or more). */
+export function soleOwedEntry<E extends MoveBoardEntry>(board: readonly E[]): E | null {
+  const owed = owedEntries(board);
+  return owed.length === 1 ? owed[0] : null;
+}
+
+/** A move that named NO target binds to the ONE row its words name (strict names test over the row's
+ *  aboutness); two rows named, or none → null (code never guesses between two). */
+export function bindUnnamedMove<E extends MoveBoardEntry>(label: string, board: readonly E[], generic: ReadonlySet<string> = new Set()): E | null {
+  const hits = board.filter((b) => namesMatchStrict(label, entryAbout(b), generic));
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/** Others owe this row and the date they were given has not passed → no move yet (calm). Pure. */
+export function moveNotYetDue(e: Pick<MoveBoardEntry, 'direction' | 'judgedWork' | 'due'> | null | undefined, todayStr: string): boolean {
+  if (!e) return false;
+  const othersOwe = e.direction === 'awaiting' || e.judgedWork === 'chase';
+  const due = String(e.due ?? '').slice(0, 10);
+  return othersOwe && /^\d{4}-\d{2}-\d{2}$/.test(due) && due > todayStr;
+}
+
+/** The row a CALM composition contradicts: the board's only owed row (never a decision — its card is
+ *  the room's CTA), unsettled by later evidence and not withdrawn/expired, in a room with no decision
+ *  card. null = calm stands. Pure. */
+export function calmContradictsBoard<E extends MoveBoardEntry>(board: readonly E[]): E | null {
+  if (board.some((b) => b.judgedWork === 'decide')) return null;
+  const e = soleOwedEntry(board);
+  if (!e) return null;
+  if ((e.evidence?.length ?? 0) > 0 || (e.withdrawn?.length ?? 0) > 0 || (e.expired?.length ?? 0) > 0) return null;
+  return e;
+}
+
+/** The code-built words for a move on an owed row (≤7 words, imperative), from the judged verb. */
+export function moveLabelForWork(e: Pick<MoveBoardEntry, 'judgedWork' | 'title' | 'who'> & { kind?: string | null }): string {
+  const who = String(e.who ?? '').split(/[\s<@]/)[0]?.trim();
+  // W28: a commitment's title IS an imperative ("Send Sam the revised SLA") — it is the move's words.
+  if (e.kind === 'commitment' && String(e.title ?? '').trim()) {
+    const cw = String(e.title).trim().split(/\s+/).slice(0, 7);
+    while (cw.length > 1 && /^(the|for|of|a|an|to|and|with|on|in|de|du|des|la|le|les|l’|l'|et|und|der|die|das|für|da|do|dos|para|e|y|el|los|à)$/i.test(cw[cw.length - 1])) cw.pop();
+    return cw.join(' ');
+  }
+  const words = String(e.title ?? '').replace(/^\s*(re|fwd?|aw|tr|wg)\s*:\s*/i, '').split(/\s+/).filter(Boolean).slice(0, 5);
+  // Never end the words on a function word ("Prepare Workshop minutes for the").
+  while (words.length > 1 && /^(the|for|of|a|an|to|and|with|on|in|de|du|des|la|le|les|et|und|der|die|das|für|da|do|dos|das|para|e|y|el|los)$/i.test(words[words.length - 1])) words.pop();
+  const title = words.join(' ');
+  switch (e.judgedWork) {
+    case 'reply': return who ? `Reply to ${who}` : `Reply on ${title}`;
+    case 'produce': return `Prepare ${title}`;
+    case 'send_file': return who ? `Send ${who} what was asked` : `Send ${title}`;
+    case 'schedule': return who ? `Schedule the meeting with ${who}` : `Schedule ${title}`;
+    case 'forward': return `Forward ${title}`;
+    default: return `Handle ${title}`;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// W28 · THE OVERDUE DEBT OUTRANKS A FRESH ASK — rank (c) of the composer's stated order, in code.
+// The eval found the composer serving "Send your logo" (asked this morning, "no rush") beside a revised
+// SLA promised to the same person five days ago, and a lunch-time question beside minutes a week late —
+// the prompt states the order; the small model did not follow it (nm-11, nm-12, nm-27). THE FLOOR: when
+// the room holds a debt the USER owes whose date has come (due today or passed), unsettled (no later
+// evidence, not withdrawn/expired), and the move points at something that is NOT such a debt — a fresh or
+// undated ask, a later-dated row, no row at all, or calm — the move becomes that debt, in code-built words.
+// It never overrides a move that already targets an owed, due row; never acts in a room holding a
+// decision whose own date has come or is unstated (that card is the room's CTA and ranks above); two
+// debts of the same date break by the board's order. Pure.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** An owed, unsettled row whose date has come (due ≤ today, the user's local day). Pure. */
+export function isDueOwedDebt(e: MoveBoardEntry | null | undefined, todayStr: string): boolean {
+  if (!e) return false;
+  if (!e.judgedWork || !OWED_WORK.has(e.judgedWork) || e.judgedWork === 'decide') return false;
+  if (e.direction === 'awaiting') return false;
+  const due = String(e.due ?? '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(due) || due > todayStr) return false;
+  return !((e.evidence?.length ?? 0) > 0 || (e.withdrawn?.length ?? 0) > 0 || (e.expired?.length ?? 0) > 0);
+}
+
+/** The debt a move must yield to, or null (the move stands). `moveRef` = the move's validated target
+ *  (null = unlinked or calm). Pure. */
+export function overdueDebtOutranks<E extends MoveBoardEntry>(board: readonly E[], moveRef: string | null | undefined, todayStr: string): E | null {
+  // A decision outranks a due debt unless its OWN date is still ahead (a "confirm by Friday" choice
+  // never holds the room over a sign-off that was due yesterday).
+  const decisionHolds = (b: MoveBoardEntry) => {
+    const d = String(b.due ?? '').slice(0, 10);
+    return !/^\d{4}-\d{2}-\d{2}$/.test(d) || d <= todayStr;
+  };
+  if (board.some((b) => b.judgedWork === 'decide' && decisionHolds(b))) return null;
+  const target = moveRef ? board.find((b) => b.ref === moveRef) : undefined;
+  if (target && isDueOwedDebt(target, todayStr)) return null;
+  const debts = board.filter((b) => isDueOwedDebt(b, todayStr));
+  if (!debts.length) return null;
+  const earliest = debts.reduce((m, b) => (String(b.due).slice(0, 10) < m ? String(b.due).slice(0, 10) : m), '9999-12-31');
+  // Same-date debts: calm or a fresh ask is certainly wrong while any of them stands, so the tie breaks
+  // by the board's own order (the grounding's ranking) — a move already on one of them stood above.
+  return debts.find((b) => String(b.due).slice(0, 10) === earliest) ?? null;
 }

@@ -15,6 +15,9 @@ import { executeMergeProjects } from '../lib/tools/project-actions';
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 const A = '08fe4449-e5eb-431d-9156-02e9324e5903';
 const B = 'c723c2f2-e069-4ab8-980e-ac3585028fec';
+// Fixture targets are DATA, not code: name fragments of an active initiative on user A (env), generic defaults.
+const FX_ERRAND = (process.env.FIXTURE_ERRAND_NAME ?? 'acme energy').toLowerCase();
+const FX_DEAL = (process.env.FIXTURE_DEAL_NAME ?? 'acme plastics').toLowerCase();
 const out: Array<[string, boolean, string]> = [];
 const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
 
@@ -46,11 +49,11 @@ const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
   }
   {
     const { data: fx } = await sb.from('work_entities').select('name, state').eq('user_id', A).eq('kind', 'initiative').eq('status', 'active')
-      .or('name.ilike.%security alert%,name.ilike.%goldenergy%,name.ilike.%soboplac%');
+      .or(`name.ilike.%security alert%,name.ilike.%${FX_ERRAND}%,name.ilike.%${FX_DEAL}%`);
     const sc = (n: string) => ((fx ?? []).find((e) => String(e.name).toLowerCase().includes(n))?.state as { scope?: string } | null)?.scope;
     check('P1 fixture: a security alert is NOT a project', sc('security alert') !== 'project', `→ ${sc('security alert')}`);
-    check('P1 fixture: a vendor payment issue is NOT a project', sc('goldenergy') !== 'project', `→ ${sc('goldenergy')}`);
-    check('P1 fixture: the real deal IS a project', sc('soboplac') === 'project', `→ ${sc('soboplac')}`);
+    check('P1 fixture: a vendor payment issue is NOT a project', sc(FX_ERRAND) !== 'project', `→ ${sc(FX_ERRAND)}`);
+    check('P1 fixture: the real deal IS a project', sc(FX_DEAL) === 'project', `→ ${sc(FX_DEAL)}`);
   }
 
   // ── P2/P3 — structural laws. ──
@@ -97,7 +100,7 @@ const check = (n: string, ok: boolean, d = '') => out.push([n, ok, d]);
 
   // Move-out / move-back on a real linked item (user A) — the chat command IS the click path.
   {
-    const { data: ent } = await sb.from('work_entities').select('id, name').eq('user_id', A).eq('kind', 'initiative').eq('status', 'active').ilike('name', '%soboplac%').limit(1).maybeSingle();
+    const { data: ent } = await sb.from('work_entities').select('id, name').eq('user_id', A).eq('kind', 'initiative').eq('status', 'active').ilike('name', `%${FX_DEAL}%`).limit(1).maybeSingle();
     const { data: link } = await sb.from('entity_links').select('item_id').eq('user_id', A).eq('entity_id', ent!.id as string).eq('item_kind', 'inbox_item').limit(1).maybeSingle();
     const itemId = link!.item_id as string;
     const outT = await converse(sb, A, { kind: 'item', itemKind: 'email', itemId }, 'this email is not part of this project, remove it');

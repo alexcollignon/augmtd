@@ -230,7 +230,8 @@ async function main() {
     ok('B5 the seat\'s answer is a bubble in the seat\'s face, drawn by <Answer>',
       /const answer = isAnswerTurn\(t\) && !!t\.text;/.test(bubble) && /<Answer text=\{t\.text\} refs=\{t\.refs \?\? \[\]\}/.test(bubble)
       && /actorName: t\.author\?\.name \? t\.author\.name\.split\(' '\)\[0\] : seatName/.test(bubble) && /actorRoleLabel: seatLabel/.test(bubble));
-    ok('B5 both doors draw spoken turns through the one bubble builder', (rail.match(/items\.push\(speechBubble\(t, key\)\)/g) ?? []).length === 2);
+    // ⟲ RE-POINTED (W39 · A CLAIM RENDERS): the item door hands the builder the turn after the claim net (`said`)
+    ok('B5 both doors draw spoken turns through the one bubble builder', (rail.match(/items\.push\(speechBubble\((?:t|said), key\)\)/g) ?? []).length === 2);
     ok('B5 tagged refs ride inline, never as the grey link row beneath', /const shownRefs = \(t\.refs \?\? \[\]\)\.filter\(\(r\) => !r\.tag/.test(rail));
   }
 
@@ -251,7 +252,7 @@ async function main() {
     const rail = src('components/home/item-rail.tsx');
     ok('C2 persisted openers are dropped at read (the ONE mapper — cache and fetch both)', /return rows\.filter\(\(t\) => !isPersistedOpener\(t\)\)\.map\(/.test(rail));
     ok('C3 the opener is never written (no openerRef, no system POST in send)', !/openerRef/.test(rail) && !/role: 'system', text: o \}/.test(rail));
-    ok('C4 the opener composes from the ONE producer the floor reads', /const invite = openerInvite\(name, hasRecord\);/.test(rail) && /return \/\\\?\\s\*\$\/\.test\(pinned\.trim\(\)\) \? null : OPENER_INVITE;/.test(rail));
+    ok('C4 the opener composes from the ONE producer the floor reads', /const invite = openerInvite\(name, hasRecord\);/.test(rail) && /return \/\\\?\\s\*\$\/\.test\(standing\.trim\(\)\) \? null : OPENER_INVITE;/.test(rail));
   }
 
   console.log('D · ONE PREDICATE FOR FOLD AND RENDER');

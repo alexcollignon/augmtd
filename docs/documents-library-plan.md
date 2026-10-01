@@ -94,7 +94,7 @@ provenance demotes to row metadata; telemetry speaks only when something is in f
   repointedSteps toast) · **browser walk on the live dev server**: page renders (title, upload
   cluster "to Unfiled", 9-processing chip, search+Filter), sidebar highlights, docx→honest
   opens-outside card, PDF→inline iframe (bucket-healed email attachment), processing HTML→honest
-  "No preview available", section paging arrows, "feeds 1 workflow" chip live on the AHK folder
+  "No preview available", section paging arrows, "feeds 1 workflow" chip live on the Chamber folder
   (real binding), meeting rows wear locks, Filter menu + "Meetings only ✕" chip + honest
   re-counts (folder renders at 0), `/settings?tab=knowledge`→`/documents`, Settings nav clean.
 - **Not machine-walkable, owner should touch**: real drag-and-drop (OS file drag can't be
@@ -221,4 +221,4 @@ provenance demotes to row metadata; telemetry speaks only when something is in f
   pre-W5 accordion variable (`f.count === 0` / `deleteFolder(f.id)`) — re-pointed by the
   orchestrator to `scopeFolder.*` with a comment (the law is identical, the variable moved).
   smoke-knowledge-folders back to **112/112 live** · tsc clean · build green · the door
-  browser-verified on the healed iScore row.
+  browser-verified on the healed Bureau row.

@@ -6,7 +6,8 @@
 //    view; a recompute lands on the NEXT open, or arrives as an APPENDED message."
 //
 // Allowed live behaviour, exhaustively: appending new timeline items · filling a skeleton that
-// never showed content · filling a RESERVED SLOT (W17 — below) · streaming an in-flight reply ·
+// never showed content · filling a RESERVED SLOT (W17 — below) · filling an EMPTY ACTION SEAT
+// (W39 — below) · streaming an in-flight reply ·
 // explicitly-live run status the user is watching (the workflow drawer's "step N/M") · changes the
 // user's own action just caused.
 //
@@ -102,4 +103,29 @@ export type SlotPaint = 'empty' | 'placeholder' | 'widget';
  *  widget keeps its seat for this open (the arrival is cached for the next one). */
 export function mayFillSlot(painted: SlotPaint): boolean {
   return painted !== 'widget';
+}
+
+// ── W39 · THE EMPTY ACTION SEAT IS A SKELETON (owner-approved, Oct 1 — the walk's blocker) ─────────
+// An item room answered an ask ("Type it"), the run drafted the reply, and the reader refreshed: the
+// page painted the PRE-ANSWER cache (no ask — it was answered — and no draft — it did not exist yet),
+// the law refused the fresh view, and the room stood with NO action card while the seat's own words
+// said the reply was ready. An action seat that painted NOTHING is not content the reader met — it is
+// a skeleton the landing view may fill. The fill is SEAT-ONLY: the fields that choose and carry the
+// action widget take the landing's values; everything the reader did meet (the opening sentence, the
+// source, the header's words) keeps its painted value. A painted widget or a reserved placeholder is
+// never replaced here (a placeholder is filled by its own producer — mayFillSlot above).
+// PRECEDENCE: this is the skeleton-fill exception applied per SEAT, not per view — it yields to every
+// hold on painted content and never swaps a widget the reader saw.
+
+/** May a held landing fill the action seat? Only a seat that painted nothing (`'empty'`). `null` =
+ *  the seat's host never reported (a project-room embed, a door with no item page) → hold. */
+export function mayFillEmptySeat(seat: SlotPaint | null): boolean {
+  return seat === 'empty';
+}
+
+/** The seat fill: the painted view, with ONLY the named seat fields taken from the landing. Pure. */
+export function fillEmptySeat<T extends object>(painted: T, landing: T, seatFields: readonly (keyof T)[]): T {
+  const out = { ...painted };
+  for (const k of seatFields) if (k in landing) out[k] = landing[k];
+  return out;
 }

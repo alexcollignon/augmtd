@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE MEMBER DIRECTORY — portal → member profile docs + a deterministic manifest.
 //
-// Ground truth (docs/ahk-tender-matching-plan.md): the chamber's public member portal exposes
+// Ground truth (docs/chamber-tender-matching-plan.md): the chamber's public member portal exposes
 // `GET /home/getMembers.json?page=N` (16 rows/page, no auth). Coverage is thin — activity free-text
 // is 99% present but a median 67 chars, sector codes only 34% — so THE SECTOR IS DERIVED BY US,
 // never read off the row.
@@ -38,9 +38,11 @@ export const DEFAULT_MEMBER_SOURCE_LABEL = 'Mitgliederverzeichnis (Portal)';
 export const MEMBER_MANIFEST_KIND = 'tender_member_manifest';
 export const MEMBER_MANIFEST_VERSION = 1;
 
-const PORTAL_BASE = 'https://portalahk.ccila-portugal.com/home/getMembers.json';
+// The member portal is per-deployment config (a client detail, never code): set TENDERS_MEMBER_PORTAL_BASE, e.g. https://portal.chamber.example
+const PORTAL_ROOT = (process.env.TENDERS_MEMBER_PORTAL_BASE ?? 'https://portal.chamber.example').replace(/\/+$/, '');
+const PORTAL_BASE = `${PORTAL_ROOT}/home/getMembers.json`;
 /** The member's own page on the portal — the link a staff member follows to see the source row. */
-const PORTAL_PROFILE_BASE = 'https://portalahk.ccila-portugal.com/home/profile';
+const PORTAL_PROFILE_BASE = `${PORTAL_ROOT}/home/profile`;
 const PAGE_DELAY_MS = 500;
 const BROWSER_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';

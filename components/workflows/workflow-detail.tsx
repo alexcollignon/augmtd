@@ -21,6 +21,7 @@
 // the server graph into the client bundle).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
+import { toReaderVoice } from '@/lib/workflows/reader-voice';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -525,7 +526,8 @@ export function WorkflowDetail({
                   : `waiting on ${parkedNow.waitingOn?.name ?? 'a teammate'}`}
               </div>
             )}
-            {description && <p className="mt-1 text-[12.5px] text-neutral-400 line-clamp-2">{description}</p>}
+            {/* W39 · THE READER IS "YOU" — a stored description predating the rule is served in the second person. */}
+            {description && <p className="mt-1 text-[12.5px] text-neutral-400 line-clamp-2">{toReaderVoice(description)}</p>}
             {owner && (
               <OwnerLine
                 workflowId={workflowId}

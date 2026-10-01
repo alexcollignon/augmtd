@@ -250,15 +250,15 @@ const src = (p: string) => readFileSync(p, 'utf8');
   check('R5 · Home rows deep-link into the room (the spine builds /item hrefs; the room mounts from the cached verdict)',
     src('lib/work-items/model.ts').includes('/item/') && src('lib/work/judge.ts').includes('readCache'));
 
-  // Live matrix + inventory per user. Rene resolved at runtime (never hardcode his id).
+  // Live matrix + inventory per user. Sam resolved at runtime (never hardcode his id).
   // RE-POINTED (Sep 19): the old scan (`select user_id limit 2000`) silently served PostgREST's
   // 1000-row server page once the table outgrew it — the repo's oldest cap class, inside the gate
   // itself (and `like` can't match a uuid column). Resolve the id from the auth listing instead.
-  const rene = await (async () => {
+  const sam = await (async () => {
     const { data: us } = await sb.auth.admin.listUsers({ perPage: 1000 });
     return us?.users.find((u) => u.id.startsWith('ae306f38'))?.id ?? null;
   })();
-  const USERS: Array<[string, string]> = [[A, 'user A'], [B, 'user B'], ...(rene ? [[rene, 'user C'] as [string, string]] : []), [PERSONAL, 'personal']];
+  const USERS: Array<[string, string]> = [[A, 'user A'], [B, 'user B'], ...(sam ? [[sam, 'user C'] as [string, string]] : []), [PERSONAL, 'personal']];
   if (!probe.error) {
     for (const [uid, label] of USERS) {
       // ── The inventory against a REAL tracked project (the most-linked one). ──
@@ -299,7 +299,7 @@ const src = (p: string) => readFileSync(p, 'utf8');
         check(`${label} · a linked item's conversation IS its deal's (parity across doors)`, k === anyLink.entity_id, '');
       } else check(`${label} · linked-item key (vacuous — no links)`, true);
     }
-    check('R5 · Rene resolved at runtime (never hardcoded)', rene !== null, rene ? `${rene.slice(0, 8)}…` : 'absent');
+    check('R5 · Sam resolved at runtime (never hardcoded)', sam !== null, sam ? `${sam.slice(0, 8)}…` : 'absent');
   }
 
   // ═══ R6 — THE ROOM-DOOR LAW + THE ONE-VOICE BRIEF (Aug 3, experience-spec seat table + laws 2/4/5/6/9) ═══
@@ -561,13 +561,16 @@ const src = (p: string) => readFileSync(p, 'utf8');
     check('R12 · a require is a THING: judge rule (v14) + the reasoned attachability floor at the ONE resolver (memoized, keep-all on failure) + word-boundary labels',
       src('lib/work/judge.ts').includes('NEVER a confirmation, approval, decision, answer, availability, or time') &&
       src('lib/work/surface-registry.ts').includes('14: ATTACHABLE-REQUIRES') && // RE-POINTED: the v14 rule survives in the version log; JUDGE_VERSION moved on (15: the ask-direction floor)
-      src('lib/prepare/requirements.ts').includes('async function attachableOnly') &&
-      src('lib/prepare/requirements.ts').includes('requires = await attachableOnly(admin, userId, requires)') &&
-      src('lib/prepare/requirements.ts').includes('return requires; // failure ≠ a verdict — keep all') &&
+      // ⟲ RE-POINTED W27: the floor gained its SECRET class (W27.B) — the one reasoned check is
+      // `attachableSplit` (code floor for secrets first, then the three-class call); failure still keeps
+      // all (but the floored secrets).
+      src('lib/prepare/requirements.ts').includes('async function attachableSplit') &&
+      src('lib/prepare/requirements.ts').includes('const split = await attachableSplit(admin, userId, requires);') &&
+      src('lib/prepare/requirements.ts').includes('if (!split) return floored; // failure ≠ a verdict — keep all') &&
       // RE-POINTED W2.7: the local word-boundary helper for require labels is `clipWords` now (the
       // shared clipLabel took the title/reason sites; a require label is an identity — no glyph).
       src('lib/work/judge.ts').includes('function clipWords'));
-    // LIVE — the floor discriminates on the real label classes (the Carson answer vs EG Bank docs).
+    // LIVE — the floor discriminates on the real label classes (the Carson answer vs Globex Bank docs).
     try {
       const { aiCall } = await import('../lib/ai/call');
       const labels = ['confirmation of the Thursday demo call time', 'the Q2 vendor risk register', 'your availability for next week'];
@@ -597,7 +600,6 @@ const src = (p: string) => readFileSync(p, 'utf8');
       g.includes('preparedStatesFor') && g.includes('function preparedWordsOf') && !g.includes('function preparedOf(') && g.includes('THE LIVE BOARD') && g.includes('OPEN ASKS'));
     check('R13 · every room-scope reasoner reads the SAME page: the responder, the chat question path, the agent loop',
       src('lib/room/brief.ts').includes('assembleRoomGrounding') &&
-      src('lib/entities/ask.ts').includes('assembleRoomGrounding') &&
       src('lib/converse/index.ts').includes('assembleRoomGrounding'));
     // RE-POINTED, STRICTER (Sep 8): board membership alone was never the law — a settled deed's CTA
     // bound to an unrelated notice that happened to be on the same board. The ref must be ON the

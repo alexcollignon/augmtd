@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     : null;
 
   const contextLines: string[] = [];
-  if (userName) contextLines.push(`User's name: ${userName}`);
+  if (userName) contextLines.push(`The user's own name (the person this assistant works for — not a company): ${userName}`);
   if (companyName) contextLines.push(`Company: ${companyName}`);
   const contextBlock = contextLines.length > 0
     ? `Known context about the user:\n${contextLines.join('\n')}\n\nUse this context directly in the instructions where relevant.`
@@ -65,13 +65,19 @@ ${description?.trim() ? `Agent description: ${description.trim()}` : ''}
 The user's rough input:
 "${instructions.trim()}"
 
-Rewrite this as a clear, well-structured system prompt in 4–6 sentences. Cover:
+Rewrite this as a clear, well-structured system prompt: one or two sentences on the role and focus, then the rules as short bullet lines (about 4–8 in all). Cover:
 - The agent's role and specific focus area
 - How it should respond when the user asks for help (format, tone, style)
 - Constraints or rules to always follow
 - Any domain-specific context implied by the input
 
-For any specifics not mentioned or not available in context (pricing, client names, industry), use [PLACEHOLDER] format so the user knows what to fill in.
+Rules for the rewrite:
+- KEEP EVERY RULE THE USER GAVE, with its force ("never" stays "never"); add structure, not new duties, names or personas.
+- When the input asks for something this agent cannot do (run on a schedule, monitor, send on its own), keep the SUBSTANCE as on-request help — what it does when asked (e.g. find the items in the inbox, draft the replies for the user to send, write the summary) — and end with one line saying it does this when asked and the user sends anything that goes out. Never write "automatically", "every morning" or a time of day as something it does.
+- For specifics neither the input nor the context above gives (company, services, prices, clients, policies), use NAMED placeholders such as [COMPANY_NAME], [SERVICES], [PRICING] — never invent them, and never a bare [PLACEHOLDER].
+- When the input is too thin to say much, write a sound general prompt for the agent's name and end with a short "Context to fill in:" block of named placeholders the user completes.
+- Use the user's name or company only where it adds meaning (whom the assistant works for); never add rules the notes did not imply (how to address the user, extra output formats, personas).
+- Write the prompt in the same language as the user's rough input.
 
 Respond with only the system prompt text — no preamble, no explanation, no quotes around the output.`;
 
@@ -81,8 +87,8 @@ Respond with only the system prompt text — no preamble, no explanation, no quo
   const stream = await client.chat.completions.create({
     model,
     messages: [{ role: 'user', content: prompt }],
-    max_tokens: 400,
-    temperature: 0.7,
+    max_tokens: 600,
+    temperature: 0.5,
     stream: true,
   });
 

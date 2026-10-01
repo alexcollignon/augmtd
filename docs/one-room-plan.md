@@ -401,7 +401,7 @@ this doc first.
   tracked project serves 5 links across 4 kinds + a 4-event ledger. Users B/C/personal are
   HONESTLY vacuous — they have no tracked projects yet, which is exactly R4's human-created-only
   model working (their untracked context: 56/76/5 entities waiting to be tracked from the strip).
-- **The parity matrix, live per user (Rene resolved at runtime, never hardcoded):** matrix
+- **The parity matrix, live per user (Sam resolved at runtime, never hardcoded):** matrix
   coverage counts named per user (untracked-context / chase / deliverables / open items); the
   one-conversation law verified on each user's REAL data (a linked item's room key === its
   deal's); Home rows deep-link into the room (`/item` hrefs from the spine, cached-verdict mount).
@@ -474,12 +474,12 @@ mechanism gates passed while a password reset carried a drafted reply.
 5. **Registry hygiene + one project definition.** Recognition NEVER founds from noise (kind-aware
    via the ONE resolver — receipt/newsletter/notification/automated may join, never found);
    `scripts/archive-noise-entities.ts` archived 20 noise entities for user A (dry-run for others —
-   Rene's one candidate touches a real client); Timeline lanes are TRACKED-only (the
+   Sam's one candidate touches a real client); Timeline lanes are TRACKED-only (the
    judged-untracked fallback deleted).
 6. **Language mirrors the concrete text** (fresh body detection outranks a stale understanding —
    the English-ask-Portuguese-draft bug); **engine turns carry their item chip** (a shared deal
    room is never ambiguous — the "stale memory" read).
-7. **`scripts/smoke-promise.ts`** — the standing outcome gates, per user (A/B/C/personal, Rene
+7. **`scripts/smoke-promise.ts`** — the standing outcome gates, per user (A/B/C/personal, Sam
    runtime-resolved): P1 zero drafts on noise (live scan) · P2 judge-only gate (+ a notification
    probe through the WHOLE engine → none) · P3 no duplicate obligation pairs (live, spine) · P4
    noise never founds (live probe, registry unchanged) · P5 one project definition · P6 label
@@ -541,8 +541,8 @@ Battery: promise 42/42 · label-flip 15/15 · one-room 52/52 · judged-room 34/3
 ## PROGRESS (July 27) — THE FIRST SYNC + USER-CREATED-ONLY EVERYWHERE + HISTORY (promise 50/50)
 
 - **CREATION-TIME RECOGNITION → THE FOUNDING PROPOSAL (the "first sync" — in the room, never a
-  popup).** The iScore lesson: creation adopted only on EXACT name match, so "iScore" founded an
-  empty shell while the brain held "iScore AI Training Program". Now `proposeFoundingAdoptions`
+  popup).** The Bureau lesson: creation adopted only on EXACT name match, so "Bureau" founded an
+  empty shell while the brain held "Bureau AI Training Program". Now `proposeFoundingAdoptions`
   (lib/entities/founding.ts) runs deterministic name/alias token-subset recognition over existing
   entities (company-token guarded), counting members across BOTH memories (entity links + the
   label-era `initiative` strings — pre-backfill entities carry state with zero links); the
@@ -558,7 +558,7 @@ Battery: promise 42/42 · label-flip 15/15 · one-room 52/52 · judged-room 34/3
   strings fold to "No project"); Timeline item tags + lanes tracked-only (+ stale client cache
   keys bumped: aug-timeline-v3, aug-timeline-gantt-v2). `scripts/merge-duplicate-entities.ts`
   folds near-name untracked twins INTO tracked projects (aliases transfer → future recognition
-  lands right); applied for user A's iScore shells.
+  lands right); applied for user A's Bureau shells.
 - **CONVERSATION HISTORY (Claude-style):** migration `20260727c_room_turns_archived.sql`
   (⚠️ APPLY MANUALLY — pre-migration Clear degrades to delete, History lists empty). "Clear" =
   ARCHIVE (a session boundary, never a deletion); History ⌄ lists sessions (date · count · first
@@ -590,7 +590,7 @@ Battery: promise 42/42 · label-flip 15/15 · one-room 52/52 · judged-room 34/3
   what's staged. The ingest funnel clears the ask + marks the draft stale (re-draft with the
   artifact in hand).
 - **One law, every door:** pass reply + doc-send + PRODUCE branches (produce was the silent gap —
-  the EGBANK class; the truth now rides the delegation envelope), the on-demand draft route, the
+  the GLOBEXBANK class; the truth now rides the delegation envelope), the on-demand draft route, the
   judge SERVING EDGE (`/api/items/judge` after(), settled-guarded — zero AI on repeat opens), and
   the legacy cron loop DEFERS inventory-carrying verdicts to the pass.
 - **Group-channel ask rules:** ONE ask per item — a coworker's attempted-work ask SUPERSEDES the
@@ -619,7 +619,7 @@ Battery: promise 42/42 · label-flip 15/15 · one-room 52/52 · judged-room 34/3
 - Gates: **P18** (live: inventory → room ask → truth-constrained draft; + supersession both-ways,
   never-blocks, self-chip, one-law-every-door, in-place dedupe, meeting href) → **promise 66/66** ·
   judged-room 34/34 · one-room 52/52 · work-surface 45/45 · label-flip 15/15 · build clean.
-  EGBANK verified live end-to-end (engine ask + Max's richer worker-informed ask → superseded to one).
+  GLOBEXBANK verified live end-to-end (engine ask + Max's richer worker-informed ask → superseded to one).
 
 ## PROGRESS — July 27 eve · THE FIRST LOOK (new-user arc)
 

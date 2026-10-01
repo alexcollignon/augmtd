@@ -12,6 +12,8 @@ RUN pip install --no-cache-dir fastapi==0.115.* "uvicorn[standard]==0.32.*" http
 
 WORKDIR /app
 COPY main.py /app/main.py
+# The formula-recalc helper — mounted read-only into a second short job (main.py _recalc_xlsx).
+COPY recalc_xlsx.py /app/recalc_xlsx.py
 
 EXPOSE 8002
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8002"]

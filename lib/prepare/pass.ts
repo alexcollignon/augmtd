@@ -354,8 +354,10 @@ async function prepareDecisionBrief(
       if (c) body = [`THE COMMITMENT: ${String(c.description ?? '')}`, c.counterparty ? `Counterparty: ${String(c.counterparty)}` : null, c.due_date ? `Due: ${String(c.due_date)}` : null, c.source ? `Origin: ${String(c.source)}` : null].filter(Boolean).join('\n');
     } else {
       const { data: it } = await admin.from('inbox_items').select('source_data').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
-      const sd = (it?.source_data ?? {}) as { snippet?: string; body_text?: string; html_body?: string };
-      const raw = sd.body_text || (sd.html_body ? String(sd.html_body).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ') : '') || sd.snippet || '';
+      // W29 — the item's words live in `body` (what the sync stores; the eval found a vendor's two priced
+      // options invisible here, and the decision was laid out from the title alone — invented options).
+      const sd = (it?.source_data ?? {}) as { snippet?: string; body?: string; body_text?: string; html_body?: string };
+      const raw = sd.body || sd.body_text || (sd.html_body ? String(sd.html_body).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ') : '') || sd.snippet || '';
       const { clipForPrompt } = await import('@/lib/utils/clip-for-prompt');
       body = clipForPrompt(String(raw), 3500);
     }
@@ -1337,7 +1339,9 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
         // one reader re-proves an unstamped machine attachment — lib/prepare/read.ts draftStagingStale).
         source_data: { ...sd, draft: { body: body2, generated_at: new Date().toISOString(), prepared: 'pass', law_version: DRAFT_LAW_VERSION_C, ...(kbHave?.file ? { attachment: { fileId: kbHave.file.id, filename: kbHave.file.filename, source: kbHave.file.source }, ...(await import('@/lib/prepare/requirements')).stagingStamp() } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa2 ? { prepared_by: { worker: pa2.name, at: new Date().toISOString() } } : {}) },
       }).eq('id', it.id);
-      return { did: reqs.have.length ? 'docsend' : 'draft', worker: pa2?.name };
+      // W39b · only a FILE in hand makes this a doc-send ("found the file and drafted the send"); a typed
+      // answer is in hand too, but nothing was found or attached — that is a drafted reply.
+      return { did: reqs.have.some((h) => !!h.file) ? 'docsend' : 'draft', worker: pa2?.name };
     }
     // Could not draft — the checklist ask (written by resolveRequirements) still stands in the room.
     return { did: 'none', reason: reqs.missing.length ? `waiting on ${reqs.missing.length} artifact(s) from you` : 'could not draft the send' };

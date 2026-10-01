@@ -17,6 +17,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowsPointingOutIcon, CheckIcon, ClipboardDocumentIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { localizeIsoDates } from '@/lib/core/iso-dates';
 import { codeBlockKind, parseMarkdown, splitPlaceholders, type MdBlock, type MdInline } from './markdown';
 
 export type MarkdownTextRenderer = (text: string, key: string) => React.ReactNode;
@@ -273,7 +274,10 @@ export interface MarkdownProps {
 
 /** THE ONE CHAT MARKDOWN RENDERER. */
 export function Markdown({ text, renderText = defaultText, cursor, className }: MarkdownProps) {
-  const blocks = parseMarkdown(text);
+  // W39 · THE ISO-DATE FLOOR (lib/core/iso-dates, law `time-truth`): a machine date the model wrote
+  // ("asked on 2026-09-30") reads in the answer's own language — never inside code, URLs, filenames
+  // or quoted source. Pure and deterministic, so a streamed answer's painted blocks keep their words.
+  const blocks = parseMarkdown(localizeIsoDates(text));
   const tail = cursor ? <StreamCaret /> : undefined;
   return (
     <div className={className ?? 'space-y-2.5'} data-md="chat">

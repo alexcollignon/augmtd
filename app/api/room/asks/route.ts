@@ -95,12 +95,12 @@ function reprepareInBackground(userId: string, item: { kind: 'inbox' | 'commitme
   after(async () => {
     try {
       const admin = createAdminClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-      const { buildWorkItems } = await import('@/lib/work-items/model');
-      const { prepareOneItem } = await import('@/lib/prepare/pass');
-      const todayStr = new Date().toISOString().slice(0, 10);
-      const items = await buildWorkItems(admin, userId, { todayStr, skipReconcile: true });
-      const w = items.find((x) => x.id === `${item.kind === 'commitment' ? 'commit' : 'inbox'}:${item.id}`);
-      if (w) await prepareOneItem(admin, userId, w);
+      // W39b · THE DEED NAMES ITS ITEM (lib/prepare/prepare-by-id): never "find it in the whole spine
+      // or do nothing" — an item the deck never classified was silently skipped, so a go-ahead
+      // produced no draft. One line per run: a re-prepare that no-ops is never silent.
+      const { prepareItemById } = await import('@/lib/prepare/prepare-by-id');
+      const r = await prepareItemById(admin, userId, item);
+      console.log(`[room/asks] re-prepare ${item.kind}:${item.id} → ${r.did} via ${r.via}${r.reason ? ` (${r.reason})` : ''}`);
     } catch (e) { console.error('[room/asks] re-prepare failed:', e); }
   });
 }
@@ -181,7 +181,7 @@ async function supplyTypedFact(
   });
 
   reprepareInBackground(userId, item);
-  return NextResponse.json({ ok: true, settled, remaining: remaining.length });
+  return NextResponse.json({ ok: true, settled, remaining: remaining.length, item });
 }
 
 export async function POST(request: NextRequest) {
@@ -227,7 +227,7 @@ export async function POST(request: NextRequest) {
     // 3. Re-run THE ONE preparation engine for the item under the work-with-what-you-have contract.
     const item = itemOfAsk(turn.dedupe_key as string | null, turn.refs as AskRow['refs']);
     if (item) reprepareInBackground(user.id, item);
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, ...(item ? { item } : {}) });
   } catch (e) {
     console.error('[room/asks] POST error:', e);
     return NextResponse.json({ error: 'failed' }, { status: 500 });

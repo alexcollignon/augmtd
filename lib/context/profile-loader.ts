@@ -98,7 +98,9 @@ export interface MeetingBehaviorProfile {
   // Participation
   participationStyle: 'active' | 'observant' | 'balanced';
   organizerRate: number;              // 0-1, how often they organize vs attend
-  acceptanceRate: number;             // 0-1, how often they accept invites
+  acceptanceRate: number | null;      // 0-1, how often they accept invites — null until measured (RSVPs untracked)
+  /** How many RSVPs the acceptance rate was measured from (absent/0 = not measured: never stated). */
+  acceptanceRateFrom?: number;
 
   // Meeting types
   meetingTypes: Record<string, {
@@ -464,7 +466,7 @@ export class ProfileLoader {
         },
         participationStyle: 'balanced',
         organizerRate: 0.5,
-        acceptanceRate: 0.5,
+        acceptanceRate: null, // unmeasured — never a default a reader could state
         meetingTypes: {},
       },
       confidence_score: 0,

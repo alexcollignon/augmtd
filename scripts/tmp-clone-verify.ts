@@ -1,4 +1,4 @@
-// Verify the cloned "AHK Member companies" KB on each target: file count, chunk count, both
+// Verify the cloned "Chamber Member companies" KB on each target: file count, chunk count, both
 // manifests present, and a GERMAN semantic query scoped to the target returns member profiles.
 //   npx tsx --env-file=.env.local scripts/tmp-clone-verify.ts
 import { config } from 'dotenv'; config({ path: '.env.local' });
@@ -10,9 +10,9 @@ const sb: SupabaseClient = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
-const FOLDER_NAME = 'AHK Member companies';
+const FOLDER_NAME = 'Chamber Member companies';
 const TARGETS: [string, string][] = [
-  ['thorsten', '9d3921b2-5a52-4b5b-9815-bc49d37ce0a7'],
+  ['jordan', '9d3921b2-5a52-4b5b-9815-bc49d37ce0a7'],
   ['dummy', 'de4e8824-9795-4876-995c-c0740b8f07ee'],
 ];
 

@@ -26,7 +26,7 @@ async function main() {
     await sb.auth.admin.updateUserById(uid, { password: PASSWORD });
   }
   await sb.from('profiles').upsert({ id: uid, email: EMAIL, full_name: 'Walk Tester', needs_join: false }, { onConflict: 'id' });
-  const { data: co } = await sb.from('companies').select('id').eq('slug', 'emirates-nbd').maybeSingle();
+  const { data: co } = await sb.from('companies').select('id').eq('slug', process.env.PILOT_COMPANY_SLUG!).maybeSingle();
   await sb.from('company_members').upsert({ company_id: co!.id, user_id: uid, role: 'member', status: 'active' }, { onConflict: 'company_id,user_id' });
   const { ensureWorkers } = await import('../lib/workers/seed');
   await ensureWorkers(sb, uid);

@@ -3,11 +3,11 @@ import { namesOverlap, GENERIC_WORK_WORDS } from '@/lib/entities/recognize';
 
 describe('namesOverlap', () => {
   it('matches when a distinctive token of the named engagement appears in the entity text', () => {
-    expect(namesOverlap('Galp Energy Deal', 'we are working with Galp on the refinery project')).toBe(true);
+    expect(namesOverlap('Acme Oil Energy Deal', 'we are working with Acme Oil on the refinery project')).toBe(true);
   });
 
   it('is case-insensitive', () => {
-    expect(namesOverlap('GALP', 'discussions with galp continue')).toBe(true);
+    expect(namesOverlap('ACME OIL', 'discussions with acme oil continue')).toBe(true);
   });
 
   it('returns false when no distinctive token appears', () => {
@@ -39,6 +39,6 @@ describe('namesOverlap', () => {
 
   it('GENERIC_WORK_WORDS is the shared vocabulary the function filters against', () => {
     expect(GENERIC_WORK_WORDS.has('project')).toBe(true);
-    expect(GENERIC_WORK_WORDS.has('galp')).toBe(false);
+    expect(GENERIC_WORK_WORDS.has('acme oil')).toBe(false);
   });
 });

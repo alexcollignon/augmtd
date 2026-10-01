@@ -161,7 +161,7 @@ events · Arc 2 (standing commitments).
   (a Compute step in the builder), delegation envelopes, and chat. Zero classifier/UI edits.
 - **The verify loop generalized**: draft → mechanical check → revise, on EVERY produced
   deliverable where claims are checkable (totals, dates, counts, "the attachment contains what
-  the reply claims"). The AHK verification gate becomes the engine's default posture, with code
+  the reply claims"). The Chamber verification gate becomes the engine's default posture, with code
   where code applies. The evaluator gains a compute-backed check channel.
 - **The observation log rides along as a byproduct**: a job's declared manifest IS an observation
   record. Unify with activity_events/action_commits into one auditable action log — the
@@ -297,7 +297,7 @@ RoomShell) MOUNTED into it, never rewritten. Order:
    SH1–SH3 (65/65); build green.
 0.7 **SHELL S3 (Aug 6, owner-corrected) — THE OPENER IS ONE PARAGRAPH; THE COMPOSER IS THE
    FLOOR.** The full four-block prose brief re-made July's mistake (it DUPLICATED the deck
-   sitting under it — Rene/TECNICLIMA/Meridian listed twice); the Home now opens with the
+   sitting under it — Sam/ACME HVAC/Meridian listed twice); the Home now opens with the
    briefing's LEAD ONLY (BriefingBlock `leadOnly` — one short serif paragraph of the day's
    shape, refs live) and the deck carries the inventory. The composer moved to the shell's
    FLOOR (sticky bottom, mt-auto, gradient hood — Claude's anatomy) with the conversation
@@ -777,7 +777,7 @@ AK. **THE FORWARD-MOTION LAW (Aug 13 — the walked-journey correction; gate AK1
    that let this ship): eyes-on = a WALKED JOURNEY — every primary action clicked
    through to its outcome — never screenshot inspection of renders.
 AJ. **THE EDITOR (Aug 13 — one composition owns the page; gate AJ1 — 138/138; eyes-on
-   verified on the TECNICLIMA room).** The owner's diagnosis, with live proof: the room
+   verified on the ACME HVAC room).** The owner's diagnosis, with live proof: the room
    simultaneously claimed the reply draft PREPARED (brief), MISSING (ask card), and
    READY TO REVIEW (move) — "some components feel created on the side… it should feel
    reasoned as a whole/team." Root cause: the ONE RESPONDER composed brief+move+offers,
@@ -803,7 +803,7 @@ AJ. **THE EDITOR (Aug 13 — one composition owns the page; gate AJ1 — 138/138
    floor doesn't run on briefs; a verify-claims pass over composed briefs is a
    candidate hardening.
 AI. **THE DECISION HAS ONE SURFACE (Aug 12 late — owner correction on the served room;
-   gate TR2 — 137/137; eyes-on re-verified).** The owner's read of the TECNICLIMA/
+   gate TR2 — 137/137; eyes-on re-verified).** The owner's read of the ACME HVAC/
    ReadyStack rooms: "the left panel is too much... so many repeated things... it
    doesn't feel like it was one system drafting that" — and the right-stage
    "Prepared by Clara — Decision" card "not sure belongs there at all." The room was
@@ -903,7 +903,7 @@ AF. **THE ONE PRODUCTION DOOR (designed AND BUILT Aug 12; gate OP1 — 134/134; 
    REVISION IS SIMPLER — the thread's own artifact list IS the current version; "make
    the chart blue" resolves to the last artifact, no card-ref plumbing. (5) WORKFLOWS
    CONVERGE LAST — run-workflow already shares uploadArtifact; pointing it at the door
-   gives scheduled runs (the AHK class) charts + facts free. THE INVARIANT BOUGHT:
+   gives scheduled runs (the Chamber class) charts + facts free. THE INVARIANT BOUGHT:
    adding a document capability = ONE edit at the door, every actor upgrades at once
    (the tool-gating map's property, applied to production). RIDES ALONG: the DM first
    contact becomes the coworker's OWN first-person intro (a self-introduction is the
@@ -1082,7 +1082,7 @@ WW. **THE DOCUMENT HANDS — slice 2: THE FIDELITY CHAIN (Aug 11; gate DH2 — 1
    attach — one extractor). NEXT: xlsx + pptx generation as chat/delegation outputs.
 VV. **THE DOCUMENT HANDS — slice 1: THE STRUCTURED RENDERER (the coworker capability arc
    begins, Aug 11; gate DH1 — 127/127, build green; E2E 8/8 with XML inspection; demo
-   docx delivered to the owner).** The Claude bar René set ("fill in this document and
+   docx delivered to the owner).** The Claude bar Sam set ("fill in this document and
    hand it back looking right") starts at the renderer: ONE shared builder serves every
    document output (delegations · workflow runs · chat production), so one upgrade lifts
    all. Markdown tables → REAL docx Tables (bold header on light fill, borders, full
@@ -1134,7 +1134,7 @@ SS. **THE USER-VOICE LAW ON WORKER THREADS + THE HONEST LANDING + DM HISTORY (Au
    click loads the session in place.
 RR. **THE TEAM ARRIVES WITH THE MEMBERSHIP + THE SOVEREIGN GALLERY (Aug 11 morning; gate
    SV6 — 124/124, build green; live repair applied).** Found live day 1: the first real
-   iScore user had ZERO coworkers — worker seeding was coupled to the EMAIL bootstrap (a
+   Bureau user had ZERO coworkers — worker seeding was coupled to the EMAIL bootstrap (a
    sovereign user never connects a mailbox) and the retired /workers page had been the
    silent backstop. Fixed as the class: (1) /api/company/join seeds the team in after()
    — joining IS "set up your agents"; (2) the presence route self-heals an empty roster
@@ -1158,7 +1158,7 @@ PP. **THE ADMIN INDEX ROW + BRANDED JOIN CODES (Aug 10 latest — owner: "see ho
    selects), quiet badges (type · plan · AI mode · status dot · corporate shield ·
    member count), copyable join code, the whole row opens the detail page. ALL editing
    lives on the detail page — the two-views split made honest. BRANDED JOIN CODES
-   (owner, mid-review): the code is an editable field on the detail page (ISCORE26-style;
+   (owner, mid-review): the code is an editable field on the detail page (BUREAU26-style;
    uppercase alphanumeric 4-20, uniqueness + format enforced server-side, rejection
    shows and reverts); random regenerate stays beside it. Dead list-page code
    (BrandingEditor copy, expansion handlers) rides the component sweep.
@@ -1236,7 +1236,7 @@ JJ. **/work RETIRED (Aug 10, owner call) + THE SOVEREIGN DOOR (designed, awaitin
    repointed: agent-form ×3, join, oauth-complete, onboarding, workspace guards); client
    components stay one release, deleted with the /workers dead-component sweep. THE
    SOVEREIGN DOOR (the corporate tier — enterprise clients who refuse Google/Microsoft
-   OAuth; the iScore blocker class): (1) A CORPORATE WORKSPACE MODE — one flag
+   OAuth; the Bureau blocker class): (1) A CORPORATE WORKSPACE MODE — one flag
    (companies.settings.sovereign or features.email=false as the trigger) that HIDES every
    mailbox/calendar AUTH surface: the Home's Connect-inbox first-look (→ "Set up your
    agent team" CTA instead), Settings connections, the Inbox/Meetings sources where
@@ -1320,7 +1320,7 @@ FF. **THE SILENCE WATCH (the initiative loop continues, Aug 10; gate AN2 — 113
    log finally spent) → the deck-row because-chip generalized.
 EE. **DEPLOYED + THE WORKFLOWS TIDY (Aug 10 afternoon; gate CS6 — 112/112, tasks 72/72,
    build green).** The second prod deploy shipped everything since Saturday (retirement,
-   Rene's fix, the creation card, facepile, badge/seen, convergence kit, anticipation) —
+   Sam's fix, the creation card, facepile, badge/seen, convergence kit, anticipation) —
    presence route live, /workers redirecting on prod. The trailing items closed:
    workflow_notifications writes DIED (the feed that read them dissolved; the opted-in
    Slack DM stays); "digest" retired from generated configs; a REACTION said in a project
@@ -1374,7 +1374,7 @@ BB. **THE WORKFLOWS COHERENCE SLICE (designed Aug 10 with the owner — the /wor
    they open the Home conversation), every link generator repointed to /home?chat=worker:…,
    entry/fallback redirects land on /home, Studio's default way back is the ledger, and the
    Home's "From your team" feed died (its jobs: Runs+badge · deck debt · conversations · the
-   facepile). Riders found live: THE SILENT-DRAFT FIX (Rene — 60s generator budget, loud
+   facepile). Riders found live: THE SILENT-DRAFT FIX (Sam — 60s generator budget, loud
    failures everywhere on the ledger, ONE GATE code-enforced) and THE GROUNDING BOUNDARY
    (owner law: "ground at the moment the information changes the output" — draft-time =
    identity-level ~400 chars; run-time = the full live page; the full-page-at-draft was
@@ -1393,7 +1393,7 @@ BB. **THE WORKFLOWS COHERENCE SLICE (designed Aug 10 with the owner — the /wor
    (1) RUNS AS THE ONE HOME — unread badge on the sidebar Workflows item (succeeded runs not
        yet reviewed); opening the Runs lens / a deliverable stamps reviewed_at — REPAIRS THE
        LIVE AUTO-PAUSE REGRESSION (reviewed_at was stamped ONLY by the old /workers chat
-       thread; threshold 3 → the AHK workflows would wrongly self-pause in 3 Wednesdays);
+       thread; threshold 3 → the Chamber workflows would wrongly self-pause in 3 Wednesdays);
        auto-pause speaks its reason in the ledger ("paused itself — runs went unopened ·
        resume?"; resume clears auto_paused_at — verified already wired).
    (2) THE ONE CREATION CARD — the review card componentized, rendered in both chat runtimes;
@@ -1500,9 +1500,9 @@ X. **STANDING REACTIONS — DONE (Aug 8, production arc step 6, THE ARC'S LAST S
    ledger → reactions. NEXT: the proactivity completion list (artifacts-into-origin
    first), the perf pass, THE ONE VIEWER.
 W. **THE WORKFLOWS LEDGER — DONE (Aug 8, production arc step 5; gate PA5 — 100/100, build
-   green; LIVE-VERIFIED on the served page with the owner's real production: both AHK
+   green; LIVE-VERIFIED on the served page with the owner's real production: both Chamber
    workflows standing with schedule/presenter/last-run truth, and a deliberately
-   overlapping describe drew the amber "Overlaps 'AHK Executive Briefing' (every Wednesday
+   overlapping describe drew the amber "Overlaps 'Chamber Executive Briefing' (every Wednesday
    at 9am)" warning with the drafted pipeline BORN carrying the verify gate).** Workflows
    is a sidebar door (BoltIcon → /home?view=workflows, a sidebar-reached lens like
    Conversations — never a switcher pill). The surface is LEDGER-LED: "Waiting on you"
@@ -1546,7 +1546,7 @@ U. **THE STRUCTURAL VERIFICATION GATE — DONE (Aug 8, production arc step 3; ga
    tasks 72/72, tsc + build green; E2E on the probe with a poisoned draft: the wrong sum
    corrected BY the code-computed must-fix, the ungrounded claim deleted, the emptied section
    kept its header).** `verify` is a STEP TYPE built into the engine — VERIFY_GATE_VERSION,
-   one implementation; the AHK arc's hand-built gate never copy-pasted into workflow prompts
+   one implementation; the Chamber arc's hand-built gate never copy-pasted into workflow prompts
    again. Order is the law: the ARITHMETIC FLOOR runs FIRST (verifyComputableClaims — its
    findings become MUST-FIX lines the reasoned pass cannot ignore), then ONE persona-free
    reasoned pass (delegated to the one AI-step executor with use_worker_identity:false — the
@@ -1679,7 +1679,7 @@ O. **THE WORKERS READ THE ONE GROUNDING — DONE (Aug 8, production-floor step 1
    stripped) on BOTH runtimes: the native loop's context parts and the AgentOS bridge's
    user_context (both chat-stream and workflow-step call sites; bridge parity lands with the
    flag's runtime — no box redeploy needed, the block rides per-run context). **THE
-   ADDRESSED-NAME STRIP** (found live: "Clara, report on NorthBank" matched the entity "Madalena
+   ADDRESSED-NAME STRIP** (found live: "Clara, report on NorthBank" matched the entity "Maya
    Clara" — a coworker's name colliding with a person-named project): the address is the
    envelope, never the subject — the worker's first name strips before matching; a GENUINE
    person-named subject still matches on its remaining tokens (verified). Delegation was
@@ -1839,7 +1839,7 @@ J. **THE ABSORPTION BRICK 3 — artifacts in the one surface — DONE (Aug 6, ga
    /workers → redirect. The team-home review desk DIES rather than moves (its jobs are deck
    jobs).
 
-### THE POC CONTINUITY CLAUSE (AHK et al. — nothing breaks mid-rebuild)
+### THE POC CONTINUITY CLAUSE (Chamber et al. — nothing breaks mid-rebuild)
 
 The pilots ride the ENGINE, which no shell work touches: scheduled workflows run from the
 dispatcher regardless of UI; deliverables still reach their email/document homes; report-backs
@@ -1939,7 +1939,7 @@ flat toolkit; proven by run_compute: one registry row lit up chat + workflows + 
    production trustworthy for the regulated audience (the Relay-style human gate, on our rails).
 3. Verification becomes a STRUCTURAL step type (evaluator + arithmetic floor as a pipeline
    stage; generate-config emits it by default) — every generated workflow born with a QA gate,
-   never a copy-pasted prompt block (the AHK lesson, made law).
+   never a copy-pasted prompt block (the Chamber lesson, made law).
 4. Sends route through action_commits; outputs get provenance chips + outcome logging (production
    feeds the same learning loop as ambient work).
 5. **Judged triggers → STANDING REACTIONS** ("whenever a role brief lands…", "when a client goes

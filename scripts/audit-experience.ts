@@ -12,9 +12,9 @@ const A = '08fe4449-e5eb-431d-9156-02e9324e5903';
 const B = 'c723c2f2-e069-4ab8-980e-ac3585028fec';
 (async () => {
   const { data: uidRows } = await sb.from('work_entities').select('user_id').limit(2000);
-  const rene = [...new Set(((uidRows ?? []) as Array<{ user_id: string }>).map((r) => r.user_id))].find((u) => u.startsWith('ae306f38'))!;
+  const sam = [...new Set(((uidRows ?? []) as Array<{ user_id: string }>).map((r) => r.user_id))].find((u) => u.startsWith('ae306f38'))!;
   const todayStr = new Date().toISOString().slice(0, 10);
-  for (const [uid, label] of [[A, 'USER A'], [B, 'USER B'], [rene, 'USER C']] as const) {
+  for (const [uid, label] of [[A, 'USER A'], [B, 'USER B'], [sam, 'USER C']] as const) {
     console.log(`\n════════════ ${label} ════════════`);
     const items = await buildWorkItems(sb, uid, { todayStr, skipReconcile: true });
     const todos = items.filter((w) => w.state === 'todo' && !w.automated).sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));

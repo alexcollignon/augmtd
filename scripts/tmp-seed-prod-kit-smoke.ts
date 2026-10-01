@@ -1,4 +1,4 @@
-// TEMP — seed the PROBE from the REAL Emirates NBD kit (the prod-uploaded halved pack) using the
+// TEMP — seed the PROBE from the REAL Globex Bank kit (the prod-uploaded halved pack) using the
 // FIXED local seeding lib: counts, chunks, clean names, timing. --clean removes the probe rows.
 // Never committed. Run: npx tsx --env-file=.env.local scripts/tmp-seed-prod-kit-smoke.ts [--clean]
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
@@ -22,8 +22,8 @@ async function cleanProbe(sb: SupabaseClient, uid: string, folderNames: string[]
 async function main() {
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
   const uid = await resolveProbeUser(sb);
-  const { data: co } = await sb.from('companies').select('id, settings').eq('slug', 'emirates-nbd').maybeSingle();
-  if (!co) { console.error('no emirates-nbd'); process.exit(1); }
+  const { data: co } = await sb.from('companies').select('id, settings').eq('slug', process.env.PILOT_COMPANY_SLUG!).maybeSingle();
+  if (!co) { console.error('no company for PILOT_COMPANY_SLUG'); process.exit(1); }
   const kit = (co.settings as Record<string, unknown>).seed_kit as { folders: Array<{ name: string; files: Array<{ name: string }> }> };
   const folderNames = kit.folders.map((f) => f.name);
   const total = kit.folders.reduce((n, f) => n + f.files.length, 0);

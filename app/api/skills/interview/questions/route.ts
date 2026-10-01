@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
+import { parseModelJSON } from '@/lib/ai/parse-json';
 
 export const maxDuration = 30;
 
@@ -18,15 +19,15 @@ const KIND_HINT: Record<string, string> = {
   method: 'how to structure or format a kind of output',
 };
 
-// Tolerant JSON extraction — models sometimes wrap output in ```json fences or prose.
+// Tolerant JSON extraction — models sometimes wrap output in ```json fences or prose, and a long answer
+// can arrive with a quirk the strict parser rejects (W37: a 500 for the user on a real interview).
 function parseJson(text: string): any {
   let raw = text.trim();
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fenced) raw = fenced[1].trim();
   try { return JSON.parse(raw); } catch { /* fall through */ }
-  const first = raw.indexOf('{');
-  const last = raw.lastIndexOf('}');
-  if (first >= 0 && last > first) return JSON.parse(raw.slice(first, last + 1));
+  const lenient = parseModelJSON<any>(raw, null);
+  if (lenient && typeof lenient === 'object') return lenient;
   throw new Error('no json found');
 }
 
@@ -64,6 +65,8 @@ Write 5–8 sharp, concrete questions that draw out tacit knowledge. Rules:
 - method: the steps, the structure, the must-haves, the common mistakes to avoid.
 - If multiple kinds apply, cover each across the question set.
 - Each question answerable in 1–3 sentences.
+- Write the questions (and hints and placeholders) in the language the user wrote the objective in.
+- A placeholder is a SHAPE of an answer, not a presumed fact about the user (no invented figures or claims).
 
 Return ONLY JSON, no prose:
 {"questions":[{"id":"q1","question":"…","hint":"one short line on why this matters","placeholder":"a brief example answer"}]}`;
@@ -73,7 +76,7 @@ Return ONLY JSON, no prose:
     const res = await aiCreate(client, {
       model,
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 900,
+      max_tokens: 1600,
       temperature: 0.6,
     });
     const text = res.choices?.[0]?.message?.content ?? '';

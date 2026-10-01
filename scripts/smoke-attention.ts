@@ -112,6 +112,11 @@ console.log('\nAT2 · THE WHY-NOW LAW — why now and why you, from judged facts
     whyNowOf({ source: 'reply', who: 'Jordan', meeting: { localTime: '14:00' } }, now) === 'Jordan will ask at your 14:00');
   ok('   …and without a name it still says when',
     whyNowOf({ source: 'notice', meeting: { localTime: '09:30' } }, now) === 'this comes up at your 09:30');
+  // TIME TRUTH (UI walk, Oct 1): a meeting tomorrow never reads as "your 10:00" (= this morning).
+  ok('   …and a not-today meeting says its day',
+    whyNowOf({ source: 'reply', who: 'Jo', meeting: { localTime: '10:00', today: false, dayWord: 'tomorrow' } }, now) === 'Jo will ask at your 10:00 tomorrow');
+  ok('   …an ended event of today (no day words) keeps today\'s words',
+    whyNowOf({ source: 'reply', who: 'Jo', meeting: { localTime: '08:30', today: false } }, now) === 'Jo will ask at your 08:30');
   // THE NO-RESTATEMENT RULE (walk-found Sep 17): the whisper row leads with the counterparty, so
   // the clause never repeats the name — "X — task — X, ready to send" read as stutter live. The
   // name survives ONLY in the calendar-adjacency branch, where it does new work.

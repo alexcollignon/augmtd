@@ -624,15 +624,14 @@ async function main() {
     // back in), R2 the pure recogniser, R3/R4 the served behaviour, R5 the DM seams, R6 the hygiene.
     console.log('\nR — THE REACH GATES (no lane answers from confinement; the sentinel never serves):');
     const reachSrc = readFileSync('lib/converse/reach.ts', 'utf8');
-    const entAsk = readFileSync('lib/entities/ask.ts', 'utf8');
 
     // R1 — SOURCE SHAPE
     ok('R1 — reach.ts exports the four members of the contract',
       ['REACH_SENTINEL', 'REACH_CONTRACT', 'needsReach', 'sayInsteadOfSentinel']
         .every((n) => new RegExp(`export (const|function) ${n}\\b`).test(reachSrc)), '');
-    ok('R1 — ONE contract, imported by the Home ask AND the entity ask (a copied clause is a clause that drifts)',
-      /import \{[^}]*REACH_CONTRACT[^}]*\} from '@\/lib\/converse\/reach'/.test(ask)
-      && /import \{[^}]*REACH_CONTRACT[^}]*\} from '@\/lib\/converse\/reach'/.test(entAsk), '');
+    // W37 · the entity ask (lib/entities/ask.ts) was REMOVED (no production caller; the room chat answers).
+    ok('R1 — ONE contract, imported by the Home ask (a copied clause is a clause that drifts)',
+      /import \{[^}]*REACH_CONTRACT[^}]*\} from '@\/lib\/converse\/reach'/.test(ask), '');
     ok('R1 — …and it rides converse\'s own item sub-path prompt too (all three toolless doors)',
       /\$\{REACH_CONTRACT\}\s*\\n\s*Return ONLY JSON/.test(conv), '');
     ok('R1 — THE SENTINEL NEVER SERVES: the outermost answer door applies sayInsteadOfSentinel',

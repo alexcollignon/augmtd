@@ -377,7 +377,7 @@ export function buildJudgePrompt(input: JudgeInput): { system: string; user: str
 }
 
 /** Every balanced top-level {…} in the text (string-aware), in order. */
-function jsonObjects(text: string): string[] {
+export function jsonObjects(text: string): string[] {
   const out: string[] = [];
   let depth = 0, start = -1, inStr = false, esc = false;
   for (let i = 0; i < text.length; i++) {
@@ -391,7 +391,7 @@ function jsonObjects(text: string): string[] {
 }
 
 /** Lenient JSON: as-is, then with comments / trailing commas / "1-5"-style ranges repaired. */
-function lenientParse(s: string): unknown {
+export function lenientParse(s: string): unknown {
   try { return JSON.parse(s); } catch { /* repair below */ }
   const fixed = s.replace(/\/\/[^\n"]*$/gm, '').replace(/,\s*([}\]])/g, '$1')
     .replace(/:\s*(\d)\s*-\s*\d\b/g, ': $1').replace(/:\s*(\d)\s*\|\s*null/g, ': $1');

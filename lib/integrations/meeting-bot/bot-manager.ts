@@ -16,6 +16,8 @@ import { indexArtifact } from '@/lib/knowledge/indexer';
 import { resolveDeixisInDescriptions } from '@/lib/inbox/deixis';
 import { userTimezone, localNow } from '@/lib/utils/user-time';
 import { anchorDueDate } from '@/lib/commitments/extraction-truth';
+import { withSpokenDue } from '@/lib/meetings/spoken-due';
+import { insightsFailedStatus, insightsStatusOf, insightsRetryDue } from '@/lib/meetings/insights-retry';
 
 // ── THE CLOCK REACHES THE MEETING LANE (W3.4 · invariant 14 TIME TRUTH — executeAIStep's idiom) ──
 // Meeting extraction ran dateless: a spoken "the 27th of August" landed as 2024, on the inbox_item
@@ -35,11 +37,21 @@ async function meetingClockBlock(supabase: SupabaseClient, userId: string, meeti
     `never shift a date or year to fit the present, never invent one — a date you cannot resolve is null.`;
 }
 
+/** The meeting's own calendar day in the user's zone (the anchor spoken day-words resolve against). */
+async function meetingLocalDay(supabase: SupabaseClient, userId: string, meetingDate?: string | null): Promise<string> {
+  const tz = await userTimezone(supabase, userId).catch(() => 'UTC');
+  const when = meetingDate && !Number.isNaN(Date.parse(meetingDate)) ? new Date(meetingDate) : new Date();
+  return localNow(tz, when).dateStr;
+}
+
 /** The code half of the clock: every model-written date re-anchored forward from the meeting. */
-function anchorInsightDates(insights: MeetingInsights, meetingDate?: string | null): MeetingInsights {
+// W29 · THE SPOKEN DEADLINE: the words ("next week", "today") ride beside the date and are never
+// dropped; a day-word the model left unresolved is resolved in code against the meeting's LOCAL date.
+function anchorInsightDates(insights: MeetingInsights, meetingDate?: string | null, meetingLocalDate?: string | null): MeetingInsights {
   return {
     ...insights,
-    actionItems: (insights.actionItems ?? []).map((a) => {
+    actionItems: (insights.actionItems ?? []).map((raw) => {
+      const a = withSpokenDue(raw, meetingLocalDate);
       const due = anchorDueDate(a.dueDate, meetingDate ?? null);
       return { ...a, dueDate: due ?? undefined };
     }),
@@ -70,6 +82,8 @@ interface ExtractedActionItem {
   priority: number; // 1-100
   context?: string;
   dueDate?: string;
+  /** W29 — the deadline words as spoken ("next week", "by Friday"); kept beside the resolved date. */
+  dueText?: string;
   category: 'todo' | 'waiting_for' | 'project';
   isUserTask?: boolean;
 }
@@ -99,6 +113,10 @@ interface MeetingInsights {
   risks: MeetingRisk[];
   suggested_next_step: string | null;
   generatedTitle?: string | null;
+  /** W35 · the insights call FAILED — the fields above are the empty fallback (action items may still
+   *  come from the cheaper extraction), never a judged "nothing happened". */
+  failed?: true;
+  failureReason?: string;
 }
 
 const GENERIC_TITLES = new Set([
@@ -242,6 +260,7 @@ export async function storeTranscriptAndGenerateWork(
           action_item: item.action,
           assignee: item.assignee,
           due_date: item.dueDate,
+          due_text: item.dueText ?? null,
           key_topics: keyTopics,
           category: item.category || 'todo',
           auto_generated: true,
@@ -305,6 +324,10 @@ export async function storeTranscriptAndGenerateWork(
     notes_structured: {
       document: insights.document || '',
       live_notes: liveNotes || '',
+      // W35 · a failed insights call is a recorded fact (the retry sweep and the page read it).
+      ...(insights.failed
+        ? { insights_status: insightsFailedStatus(insightsStatusOf(transcriptRecord?.notes_structured), new Date(), insights.failureReason) }
+        : {}),
     },
     // The deal this meeting belongs to (grounded from attendees) — the magnet associates the transcript to
     // its project by this, so the notes become first-class project context. null = loose (safe default).
@@ -465,6 +488,7 @@ export async function reprocessTranscripts(
               action_item: item.action,
               assignee: item.assignee || null,
               due_date: item.dueDate || null,
+              due_text: item.dueText || null,
               key_topics: keyTopics,
               category: item.category || 'todo',
               auto_generated: true,
@@ -565,6 +589,7 @@ Return a JSON object with exactly these fields:
       "priority": 75,
       "context": "Why this matters",
       "dueDate": "YYYY-MM-DD ONLY if a deadline was explicitly stated in the meeting, else null — never invent a date",
+      "dueText": "the deadline words exactly as spoken (e.g. 'next week', 'by Friday', 'today'), else null",
       "category": "todo",
       "isUserTask": true
     }
@@ -589,8 +614,8 @@ Rules for the document field:
 - Never write: "The meeting covered...", "It was noted that...", "The discussion included...".
 
 Rules for other fields:
-- decisions: concrete things agreed or decided (not tasks). Max 8. Must be grounded in the transcript.
-- actionItems: only SPECIFIC obligations a participant explicitly took on (or is explicitly owed) — NOT every idea, sub-step, or suggestion discussed. Merge related sub-tasks of one obligation into a single item. Be selective: prefer fewer, real commitments (typically 0–6). Max 10. Each action's text is a short IMPERATIVE TITLE (at most ~9 words, starts with a verb, names the deliverable — "Send the revised proposal to Acme") — NEVER meeting-notes narration ("Discussed the need to…", "It was agreed that…"); write it the way it would sit on a to-do list. category: "todo" | "waiting_for" | "project". isUserTask=true if assignee matches user or is unassigned. dueDate: only when a deadline was explicitly stated — otherwise null (never invent one).
+- decisions: concrete things agreed or decided (not tasks). Max 8. Must be grounded in the transcript. A DEFERRAL IS NOT A DECISION: "let's park this", "we'll decide next week", "revisit once we have the numbers" leaves the question OPEN — record it in the document as an open question (and as an action item only if someone took on a follow-up), never as a decision, and never give it an owner nobody named. Example — "Sam: let's not decide on the vendor today, we'll come back to it next week" → no decision; the document says "Vendor choice left open — to revisit next week".
+- actionItems: only SPECIFIC obligations a participant explicitly took on (or is explicitly owed) — NOT every idea, sub-step, or suggestion discussed. Merge related sub-tasks of one obligation into a single item. Be selective: prefer fewer, real commitments (typically 0–6). Max 10. Each action's text is a short IMPERATIVE TITLE (at most ~9 words, starts with a verb, names the deliverable — "Send the revised proposal to Acme") — NEVER meeting-notes narration ("Discussed the need to…", "It was agreed that…"); write it the way it would sit on a to-do list. category: "todo" | "waiting_for" | "project". isUserTask=true if assignee matches user or is unassigned. dueDate: only when a deadline was explicitly stated — otherwise null (never invent one). dueText: whenever ANY deadline or timing was spoken for the item, copy those words exactly ("next week", "today", "before the board meeting") — even when they name no single day and dueDate is null; never drop them.
 - risks: blockers or concerns raised explicitly or implicitly. Max 6. severity: "high" | "medium" | "low".
 - keyMoments: up to 6 notable segments. type: "decision" | "risk" | "commitment". segmentIndex must be a real [N] from the transcript.
 - Return ONLY the JSON object, no other text.`;
@@ -632,6 +657,7 @@ Rules for other fields:
     const parsed = JSON.parse(stripped.slice(jsonStart, jsonEnd + 1)) as MeetingInsights;
 
     console.log(`[MeetingBot] Extracted insights: ${parsed.decisions?.length ?? 0} decisions, ${parsed.actionItems?.length ?? 0} actions, ${parsed.risks?.length ?? 0} risks, ${parsed.keyMoments?.length ?? 0} key moments`);
+    const localDay = await meetingLocalDay(supabase, userId, meetingDate).catch(() => null);
     return anchorInsightDates({
       document: parsed.document ?? '',
       decisions: parsed.decisions ?? [],
@@ -640,11 +666,15 @@ Rules for other fields:
       keyMoments: parsed.keyMoments ?? [],
       suggested_next_step: parsed.suggested_next_step ?? null,
       generatedTitle: parsed.generatedTitle ?? null,
-    }, meetingDate);
+    }, meetingDate, localDay);
   } catch (error) {
     console.error('[MeetingBot] Error extracting meeting insights:', error);
     const actionItems = await extractActionItemsWithAI(userId, meetingTitle, segments, supabase, meetingDate);
-    return { document: '', decisions: [], actionItems, risks: [], keyMoments: [], suggested_next_step: null };
+    // W35 · FAILURE HONESTY: the empty fallback is MARKED — the caller records it and the retry runs.
+    return {
+      document: '', decisions: [], actionItems, risks: [], keyMoments: [], suggested_next_step: null,
+      failed: true, failureReason: error instanceof Error ? error.name || 'Error' : 'Error',
+    };
   }
 }
 
@@ -662,7 +692,7 @@ export async function reEnhanceTranscript(
   let transcript: any = null;
   const { data: byEvent } = await supabase
     .from('meeting_transcripts')
-    .select('id, title, transcript_segments, notes_structured, calendar_event_id, start_time')
+    .select('id, title, transcript, transcript_segments, notes_structured, calendar_event_id, start_time')
     .eq('calendar_event_id', eventOrTranscriptId)
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
@@ -673,7 +703,7 @@ export async function reEnhanceTranscript(
   if (!transcript) {
     const { data: byId } = await supabase
       .from('meeting_transcripts')
-      .select('id, title, transcript_segments, notes_structured, calendar_event_id, start_time')
+      .select('id, title, transcript, transcript_segments, notes_structured, calendar_event_id, start_time')
       .eq('id', eventOrTranscriptId)
       .eq('user_id', userId)
       .maybeSingle();
@@ -681,9 +711,29 @@ export async function reEnhanceTranscript(
   }
 
   if (!transcript) throw new Error('Transcript not found');
+  return reEnhanceTranscriptRow(userId, transcript, templateId, supabase);
+}
 
-  const segments = transcript.transcript_segments ?? [];
+/** The re-run on a transcript row already in hand (the retry sweep reads rows itself). W35: a FAILED
+ *  re-run never overwrites the notes that stand — it only records the failure (and the next backoff);
+ *  a successful one clears the failure stamp. Audio and transcript are never touched. */
+export async function reEnhanceTranscriptRow(
+  userId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  transcript: any,
+  templateId: string,
+  supabase: SupabaseClient,
+): Promise<MeetingInsights> {
+  // THE RE-RUN READS WHAT THE ROW HOLDS (UI walk, Oct 1): a row whose words live only in `transcript`
+  // (no segments written) was re-run on the TITLE alone — and the model invented a whole generic
+  // meeting ("stakeholder roles assigned", "risk mitigation outlined") from four words. The stored
+  // text becomes segments the way the text-note door makes them; with no words at all there is
+  // nothing to extract, and the re-run says so (a recorded failure) instead of buying a fiction.
+  const stored = Array.isArray(transcript.transcript_segments) ? transcript.transcript_segments : [];
+  const segments = stored.length ? stored
+    : (typeof transcript.transcript === 'string' && transcript.transcript.trim() ? textToSegments(transcript.transcript) : []);
   const liveNotes = transcript.notes_structured?.live_notes || '';
+  const nothingToRead = !segments.length && !String(liveNotes).trim();
 
   // Get template for custom instructions
   const { getTemplate } = await import('@/lib/meetings/templates');
@@ -696,7 +746,21 @@ export async function reEnhanceTranscript(
   }
 
   const combinedNotes = [liveNotes, templateHint].filter(Boolean).join('\n');
-  const insights = await extractMeetingInsights(userId, transcript.title, segments, supabase, combinedNotes || undefined, transcript.start_time ?? null);
+  const insights: MeetingInsights = nothingToRead
+    ? { document: '', decisions: [], actionItems: [], risks: [], keyMoments: [], suggested_next_step: null, failed: true, failureReason: 'EmptyTranscript' }
+    : await extractMeetingInsights(userId, transcript.title, segments, supabase, combinedNotes || undefined, transcript.start_time ?? null);
+
+  if (insights.failed) {
+    // W35 · the standing notes stay exactly as they are; only the failure is recorded.
+    const { error: stampErr } = await supabase.from('meeting_transcripts').update({
+      notes_structured: {
+        ...(transcript.notes_structured ?? {}),
+        insights_status: insightsFailedStatus(insightsStatusOf(transcript.notes_structured), new Date(), insights.failureReason),
+      },
+    }).eq('id', transcript.id).eq('user_id', userId);
+    if (stampErr) console.error('[MeetingBot] Failed to record the insights failure:', stampErr);
+    return insights;
+  }
 
   // Update transcript
   const update: Record<string, any> = {
@@ -718,6 +782,44 @@ export async function reEnhanceTranscript(
     .eq('id', transcript.id);
 
   return insights;
+}
+
+/**
+ * W35 · THE BOUNDED RETRY — the transcripts whose insights failed and whose backoff has elapsed get ONE
+ * more run through the same re-run path (`reEnhanceTranscriptRow`). Bounded per call (`max`), stops
+ * starting new runs past `deadlineMs`, and REPORTS what it left behind (no silent caps). The failure stamp
+ * lives in `notes_structured` (JSON path filter — no migration); audio and transcript are never touched.
+ */
+export async function retryFailedMeetingInsights(
+  admin: SupabaseClient,
+  opts: { now?: Date; max?: number; deadlineMs?: number; rerun?: typeof reEnhanceTranscriptRow } = {},
+): Promise<{ retried: number; recovered: number; stillFailed: number; due: number; leftBehind: number; errors: string[] }> {
+  const now = opts.now ?? new Date();
+  const max = Math.max(0, opts.max ?? 2);
+  const rerun = opts.rerun ?? reEnhanceTranscriptRow;
+  const out = { retried: 0, recovered: 0, stillFailed: 0, due: 0, leftBehind: 0, errors: [] as string[] };
+  const { data, error } = await admin.from('meeting_transcripts')
+    .select('id, user_id, title, transcript, transcript_segments, notes_structured, calendar_event_id, start_time, template_id')
+    .eq('notes_structured->insights_status->>state', 'failed')
+    .order('created_at', { ascending: true })
+    .limit(50);
+  if (error) { out.errors.push(`read failed transcripts: ${error.message}`); return out; }
+  const due = ((data ?? []) as Array<Record<string, unknown>>)
+    .filter((t) => insightsRetryDue(insightsStatusOf(t.notes_structured), now));
+  out.due = due.length;
+  for (const t of due) {
+    if (out.retried >= max || (opts.deadlineMs != null && Date.now() > opts.deadlineMs)) { out.leftBehind++; continue; }
+    out.retried++;
+    try {
+      const r = await rerun(String(t.user_id), t, String(t.template_id ?? 'default'), admin);
+      if (r.failed) out.stillFailed++; else out.recovered++;
+    } catch (e) {
+      out.stillFailed++;
+      out.errors.push(`${String(t.id).slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  if (out.leftBehind) console.warn(`[MeetingBot] insights retry: ${out.leftBehind} due transcript(s) left for the next run`);
+  return out;
 }
 
 /**
@@ -783,6 +885,7 @@ obligation is not a new item. Be selective: prefer fewer, real commitments (typi
     "priority": 75,
     "context": "Brief explanation of why this matters",
     "dueDate": "YYYY-MM-DD ONLY if a deadline was explicitly stated (resolved forward from the meeting date), else null",
+    "dueText": "the deadline words exactly as spoken ('next week', 'by Friday'), else null — never drop them",
     "category": "todo"
   }
 ]
@@ -808,7 +911,9 @@ Category: "todo" | "waiting_for" | "project". Maximum 10 items. Return ONLY the 
     if (!response) return [];
 
     // THE CLOCK's code half — the model's year never outranks the meeting's own date.
+    const localDay = await meetingLocalDay(supabase, userId, meetingDate).catch(() => null);
     const actionItems = (JSON.parse(response) as ExtractedActionItem[])
+      .map((raw) => withSpokenDue(raw, localDay))
       .map((a) => ({ ...a, dueDate: anchorDueDate(a.dueDate, meetingDate ?? null) ?? undefined }));
     console.log(`[MeetingBot] Extracted ${actionItems.length} action items`);
     return actionItems;

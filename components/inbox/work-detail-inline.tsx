@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
+import { useUserZone } from '@/context/user-zone-context';
+import { clockIn, dateIn, dayKeyIn } from '@/lib/core/user-zone';
 import {
   EnvelopeIcon,
   CalendarIcon,
@@ -60,6 +62,7 @@ interface WorkDetailInlineProps {
 }
 
 export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeetings, pendingReplyDraft, onReplySent, replyBody, onReplyBodyChange, onReplyOpenChange, onOpenWorkflowPanel, folderSections }: WorkDetailInlineProps) {
+  const zone = useUserZone();
   const [threadEmails, setThreadEmails] = useState<any[] | null>(null);
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
   const [replyOpen, setReplyOpen] = useState(false);
@@ -632,17 +635,15 @@ export default function WorkDetailInline({ item, onItemConfirmed, onRefreshMeeti
     sourceData?.start_time || sourceData?.calendar_event
   );
 
+  // THE READER'S ZONE (law `one-reader-zone`): day and clock in the user's zone, never the device's.
   const formatMeetingTime = (startTime: string, endTime?: string) => {
-    const start = new Date(startTime);
-    const now = new Date();
-    const isToday = start.toDateString() === now.toDateString();
-    const isTomorrow = start.toDateString() === new Date(now.getTime() + 86400000).toDateString();
-    const dateLabel = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    const timeStr = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-    if (endTime) {
-      const endStr = new Date(endTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-      return `${dateLabel} · ${timeStr}–${endStr}`;
-    }
+    const now = Date.now();
+    const day = dayKeyIn(startTime, zone);
+    const isToday = day === dayKeyIn(now, zone);
+    const isTomorrow = day === dayKeyIn(now + 86400000, zone);
+    const dateLabel = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : dateIn(startTime, zone, { weekday: 'short', month: 'short', day: 'numeric' });
+    const timeStr = clockIn(startTime, zone, '12h');
+    if (endTime) return `${dateLabel} · ${timeStr}–${clockIn(endTime, zone, '12h')}`;
     return `${dateLabel} · ${timeStr}`;
   };
 

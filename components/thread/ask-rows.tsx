@@ -14,9 +14,10 @@
 // The ask's answers used to be three chips under the WHOLE card, which is a lie the moment an ask
 // is missing two different KINDS of thing: "Attach" and "Type it" are not the same offer for "the
 // signed addendum" and "the account reference". So a row may carry its own doors — Type it ·
-// Attach · Point me to it — and ALL THREE ARE ALWAYS THERE (the owner's "keeping options open").
-// Only their ORDER changes, by `lead` (lib/room/go-ahead.ts `askItemShape`). A door with no handler
-// still does not render: no lying doors, the law the whole kit is built on.
+// Attach · Point me to it. A FACT row offers all three, Type it first; a DOCUMENT row (the input's
+// kind — lib/room/go-ahead.ts `askItemShape`, an engine-stated answer is always a fact) offers
+// Attach · Point me to it, never Type it (W39: nobody types a signed contract). A door with no
+// handler still does not render: no lying doors, the law the whole kit is built on.
 //
 // Presentational by construction, like everything in components/thread/: no fetch, no router, no
 // knowledge of a route. The ONLY state is the text the reader is currently typing into a row —
@@ -87,11 +88,14 @@ function Row({ label, doors }: { label: string; doors?: AskRowDoors | null }) {
         d.onAttach ? { key: 'attach', label: 'Attach', lead: false, run: d.onAttach } : null,
         d.onPointToIt ? { key: 'point', label: 'Point me to it', lead: false, run: d.onPointToIt } : null,
       ]
-      // A DOCUMENT LEADS WITH ATTACH — but typing stays, because the reader may hold the one number
-      // that document was ever wanted for.
+      // A DOCUMENT IS ANSWERED BY THE FILE (W39 — walk, Oct 1: "Type it" on a signed contract asked
+      // the reader to retype a thing only the file can be). Attach leads, Point me to it follows, and
+      // Type it is NOT offered while an Attach door stands. A figure ON a document ("the invoice
+      // number") is a fact (askItemShape), so it never reaches this branch. Only a row with no other
+      // door keeps typing — a row with no door at all would be a dead end.
       : [
         d.onAttach ? { key: 'attach', label: 'Attach', lead: true, run: d.onAttach } : null,
-        canType ? { key: 'type', label: 'Type it', lead: false, run: () => setTyping(true) } : null,
+        canType && !d.onAttach && !d.onPointToIt ? { key: 'type', label: 'Type it', lead: true, run: () => setTyping(true) } : null,
         d.onPointToIt ? { key: 'point', label: 'Point me to it', lead: false, run: d.onPointToIt } : null,
       ]).filter(Boolean) as Array<{ key: string; label: string; lead: boolean; run: () => void }>
     : [];

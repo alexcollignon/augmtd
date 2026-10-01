@@ -219,10 +219,10 @@ export type RenderFacts = {
 /** "I've drafted / we prepared / I put together …" — a first-person preparation claim (past only;
  *  "I can draft", "I haven't drafted", "I have not prepared" never match). */
 const PREP_CLAIM = /\b(?:I|we)(?:'ve| have)?\s+(?:now\s+|already\s+|just\s+|also\s+)?(?:drafted|prepared|written|wrote|put together|pulled together|staged|built|created|laid out|outlined|sketched|lined up)\b/i;
-type PrepKind = 'email' | 'invite' | 'forward' | 'document' | 'decision';
+export type PrepKind = 'email' | 'invite' | 'forward' | 'document' | 'decision';
 /** The claimed object's KIND, read from the words after the verb — null when it names none. Email
  *  first: "a note to Sam" is a message; "notes on the change" is a document. */
-function claimedKindOf(after: string): PrepKind | null {
+export function claimedKindOf(after: string): PrepKind | null {
   const t = after.slice(0, 90);
   if (/\b(?:note|line|message|email|e-mail|reply|response|answer|nudge|follow-?up|reminder)\s+(?:to|for)\s+[A-Z]/.test(t)
     || /\b(?:reply|replies|response|email|e-mail|message|nudge|follow-?up)\b/i.test(t)) return 'email';
