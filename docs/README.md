@@ -9,6 +9,7 @@ four rows.
 
 | Doc | What it is |
 |---|---|
+| `docs/quality-results-2026-10.md` | LIVE — the W26–W41 quality program: method, harnesses, scores, adopted models, evidence |
 | `experience-spec.md` | **The constitution** — the one sentence, the seat table, the ten laws, the acceptance tests. Every change traces here. |
 | `stabilization-plan.md` | **The current program** (Sep 22) — root causes, the 14 invariants, waves W0–W4, operating protocol, owner calls. |
 | `event-spine-plan.md` | **The next arc (Sep 23, spec only)** — durable event queue, the work index (Home < 300 ms), record lifecycle + retention, the decision eval + abstain lane; owner decisions in PART G. |
