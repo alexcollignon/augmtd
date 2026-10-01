@@ -100,7 +100,7 @@ async function main() {
       /export function startOpenReads\(/.test(frame) && /void fetchItemView\(viewKind, id\);/.test(frame)
       && /void fetchOpenObject\(`\/api\/commitments\/\$\{id\}`, `aug-item-commitment-\$\{id\}`\);/.test(frame)
       && /if \(kind === 'email'\) void loadThreadRaw\(id\);/.test(frame)
-      && /startOpenReads\(kindProp \?\? kindOfSearch\(window\.location\.search\), id\);/.test(frame));
+      && /startOpenReads\(kindProp \?\? prefixKind \?\? kindOfSearch\(window\.location\.search\), id\);/.test(frame));
     const detail = src(DETAIL);
     gate('B2 the commitment door reads its facts through the SAME flight (joins/takes the frame\'s read); a post-deed reload reads afresh',
       // ⟲ RE-POINTED (W17): the instant-load key has ONE producer now (warm-client itemObjectKey) — the
@@ -260,7 +260,7 @@ async function main() {
       /useState\(\(\) => origin === 'route' && docked && peekFramePainted\(\)\)/.test(frame) && /if \(docked\) _framePaintedAt = Date\.now\(\);/.test(frame));
     gate('G7 the client frame needs NO route params: id + kind come from the row\'s href (the room\'s kind rule, viewTargetOf)',
       /export function clientFrameTarget\(/.test(frame) && /const t = viewTargetOf\(href\);/.test(frame)
-      && /const id = idProp \?\? \(typeof params\?\.id === 'string' \? params\.id : null\);/.test(frame));
+      && /const id = idProp \?\? addr\?\.id \?\? null;/.test(frame) && /const addr = idProp \? null : \(typeof params\?\.id === 'string' \? itemAddressOf\(params\.id, null\) : null\);/.test(frame));
     // THE PREMISE, pinned to the installed Next (re-check on an upgrade): the legacy router's
     // router.prefetch defaults to a FULL prefetch (the whole dynamic segment) — the loading state is
     // not what it fetches, so the row can never rely on a hover prefetch to paint at the click.

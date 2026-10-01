@@ -117,16 +117,55 @@ export function prepAnchorKey(kind: 'inbox' | 'commitment' | 'followup' | 'email
 /** A spine ref → its per-item door, the kind carried (`commit:` → `?kind=commitment`). Null for a ref
  *  with no item door (a deliverable, an event). THE ONE PRODUCER — hosts never hand-roll it. */
 export function refDoorHref(ref: string | null | undefined): string | null {
+  const s = spineRefOf(ref);
+  return s ? `/item/${s.id}?kind=${s.kind}` : null;
+}
+
+export type ItemDoorKind = 'email' | 'commitment' | 'followup' | 'meeting';
+
+/** THE ADDRESS GRAMMAR'S ONE PARSER — a spine / room ref (`inbox:<id>` · `commit:<id>` ·
+ *  `commitment:<id>` · `meeting:<id>`) → the door kind it names + the bare id. Null for a bare id or a
+ *  prefix with no item door. Pure; every reader of a prefixed id goes through it. */
+export function spineRefOf(ref: string | null | undefined): { kind: 'email' | 'commitment' | 'meeting'; id: string } | null {
   if (!ref) return null;
   const at = ref.indexOf(':');
   if (at < 0) return null;
   const k = ref.slice(0, at);
-  const i = ref.slice(at + 1);
-  if (!i) return null;
-  return k === 'inbox' ? `/item/${i}?kind=email`
-    : k === 'commit' || k === 'commitment' ? `/item/${i}?kind=commitment`
-    : k === 'meeting' ? `/item/${i}?kind=meeting`
+  const id = ref.slice(at + 1);
+  if (!id) return null;
+  const kind = k === 'inbox' ? 'email' as const
+    : k === 'commit' || k === 'commitment' ? 'commitment' as const
+    : k === 'meeting' ? 'meeting' as const
     : null;
+  return kind ? { kind, id } : null;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE ADDRESS LAW — ONE URL OWNS THE THREAD (mobile walk, Oct 1: `/item/inbox:<uuid>` painted an empty
+// room while `/item/<uuid>` worked). The item door's canonical address is `/item/<bare id>?kind=<k>`.
+// A prefixed id (a room key / spine ref pasted or produced by a host) is NORMALIZED here and the page
+// REDIRECTS to the canonical form, so one URL owns the thread.
+//
+// THE PRECEDENCE RULE: the PREFIX names the object's own table, so it WINS over a `?kind` that
+// disagrees (an `inbox:` id read as a commitment is a door onto nothing). The one exception is a
+// COMPATIBLE refinement — `?kind=followup` on a commitment ref is a view of that same commitment, so
+// it stays. A bare id keeps its `?kind` (absent → email, the route's own default) and never redirects.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** The item door's address, normalized (pure). `redirect` = the canonical href when the raw address
+ *  was not canonical (a prefixed id), else null. `extra` query params (e.g. `angle`) ride the redirect. */
+export function itemAddressOf(
+  rawId: string, kindParam: string | null | undefined, extra: Record<string, string | null | undefined> = {},
+): { id: string; kind: ItemDoorKind; redirect: string | null } {
+  let raw = rawId;
+  try { raw = decodeURIComponent(rawId); } catch { /* a malformed escape stays as typed — the door 404s it */ }
+  const q: ItemDoorKind = kindParam === 'commitment' || kindParam === 'followup' || kindParam === 'meeting' ? kindParam : 'email';
+  const s = spineRefOf(raw);
+  if (!s) return { id: raw, kind: q, redirect: null };
+  const kind: ItemDoorKind = s.kind === 'commitment' && q === 'followup' ? 'followup' : s.kind;
+  const params = new URLSearchParams({ kind });
+  for (const [k, v] of Object.entries(extra)) if (v) params.set(k, v);
+  return { id: s.id, kind, redirect: `/item/${encodeURIComponent(s.id)}?${params.toString()}` };
 }
 
 /** The kind an `/item/<id>?kind=…` address names (absent → email, the route's own default). */

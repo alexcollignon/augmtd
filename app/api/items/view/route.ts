@@ -189,6 +189,16 @@ export async function GET(request: NextRequest) {
     const preparedArts = prepState?.all ?? [];
     mark('wave1');
 
+    // THE DOOR ONTO NOTHING IS A 404 (mobile walk, Oct 1): the open item's own row is read user-scoped,
+    // so a deleted id, another user's id and a malformed id (22P02 — not a uuid) all answer the SAME
+    // `not_found` — existence never leaks. Before any background work is scheduled. A transient read
+    // error (any other code) keeps the old degraded payload: a blip must not read as "removed".
+    // Mail + commitment doors only: a MEETING door's id may be a calendar event or a transcript shared
+    // with the user (app/api/meetings/[id]/full resolves both), so its own-transcript row is no verdict.
+    if (linkKind !== 'meeting' && !itemRowRes.data && (!itemRowRes.error || itemRowRes.error.code === '22P02')) {
+      return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    }
+
     // ── THE ANCHOR — what the rail's opening message is assembled from: who this is with, the item's
     // verb-first ask (understanding.ask), and whether prepared work already arrived. Grounded-or-absent
     // per part; never invented. ONE derivation (lib/room/item-anchor) shared with THE WARM — the

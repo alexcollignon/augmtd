@@ -44,6 +44,7 @@ import { RoomConversationSkeleton } from '@/components/room/room-skeleton';
 import { loadLS } from '@/lib/utils/local-cache';
 import { fetchItemView, fetchOpenObject, viewTargetOf, type ItemViewKind } from '@/lib/room/warm-client';
 import { loadThreadRaw } from '@/lib/inbox/thread-door';
+import { itemAddressOf } from '@/lib/room/presentation';
 
 type OpenKind = 'email' | 'meeting' | 'commitment' | 'followup';
 
@@ -118,7 +119,12 @@ export function ItemOpenFrame({ docked, id: idProp, kind: kindProp, origin = 'ro
   docked: boolean; id?: string; kind?: OpenKind; origin?: 'route' | 'client';
 }) {
   const params = useParams<{ id?: string }>();
-  const id = idProp ?? (typeof params?.id === 'string' ? params.id : null);
+  // THE ADDRESS LAW: a prefixed address (`/item/inbox:<id>`) is about to redirect to its canonical
+  // form — the frame already reads the BARE id under the prefix's kind (the page's own parser), so the
+  // open's reads join the canonical page's flight instead of asking the door for `inbox:<id>`.
+  const addr = idProp ? null : (typeof params?.id === 'string' ? itemAddressOf(params.id, null) : null);
+  const id = idProp ?? addr?.id ?? null;
+  const prefixKind: OpenKind | undefined = addr?.redirect ? addr.kind : undefined;
   // THE HELD NAME, ON THE FIRST RENDER: the client frame knows its kind from the row's href, so its
   // name is read at the click (no effect → the name is in the very first paint); the route's frame
   // reads the address in a layout effect (still pre-paint).
@@ -128,15 +134,15 @@ export function ItemOpenFrame({ docked, id: idProp, kind: kindProp, origin = 'ro
   useLayoutEffect(() => {
     if (origin === 'route') markRouteLanded();
     if (!id) return;
-    setTitle(heldTitleOf(kindProp ?? kindOfSearch(window.location.search), id));
-  }, [id, kindProp, origin]);
+    setTitle(heldTitleOf(kindProp ?? prefixKind ?? kindOfSearch(window.location.search), id));
+  }, [id, kindProp, prefixKind, origin]);
   useEffect(() => {
     if (!id) return;
-    startOpenReads(kindProp ?? kindOfSearch(window.location.search), id);
+    startOpenReads(kindProp ?? prefixKind ?? kindOfSearch(window.location.search), id);
     if (docked) _framePaintedAt = Date.now();
     const r = requestAnimationFrame(() => setEntered(true));
     return () => cancelAnimationFrame(r);
-  }, [id, kindProp, docked]);
+  }, [id, kindProp, prefixKind, docked]);
 
   const frame = (
     <div className="w-full h-full min-h-0 flex flex-col bg-neutral-50" aria-busy="true">
