@@ -26,6 +26,7 @@
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 import { ROOM_CACHE_MAX_AGE_MS } from '@/lib/room/no-mutation';
 import { loadThreadRaw } from '@/lib/inbox/thread-door';
+import { itemAddressOf } from '@/lib/room/presentation';
 
 export type ItemViewKind = 'email' | 'meeting' | 'commitment' | 'followup' | 'awareness';
 
@@ -72,11 +73,11 @@ export function viewTargetOf(href: string | null | undefined): { kind: ItemViewK
   if (!href) return null;
   const m = href.match(/\/item\/([^/?#]+)/);
   if (!m) return null;
-  const k = new URLSearchParams(href.split('?')[1] || '').get('kind') || 'email';
-  // The deep-dive mounts MeetingDetail / CommitmentDetail / FollowUpDetail for those kinds and
-  // EmailDetail for everything else — whose view key is 'email'.
-  const kind: ItemViewKind = k === 'meeting' || k === 'commitment' || k === 'followup' ? k : 'email';
-  return { kind, id: m[1] };
+  // THE ADDRESS LAW: a prefixed id (`inbox:<id>`) warms the CANONICAL view key the page will read —
+  // the same parser the page redirects with (lib/room/presentation itemAddressOf). The deep-dive mounts
+  // MeetingDetail / CommitmentDetail / FollowUpDetail for those kinds and EmailDetail otherwise.
+  const a = itemAddressOf(m[1], new URLSearchParams(href.split('?')[1] || '').get('kind'));
+  return { kind: a.kind, id: a.id };
 }
 
 // ── THE ONE VIEW FLIGHT — a hover warm and the open share one request ───────────────────────────
@@ -119,6 +120,12 @@ const takeLanded = (m: Map<string, Landed>, key: string): ViewPayload | null => 
 
 /** GET the room's outcome read; a caller arriving while one is in flight JOINS it. Writes the cache
  *  (the next open's first paint) on every successful landing. `warm` = a hover/intent prefetch. */
+/** The view door's answer for an id that is not this user's item (deleted · another user's · malformed —
+ *  the door answers all three alike, so existence never leaks). */
+export const NOT_FOUND_VIEW: ViewPayload = Object.freeze({ error: 'not_found' });
+/** Is this view landing the door's not-found answer? (By shape — a re-read's own parsed 404 body counts.) */
+export const isNotFoundView = (d: unknown): boolean => !!d && (d as { error?: unknown }).error === 'not_found';
+
 export function fetchItemView(kind: ItemViewKind, id: string, opts: { warm?: boolean } = {}): Promise<ViewPayload | null> {
   const key = itemViewKey(kind, id);
   const flying = _viewFlight.get(key);
@@ -134,8 +141,11 @@ export function fetchItemView(kind: ItemViewKind, id: string, opts: { warm?: boo
   }
   const flight: ViewFlight = { p: Promise.resolve(null), warm: !!opts.warm };
   flight.p = fetch(`/api/items/view?kind=${kind}&id=${id}${opts.warm ? '&warm=1' : ''}`)
-    .then((r) => (r.ok ? r.json() : null))
+    .then((r) => (r.status === 404 ? NOT_FOUND_VIEW : r.ok ? r.json() : null))
     .then((d: ViewPayload | null) => {
+      // THE DOOR ONTO NOTHING (W41): a 404 is handed to the mount as itself — never cached, never null
+      // (null = "could not load", a different truth the room must not show as "removed").
+      if (d === NOT_FOUND_VIEW) return d;
       if (!d || d.error) return null;
       try { saveLS(key, d); } catch { /* private mode */ }
       // Only an OPEN's landing (a real open, or a warm an open joined) is handed to the mount.

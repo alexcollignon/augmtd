@@ -1,5 +1,7 @@
+import { redirect } from 'next/navigation';
 import { guardFeaturePage } from '@/lib/workspace/guards';
-import { ItemDetail, type ItemKind } from '@/components/home/item-detail';
+import { ItemDetail } from '@/components/home/item-detail';
+import { itemAddressOf } from '@/lib/room/presentation';
 
 // ── The URL-addressed Home item detail as a FULL PAGE — rendered on a direct visit / refresh /
 // deep-link (when NOT soft-navigated from the Home, so the intercepting @modal slot doesn't catch
@@ -15,6 +17,10 @@ export default async function ItemPage({
   await guardFeaturePage(null);
   const { id } = await params;
   const { angle, kind } = await searchParams;
+  // THE ADDRESS LAW: a prefixed id (`inbox:<id>` · `commit:<id>` · `meeting:<id>`) redirects to the
+  // canonical `/item/<id>?kind=…` — one URL owns the thread (lib/room/presentation itemAddressOf).
+  const addr = itemAddressOf(id, kind ?? null, { angle });
+  if (addr.redirect) redirect(addr.redirect);
 
   return (
     // THE ROOM OWNS ITS CHROME (Sep 7 — the one room grammar): the item room's own 52px header
@@ -23,7 +29,7 @@ export default async function ItemPage({
     // a second back affordance stacked on the first — exactly the "two places, one fact" the walk
     // called out. The project room has never had one.
     <div className="flex-1 min-w-0 h-full flex flex-col bg-white">
-      <ItemDetail id={id} angle={angle ?? null} kind={(kind as ItemKind) ?? 'email'} />
+      <ItemDetail id={addr.id} angle={angle ?? null} kind={addr.kind} />
     </div>
   );
 }

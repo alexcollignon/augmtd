@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { announceDeed } from '@/lib/room/deed-echo';
 import { WorkerFace } from '@/components/work/worker-face';
 import { useRouter } from 'next/navigation';
@@ -48,7 +48,7 @@ import KbFilePicker from '@/components/inbox/kb-file-picker';
 import { loadLS, saveLS } from '@/lib/utils/local-cache';
 // THE NO-MUTATION LAW — the one mechanism a loader consults before replacing what is painted.
 import { mayReplaceInPlace, mayFillEmptySeat, fillEmptySeat, ROOM_CACHE_MAX_AGE_MS, type ArrivalReason, type SlotPaint } from '@/lib/room/no-mutation';
-import { fetchItemView, fetchOpenObject, itemViewKey, itemObjectKey } from '@/lib/room/warm-client';
+import { fetchItemView, fetchOpenObject, itemViewKey, itemObjectKey, isNotFoundView, NOT_FOUND_VIEW } from '@/lib/room/warm-client';
 // W17 · NO WAITING — the view serves the cached judgment; the page reads it at first paint.
 import { relevanceOfWork, REPLY_WORKS, type ServedVerdict } from '@/lib/room/served-verdict';
 import { loadThreadRaw } from '@/lib/inbox/thread-door';
@@ -1105,6 +1105,10 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
   }, []);
   const recheckedRef = useRef(false);
   const lateCheckedRef = useRef(false);
+  // W41 · THE DOOR ONTO NOTHING: the view door answered not_found (deleted · not this user's ·
+  // malformed — one answer, existence never leaks) → the ItemDetail host swaps the room for the
+  // unavailable state. A cache painted for it is dropped: the item is gone, the cache is not a truth.
+  const reportMissing = useContext(ItemMissingContext);
   // `reason`: 'user' for a deed the reader just performed (the law's own exception), 'open' for the
   // mount's own read — which yields to whatever the open already painted.
   const refresh = useCallback((reason: ArrivalReason = 'user') => {
@@ -1112,9 +1116,10 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
     // room) must read the post-deed world, so it never joins a flight that started before the deed.
     const landing = reason === 'open'
       ? fetchItemView(kind, id)
-      : fetch(`/api/items/view?kind=${kind}&id=${id}`).then((r) => (r.ok ? r.json() : null));
+      : fetch(`/api/items/view?kind=${kind}&id=${id}`).then((r) => (r.status === 404 ? NOT_FOUND_VIEW : r.ok ? r.json() : null));
     landing
       .then((d) => {
+        if (isNotFoundView(d)) { try { window.localStorage.removeItem(key); } catch { /* private mode */ } reportMissing(); return; }
         if (!d || d.error) { if (reason === 'open') setFailed(true); return; }
         saveLS(key, d);
         const paint = mayReplaceInPlace(reason, paintedRef.current);
@@ -1167,7 +1172,7 @@ function useItemView(kind: 'email' | 'meeting' | 'commitment' | 'followup' | 'aw
         }
       })
       .catch(() => { if (reason === 'open') setFailed(true); });
-  }, [kind, id, key]);
+  }, [kind, id, key, reportMissing]);
   useEffect(() => { refresh('open'); }, [refresh]);
   // W39 · A CLAIM RENDERS: the seat's words claimed a prepared thing the page does not show (the rail
   // drops that sentence and calls this) — ONE fresh read whose landing may fill the EMPTY seat only.
@@ -1371,10 +1376,49 @@ export type ReportedDecision = {
 // ── Top-level router — reads `kind` and renders the right variant inside the shared shell. Email is
 // the default (the current behaviour + a hard visit with no `kind`).
 export function ItemDetail({ id, angle, kind = 'email', embedded = false, initialStage, stageSignal, hideArtifactCards, onDecision, injectedDraft }: { id: string; angle?: string | null; kind?: ItemKind; embedded?: boolean; initialStage?: 'reply' | 'forward' | 'invite'; stageSignal?: number; hideArtifactCards?: boolean; onDecision?: (d: ReportedDecision | null) => void; injectedDraft?: { body: string; v: number } | null }) {
-  if (kind === 'meeting') return <MeetingDetail id={id} embedded={embedded} />;
-  if (kind === 'commitment') return <CommitmentDetail id={id} embedded={embedded} />;
-  if (kind === 'followup') return <FollowUpDetail id={id} embedded={embedded} />;
-  return <EmailDetail id={id} angle={angle} embedded={embedded} initialStage={initialStage} stageSignal={stageSignal} hideArtifactCards={hideArtifactCards} onDecision={onDecision} injectedDraft={injectedDraft} />;
+  // W41 · THE DOOR ONTO NOTHING (mobile walk, Oct 1): the address the view door answered not_found for.
+  // Keyed by address, so a soft hop to another item never inherits the verdict. Only a LANDED 404 sets
+  // it — while the read is in flight the room's own skeleton stands (never a not-found flash).
+  const address = `${kind}:${id}`;
+  const [missingAt, setMissingAt] = useState<string | null>(null);
+  const reportMissing = useCallback(() => setMissingAt(address), [address]);
+  if (missingAt === address) return <ItemUnavailable embedded={embedded} />;
+  const room = kind === 'meeting' ? <MeetingDetail id={id} embedded={embedded} />
+    : kind === 'commitment' ? <CommitmentDetail id={id} embedded={embedded} />
+    : kind === 'followup' ? <FollowUpDetail id={id} embedded={embedded} />
+    : <EmailDetail id={id} angle={angle} embedded={embedded} initialStage={initialStage} stageSignal={stageSignal} hideArtifactCards={hideArtifactCards} onDecision={onDecision} injectedDraft={injectedDraft} />;
+  return <ItemMissingContext.Provider value={reportMissing}>{room}</ItemMissingContext.Provider>;
+}
+
+/** The ItemDetail host's not-found channel (useItemView calls it on the door's not_found answer). */
+const ItemMissingContext = createContext<() => void>(() => {});
+
+/** The words of the unavailable state — ONE home (the source gate reads them). Deleted, another
+ *  user's and malformed read the same: the room never says which. */
+export const ITEM_UNAVAILABLE_WORDS = {
+  title: "This item isn't available",
+  body: "It may have been removed, or it isn't yours.",
+} as const;
+
+function ItemUnavailable({ embedded }: { embedded: boolean }) {
+  return (
+    <div className={`flex-1 min-h-0 flex flex-col bg-white ${embedded ? '' : 'h-full'}`} data-testid="item-unavailable">
+      {!embedded && (
+        <header className="flex-shrink-0 flex items-center gap-3 h-[52px] px-5 bg-white border-b border-neutral-200/80">
+          <BackLink fallback="/home" className="flex-shrink-0 text-neutral-300 hover:text-neutral-600 gap-0">
+            <span className="sr-only">Back</span>
+          </BackLink>
+        </header>
+      )}
+      <div className="flex-1 flex flex-col items-center justify-center px-6 py-16 text-center">
+        <p className="text-[15px] font-semibold text-neutral-900">{ITEM_UNAVAILABLE_WORDS.title}</p>
+        <p className="mt-1.5 max-w-sm text-[13px] leading-relaxed text-neutral-500">{ITEM_UNAVAILABLE_WORDS.body}</p>
+        <Link href="/home" className="mt-5 inline-flex items-center rounded-lg border border-neutral-200 px-3.5 py-1.5 text-[13px] font-medium text-neutral-700 hover:bg-neutral-50">
+          Back to Home
+        </Link>
+      </div>
+    </div>
+  );
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════

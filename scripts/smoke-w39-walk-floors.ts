@@ -140,5 +140,37 @@ console.log('W4 · the phone seat (390px)');
     && /\[@media\(pointer:coarse\)\]:py-2\.5 \[@media\(pointer:coarse\)\]:-my-2\.5/.test(code('components/work/work-row.tsx')));
 }
 
+// ── W5 · THE ITEM ADDRESS (the Oct 1 mobile walk: `/item/inbox:<uuid>` painted an EMPTY room).
+//   Law `no-mutation-and-address` (every thread owns ONE URL that survives refresh) + the door onto
+//   nothing. The outcome is the unit tier (tests/unit/item-address); these hold each seat.
+console.log('W5 · the item address + the door onto nothing');
+{
+  let o = ''; let g = false;
+  try {
+    o = execSync('npx vitest run tests/unit/item-address.test.ts', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    g = /Tests\s+\d+ passed/.test(o) && !/failed/.test(o);
+  } catch (e) { o = String((e as { stdout?: string }).stdout ?? e); }
+  ok('W5a the address normalizer passes its unit tier (prefix → bare id + kind, prefix wins, followup refinement, canonical redirect)', g);
+  for (const p of ['app/(main)/item/[id]/page.tsx', 'app/(main)/@modal/(.)item/[id]/page.tsx']) {
+    const s = code(p);
+    ok(`W5b ${p} normalizes through the ONE parser and redirects a prefixed id to the canonical form`,
+      /itemAddressOf\(id, kind \?\? null, \{ angle \}\)/.test(s) && /if \(addr\.redirect\) redirect\(addr\.redirect\);/.test(s) && /id=\{addr\.id\}/.test(s));
+  }
+  ok('W5c the view warm and the route frame read prefixed hrefs through the same parser',
+    /itemAddressOf\(m\[1\]/.test(code('lib/room/warm-client.ts')) && /itemAddressOf\(params\.id, null\)/.test(code('components/home/item-open-frame.tsx')));
+  const view = code('app/api/items/view/route.ts');
+  const at404 = view.indexOf("{ error: 'not_found' }, { status: 404 }");
+  ok('W5d the view door answers ONE not_found for missing / not-yours / malformed (22P02), mail + commitment only, before any open kick',
+    at404 > 0 && /linkKind !== 'meeting' && !itemRowRes\.data && \(!itemRowRes\.error \|\| itemRowRes\.error\.code === '22P02'\)/.test(view)
+    && at404 < view.indexOf('const onOpen ='));
+  ok('W5e the item room swaps to the unavailable state only on a LANDED not_found (keyed by address) — never while loading',
+    /if \(isNotFoundView\(d\)\) \{ try \{ window\.localStorage\.removeItem\(key\); \} catch \{\s*\} reportMissing\(\); return; \}/.test(detail)
+    && /if \(missingAt === address\) return <ItemUnavailable embedded=\{embedded\} \/>;/.test(detail)
+    && /<ItemMissingContext\.Provider value=\{reportMissing\}>/.test(detail)
+    && /r\.status === 404 \? NOT_FOUND_VIEW/.test(code('lib/room/warm-client.ts')));
+  ok('W5f the unavailable state never says which (removed OR not yours) and offers the way back',
+    /title: "This item isn't available"/.test(detail) && /removed, or it isn't yours/.test(detail) && /href="\/home"/.test(detail));
+}
+
 console.log(`\n${fail ? '❌' : '✅'} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
