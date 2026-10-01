@@ -68,7 +68,9 @@ export type SurfaceCaseSpec = {
 export const ME_NAME = 'Probe Host';
 
 export const toEvalCase = (s: SurfaceCaseSpec): EvalCase => ({
-  id: s.id, group: s.group, title: s.title, world: s.world ? { ...s.world, me: { name: ME_NAME, ...(s.world.me ?? {}) } } : {},
+  // The user is the probe host in EVERY case — a case with no records too (W36: hand-offs carry no world, and
+  // the judge's WORLD FACTS fell back to the engine default name, failing "Hey Probe" as a misnamed user).
+  id: s.id, group: s.group, title: s.title, world: { ...(s.world ?? {}), me: { name: ME_NAME, ...(s.world?.me ?? {}) } },
   truth: { expectation: s.truth, ...(s.edge ? { edge: s.edge } : {}), ...(s.quick ? { quick: true } : {}) },
   truthSheet: s.truth, hardConditions: s.hard ?? [], turns: s.turns,
   params: { ...(s.params ?? {}), checks: s.checks ?? [] },

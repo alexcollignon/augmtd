@@ -219,7 +219,12 @@ ${clipForPrompt(body, 1200)}
   // W18.B · A DRAFT SPEAKS THE THREAD'S LANGUAGE — the output is checked (zero AI); a wrong-language
   // draft gets ONE revise pass with the hard instruction appended LAST, and a draft still wrong after
   // it is not served ('' — every caller's honest not-prepared state).
-  const checked = await draftInLanguage(async (languageFix) => {
+  // W36 · A REPLY NEVER AGREES TO A PAYMENT-DETAIL CHANGE (lib/prepare/risky-asks): read in code from the
+  // email's own words; when present the drafter gets the safe-reply contract, and the draft is held below.
+  const { asksPaymentDetailChange, RISKY_CHANGE_REPLY, riskyAgreementIn, riskyAgreementObjection, dropRiskyAgreement } = await import('@/lib/prepare/risky-asks');
+  const riskyAsk = asksPaymentDetailChange(`${subject}\n${body}`);
+  let riskFix = '';
+  const writeReply = async (languageFix: string | null): Promise<string> => {
     const res = await aiCreate(ai, {
       model, max_tokens: 600, temperature: 0.6,
       messages: [{ role: 'user', content:
@@ -241,6 +246,7 @@ ${clipForPrompt(body, 1200)}
         // THE COMPLETION RULE (W5a): the reply may claim only deeds the facts above (staged
         // attachments, the artifact truth) support.
         `${COMPLETION_HONESTY_RULE} ` +
+        `${riskyAsk ? `${RISKY_CHANGE_REPLY} ` : ''}` +
         `Return ONLY the reply body — no subject line, no preamble, no ` +
         `surrounding quotes. Keep it appropriately concise and ready to send.\n\n` +
         `--- EMAIL TO REPLY TO ---\n` +
@@ -252,10 +258,20 @@ ${clipForPrompt(body, 1200)}
         `${EXCERPT_RULE}\n` +
         // LANGUAGE RULE — LAST, so it wins over the voice examples above (recency + explicit target).
         langRule +
+        (riskFix ? `\n\n${riskFix}` : '') +
         (languageFix ? `\n\n${languageFix}` : '') }],
     });
     return res.choices?.[0]?.message?.content?.trim() || '';
-  }, detected);
+  };
+  let checked = await draftInLanguage(writeReply, detected);
+  if (riskyAsk && checked.body) {
+    const agreed = riskyAgreementIn(checked.body);
+    if (agreed) {
+      riskFix = `REVIEWER'S OBJECTION — fix this: ${riskyAgreementObjection(agreed)}`;
+      const again = await draftInLanguage(writeReply, detected);
+      checked = { ...again, body: dropRiskyAgreement(again.body || checked.body) };
+    }
+  }
   // W28.10 · A REPLY PROMISES ONLY WHAT THE USER SAID (full eval: "Tuesday or Wednesday afternoon would work
   // well for me" with no calendar; "I'll send the SOW by end of day Thursday"). When the draft states an
   // availability or a dated commitment on the user's behalf, the claims floor checks it against the thread

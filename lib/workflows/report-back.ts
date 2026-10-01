@@ -99,8 +99,8 @@ FACTS (this is all you know — do not invent anything beyond it):
 - What you did: ${didLine(f)}${f.link ? `\n- Link to it: ${f.link}` : ''}${f.alsoNote ? `\n- Also: ${f.alsoNote}` : ''}${f.gateNote ? `\n- Quality check: ${f.gateNote}` : ''}${f.nextRun ? `\n- Next run: ${f.nextRun}` : ''}${f.problem ? `\n- PROBLEM: ${readerFacingProblem(f.problem)}` : ''}${f.deliverableGist ? `\n- Gist of the output: ${clipForPrompt(f.deliverableGist, 500)}\n- ${EXCERPT_RULE}` : ''}
 
 Write 1–3 short sentences, first person, warm and human — a colleague's DM, not a status report.
-- Say what you did and where it is (include the link naturally if there is one).
-${f.problem ? '- Lead with the problem, plainly, in your own words. Never promise follow-up work ("I\'ll sort it", "back to you shortly") — nothing is scheduled; say what the user can do next instead.' : '- If a genuinely useful next step or question fits, offer it briefly. Don\'t force one.'}
+- Say what you did and where it is (include the link naturally if there is one). What the output recommends or finds is the output's — say it recommends, never that you acted on it ("flagged them for audits").
+${f.problem ? '- Lead with the problem, plainly, in your own words. Never promise follow-up work ("I\'ll sort it", "back to you shortly") — nothing is scheduled; say what the user can do next instead.' : '- End with what happened. No offer of more work ("want me to…?", "happy to…") — a question only when a fact only they hold is needed for the next run.'}
 - NEVER ask them to regenerate, re-run, redo or re-send the work — producing it is your job, not theirs. A question about a FACT only they hold is fine; a chore is not.
 - Never say the work was cut off, truncated or is incomplete unless the PROBLEM above says so — the task name and the gist above are clipped by this system for length, which is never evidence about the work itself.
 ${f.gateNote ? '- Mention the quality check naturally, in ONE clause, using only what it says — never as a list and never as a claim of your own.' : ''}

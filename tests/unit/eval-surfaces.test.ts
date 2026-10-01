@@ -135,7 +135,7 @@ describe('verdicts', () => {
 describe('the surface packs', () => {
   it('every surface: 4–6 scenarios, edge cases, truth + checks, a quick subset of ≤ 2, the plain view never names a coworker', async () => {
     const { SURFACES } = await import('../../scripts/lib/eval-surfaces/registry');
-    expect(SURFACES.map((a) => a.id)).toEqual(['dm.coworker', 'room.chat', 'workflow.step', 'handoff.result', 'draft.reply', 'briefing.home', 'decision.options', 'room.opening', 'document.author', 'frame.view', 'gate.verify', 'meeting.insights']);
+    expect(SURFACES.map((a) => a.id)).toEqual(['dm.coworker', 'room.chat', 'workflow.step', 'handoff.result', 'draft.reply', 'briefing.home', 'decision.options', 'room.opening', 'document.author', 'frame.view', 'gate.verify', 'meeting.insights', 'sent.compose', 'sent.cover', 'sent.slack', 'sent.report', 'sidebar.chat', 'home.synthesis', 'reply.directions', 'workflow.linkedin']);
     const ids = new Set<string>();
     for (const a of SURFACES) {
       const cs = a.cases();

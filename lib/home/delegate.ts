@@ -48,6 +48,12 @@ export const DELEGATION_RECENT_FACTS_RULE =
   `notes, a case study, attached files), build the deliverable from THAT material only — no outside facts, ` +
   `prices, competitors or sources added unless the request asks for research beyond it. A cell or point the ` +
   `material does not cover says so ("not in the notes") instead of being filled in.\n` +
+  // W36 (eval handoff.result: "a competitor pricing table for our renewal deck" with no product named came back
+  // as a sourced table for a market the coworker picked from its search results).
+  `- THE USER'S OWN CONTEXT IS NOT SEARCHABLE: when the work depends on something only the user knows — ` +
+  `whose product or market it is, which competitors or client, which figures — and neither the request, the ` +
+  `material nor their records say it, never pick one from search results or memory and present it as theirs. ` +
+  `Deliver what can be done without it and name exactly what you need.\n` +
   `- CITE WHAT YOU SEARCHED: research about the current market, companies, people, prices or figures comes ` +
   `from web_search results in THIS task (companies merge, rename and change hands — your memory is stale) ` +
   `and every such fact in your deliverable names its source (publisher + link, and the date when the ` +
@@ -57,12 +63,23 @@ export const DELEGATION_RECENT_FACTS_RULE =
  *  above the finished variants). A first paragraph that only ANNOUNCES the work ("I'll…", "I will…",
  *  "Let me…") and is followed by the work itself is dropped. Pure; anything else is left untouched. */
 export function stripAnnouncement(text: string): string {
-  const t = String(text ?? '').trim();
-  const m = /^((?:I'?ll|I will|Let me|I'm going to|I am going to|I need to)\b[^\n]{0,240})\n+(?:-{2,}\s*\n+)?([\s\S]+)$/.exec(t);
-  if (!m) return t;
-  const rest = m[2].trim();
-  return rest.length >= 60 ? rest : t;
+  let t = String(text ?? '').trim();
+  // W36 · THE RESEARCH NARRATION IS NOT THE WORK (eval handoff.result, EU: a hand-back opened "The search
+  // results are about general SaaS pricing models … Let me search for information … or try a different
+  // approach." — the model's own search narration kept as the deliverable's first paragraph). Opening
+  // paragraphs that only announce the work or narrate the searching are dropped, one after another.
+  for (let i = 0; i < 3; i++) {
+    const m = new RegExp(`^(${OPENING_NARRATION.source}[^\\n]{0,400})\\n+(?:-{2,}\\s*\\n+)?([\\s\\S]+)$`, 'i').exec(t);
+    if (!m) break;
+    const rest = m[2].trim();
+    if (rest.length < 60) break;
+    t = rest;
+  }
+  return t;
 }
+
+/** An opening paragraph that announces the work or narrates the searching (never the work itself). */
+const OPENING_NARRATION = /(?:I'?ll|I will|Let me|I'm going to|I am going to|I need to|The (?:web )?search(?:es)? (?:results?|returned|show|did)|The (?:search )?results? (?:are|were|is|was|show|don'?t|do not|didn'?t|did not)|My (?:search|searches)|(?:I )?(?:searched|couldn'?t find|could not find|didn'?t find|did not find)|Based on (?:the|my) (?:search|searches|research))\b/;
 
 /** W28 · THE MATERIAL BOUNDS THE TOOLS (eval: a comparison asked "from these notes" still ran web_search
  *  and came back with outside prices, "the search results don't contain…" preambles and a Sources list —

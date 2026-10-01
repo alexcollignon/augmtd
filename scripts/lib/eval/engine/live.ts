@@ -170,7 +170,12 @@ export async function buildTierEnv(o: {
     tier: o.tier,
     ctx: { admin: o.admin, userId: o.userId, now: o.now, stubbed: o.stubbed, ...(o.session ? { session: o.session } : {}) },
     async augmtdModel(adapter: AnyAdapter) {
-      return (await getAIClient(o.userId, adapter.producer.slot, o.admin)).model;
+      // W36 — THE PRODUCER MODEL: the AUGMTD column names the model its producer RESOLVES to (a
+      // producer:<key> override on the probe outranks the slot), so the report and its effort say
+      // what actually ran.
+      const { isEffortProducer } = await import('../../../../lib/ai/effort');
+      const key = adapter.producer.effortKey;
+      return (await getAIClient(o.userId, adapter.producer.slot, o.admin, isEffortProducer(key) ? { producer: key } : {})).model;
     },
     async plainFor(column: Exclude<ColumnId, 'augmtd'>, adapter: AnyAdapter): Promise<PlainSystem> {
       if (column === 'same') {

@@ -1,4 +1,4 @@
-import { conductBlock } from '@/lib/ai/conduct';
+import { conductBlock, CONDUCT_RULES } from '@/lib/ai/conduct';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
@@ -11,6 +11,8 @@ import { loadPlanStepSummaries, type ItemPlanKind } from '@/lib/home/item-plan';
 import { firstEmailIn, looksLikeEmail } from '@/lib/core/email';
 import { stagedFilesOf } from '@/lib/prepare/email-card';
 import { plainBody } from '@/lib/core/text';
+import { clipForPrompt, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
+import { inboundBlock, attrValue, withoutMachineAddressed, INBOUND_DATA_RULE } from '@/lib/utils/inbound-data';
 
 export const maxDuration = 30;
 
@@ -32,6 +34,48 @@ const extractName = (s?: string | null): string | null => {
   const t = s.replace(/<[^>]*>/g, '').trim().replace(/^"|"$/g, '').trim();
   return t && !looksLikeEmail(t) ? t : null;
 };
+
+/** W36 · THE THREAD'S PRESENT — the thread's most recent messages (oldest first), each cut to the
+ *  sender's own words and carried as tagged DATA (lib/utils/inbound-data inboundBlock, clipped under the
+ *  excerpt law); the message a commitment was noted from is marked. '' when there is no thread (or one
+ *  message only — the caller's source line carries it). */
+async function threadPresentOf(
+  supabase: Awaited<ReturnType<typeof createClient>>, userId: string, threadId: string | null, originId: string | null,
+): Promise<{ block: string; words: string }> {
+  const none = { block: '', words: '' };
+  if (!threadId) return none;
+  const { data, error } = await supabase.from('emails')
+    .select('id, from_name, from_address, body, received_at, is_from_user')
+    .eq('user_id', userId).eq('thread_id', threadId)
+    .order('received_at', { ascending: false }).limit(6);
+  if (error || !data || data.length < 2) return none;
+  const { topMessageOf } = await import('@/lib/inbox/top-message');
+  const rows = [...(data as Array<{ id: string; from_name: string | null; from_address: string | null; body: string | null; received_at: string | null; is_from_user: boolean | null }>)].reverse();
+  const theirWords: string[] = [];
+  const blocks = rows.map((m) => {
+    const who = m.is_from_user ? 'the user (you)' : (m.from_name || m.from_address || 'someone');
+    const words = topMessageOf(plainBody(String(m.body ?? ''))).trim() || plainBody(String(m.body ?? '')).trim();
+    if (!m.is_from_user) theirWords.push(words);
+    const attrs = `from="${attrValue(who)}" date="${attrValue((m.received_at ?? '').slice(0, 10))}"${originId && m.id === originId ? ' origin="the message this was noted from"' : ''}`;
+    return inboundBlock('message', withoutMachineAddressed(words), 1200, { attrs });
+  });
+  return {
+    block: `THE THREAD (most recent messages, oldest first). A later message can change what is owed; where two ` +
+      `messages give different values for the same thing, the email names both and asks which holds.\n${blocks.join('\n')}`,
+    // The correspondents' own words — what the reply's LANGUAGE is read from (never our English framing).
+    words: theirWords.join('\n\n'),
+  };
+}
+
+/** " (Thursday 1 October 2026)" for a YYYY-MM-DD due date — a writer names the day it read, never a guessed one. */
+function dueInWords(d: string, now: Date = new Date()): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return '';
+  const t = new Date(`${d}T12:00:00Z`);
+  if (Number.isNaN(t.getTime())) return '';
+  const days = Math.round((t.getTime() - Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 12)) / 86_400_000);
+  const rel = days === 0 ? 'today' : days === 1 ? 'tomorrow' : days > 1 ? `in ${days} days` : `${-days} day${days === -1 ? '' : 's'} ago`;
+  return ` (${t.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })} — ${rel})`;
+}
 
 function paraHTML(text: string): string {
   const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -64,11 +108,34 @@ export async function POST(request: NextRequest) {
     } catch { /* non-fatal */ }
     const isSelf = (e?: string | null) => !!e && userEmails.has(e.toLowerCase());
 
-    let userName = 'me';
+    // W36 · THE SIGNER IS NEVER "me" (eval sent.compose, EU: an account with no profile name was prompted
+    // "You are me … sign as me" — drafts came back unsigned or signed with the RECIPIENT's name). The name
+    // comes from the profile, else the account's own metadata, else the display name its own sent mail
+    // goes out under; with none, the words sign as the user's sent mail signs, never as a placeholder.
+    let knownName: string | null = null;
     try {
       const { data: prof } = await supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle();
-      if (prof?.full_name) userName = String(prof.full_name);
-    } catch { /* keep default */ }
+      if (prof?.full_name) knownName = String(prof.full_name);
+    } catch { /* fall through */ }
+    if (!knownName) {
+      const md = (user.user_metadata ?? {}) as { full_name?: unknown; name?: unknown };
+      const n = String(md.full_name ?? md.name ?? '').trim();
+      if (n) knownName = n;
+    }
+    if (!knownName) {
+      // The display name the user's own mailbox sends under (their most recent sent mail).
+      const { data: sent, error: sentErr } = await supabase.from('emails').select('from_name')
+        .eq('user_id', user.id).eq('is_from_user', true).not('from_name', 'is', null)
+        .order('received_at', { ascending: false }).limit(1).maybeSingle();
+      const n = !sentErr ? String((sent as { from_name?: string | null } | null)?.from_name ?? '').trim() : '';
+      if (n && !looksLikeEmail(n)) knownName = n;
+    }
+    const userName = knownName ?? 'the user';
+    const signRule = knownName
+      ? `Write the message in ${knownName}'s voice and sign as ${knownName} — NEVER sign as anyone else. `
+      : `Write the message in the user's voice and sign off the way the user signs their own sent emails (the name ` +
+        `and sign-off shown in their examples) — NEVER sign as the recipient or anyone else in the thread, and never ` +
+        `with a placeholder. `;
 
     // Resolved fields.
     let to: string[] = [];
@@ -81,6 +148,8 @@ export async function POST(request: NextRequest) {
     // The prompt describing what to write + the context the model grounds on.
     let task = '';
     let context = '';
+    // W36: the words the reply's language is read from — the correspondents' own, when known.
+    let languageSource = '';
     // The best recipient email we can find for the voice block (per-recipient tone).
     let voiceRecipient: string | null = null;
     // When true, we resolve the recipient/subject but do NOT auto-generate a reply body — an FYI/`noted`
@@ -139,7 +208,7 @@ export async function POST(request: NextRequest) {
       const nextStep = (tr.suggested_next_step as string) || '';
       context = [
         `Meeting: ${title}`,
-        (tr.summary as string) ? `Summary:\n${(tr.summary as string).slice(0, 2000)}` : '',
+        (tr.summary as string) ? `Summary:\n${clipForPrompt(tr.summary as string, 2000)}` : '',
         nextStep ? `Suggested next step: ${nextStep}` : '',
       ].filter(Boolean).join('\n\n');
       task = intent?.trim()
@@ -180,6 +249,7 @@ export async function POST(request: NextRequest) {
       // automated addresses) — never empty merely because nobody asked.
       cc = (addr.cc ?? []).map((a) => a.email).filter((e): e is string => !!e && !isSelf(e) && !to.includes(e)).slice(0, 10);
       recipientName = addresseeLabel(stamped ?? addr.addressee);
+      let commitmentThreadId: string | null = null;
       {
         const { threadMailboxOf } = await import('@/lib/inbox/draft-reply');
         let tid = (c.thread_id as string | null) ?? null;
@@ -187,6 +257,7 @@ export async function POST(request: NextRequest) {
           const { data: se } = await supabase.from('emails').select('thread_id').eq('id', c.source_id).eq('user_id', user.id).maybeSingle();
           tid = (se?.thread_id as string | null) ?? null;
         }
+        commitmentThreadId = tid;
         mailbox = await threadMailboxOf(supabase, user.id, tid);
       }
       suggestions = addr.suggestions.map((a) => ({ name: a.name, email: a.email }));
@@ -199,17 +270,27 @@ export async function POST(request: NextRequest) {
           .eq('id', c.source_id).eq('user_id', user.id).maybeSingle();
         if (e) {
           sourceSubject = (e.subject as string) || null;
-          sourceBody = typeof e.body === 'string' ? (e.body as string).replace(/\s+/g, ' ').trim().slice(0, 1500) : null;
+          sourceBody = typeof e.body === 'string' ? plainBody(e.body as string).trim() || null : null;
         }
       }
+      // W36 · THE THREAD'S PRESENT (eval sent.compose: "confirm the headcount to Rui" was drafted as
+      // "Confirming: 28 people" from the one message the commitment was noted from, while a later message
+      // in the same thread gave a different number). The message that bore a commitment is its origin,
+      // not its present: the drafter reads the thread's recent messages, oldest first, each cut to the
+      // sender's own words — the same ground the reply drafter answers from.
+      const present = await threadPresentOf(supabase, user.id, commitmentThreadId, c.source === 'email' ? String(c.source_id ?? '') : null);
+      const threadBlock = present.block;
+      languageSource = present.words || sourceBody || '';
       voiceRecipient = to[0] ?? null;
 
       subject = sourceSubject ? `Re: ${sourceSubject}` : `Following up`;
       context = [
         `What you owe / committed to: ${c.description ?? ''}`,
-        (c.due_date as string) ? `Due: ${c.due_date}` : '',
+        (c.due_date as string) ? `Due on the user's own list (internal — not a date the correspondent gave): ${c.due_date}${dueInWords(String(c.due_date))}` : '',
         recipientName ? `Recipient: ${recipientName}` : '',
-        sourceBody ? `From the original message:\n${sourceBody}` : '',
+        threadBlock || (sourceBody ? `From the original message:\n${inboundBlock('message', withoutMachineAddressed(sourceBody), 1500)}` : ''),
+        threadBlock || sourceBody ? INBOUND_DATA_RULE : '',
+        (threadBlock || sourceBody || '').includes(EXCERPT_MARK) ? EXCERPT_RULE : '',
       ].filter(Boolean).join('\n\n');
       // W12.1 · THE DIRECTION FRAMES THE TASK (lib/prepare/truth commitmentComposeTask): on work the
       // user OWES the message DELIVERS — never a request to the counterparty; on work THEY owe a
@@ -257,7 +338,7 @@ export async function POST(request: NextRequest) {
       context = [
         subj ? `Subject: ${subj}` : '',
         from ? `From: ${from}` : '',
-        typeof sd.body === 'string' ? `Message:\n${plainBody(sd.body as string).slice(0, 2500)}` : '',
+        typeof sd.body === 'string' ? `Message:\n${clipForPrompt(plainBody(sd.body as string), 2500)}` : '',
       ].filter(Boolean).join('\n\n');
       task = intent?.trim()
         ? intent.trim()
@@ -289,30 +370,46 @@ export async function POST(request: NextRequest) {
     } else if (!skipDraft) try {
       // W18.B · A DRAFT SPEAKS THE THREAD'S LANGUAGE: the target is resolved first — the voice block
       // shows only exemplars in it, and the output is checked against it (draftInLanguage).
-      const target = detectLanguage(context);
+      const target = detectLanguage(languageSource || context);
       const voiceBlock = await buildVoiceBlock(user.id, voiceRecipient, supabase, mailbox, { language: target }).catch(() => '');
       const { draftInLanguage, exemplarRule } = await import('@/lib/context/draft-language');
       const { mailboxIdentityRule } = await import('@/lib/inbox/draft-reply');
       const identityRule = mailboxIdentityRule(mailbox);
+      const { addressRegisterOf } = await import('@/lib/context/draft-language');
+      const register = addressRegisterOf(languageSource);
+      const registerLine = register === 'formal'
+        ? ' (4) The correspondent addresses the user FORMALLY (Sie / vous / usted) — write with the formal form of address.'
+        : register === 'informal' ? ' (4) The correspondent addresses the user informally (du / tu / tú) — the informal form fits.' : '';
       const { client: ai, model } = await getAIClient(user.id, 'conversation', supabase);
       const generateOnce = async (objection: string | null, languageFix: string | null): Promise<string> => {
         const res = await aiCreate(ai, {
           model, max_tokens: 600, temperature: 0.6,
           messages: [{ role: 'user', content:
             `${voiceBlock ? voiceBlock + '\n\n' : ''}` +
-            `You are ${userName}. ${task}\n\n` +
-            `Write the message in ${userName}'s voice and sign as ${userName} — NEVER sign as anyone else. ` +
+            `You are ${knownName ?? 'writing as the user'}. ${task}\n\n` +
+            signRule +
             `${identityRule ? `${identityRule} ` : ''}` +
             `Return ONLY the message body — no subject line, no preamble, no surrounding quotes. Keep it ready to send.\n\n` +
             // W28 — ONE CONDUCT (lib/ai/conduct.ts `draft`): a stated structure or length is the contract.
-            `${conductBlock('draft')}\n\n` +
+            `${conductBlock('draft')}\n` +
+            // W36 — this door's two extra rules (measured here, sent.compose; not in the shared draft profile).
+            `${CONDUCT_RULES.promises_as_given}\n${CONDUCT_RULES.correspondent_register}\n\n` +
             `--- CONTEXT ---\n${context}\n\n` +
+            // W36 · THE CHECK SITS NEXT TO THE WORDS (eval sent.compose, EU: the conduct rules above were read
+            // and a headcount the thread gave two ways was still "confirmed" as one) — the three checks a
+            // careful sender makes, stated after the context the draft is written from.
+            `CHECK BEFORE YOU WRITE: (1) if the context gives two different values for the same thing (a count, ` +
+            `a date, an amount), the email names both and asks which holds — it never states one as settled; ` +
+            `(2) no status, reason or deed (sent, confirmed, booked, "with finance") the context does not state; ` +
+            `(3) no day or deadline the context does not give.${registerLine}\n\n` +
             (objection ? `REVIEWER'S OBJECTION to your previous draft — fix this: ${objection}\n\n` : '') +
             // Language mirrors the correspondent, not the user's default. A concrete detected language wins
             // over the voice examples (which may be in another language); fall back to "match the context".
             (target
               ? `IMPORTANT — LANGUAGE: The context above is in ${target}. Write the ENTIRE ` +
-                `message in ${target}, and ONLY in ${target} — the greeting and sign-off included. ${exemplarRule(target)}`
+                `message in ${target}, and ONLY in ${target} — the greeting and sign-off included — using the form of ` +
+                `address the correspondent used with the user (formal if they wrote formally, e.g. Sie / vous / usted), ` +
+                `whatever the user's own examples do. ${exemplarRule(target)}`
               : `IMPORTANT — LANGUAGE: Write in the SAME language as the context above — detect it and match ` +
                 `it; if there's no clear language, use English. ${exemplarRule(null)}`) +
             (languageFix ? `\n\n${languageFix}` : '') }],
@@ -320,8 +417,19 @@ export async function POST(request: NextRequest) {
         return res.choices?.[0]?.message?.content?.trim() || '';
       };
       // The language check wraps every generation the truth vet asks for (first + its one retry).
-      const generate = async (objection: string | null): Promise<string> =>
-        (await draftInLanguage((languageFix) => generateOnce(objection, languageFix), target)).body;
+      // W36 · A MESSAGE CLAIMS ONLY THE WORK THE RECORD SHOWS (lib/prepare/claims-floor unsupportedWorkClaims):
+      // a draft that names a day, a status, progress or a deed nothing on record shows is regenerated ONCE with
+      // those claims named; if the rewrite still makes one, the served words carry a NAMED SLOT in its place
+      // (slotUnsupportedWork) — never the invented claim.
+      const { unsupportedWorkClaims, workClaimObjection, slotUnsupportedWork } = await import('@/lib/prepare/claims-floor');
+      const promiseMaterial = [context, intent?.trim() ? `The user's instruction: ${intent.trim()}` : ''].filter(Boolean).join('\n\n');
+      const generate = async (objection: string | null): Promise<string> => {
+        const first = (await draftInLanguage((languageFix) => generateOnce(objection, languageFix), target)).body;
+        const claims = first ? unsupportedWorkClaims(first, promiseMaterial) : [];
+        if (!claims.length) return first;
+        const again = (await draftInLanguage((languageFix) => generateOnce([objection, workClaimObjection(claims)].filter(Boolean).join('\n'), languageFix), target)).body;
+        return slotUnsupportedWork(again || first, promiseMaterial).text;
+      };
       const vetted = await draftThroughVet(generate, vetFacts);
       body = vetted.body;
       if (vetted.failed) withheld = withheldLine(vetted.failed);

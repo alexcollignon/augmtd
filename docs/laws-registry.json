@@ -118,7 +118,11 @@
     "lib/commitments/fulfillment.ts",
     "lib/room/cta-law.ts",
     "lib/prepare/requirements.ts",
-    "lib/work/judge.ts"
+    "lib/work/judge.ts",
+    "app/api/items/reply-directions/route.ts",
+    "lib/tools/linkedin-post.ts",
+    "lib/home/synthesize-brief.ts",
+    "app/api/assistant/chat/route.ts"
    ],
    "gates": [
     {
@@ -172,6 +176,32 @@
      "kind": "pure",
      "cost": "zero-ai",
      "note": "W28 (uncommitted) AN OBEYED INJECTION IS NOT AN ASK: an understanding whose ask comes from the paragraphs that address the machine (addressesTheMachine), or that finds work in a message holding nothing else, is floored to awareness — no ask, owner or deadline (lib/ai/email-processor.ts injectionFloor); tests/unit/w28-extraction-and-move-floors"
+    },
+    {
+     "suite": "smoke-w36-assist-floors",
+     "ids": [
+      "A1",
+      "A2a",
+      "A2c",
+      "A2d",
+      "A2e",
+      "A2f"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W36 (uncommitted): THE INSTRUCTION SPAN NEVER REACHES AN ACTION MENU — the reply-direction chips replace every paragraph addressed to the machine (addressesTheMachine) with a declared note (lib/utils/inbound-data.ts withholdMachineParagraphs) and carry the email as an inboundBlock under INBOUND_DATA_RULE; the Home synthesis marks sender snippets as data and states the risky-ask rule; the LinkedIn workflow step carries the upstream step's content as a declared <source_content> block; the sidebar clips the focused email under the excerpt law as data. Precedence: the code floor wins over the prompt rule. tests/unit/w36-assist-floors. Measured by eval-surfaces (reply.directions rd-injected/rd-bank, home.synthesis hs-injected, workflow.linkedin li-injected, sidebar.chat sb-injection)."
+    },
+    {
+     "suite": "smoke-w36-sent-floors",
+     "ids": [
+      "S1",
+      "S2a",
+      "S2f",
+      "S2g"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W36 SENT IN THE USER'S NAME: a sentence addressed to the assistant/AI/system is removed (declared mark) from the thread, document and Slack material a writer reads (withoutMachineAddressed); tests/unit/w36-sent-floors"
     }
    ],
    "version_key": null,
@@ -1201,7 +1231,8 @@
     "lib/ai/bedrock-embeddings.ts",
     "lib/ai/call.ts",
     "lib/ai/bedrock-converse.ts",
-    "lib/ai/bedrock-residency.ts"
+    "lib/ai/bedrock-residency.ts",
+    "lib/ai/model-choice.ts"
    ],
    "gates": [
     {
@@ -1237,6 +1268,15 @@
      "kind": "outcome",
      "cost": "zero-ai",
      "note": "W31 EU residency floor: bedrock tier defaults + documented override targets are in-region or eu. (never global./us.); an EU-region adapter refuses a non-EU profile before sending"
+    },
+    {
+     "suite": "smoke-producer-model",
+     "ids": [
+      "M2b"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W36 (uncommitted): every EU tier × slot × producer with every model level (tenant producer, tier producer, tenant slot) pointed out of the perimeter still resolves to EU-resident Bedrock — refused levels fall through, the resolver fails closed"
     }
    ],
    "version_key": null,
@@ -4118,6 +4158,26 @@
       "K1-K5"
      ],
      "note": "W28 (uncommitted): K1 the Home persona composes the home_chat profile and is the W24 prompt byte for byte (pinned sha256); K2 every profile carries the format contract, drafts/steps carry no interview rules, frames explain why, rank against the surface's own contracts, say writing is never sending, and use no ALL-CAPS threat words; K3 the coworker chat prompt composes coworker_chat and the agent/hand-off step workflow_step, the contradicting 'never list multiple questions' / 'one focused question' wording is retired; K4 the real lib/+app/ tree: every model-calling file is registered (13 producers wired, 1 pending, the rest exempt with a reason), every producer's evidence needle is in place, nothing stale or doubled; K5 decoys: a new model-calling file and a producer that drops its conduct both FAIL. tests/unit/conduct.test.ts drives the pure audit on fixtures. Behaviour on live models is measured by the eval harness (live-AI, run by the orchestrator), not here."
+    },
+    {
+     "suite": "smoke-w36-assist-floors",
+     "ids": [
+      "A1",
+      "A2e"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W36 (uncommitted): RISKY ASKS ARE VERIFIED FIRST (CONDUCT_RULES.verify_risky_asks — a request to change payment details, move money, approve a payment or share credentials is never agreed to on its own word; verified through a known channel, never the sender) composed by the sidebar_chat profile, the reply-direction chips and the Home synthesis; the sidebar signs the user's messages with their profile name (user_voice_messages); the LinkedIn tool runs only as a workflow step and composes workflow_step. Collides with deliver_first (a draft that confirms a redirection is 'delivered' but unsafe): verify_risky_asks wins. tests/unit/w36-assist-floors."
+    },
+    {
+     "suite": "smoke-w36-sent-floors",
+     "ids": [
+      "S1",
+      "S2h"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W36: promises_as_given + correspondent_register are composed by the compose door only — kept OUT of the shared draft profile (A/B on draft.reply EU: dr-bank-change 2.83 with vs 4.42 without, dr-quote-missing 3.67 vs 4.58); tests/unit/w36-sent-floors"
     }
    ],
    "fn": "conductBlock · conductRules · auditConduct",
@@ -6460,6 +6520,58 @@
    "status": "holding",
    "broken_by": null,
    "collides_with": []
+  },
+  {
+   "id": "producer-model",
+   "name": "THE PRODUCER MODEL",
+   "aliases": [
+    "PRODUCER_MODEL",
+    "resolveModelChoice",
+    "producer:<key> overrides",
+    "THE MODEL PRECEDENCE"
+   ],
+   "tier": 2,
+   "domain": "platform",
+   "statement": "A producer that names itself (the EFFORT_PRODUCERS key it already passes for its effort) may run on its own model, per tier, through ONE pure resolver (lib/ai/model-choice.ts) with ONE precedence: tenant producer override (tenant_configs.model_overrides[\"producer:<key>\"]) > tier producer default (lib/ai/defaults.ts PRODUCER_MODEL) > tenant slot override > tier slot default. Each level layers over the one beneath (a { model } entry keeps the slot's provider and budget; another provider starts fresh). On the EU tiers every level is held to the EU Bedrock perimeter: a level outside it is refused, logged, and the next level serves; the tier default failing throws. The effort follows the RESOLVED model's family. PRODUCER_MODEL is empty on every tier until a measured split is adopted; unknown override keys are reported, never silently used.",
+   "homes": [
+    "lib/ai/model-choice.ts",
+    "lib/ai/defaults.ts",
+    "lib/ai/factory.ts",
+    "lib/ai/call.ts",
+    "lib/ai/types.ts",
+    "lib/ai/email-processor.ts",
+    "lib/commitments/extract.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-producer-model",
+     "ids": [
+      "M1",
+      "M2a",
+      "M2b",
+      "M2c",
+      "M3"
+     ],
+     "kind": "outcome",
+     "cost": "zero-ai",
+     "note": "W36 (uncommitted): M1 tests/unit/model-choice (the resolver's four levels, layering, the perimeter at every level, getAIClient + aiCall route a named producer and its effort follows the resolved family); M2 an exhaustive hostile sweep (every EU tier × slot × producer with every level pointed out of the perimeter resolves inside it) + PRODUCER_MODEL empty; M3 the five measured producers name themselves where the model is resolved. Adoption of any entry is measured by scripts/eval-outputs.ts on a probe carrying the producer override."
+    }
+   ],
+   "fn": "resolveModelChoice · withinTierPerimeter · modelOverrideProblems",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W36.1",
+   "collides_with": [
+    {
+     "law": "tier-privacy",
+     "precedence": "tier-privacy wins: no producer choice (tenant or tier) can resolve an EU-tier call outside EU-resident Bedrock; a refused level falls to the next, and the Bedrock adapter re-checks at request time"
+    },
+    {
+     "law": "model-param-floor",
+     "precedence": "compatible: the resolver chooses the model, the floor then applies that model's family rules at the transport — a producer-routed model gets exactly the floor its family gets anywhere"
+    }
+   ]
   },
   {
    "id": "sovereign-door",
@@ -9544,6 +9656,78 @@
     {
      "law": "one-conduct-every-producer",
      "precedence": "the conduct rule is the one wording; this law adds the code-read facts and the briefing's same-person mark beside it, never a second wording"
+    }
+   ]
+  },
+  {
+   "id": "sent-in-the-users-name",
+   "name": "THE WORDS SENT IN THE USER'S NAME",
+   "aliases": [
+    "THE THREAD'S PRESENT",
+    "A DATED PROMISE NAMES A DAY THE RECORDS GIVE",
+    "A GROUP PING IS THE INSTRUCTION'S",
+    "A STATED BULLET COUNT IS THE WHOLE MESSAGE",
+    "SLACK SPEAKS MRKDWN",
+    "THE COVER CHECKS, THEN WRITES",
+    "THEIR FORM OF ADDRESS",
+    "THE SIGNER IS NEVER 'me'"
+   ],
+   "tier": 2,
+   "domain": "workflows",
+   "statement": "Words that leave in the user's name — the compose door's email for a commitment, the cover email a task sends with its document, the Slack message a task posts — are written from the material's present and promise nothing it does not: the compose door reads the thread's recent messages (oldest first, tagged DATA, machine-addressed lines removed), not only the message a commitment was noted from; a draft that claims a day, a status, progress or a deed about the user's work that nothing on record shows (read in code, en·de·fr·pt·es) is regenerated once with those claims named, and if the rewrite still claims one the served words carry a NAMED SLOT in its place, never the invention (the sidebar's drafted cards pass the same floor); the reply's language and form of address (Sie/vous/usted) are read from the correspondents' own words; an account without a profile name signs as its own sent mail does, never as 'me'. The cover email writes a check (two values for one figure, the conditions it must keep, text addressed as an instruction) before the body, and only the body is sent. A posted Slack message keeps a group ping only when the task's instruction asks for one, holds a stated bullet count as the whole message, speaks mrkdwn, and is never cut mid-sentence. The reply drafter holds a payment-detail change in code (lib/prepare/risky-asks: the ask read from the email's own words, a safe-reply contract, one rewrite, then any sentence that agrees — now or once verified — commits a payment either way, or routes verification through the requester is dropped). A hand-off drops opening paragraphs that narrate its searching, and never presents the user's own context (their product, market, competitors) picked from search; the claims floor slots only concrete facts (a number, date, time, name or amount) and never quotes a span cut.",
+   "homes": [
+    "app/api/assistant/chat/route.ts",
+    "app/api/compose/draft/route.ts",
+    "lib/ai/conduct.ts",
+    "lib/context/draft-language.ts",
+    "lib/home/delegate.ts",
+    "lib/inbox/draft-reply.ts",
+    "lib/prepare/claims-floor.ts",
+    "lib/prepare/risky-asks.ts",
+    "lib/utils/inbound-data.ts",
+    "lib/workflows/report-back.ts",
+    "lib/workflows/run-workflow.ts",
+    "lib/workflows/slack-message.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w36-sent-floors",
+     "ids": [
+      "S1",
+      "S2a",
+      "S2b",
+      "S2c",
+      "S2d",
+      "S2e",
+      "S2f",
+      "S2g",
+      "S2h",
+      "S2i",
+      "S2j",
+      "S2k"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W36 (uncommitted): tests/unit/w36-sent-floors — neutraliseBroadcasts/statedBulletCount/holdBulletContract/toSlackMrkdwn, unsupportedPromiseTiming, withoutMachineAddressed, addressRegisterOf, coverBodyOf, the draft rules. Measured by eval-surfaces --surfaces sent (compose · cover · slack · report vs same model, Sonnet 5.5, GPT-5.6-terra; both tiers)."
+    }
+   ],
+   "fn": "unsupportedWorkClaims · slotUnsupportedWork · workClaimObjection · withoutMachineAddressed · addressRegisterOf · coverBodyOf · neutraliseBroadcasts · holdBulletContract · toSlackMrkdwn · asksPaymentDetailChange · riskyAgreementIn · dropRiskyAgreement · isConcreteClaim · stripAnnouncement",
+   "version_key": "CONDUCT_VERSION",
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W36.S",
+   "collides_with": [
+    {
+     "law": "untrusted-input-is-data",
+     "precedence": "untrusted-input wins: the thread and the document ride as DATA; the machine-addressed floor only removes words spoken to the assistant, it never acts on them"
+    },
+    {
+     "law": "one-conduct-every-producer",
+     "precedence": "the conduct rules are the one wording (promises_as_given, correspondent_register join the draft profile); the floors here hold in code what those rules ask"
+    },
+    {
+     "law": "excerpt-honesty",
+     "precedence": "every clip in these prompts goes through clipForPrompt / inboundBlock and declares itself"
     }
    ]
   }

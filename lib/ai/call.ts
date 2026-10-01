@@ -122,13 +122,16 @@ export interface AICallResult<T> {
  */
 export async function aiCall<T = unknown>(opts: AICallOpts): Promise<AICallResult<T>> {
   const shape = opts.shape;
-  const resolve = async (slot: TaskType) =>
-    opts.userId && opts.supabase ? getAIClient(opts.userId, slot, opts.supabase) : getSystemClient(slot);
+  // W36 — THE PRODUCER MODEL: a named producer resolves its OWN model (lib/ai/model-choice.ts precedence);
+  // the tier probe and the empty-content fallback stay the plain slot resolution.
+  const producerOpts = shape.effortProducer ? { producer: shape.effortProducer } : {};
+  const resolve = async (slot: TaskType, o: { producer?: EffortProducer } = {}) =>
+    opts.userId && opts.supabase ? getAIClient(opts.userId, slot, opts.supabase, o) : getSystemClient(slot, o);
 
   const tierProbe = await resolve('classification'); // cheap: config is cached; gives us the tier
   const tier = tierProbe.tier as TierType;
   const slot = slotForShape(tier, shape);
-  let resolved = slot === 'classification' ? tierProbe : await resolve(slot);
+  let resolved = shape.effortProducer ? await resolve(slot, producerOpts) : slot === 'classification' ? tierProbe : await resolve(slot);
 
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = opts.messages
     ?? [...(opts.system ? [{ role: 'system' as const, content: opts.system }] : []), { role: 'user' as const, content: opts.prompt ?? '' }];

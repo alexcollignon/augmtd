@@ -7,8 +7,10 @@ import { stepSurface } from './surfaces/step';
 import { handoffSurface } from './surfaces/handoff';
 import { draftSurface } from './surfaces/draft';
 import { MORE_SURFACES } from './surfaces/more';
+import { SENT_SURFACES } from './surfaces/sent';
+import { ASSIST_SURFACES } from './surfaces/assist';
 
-export const SURFACES: AnyAdapter[] = [dmSurface, roomSurface, stepSurface, handoffSurface, draftSurface, ...MORE_SURFACES];
+export const SURFACES: AnyAdapter[] = [dmSurface, roomSurface, stepSurface, handoffSurface, draftSurface, ...MORE_SURFACES, ...SENT_SURFACES, ...ASSIST_SURFACES];
 
 export function selectSurfaces(ids: string[] | null): AnyAdapter[] {
   if (!ids?.length) return SURFACES;

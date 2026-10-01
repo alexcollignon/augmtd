@@ -504,8 +504,10 @@ export function commitmentComposeTask(c: { direction?: string | null; descriptio
   const noFile = 'NOTHING is attached to this message — never say anything is attached, enclosed or "please find".';
   if (String(c.direction ?? '') === 'you_owe') {
     return `THE USER OWES THIS: "${what}". Write a short email FROM the user TO ${who} that DELIVERS it — ` +
-      `state the change or the answer itself when the context gives it; otherwise state honestly where it ` +
-      `stands and WHEN it will arrive. This is the user's own obligation: NEVER ask ${who} for an update, ` +
+      `state the change or the answer itself when the context gives it; otherwise say plainly that it is not ` +
+      `ready yet and WHEN it will arrive (the due date on record, or as soon as it is ready) — never a reason, ` +
+      `stage or status ("with finance", "out for signature", "almost done") the context does not give. ` +
+      `This is the user's own obligation: NEVER ask ${who} for an update, ` +
       `never nudge, remind or "follow up" with them, never write "let me know when you've had a chance". ` +
       `${noFile} ${COMPLETION_HONESTY_RULE}`;
   }

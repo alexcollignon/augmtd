@@ -3,6 +3,7 @@ import type { Chat } from 'openai/resources'
 import { SupabaseClient } from '@supabase/supabase-js'
 import type { TaskType, TierType, ModelEndpoint, TenantConfig, ResolvedClient } from './types'
 import { TIER_DEFAULTS } from './defaults'
+import { resolveModelChoice, modelOverrideProblems, type ModelSource } from './model-choice'
 import { createBedrockAdapter } from './bedrock-adapter'
 import {
   CLAUDE_NO_SAMPLING_RE, OPENAI_REASONING_RE, OPENAI_NO_MINIMAL_RE, openaiReasoningFloor, openaiReasoningValue, applyEffort, callerStatedEffort, effortOf, slotEffort, stampUsageEffort, producerEffort, type AIEffort,
@@ -55,6 +56,10 @@ async function getTenantConfig(userId: string, supabase: SupabaseClient): Promis
     auditLogging: tcData?.audit_logging ?? false,
     modelVersionPinning: tcData?.model_version_pinning ?? false,
   }
+
+  // W36 — a model_overrides key nothing reads (a typo, a retired producer) is said, never silently kept.
+  const problems = modelOverrideProblems(config.modelOverrides)
+  if (problems.length) console.warn(`[AI] tenant_configs.model_overrides for user ${userId.slice(0, 8)}: ${problems.join(' · ')}`)
 
   configCache.set(userId, { config, expiresAt: Date.now() + CONFIG_TTL_MS })
   return config
@@ -217,14 +222,17 @@ function resolveApiKey(endpoint: ModelEndpoint, config: TenantConfig): string {
 }
 
 // ─── Endpoint resolution ────────────────────────────────────────────────────────
-// Merges tier default with tenant overrides and dynamic endpoints.
+// W36 — THE PRODUCER MODEL: the model comes from ONE pure resolver (lib/ai/model-choice.ts) with one
+// precedence — tenant producer override > tier producer default (PRODUCER_MODEL) > tenant slot override
+// > tier slot default — and THE PERIMETER (an EU tier never resolves outside EU-resident Bedrock; a
+// refused level is logged and the next one serves). Then the tenant's dynamic endpoints are merged in.
 
-function resolveEndpoint(task: TaskType, config: TenantConfig): ModelEndpoint {
-  const tierDefault = TIER_DEFAULTS[config.tier][task]
-  const override = config.modelOverrides?.[task] ?? {}
-
-  // Merge: override wins over tier default
-  const endpoint: ModelEndpoint = { ...tierDefault, ...override }
+function resolveEndpoint(task: TaskType, config: TenantConfig, producer?: EffortProducer): { endpoint: ModelEndpoint; source: ModelSource } {
+  const choice = resolveModelChoice({ tier: config.tier, task, overrides: config.modelOverrides, producer })
+  for (const r of choice.refused) {
+    console.error(`[AI] REFUSED ${r.source} model ${r.provider}:${r.model || '(none)'} for ${producer ?? task} (tier ${config.tier}, user ${config.userId.slice(0, 8)}): ${r.reason} — serving ${choice.source}`)
+  }
+  const endpoint: ModelEndpoint = choice.endpoint
 
   // For private tiers without a baked-in baseURL, inject from tenant endpoints config
   // (never for Bedrock — it has no baseURL; SigV4 + region, built in buildClient).
@@ -234,7 +242,14 @@ function resolveEndpoint(task: TaskType, config: TenantConfig): ModelEndpoint {
       : config.endpoints.ai
   }
 
-  return endpoint
+  return { endpoint, source: choice.source }
+}
+
+/** W36 — options a caller may state when resolving its client. */
+export type AIClientOpts = {
+  /** THE PRODUCER MODEL + THE PRODUCER EFFORT: the producer names itself (lib/ai/effort.ts EFFORT_PRODUCERS);
+   *  its model may differ from its slot's (lib/ai/model-choice.ts). Absent = the slot resolution. */
+  producer?: EffortProducer
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────────
@@ -253,14 +268,19 @@ function resolveEndpoint(task: TaskType, config: TenantConfig): ModelEndpoint {
 export async function getAIClient(
   userId: string,
   task: TaskType,
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  opts: AIClientOpts = {},
 ): Promise<ResolvedClient> {
   const config = await getTenantConfig(userId, supabase)
-  const endpoint = resolveEndpoint(task, config)
+  const { endpoint, source } = resolveEndpoint(task, config, opts.producer)
   const base = buildClient(endpoint, config)
   const effort = slotEffort(task)
-  console.log(`[AI] task=${task} tier=${config.tier} model=${endpoint.model} user=${userId.slice(0, 8)}${effort ? ` effort=${effort}` : ''}`)
-  return { client: effort ? bindEffort(base, effort) : base, model: endpoint.model, endpoint, tier: config.tier, ...(effort ? { effort } : {}) }
+  const prod = opts.producer ? ` producer=${opts.producer}${source !== 'tier-slot' && source !== 'tenant-slot' ? `(${source})` : ''}` : ''
+  console.log(`[AI] task=${task} tier=${config.tier} model=${endpoint.model} user=${userId.slice(0, 8)}${prod}${effort ? ` effort=${effort}` : ''}`)
+  return {
+    client: effort ? bindEffort(base, effort) : base, model: endpoint.model, endpoint, tier: config.tier,
+    ...(effort ? { effort } : {}), ...(opts.producer ? { producer: opts.producer } : {}), modelSource: source,
+  }
 }
 
 /**
@@ -273,8 +293,7 @@ export async function getAIClient(
  * premise the company's `ai_tier` exists to keep. `scripts/smoke-tier-routing.ts` allowlists the
  * files that may call this; adding a caller = adding it there, with the reason.
  */
-export function getSystemClient(task: TaskType): ResolvedClient {
-  const endpoint = TIER_DEFAULTS['standard'][task]
+export function getSystemClient(task: TaskType, opts: AIClientOpts = {}): ResolvedClient {
   const fakeConfig: TenantConfig = {
     userId: 'system',
     tier: 'standard',
@@ -284,9 +303,14 @@ export function getSystemClient(task: TaskType): ResolvedClient {
     auditLogging: false,
     modelVersionPinning: false,
   }
+  // W36: the standard tier's producer default applies here too (no tenant, so no override level).
+  const { endpoint, source } = resolveEndpoint(task, fakeConfig, opts.producer)
   const base = buildClient(endpoint, fakeConfig)
   const effort = slotEffort(task)
-  return { client: effort ? bindEffort(base, effort) : base, model: endpoint.model, endpoint, tier: 'standard', ...(effort ? { effort } : {}) }
+  return {
+    client: effort ? bindEffort(base, effort) : base, model: endpoint.model, endpoint, tier: 'standard',
+    ...(effort ? { effort } : {}), ...(opts.producer ? { producer: opts.producer } : {}), modelSource: source,
+  }
 }
 
 /**

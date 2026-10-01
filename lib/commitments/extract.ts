@@ -1090,7 +1090,7 @@ Return ONLY JSON — {"commitments":[]} when there are no real commitments:
 {"commitments":[{"direction":"you_owe|awaiting","doer":"user | the other party's name/email","quote":"the exact words from this message","explicit_promise":true,"description":"short imperative, e.g. 'Send the Q3 proposal'","due_date":"YYYY-MM-DD or null","counterparty":"name/email or null","initiative":"short label or null","steps":["short sub-part", "..."]}]}`;
 
     try {
-      const { client: ai, model } = await getAIClient(userId, 'summarization', client);
+      const { client: ai, model } = await getAIClient(userId, 'summarization', client, { producer: 'commitments.extract' }); // W36 · THE PRODUCER MODEL
       // NO SILENT CAPS (W27 · the loss diagnosis): a long list overflowed the old 700-token budget, the
       // cut JSON failed to parse, and the catch returned [] — "no commitments", silently. The budget now
       // fits a long list; a truncated or unparseable answer is retried ONCE at double the budget; what

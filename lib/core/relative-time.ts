@@ -280,6 +280,22 @@ export function localDayOf(at: Date | string | number, tz?: string | null): stri
   }
 }
 
+/** W36 · TIME TRUTH in code: a date as it stands against the user's LOCAL today — "yesterday (Tuesday 29
+ *  September 2026)", "today (…)", "in 3 days (…)", "5 days ago (…)" — so no model derives "today" for a
+ *  meeting held yesterday (the sidebar's meeting follow-up thanked Sam "for the time today"). The same
+ *  approach as the briefing's calendarLine (each event marked past/now/upcoming against the local clock),
+ *  at day grain. Accepts an instant or a YYYY-MM-DD day. Pure. */
+export function dayRelativeTo(at: Date | string | number, now: Date = new Date(), tz?: string | null): string {
+  const raw = String(at ?? '');
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : localDayOf(at, tz);
+  const today = localDayOf(now, tz);
+  if (!day || !today) return raw;
+  const diff = Math.round((Date.parse(`${day}T12:00:00Z`) - Date.parse(`${today}T12:00:00Z`)) / 86_400_000);
+  const rel = diff === 0 ? 'today' : diff === -1 ? 'yesterday' : diff === 1 ? 'tomorrow' : diff < 0 ? `${-diff} days ago` : `in ${diff} days`;
+  const words = new Date(`${day}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+  return `${rel} (${words})`;
+}
+
 export function addDays(day: string, n: number): string {
   const t = Date.parse(`${day}T12:00:00Z`) + n * 86_400_000;
   return new Date(t).toISOString().slice(0, 10);

@@ -1009,7 +1009,7 @@ export async function computeUnderstanding(email: EmailData, supabase: SupabaseC
     ? email.user_addresses
     : [email.recipient_email].filter(Boolean) as string[]);
   const { getAIClient, aiCreate } = await import('@/lib/ai/factory');
-  const { client: ai, model } = await getAIClient(email.user_id!, 'classification', supabase);
+  const { client: ai, model } = await getAIClient(email.user_id!, 'classification', supabase, { producer: 'inbox.understanding' }); // W36 · THE PRODUCER MODEL
   // Reference date for resolving RELATIVE deadlines ("by Friday", "tomorrow") — the day THIS email was
   // sent, so "Friday" resolves correctly regardless of when we process it.
   const refISO = email.received_at && !Number.isNaN(Date.parse(email.received_at)) ? email.received_at : new Date().toISOString();

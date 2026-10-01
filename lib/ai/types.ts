@@ -40,13 +40,17 @@ export interface ModelEndpoint {
   dimensions?: number     // Embeddings output dimension (OpenAI supports truncation via this param)
 }
 
+/** tenant_configs.model_overrides: per-slot keys, and (W36) per-producer keys `producer:<EFFORT_PRODUCERS key>`. */
+export type ModelOverrides = Partial<Record<TaskType, Partial<ModelEndpoint>>> & { [producerKey: `producer:${string}`]: Partial<ModelEndpoint> | undefined }
+
 // ─── Tenant config ──────────────────────────────────────────────────────────────
 
 export interface TenantConfig {
   userId: string
   tier: TierType
-  // Per-task model overrides — applied on top of tier defaults
-  modelOverrides: Partial<Record<TaskType, Partial<ModelEndpoint>>>
+  // Per-task model overrides — applied on top of tier defaults. W36: a key may also name a PRODUCER
+  // ("producer:work.judge") — it outranks the slot (lib/ai/model-choice.ts, THE PRODUCER MODEL).
+  modelOverrides: ModelOverrides
   // Named endpoints for private tiers (e.g. { ai: 'http://...', embeddings: 'http://...' })
   endpoints: Record<string, string>
   // Encrypted API keys for client-managed deployments
@@ -70,4 +74,8 @@ export interface ResolvedClient {
   /** W27.C — the slot effort this client view applies to requests that state none (lib/ai/effort.ts).
    *  Absent = the param floor (the default for every slot). */
   effort?: import('./effort').AIEffort
+  /** W36 — the producer this client was resolved for, and which precedence level chose its model
+   *  (lib/ai/model-choice.ts). Absent producer = a plain slot resolution. */
+  producer?: import('./effort').EffortProducer
+  modelSource?: import('./model-choice').ModelSource
 }
