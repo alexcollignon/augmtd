@@ -251,7 +251,7 @@ async function main() {
     const rail = src('components/home/item-rail.tsx');
     ok('C2 persisted openers are dropped at read (the ONE mapper — cache and fetch both)', /return rows\.filter\(\(t\) => !isPersistedOpener\(t\)\)\.map\(/.test(rail));
     ok('C3 the opener is never written (no openerRef, no system POST in send)', !/openerRef/.test(rail) && !/role: 'system', text: o \}/.test(rail));
-    ok('C4 the opener composes from the ONE producer the floor reads', /const invite = openerInvite\(name, hasRecord\);/.test(rail) && /return \/\\\?\\s\*\$\/\.test\(pinned\.trim\(\)\) \? null : OPENER_INVITE;/.test(rail));
+    ok('C4 the opener composes from the ONE producer the floor reads', /const invite = openerInvite\(name, hasRecord\);/.test(rail) && /return \/\\\?\\s\*\$\/\.test\(standing\.trim\(\)\) \? null : OPENER_INVITE;/.test(rail));
   }
 
   console.log('D · ONE PREDICATE FOR FOLD AND RENDER');

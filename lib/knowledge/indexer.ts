@@ -19,15 +19,26 @@ const SKIP_MIME_TYPES = new Set([
   'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/wav',
 ]);
 
+// Scanned-PDF OCR budget: pages per file, and the completion budget per page (a dense A4 page is
+// ~1,000 tokens of text; reasoning models spend part of the budget before answering).
+const OCR_PAGE_CAP = 20;
+const OCR_MAX_TOKENS = 4000;
+
 // Image types that can be OCR'd via GPT-4o vision
 const OCR_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
 
-// ~800 tokens ≈ 3200 chars. Overlap prevents cutting context at boundaries.
-const CHUNK_SIZE = 3200;
-const CHUNK_OVERLAP = 300;
-// Hard cap on chunks per file — prevents DB bloat for very large documents.
+// THE CHUNK FITS THE EMBEDDER (eval-retrieval, Oct 1). A chunk's vector is computed from at most
+// EMBED_MAX_CHARS (1,500) characters — header + summary + content — so a chunk longer than ~1,250
+// characters is only HALF visible to vector search: with the old 3,200-char chunks, a clause in a
+// chunk's second half ("the courts of Lisbon have exclusive jurisdiction") could never be found by
+// meaning. Chunks are now sized so their whole content fits the window beside its header and summary.
+// Overlap prevents cutting context at boundaries. Exported for the ingestion eval's chunk check.
+export const CHUNK_SIZE = 1200;
+export const CHUNK_OVERLAP = 150;
+// Hard cap on chunks per file — prevents DB bloat for very large documents. Raised with the smaller
+// chunk (200 × 3,200 → 500 × 1,200 chars) so a long document keeps the coverage it had.
 // Exported (additively) so the retry door caps exactly where the first pass would have.
-export const MAX_CHUNKS_PER_FILE = 200;
+export const MAX_CHUNKS_PER_FILE = 500;
 
 export interface KnowledgeFile {
   id: string;
@@ -64,6 +75,13 @@ export type EmbedPurpose = 'document' | 'query';
 // worked by accident; semantically the name has to be IN the vector.
 /** File-level vector: the filename leads the body. */
 export const fileEmbedText = (filename: string, text: string): string => `${filename}\n${text}`;
+/** Summarised chunk vector (upload / artifact / connected-source paths): the context header
+ *  (document + section), the chunk's one-sentence summary, then the chunk's own text — embedText
+ *  clips the whole to the embedder's window. Until Oct 1 only the summary was embedded: the vector
+ *  carried neither the file's name nor the chunk's facts, so "which invoice charged 318.75" could not
+ *  tell two near-identical invoices apart (eval-retrieval). */
+export const summaryChunkEmbedText = (contextHeader: string | null, summary: string, content: string): string =>
+  `${contextHeader ? contextHeader + '\n' : ''}${summary}\n${content}`;
 /** Tier-1 raw chunk vector (ingest path): the context header (document + section) leads the content. */
 export const rawChunkEmbedText = (contextHeader: string | null, content: string): string =>
   `${contextHeader ? contextHeader + '\n' : ''}${content}`;
@@ -134,7 +152,12 @@ export function chunkText(text: string, _filename: string): Chunk[] {
   if (!text) return [];
   if (text.length <= CHUNK_SIZE) return [{ heading: null, content: text }];
 
-  const paragraphs = text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  // THE PARAGRAPH FLOOR (eval-ingestion, Oct 1): a paragraph longer than a chunk is split at line,
+  // then sentence, then word boundaries — before it, a PDF whose text had no blank line (every PDF:
+  // the extractor merged pages into one line) became ONE chunk of the whole document, of which the
+  // embedder saw only the first 1,500 characters.
+  const paragraphs = text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean)
+    .flatMap((p) => splitOversized(p, CHUNK_SIZE));
   const chunks: Chunk[] = [];
   let currentContent = '';
   let currentHeading: string | null = null;
@@ -179,6 +202,27 @@ export function chunkText(text: string, _filename: string): Chunk[] {
   return chunks.length > 0 ? chunks : [{ heading: null, content: text.slice(0, CHUNK_SIZE) }];
 }
 
+/** Split a paragraph longer than `max` into pieces of at most `max` chars, cutting at the last line
+ *  break, else sentence end, else space inside each window (a hard cut only for an unbroken run).
+ *  Pure; a paragraph within `max` comes back as-is. */
+export function splitOversized(para: string, max: number): string[] {
+  if (para.length <= max) return [para];
+  const out: string[] = [];
+  let rest = para;
+  while (rest.length > max) {
+    const win = rest.slice(0, max);
+    const floor = Math.floor(max * 0.4);
+    let cut = win.lastIndexOf('\n');
+    if (cut < floor) { const m = [...win.matchAll(/[.!?;:](?=\s)/g)].pop(); cut = m && m.index! + 1 >= floor ? m.index! + 1 : -1; }
+    if (cut < floor) cut = win.lastIndexOf(' ');
+    if (cut < floor) cut = max;
+    out.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) out.push(rest);
+  return out.filter(Boolean);
+}
+
 /** Exported (additively) for the retry door — the stored `context_header` must be byte-identical
  *  to what the first pass would have written. */
 export function buildContextHeader(filename: string, heading: string | null, chunkIndex: number): string {
@@ -215,7 +259,7 @@ async function generateSummary(extractedText: string, filename: string, userId: 
 // ─── Chunk summarization ─────────────────────────────────────────────────────
 
 const SUMMARIZE_BATCH_SIZE = 8;
-const SUMMARIZE_CHUNK_PREVIEW = 800; // chars sent to AI per chunk — enough for a good summary
+const SUMMARIZE_CHUNK_PREVIEW = CHUNK_SIZE; // the summary reads the WHOLE chunk (it read 800 of 3,200)
 
 /**
  * Summarize each chunk in 1 sentence for embedding.
@@ -292,7 +336,7 @@ async function extractImageWithOCR(buffer: Buffer, mimeType: string, filename: s
     const { client, model, endpoint, tier } = await getAIClient(userId, 'ocr', supabase);
     const res = await client.chat.completions.create({
       model,
-      max_tokens: 2000,
+      max_tokens: OCR_MAX_TOKENS,
       messages: [{
         role: 'user',
         content: [
@@ -313,61 +357,101 @@ async function extractImageWithOCR(buffer: Buffer, mimeType: string, filename: s
   }
 }
 
+/** OCR one page image through the tenant's `ocr` slot (the tier's own perimeter). null on refusal. */
+async function ocrPageImage(image: Buffer, mime: string, pageNo: number, filename: string, userId: string, supabase: SupabaseClient): Promise<string | null> {
+  const { resizeImageIfNeeded } = await import('@/lib/attachments/resize-image');
+  const sized = await resizeImageIfNeeded(image, mime);
+  const { client, model, endpoint, tier } = await getAIClient(userId, 'ocr', supabase);
+  const res = await client.chat.completions.create({
+    model,
+    max_tokens: OCR_MAX_TOKENS,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: `Extract all text visible on page ${pageNo} of this document. Keep each line on its own line and table rows on one line. Output only the raw text — no commentary.` },
+        { type: 'image_url', image_url: { url: `data:${sized.mimeType};base64,${sized.buffer.toString('base64')}` } },
+      ],
+    }],
+  });
+  logAIUsage(supabase, {
+    userId, source: 'kb_indexing', provider: endpoint.provider, model, tier, taskType: 'ocr', usage: res.usage,
+  }).catch(() => {});
+  const text = res.choices[0]?.message?.content ?? '';
+  const isError = /\b(cannot|unable|can't|failed|unreadable|not able|sorry)\b/i.test(text.slice(0, 200));
+  if (!text || isError) console.warn(`[Indexer] OCR returned nothing usable for ${filename} p${pageNo}`);
+  return text && !isError ? text.trim() : null;
+}
+
+/** The largest image painted on a PDF page, decoded by pdfjs (any filter it reads — DCT, Flate,
+ *  CCITT, JBIG2, JPX) and re-encoded as PNG. null when the page paints no image. */
+async function pdfPageImage(pdf: { getPage: (n: number) => Promise<unknown> }, pageNo: number): Promise<Buffer | null> {
+  const { getResolvedPDFJS } = await import('unpdf');
+  const { OPS } = await getResolvedPDFJS();
+  const { encodePng } = await import('@/lib/attachments/png-encode');
+  const page = (await pdf.getPage(pageNo)) as {
+    getOperatorList: () => Promise<{ fnArray: number[]; argsArray: unknown[][] }>;
+    objs: { get: (name: string, cb: (v: unknown) => void) => void };
+  };
+  const ops = await page.getOperatorList();
+  const names = new Set<string>();
+  ops.fnArray.forEach((fn, i) => { if (fn === OPS.paintImageXObject) names.add(String(ops.argsArray[i][0])); });
+  let best: { width: number; height: number; kind: number; data: Uint8Array } | null = null;
+  for (const n of names) {
+    const img = await new Promise<unknown>((res) => { try { page.objs.get(n, res); } catch { res(null); } });
+    const im = img as { width?: number; height?: number; kind?: number; data?: Uint8Array } | null;
+    if (!im?.data || !im.width || !im.height) continue;
+    if (!best || im.width * im.height > best.width * best.height) best = { width: im.width, height: im.height, kind: im.kind ?? 0, data: im.data };
+  }
+  return best && best.width * best.height >= 200 * 200 ? encodePng(best) : null;
+}
+
 /**
- * PDF text extraction with scanned-document fallback.
- * 1. Try pdf-parse (fast, works for text-based PDFs).
- * 2. If yield is low (likely scanned), fall back based on OCR provider:
- *    - anthropic:  Claude native PDF reading (base64 document block — Anthropic-only API)
- *    - all others: render first N pages to PNG via pdfjs-dist + canvas → vision OCR
- *      Works for all private/on-prem tiers (pixtral, llama-vision, gpt-4o, etc.)
+ * PDF text extraction with scanned-page fallback (eval-ingestion, Oct 1).
+ * 1. The text layer, page by page (lines kept).
+ * 2. Every page WITHOUT a text layer (< 40 chars) is a scanned page: its largest painted image is
+ *    decoded by pdfjs (whatever the image filter — the old path only found raw JPEG bytes, so a
+ *    Flate/CCITT scan read as nothing) and OCR'd through the tenant's `ocr` slot, in page order.
+ * 3. OCR is capped at OCR_PAGE_CAP pages per file, and the cap DECLARES itself in the text (no silent
+ *    caps — the old path read 3 pages and dropped the rest without a word).
  */
 async function extractPdfWithFallback(buffer: Buffer, filename: string, userId: string, supabase: SupabaseClient): Promise<string | null> {
-  const pdfText = await extractTextFromAttachment(buffer, 'application/pdf', filename) ?? '';
+  const { extractPdfPages } = await import('@/lib/attachments/text-extractor');
+  let pages: string[] = [];
+  try { pages = await extractPdfPages(buffer); } catch (err) { console.error(`[Indexer] PDF text layer failed for ${filename}:`, err); }
+  const textOnly = pages.join('\n\n').trim();
+  const scanned = pages.map((p, i) => (p.replace(/\s+/g, '').length < 40 ? i : -1)).filter((i) => i >= 0);
+  if (!scanned.length || buffer.length < 10000) return textOnly || null;
 
-  const isLikelyScanned = pdfText.length < 200 && buffer.length > 10000;
-  if (!isLikelyScanned) return pdfText || null;
-
-  const { client: ocrClient, model: ocrModel, endpoint, tier: ocrTier } = await getAIClient(userId, 'ocr', supabase);
-
-  // Extract embedded JPEG images directly from the PDF binary — no canvas rendering needed.
-  // Scanned PDFs (iPhone scanner, document scanners) are just JPEG(s) wrapped in a PDF
-  // container. Extracting them avoids the pdfjs+canvas segfault issues entirely.
-  const pageImages = extractJpegsFromPdf(buffer);
-  if (pageImages.length === 0) {
-    console.log(`[Indexer] No embedded images found in ${filename}, returning raw text`);
-    return pdfText || null;
-  }
-
-  console.log(`[Indexer] Extracted ${pageImages.length} image(s) from ${filename} — sending to vision OCR`);
+  console.log(`[Indexer] ${filename}: ${scanned.length}/${pages.length} page(s) without a text layer — OCR`);
+  const out = [...pages];
+  const read = scanned.slice(0, OCR_PAGE_CAP);
+  let ocrd = 0;
   try {
-    const parts: string[] = [];
-    for (let i = 0; i < Math.min(pageImages.length, 3); i++) {
-      const base64 = pageImages[i].toString('base64');
-      const res = await ocrClient.chat.completions.create({
-        model: ocrModel,
-        max_tokens: 2000,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'text', text: `Extract all text visible on page ${i + 1} of this document. Output only the raw text — no commentary.` },
-            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } },
-          ],
-        }],
-      });
-      logAIUsage(supabase, {
-        userId, source: 'kb_indexing', provider: endpoint.provider, model: ocrModel, tier: ocrTier, taskType: 'ocr', usage: res.usage,
-      }).catch(() => {});
-      const text = res.choices[0]?.message?.content ?? '';
-      const isError = /\b(cannot|unable|can't|failed|unreadable|not able|sorry)\b/i.test(text.slice(0, 200));
-      if (text && !isError) parts.push(text);
+    const { getDocumentProxy } = await import('unpdf');
+    const pdf = await getDocumentProxy(new Uint8Array(buffer));
+    for (const i of read) {
+      try {
+        const png = await pdfPageImage(pdf as never, i + 1);
+        if (!png) continue;
+        const t = await ocrPageImage(png, 'image/png', i + 1, filename, userId, supabase);
+        if (t) { out[i] = [pages[i], t].filter(Boolean).join('\n'); ocrd++; }
+      } catch (err) { console.error(`[Indexer] OCR of ${filename} p${i + 1} failed:`, err); }
     }
-    const extracted = parts.join('\n\n');
-    console.log(`[Indexer] Vision OCR extracted ${extracted.length} chars from ${filename}`);
-    return extracted || pdfText || null;
-  } catch (err) {
-    console.error(`[Indexer] Vision OCR failed for ${filename}:`, err);
-    return pdfText || null;
+  } catch (err) { console.error(`[Indexer] PDF image decode failed for ${filename}:`, err); }
+
+  // Last resort for a PDF pdfjs cannot open: the raw embedded JPEGs, in file order.
+  if (!ocrd && !textOnly) {
+    const jpegs = extractJpegsFromPdf(buffer).slice(0, OCR_PAGE_CAP);
+    const parts: string[] = [];
+    for (let i = 0; i < jpegs.length; i++) {
+      try { const t = await ocrPageImage(jpegs[i], 'image/jpeg', i + 1, filename, userId, supabase); if (t) parts.push(t); } catch { /* next */ }
+    }
+    if (parts.length) return parts.join('\n\n');
   }
+  const left = scanned.length - read.length;
+  const note = left > 0 ? `\n\n[Scanned pages not read: ${left} page(s) after page ${read[read.length - 1] + 1} exceed the ${OCR_PAGE_CAP}-page OCR cap.]` : '';
+  console.log(`[Indexer] ${filename}: OCR read ${ocrd}/${read.length} scanned page(s)${left > 0 ? `, ${left} left behind (cap)` : ''}`);
+  return (out.join('\n\n').trim() + note) || null;
 }
 
 /**
@@ -602,7 +686,7 @@ export async function indexUploadedFile(params: IndexUploadParams, adminClient: 
     }
     const headers = chunks.map((c, i) => buildContextHeader(filename, c.heading, i));
     const chunkSummaries = await summarizeChunks(chunks, filename, userId, adminClient);
-    const embeddings = await embedTexts(chunkSummaries, userId, adminClient);
+    const embeddings = await embedTexts(chunks.map((c, i) => summaryChunkEmbedText(headers[i], chunkSummaries[i], c.content)), userId, adminClient);
 
     await adminClient.from('knowledge_chunks').delete().eq('file_id', fileId);
 
@@ -629,12 +713,20 @@ export async function indexUploadedFile(params: IndexUploadParams, adminClient: 
  * Uses select-then-insert so only one row exists per user.
  */
 export async function getOrCreateAugmtdSource(userId: string, adminClient: SupabaseClient): Promise<string> {
-  const { data: existing } = await adminClient
+  // W38 — THE SNOWBALL (found by the file verifier's teardown: ~50 empty "AUGMTD Files" sources on one
+  // account in an hour). Two concurrent indexings (a compute run's two outputs) both missed and both
+  // inserted; from then on `.maybeSingle()` ERRORED on the two rows, the error was ignored, `existing`
+  // read null, and EVERY later index inserted yet another source. The oldest row is the one source;
+  // a read error is surfaced, never mistaken for "none".
+  const { data: rows, error: readErr } = await adminClient
     .from('knowledge_sources')
     .select('id')
     .eq('user_id', userId)
     .eq('provider', 'augmtd')
-    .maybeSingle();
+    .order('created_at', { ascending: true })
+    .limit(1);
+  if (readErr) throw new Error(`Failed to read augmtd source: ${readErr.message}`);
+  const existing = rows?.[0] as { id: string } | undefined;
 
   if (existing) return existing.id;
 
@@ -735,7 +827,7 @@ export async function indexArtifact(params: IndexArtifactParams, adminClient: Su
       const chunks = allChunks.slice(0, MAX_CHUNKS_PER_FILE);
       const headers = chunks.map((c, i) => buildContextHeader(filename, c.heading, i));
       const chunkSummaries = await summarizeChunks(chunks, filename, userId, adminClient);
-      const embeddings = await embedTexts(chunkSummaries, userId, adminClient);
+      const embeddings = await embedTexts(chunks.map((c, i) => summaryChunkEmbedText(headers[i], chunkSummaries[i], c.content)), userId, adminClient);
 
       await adminClient.from('knowledge_chunks').delete().eq('file_id', fileId);
 
@@ -912,7 +1004,7 @@ export async function indexSource(
           const headers = chunks.map((c, i) => buildContextHeader(file.name, c.heading, i));
           const chunkSummaries = await summarizeChunks(chunks, file.name, source.user_id, adminClient);
 
-          const embeddings = await embedTexts(chunkSummaries, source.user_id, adminClient);
+          const embeddings = await embedTexts(chunks.map((c, i) => summaryChunkEmbedText(headers[i], chunkSummaries[i], c.content)), source.user_id, adminClient);
 
           // Delete stale chunks for this file before re-inserting
           await adminClient.from('knowledge_chunks').delete().eq('file_id', fileId);

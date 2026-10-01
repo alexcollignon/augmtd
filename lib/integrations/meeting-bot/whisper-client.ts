@@ -49,9 +49,15 @@ export async function transcribeAudio(
   const formData = new FormData();
   const blob = new Blob([audioBuffer.buffer as ArrayBuffer], { type: 'audio/webm' });
   formData.append('file', blob, filename);
-  formData.append('model', 'Systran/faster-whisper-medium');
+  // PARITY WITH THE TRANSCRIPTION SERVICE (infra/meeting-bot/transcription_worker.py — the path every
+  // deployed recording takes; this client is the no-service fallback). Until Oct 1 this fallback
+  // forced `language: en` (a Portuguese/German/French meeting came back as English-shaped noise) on
+  // the old medium model. Now the same request the service sends: large-v3-turbo, language
+  // auto-detected per file, VAD on, and the punctuation seed prompt.
+  formData.append('model', 'deepdml/faster-whisper-large-v3-turbo-ct2');
   formData.append('response_format', 'verbose_json');
-  formData.append('language', 'en');
+  formData.append('vad_filter', 'true');
+  formData.append('prompt', 'Okay, let us begin.');
 
   const response = await fetch(`${whisperUrl}/v1/audio/transcriptions`, {
     method: 'POST',

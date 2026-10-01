@@ -73,10 +73,22 @@ export function anchorOf(linkKind: AnchorLinkKind, row: AnyRow, prepared: Prepar
   // W18.D · TIME TRUTH: the ask is a STORED ingest snapshot the door's fallback sentence and the
   // composer both read ("… by tomorrow" frozen at ingest). THE SERVE GUARD (lib/inbox/deixis — the
   // deixis law's one stripper, zero AI) removes a decaying day-word before either speaks it.
-  if (anchor.ask) anchor.ask = stripDeixis(anchor.ask) || null;
+  if (anchor.ask) anchor.ask = spokenIsoDates(stripDeixis(anchor.ask)) || null;
   const replyArt = prepared.find((a) => isLiveArtifact(a) && (a.kind === 'reply_draft' || a.kind === 'nudge_draft'));
   if (replyArt) anchor.prepared = replyArt.by ?? 'draft';
   return anchor;
+}
+
+/** TIME TRUTH, SPOKEN (UI walk, Oct 1): the understanding's ask carries its deadline as an absolute
+ *  date ("Send the signed MSA — 2026-10-02"), and the door's fallback sentence spoke the ISO string
+ *  verbatim ("Sam asked you to send the signed MSA — 2026-10-02."). A date-only ISO is rewritten the
+ *  way the rest of the product writes dates ("Fri, Oct 2"); date-only, so no zone can shift it. Pure. */
+export function spokenIsoDates(text: string): string {
+  return String(text ?? '').replace(/\b(\d{4})-(\d{2})-(\d{2})\b(?![T:\d])/g, (m, y, mo, d) => {
+    const dt = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d), 12));
+    if (Number.isNaN(dt.getTime()) || dt.getUTCDate() !== Number(d)) return m;
+    return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }).format(dt);
+  });
 }
 
 /** The item's latest activity (the plan-freshness rule reads it). */

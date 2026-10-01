@@ -26,6 +26,7 @@ import { join } from 'path';
 import { narratesSpeakerInThirdPerson } from '../lib/room/self-voice';
 import { fallbackOpeningLine, FALLBACK_FORBIDDEN, prepareNoneLine } from '../lib/room/opening-fallback';
 import { createSingleFlight } from '../lib/room/single-flight';
+import { spokenIsoDates } from '../lib/room/item-anchor';
 
 const ROOT = process.cwd();
 const src = (p: string) => readFileSync(join(ROOT, p), 'utf8');
@@ -276,6 +277,15 @@ async function main() {
     const moved = memo.needsPlanPreGen(k, '2026-09-23T09:30:00Z');
     gate('I7 pure: first sight → warm; same key + same stamp (a remount) → never again; a moved stamp → eligible once more',
       first && !remount && moved, `first=${first} remount=${remount} moved=${moved}`);
+  }
+
+  // ═══ G4 · THE ANCHOR'S ASK SPEAKS DATES, NEVER ISO (UI walk, Oct 1) ═══
+  console.log('\nG4 · the anchor ask speaks its date');
+  {
+    const said = fallbackOpeningLine({ who: 'Sam', ask: spokenIsoDates('Send the signed MSA — 2026-10-02'), origin: 'their_ask' }) ?? '';
+    gate('G4 an ISO deadline in the ask is spoken as a date ("Fri, Oct 2"), never "2026-10-02"',
+      !/\d{4}-\d{2}-\d{2}/.test(said) && said.includes('Fri, Oct 2'), said);
+    gate('G4 the anchor applies it at the one derivation', /spokenIsoDates\(stripDeixis\(anchor\.ask\)\)/.test(src('lib/room/item-anchor.ts')));
   }
 
   // ═══ H · REGISTERED + ON THE BOARD ═══

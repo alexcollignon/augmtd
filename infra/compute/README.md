@@ -68,3 +68,6 @@ Vercel env: `COMPUTE_SERVICE_URL=http://46.224.176.245:8002` · `COMPUTE_SECRET=
 - `COMPUTE_JOBS_DIR` must be the SAME host path inside and outside the service container
   (bind-mount identity) so the job container's `-v` mounts resolve.
 - Job dirs are deleted after every run (success or failure) — nothing persists on the box.
+- W38 (Oct 1, NOT yet redeployed): `main.py` registers the Office MIME types (the slim image's `mimetypes`
+  returned `application/octet-stream` for .xlsx/.docx/.pptx). Not urgent — the TS caller already corrects by
+  extension (`lib/tools/compute.ts` `outputMime`); redeploy with the next box change.

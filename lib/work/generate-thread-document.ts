@@ -3,6 +3,7 @@ import { conductBlock } from '@/lib/ai/conduct';
 import { buildToolRegistry } from '@/lib/mcp/registry';
 import { indexArtifact } from '@/lib/knowledge/indexer';
 import { getFileExt, getMimeType } from '@/lib/artifacts/builders';
+import { clipLabel } from '@/lib/utils/clip-for-prompt';
 import type { DocumentArtifact } from '@/lib/types/inbox';
 
 // ─── Shared document generation for a thread ──────────────────────────────────
@@ -76,7 +77,7 @@ export async function generateThreadDocument(
     const emailArtifacts = (pipelineResult.artifacts || []) as DocumentArtifact[];
     if (emailArtifacts.length === 0) return { artifact: null, summary: 'Generation failed' };
     const a = emailArtifacts[0];
-    a.title = instructions.slice(0, 60);
+    a.title = clipLabel(instructions, 60);
     const { data: t } = await adminClient.from('work_threads').select('artifacts').eq('id', threadId).single();
     const upd = [...(((t?.artifacts as DocumentArtifact[]) || []).filter((x) => x.type !== a.type)), a];
     await adminClient.from('work_threads').update({ artifacts: upd, artifact: a, updated_at: new Date().toISOString() }).eq('id', threadId);
@@ -130,6 +131,25 @@ export async function generateThreadDocument(
     } catch { /* auto-resolution is an enhancement */ }
   }
 
+  // 0b — W38 · THE FACTS FLOOR REACHES THE AUTHOR (found by the file verifier: a DM deck over a 4×3
+  // sales table stated every quarter total +5,000 and a 29,600 year total — true 13,600 — because the
+  // author summed by hand; and a thread-attached CSV reached ONLY the compiler, never the author, whose
+  // text the compiler is bound to as THE CONTENT). Tabular material — the thread's attachment or a
+  // table inside the grounding — is (a) shown to the author and (b) aggregated IN CODE in the sandbox
+  // first; the author states aggregates only from those computed lines. Fail-soft: no sandbox → the
+  // author writes as before (and the verify loop below still flags mismatches).
+  const { tabularBlock } = await import('@/lib/compute/tabular');
+  const table = csvText ?? tabularBlock(groundingContext);
+  let computedFacts: string | null = null;
+  if (table && !revise) {
+    try {
+      const { computeDataFacts } = await import('@/lib/compute/data-facts');
+      computedFacts = await computeDataFacts(adminClient, userId, { request: instructions, csvText: table });
+    } catch { computedFacts = null; }
+  }
+  const { clipForPrompt, EXCERPT_MARK, EXCERPT_RULE } = await import('@/lib/utils/clip-for-prompt');
+  const attachedData = csvText && !(groundingContext ?? '').includes(csvText.slice(0, 200)) ? clipForPrompt(csvText, 8000) : null;
+
   // 1 — the author writes the content (the coworker's task-tier model; typed rule attached).
   const { getAIClient, aiCreate } = await import('@/lib/ai/factory');
   const { TYPED_OUTPUT_RULE } = await import('@/lib/workflows/typed-output');
@@ -148,20 +168,35 @@ export async function generateThreadDocument(
         `${conductBlock('document')}\n` +
         (userContext ? `\nCONTEXT ABOUT THE USER:\n${userContext.slice(0, 2000)}\n` : '') +
         (groundingContext ? `\nSOURCE MATERIAL (the primary source — ground every fact here):\n${groundingContext.slice(0, 14000)}\n` : '') +
+        (attachedData ? `\nTHE ATTACHED DATA (the table the user attached — ground every figure here):\n${attachedData}\n${attachedData.includes(EXCERPT_MARK) ? `(${EXCERPT_RULE})\n` : ''}` : '') +
+        (computedFacts ? `\nCOMPUTED FACTS (computed BY CODE over the full table — authoritative): every total, mean, ` +
+          `difference or other aggregate you state comes from these lines verbatim; never compute an aggregate yourself. ` +
+          `A figure that is neither a raw value of the table nor in these lines is left out.\n${computedFacts}\n` : '') +
         (revise ? `\nTHIS REVISES the existing document "${revise.title ?? 'the current version'}" — produce the FULL revised text: apply the requested changes, keep everything else.\n` +
           (currentDocText ? `THE CURRENT DOCUMENT:\n${currentDocText}\n` : '') : '') +
+        `\nCharts named in the ask are drawn BY CODE from the data — never draw a chart, bar or rule with characters (#, █, =, *).\n` +
         `\nTHE DELIVERABLE: ${instructions}`,
     }],
   });
-  const content = (res.choices?.[0]?.message?.content ?? '').trim();
+  let content = (res.choices?.[0]?.message?.content ?? '').trim();
   if (!content) return { artifact: null, summary: 'Generation failed' };
+  // The author's own leading "# Title" names the document (and the served file) — otherwise the
+  // title would be the ask itself; it is lifted out so the document does not print it twice.
+  const h1 = /^#\s+(.+?)\s*#*\s*\n/.exec(`${content}\n`);
+  const authoredTitle = h1 && !/^```/.test(content) ? clipLabel(h1[1].replace(/\*\*/g, ''), 120) : null;
+  if (authoredTitle) content = content.slice(h1![0].length).trim() || content;
 
   // 2 — the door: tiers + floors + theme, one place for every actor.
   const { materializeDocument } = await import('@/lib/documents/materialize');
+  // W38 — A TITLE IS A LABEL, NOT A SLICE: the title names the served file ("<title>.xlsx"), and a raw
+  // `.slice(0, 60)` cut the ask mid-word ("…with a Total col.xlsx"). The author's own typed title wins;
+  // else the ask, clipped at a word boundary (clipLabel — the one label clip).
+  const docTitle = authoredTitle || clipLabel(instructions, 60) || 'Document';
   const m = await materializeDocument(adminClient, userId, {
-    title: instructions.slice(0, 60), content,
+    title: docTitle, content,
     request: instructions,
-    csvText,
+    csvText: csvText ?? table, // a table found in the grounding is tabular material too (charts, facts)
+    computedFacts, // the door's compiler reuses the author's facts (one computation, one truth)
     revise: revise ? { bytes: revise.bytes, ext: revise.ext, title: revise.title } : null,
     forceType: deliverableType as import('@/lib/types/inbox').DeliverableType,
   });
@@ -177,7 +212,7 @@ export async function generateThreadDocument(
   if (upErr) return { artifact: null, summary: 'Generation failed' };
   const artifact: DocumentArtifact = {
     id: artifactId, type: m.type,
-    title: revise?.title ?? instructions.slice(0, 60),
+    title: revise?.title ?? (String((m.content as { title?: unknown })?.title ?? '').trim() || docTitle),
     ...(revise ? { parent_id: revise.artifactId } : {}),
     generated_at: new Date().toISOString(), storage_path: storagePath, content: m.content,
   } as DocumentArtifact;

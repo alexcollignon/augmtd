@@ -10,7 +10,7 @@ import { randomUUID } from 'crypto';
 import { executeStep } from './execute-step';
 import { nextRunFromTrigger } from './schedule';
 import { sendCoworkerEmail } from '@/lib/tools/coworker-email';
-import { buildArtifactFile, getFileExt, getMimeType } from '@/lib/artifacts/builders';
+import { getFileExt, getMimeType } from '@/lib/artifacts/builders';
 import { textToDocContent, uploadArtifact } from '@/lib/workflows/doc-content';
 import { indexArtifact } from '@/lib/knowledge/indexer';
 import { normalizeOutput } from './types';
@@ -23,7 +23,7 @@ import type {
   Workflow, WorkflowRun, StepOutput, TriggerSource, OutputConfig, NormalizedOutput, OutputHome,
   HandoffStep,
 } from './types';
-import type { DocContent, DocSection, DocumentArtifact, DeliverableType } from '@/lib/types/inbox';
+import type { DocSection, DocumentArtifact, DeliverableType } from '@/lib/types/inbox';
 import type { WorkspaceFeatures } from '@/lib/workspace/types';
 
 // ── Admin client (service role) ───────────────────────────────────────────────
@@ -1112,11 +1112,13 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunWorkflow
       // A frame is not an office attachment (its file is .html and no builder makes one) — an
       // email-attachment home falls back to the document builder rather than asking for the
       // impossible. The frame lane itself only runs on the document home.
-      const configured = (out.artifactType as DeliverableType) ?? 'document';
-      const docType: DeliverableType = configured === 'frame' ? 'document' : configured;
-      const buffer = await buildArtifactFile(docType, materialised.artifact.content as DocContent);
-      const safeName = (subject.replace(/[^\w\s.-]/g, '').trim() || 'document').slice(0, 80);
-      attachments = [{ filename: `${safeName}.${getFileExt(docType)}`, content: buffer }];
+      // W38 — THE ATTACHMENT IS THE DELIVERED FILE (lib/artifacts/attachment.ts): the stored bytes of
+      // the artifact this run delivered, named by their own extension — never a re-render through the
+      // workflow's CONFIGURED kind (a typed sheet fed to the Word builder threw; a compiled file lost
+      // its charts).
+      const { attachmentForArtifact } = await import('@/lib/artifacts/attachment');
+      const att = await attachmentForArtifact(admin, materialised.artifact, { subject, configuredType: (out.artifactType as DeliverableType) ?? 'document' });
+      attachments = [att];
       body = await draftEmailCoverBody(admin, runnerId, out.emailBodyInstructions, subject, finalText);
     }
     const r = await sendCoworkerEmail(admin, runnerId, agentId, { to, cc: out.emailCc, subject, body, attachments });

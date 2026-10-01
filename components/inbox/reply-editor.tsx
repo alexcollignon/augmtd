@@ -1,6 +1,6 @@
 'use client';
 
-import { forwardRef, useCallback, useRef } from 'react';
+import { forwardRef, useCallback, useEffect, useRef } from 'react';
 import FormatToolbar from './format-toolbar';
 import { sanitizeDraftHtml } from '@/lib/utils/sanitize-html';
 
@@ -79,6 +79,25 @@ const ReplyEditor = forwardRef<HTMLDivElement, ReplyEditorProps>(function ReplyE
     [ref, initialHTML, onInput],
   );
 
+  // AUTOFOCUS, FOR REAL (UI walk, Oct 1): React's `autoFocus` only focuses form controls — on a
+  // contentEditable div it is a no-op. "Click anywhere to edit" mounted this editor UNFOCUSED, so the
+  // first words typed after the click went nowhere. Focus once on mount, caret at the end.
+  useEffect(() => {
+    if (!autoFocus) return;
+    const el = editorRef.current;
+    if (!el) return;
+    el.focus();
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    } catch { /* focus alone is enough */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only: never steal the caret mid-edit
+  }, []);
+
   return (
     <div className={className}>
       <div
@@ -93,13 +112,17 @@ const ReplyEditor = forwardRef<HTMLDivElement, ReplyEditorProps>(function ReplyE
         style={{ minHeight, maxHeight }}
       />
       {children}
-      <div className="flex items-center justify-between gap-2 mt-2">
-        <div className="flex items-center gap-1 flex-1 min-w-0">
+      {/* THE ROW WRAPS, IT NEVER OVERLAPS (UI walk, Oct 1): in a narrow pane (the inbox reading
+          column beside the assistant) the format buttons ran UNDER the trailing "Sig · Discard ·
+          Send" — the leading group shrank to zero and overflowed. It keeps its own width now and
+          the trailing controls drop to the next line, right-aligned, when both cannot fit. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 mt-2">
+        <div className="flex items-center gap-1 flex-1 min-w-fit">
           {toolbarLeading}
           {toolbarLeading && <div className="w-px h-4 bg-neutral-200 flex-shrink-0" />}
           <FormatToolbar editorRef={editorRef} onSync={() => emit(editorRef.current)} />
         </div>
-        {toolbarTrailing}
+        {toolbarTrailing && <div className="ml-auto flex-shrink-0">{toolbarTrailing}</div>}
       </div>
     </div>
   );

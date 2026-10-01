@@ -5218,7 +5218,10 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
       return i > 0
         // the pinned branch carries NO preamble and NO subject — just the forward question
         // ⟲ RE-POINTED W19: the invitation is the ONE producer's constant (OPENER_INVITE).
-        && /if \(pinned\) return \/\\\?\\s\*\$\/\.test\(pinned\.trim\(\)\) \? null : OPENER_INVITE;/.test(seg)
+        // ⟲ RE-POINTED (UI walk, Oct 1): the summary is a pinned position too — whatever STANDS
+        // pinned (the brief, else the summary the seat speaks), the opener is purely the invitation.
+        && /const standing = pinned \|\| sum;/.test(seg)
+        && /if \(standing\) return \/\\\?\\s\*\$\/\.test\(standing\.trim\(\)\) \? null : OPENER_INVITE;/.test(seg)
         && /export const OPENER_INVITE = 'What do you want to pick up\?';/.test(read('components/home/room-chat.ts') ?? '')
         // …and it is still derived, with no second composed voice behind it
         && !/fetch\(/.test(seg) && !/await /.test(seg)

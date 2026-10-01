@@ -834,9 +834,12 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     // less: with a brief standing, the opener is PURELY the invitation — no preamble, no subject.
     // And when that brief already ends by asking something, the turn is ALREADY back with the
     // reader: a question under a question is the machine talking to itself, so nothing renders.
-    if (pinned) return /\?\s*$/.test(pinned.trim()) ? null : OPENER_INVITE;
-    const firstSentence = sum ? (sum.match(/^[\s\S]{0,220}?[.!?](?=\s|$)/)?.[0] ?? null) : null;
-    if (firstSentence) return `${firstSentence} ${OPENER_INVITE}`;
+    // THE SUMMARY IS A PINNED POSITION TOO (UI walk, Oct 1): with no composed brief the room's pinned
+    // seat speaks `ent.summary` (openingText below) — so an opener that led with the summary's first
+    // sentence printed it twice, one bubble apart ("Migrate X. Budget …" / "Migrate X. What do you
+    // want to pick up?"). Whatever stands pinned, the opener is purely the invitation.
+    const standing = pinned || sum;
+    if (standing) return /\?\s*$/.test(standing.trim()) ? null : OPENER_INVITE;
     return name ? invite : null;
   })();
 

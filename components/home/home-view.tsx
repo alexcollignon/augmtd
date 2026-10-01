@@ -2001,10 +2001,12 @@ export function HomeView({ initialView = null }: { initialView?: string | null }
     machineState: c.machine?.state ?? null,
   }));
   const liveDeals = (b?.slippingDeals ?? []).filter((d) => !dismissedDeals.has(d.key));
-  // THE BRIEF de-dup: items the brain SENTENCED live in the prose — they leave the deck (hero kept).
-  const sentencedIds = new Set(
-    (b?.briefing?.refs ?? []).filter((r) => r.kind === 'action' && !(b?.briefing?.tail ?? []).includes(r.itemId)).map((r) => r.itemId),
-  );
+  // THE BRIEF de-dup is RETIRED ON THIS PAGE (UI walk, Oct 1). It removed every item the brain
+  // SENTENCED from the deck because "it lives in the prose" — but NO PROSE RENDERS ON THE HOME (owner
+  // law). A sentenced item therefore had no home at all: a served attention row (a reply due today)
+  // vanished while the sidebar still counted it. A sentence nobody sees is not a home, so nothing is
+  // de-duplicated against it; the served attention set alone decides the rows.
+  const sentencedIds = new Set<string>();
   const agenda: Agenda = buildAgenda({
     replyItems: agendaReplyItems, noticeItems: agendaNoticeItems, commitItems: agendaCommitItems,
     priorityCards: liveBodyCards, deals: liveDeals,

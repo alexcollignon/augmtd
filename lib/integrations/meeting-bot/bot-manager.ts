@@ -692,7 +692,7 @@ export async function reEnhanceTranscript(
   let transcript: any = null;
   const { data: byEvent } = await supabase
     .from('meeting_transcripts')
-    .select('id, title, transcript_segments, notes_structured, calendar_event_id, start_time')
+    .select('id, title, transcript, transcript_segments, notes_structured, calendar_event_id, start_time')
     .eq('calendar_event_id', eventOrTranscriptId)
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
@@ -703,7 +703,7 @@ export async function reEnhanceTranscript(
   if (!transcript) {
     const { data: byId } = await supabase
       .from('meeting_transcripts')
-      .select('id, title, transcript_segments, notes_structured, calendar_event_id, start_time')
+      .select('id, title, transcript, transcript_segments, notes_structured, calendar_event_id, start_time')
       .eq('id', eventOrTranscriptId)
       .eq('user_id', userId)
       .maybeSingle();
@@ -724,8 +724,16 @@ export async function reEnhanceTranscriptRow(
   templateId: string,
   supabase: SupabaseClient,
 ): Promise<MeetingInsights> {
-  const segments = transcript.transcript_segments ?? [];
+  // THE RE-RUN READS WHAT THE ROW HOLDS (UI walk, Oct 1): a row whose words live only in `transcript`
+  // (no segments written) was re-run on the TITLE alone — and the model invented a whole generic
+  // meeting ("stakeholder roles assigned", "risk mitigation outlined") from four words. The stored
+  // text becomes segments the way the text-note door makes them; with no words at all there is
+  // nothing to extract, and the re-run says so (a recorded failure) instead of buying a fiction.
+  const stored = Array.isArray(transcript.transcript_segments) ? transcript.transcript_segments : [];
+  const segments = stored.length ? stored
+    : (typeof transcript.transcript === 'string' && transcript.transcript.trim() ? textToSegments(transcript.transcript) : []);
   const liveNotes = transcript.notes_structured?.live_notes || '';
+  const nothingToRead = !segments.length && !String(liveNotes).trim();
 
   // Get template for custom instructions
   const { getTemplate } = await import('@/lib/meetings/templates');
@@ -738,7 +746,9 @@ export async function reEnhanceTranscriptRow(
   }
 
   const combinedNotes = [liveNotes, templateHint].filter(Boolean).join('\n');
-  const insights = await extractMeetingInsights(userId, transcript.title, segments, supabase, combinedNotes || undefined, transcript.start_time ?? null);
+  const insights: MeetingInsights = nothingToRead
+    ? { document: '', decisions: [], actionItems: [], risks: [], keyMoments: [], suggested_next_step: null, failed: true, failureReason: 'EmptyTranscript' }
+    : await extractMeetingInsights(userId, transcript.title, segments, supabase, combinedNotes || undefined, transcript.start_time ?? null);
 
   if (insights.failed) {
     // W35 · the standing notes stay exactly as they are; only the failure is recorded.
@@ -789,7 +799,7 @@ export async function retryFailedMeetingInsights(
   const rerun = opts.rerun ?? reEnhanceTranscriptRow;
   const out = { retried: 0, recovered: 0, stillFailed: 0, due: 0, leftBehind: 0, errors: [] as string[] };
   const { data, error } = await admin.from('meeting_transcripts')
-    .select('id, user_id, title, transcript_segments, notes_structured, calendar_event_id, start_time, template_id')
+    .select('id, user_id, title, transcript, transcript_segments, notes_structured, calendar_event_id, start_time, template_id')
     .eq('notes_structured->insights_status->>state', 'failed')
     .order('created_at', { ascending: true })
     .limit(50);

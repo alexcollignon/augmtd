@@ -138,13 +138,13 @@ describe('free slots honor the clock and the window', () => {
   it('proposeFreeSlots confines proposals to the stated window and refuses a closed one', async () => {
     const fake = { from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ gte: () => ({ lte: () => ({ limit: async () => ({ data: [] }) }) }) }) }) }) }) } as never;
     const today = '2026-09-23';
-    const inWin = await proposeFreeSlots(fake, 'u', { tz: 'UTC', todayStr: today, fromDayStr: '2026-09-30', toDayStr: '2026-10-01', count: 3 });
+    const inWin = await proposeFreeSlots(fake, 'u', { tz: 'UTC', todayStr: today, fromDayStr: '2026-09-30', toDayStr: '2026-10-01', count: 3, nowMs: Date.parse('2026-09-23T12:00:00Z') });
     expect(inWin.length).toBeGreaterThan(0);
     for (const s of inWin) expect(s.startISO.slice(0, 10) >= '2026-09-30' && s.startISO.slice(0, 10) <= '2026-10-01').toBe(true);
-    const closed = await proposeFreeSlots(fake, 'u', { tz: 'UTC', todayStr: today, fromDayStr: '2026-09-15', toDayStr: '2026-09-16', count: 3 });
+    const closed = await proposeFreeSlots(fake, 'u', { tz: 'UTC', todayStr: today, fromDayStr: '2026-09-15', toDayStr: '2026-09-16', count: 3, nowMs: Date.parse('2026-09-23T12:00:00Z') });
     expect(closed).toEqual([]);
     // a window opening in the past is clamped to tomorrow, never proposing behind the clock
-    const clamped = await proposeFreeSlots(fake, 'u', { tz: 'UTC', todayStr: today, fromDayStr: '2026-09-20', toDayStr: '2026-09-25', count: 3 });
+    const clamped = await proposeFreeSlots(fake, 'u', { tz: 'UTC', todayStr: today, fromDayStr: '2026-09-20', toDayStr: '2026-09-25', count: 3, nowMs: Date.parse('2026-09-23T12:00:00Z') });
     for (const s of clamped) expect(s.startISO.slice(0, 10) >= '2026-09-24').toBe(true);
   });
 });

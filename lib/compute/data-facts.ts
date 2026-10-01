@@ -24,9 +24,10 @@ export async function computeDataFacts(
     const lines = csv.split('\n');
     const preview = lines.slice(0, 6).join('\n');
 
+    // W38: "never invent categories" — unasked Low/Medium/High bands leaked made-up cut-offs into a delivered document.
     const gen = async (repairNote?: string): Promise<string | null> => {
       const res = await aiCall<{ script?: string }>({
-        userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: 900, source: 'brain_synthesis',
+        userId, supabase: client, shape: { output: 'json' }, temperature: 0, maxTokens: 3000, source: 'brain_synthesis',
         prompt:
           `Write a small Python script that computes what this request needs from a CSV file.\n\n` +
           `THE REQUEST: ${args.request.slice(0, 500)}\n\n` +
@@ -35,7 +36,8 @@ export async function computeDataFacts(
           (repairNote ? `YOUR PREVIOUS SCRIPT FAILED — fix the cause:\n${repairNote.slice(0, 600)}\n\n` : '') +
           `CONTRACT: read the CSV from /job/inputs/data.txt with csv.DictReader; process EVERY data row — ` +
           `never deduplicate, never silently skip a row; the FIRST printed line must be exactly ` +
-          `"TOTAL ROWS: <n>" (the number of data rows you processed). When the request PARTITIONS rows ` +
+          `"TOTAL ROWS: <n>" (the number of data rows you processed). Never invent categories, bands or thresholds ` +
+          `the request does not name. When the request PARTITIONS rows ` +
           `into categories (bands, buckets, groups): every row must land in EXACTLY ONE category — if the ` +
           `stated ranges leave gaps for the actual values (e.g. decimal scores between "0-39" and "40-59"), ` +
           `close the gaps with half-open ranges (0-39 means < 40) and print a line ` +
@@ -73,17 +75,19 @@ export async function computeDataFacts(
       if (cm && Number(cm[1]) !== n) return `You classified ${cm[1]} of ${n} rows — ${n - Number(cm[1])} fell through the category boundaries. Close the gaps (half-open ranges) so every row lands in exactly one category, and state the boundary rule in a Note line.`;
       return null;
     };
+    // Failing soft is not failing silently (W38): every null exit says why in the logs.
     let script = await gen();
-    if (!script) return null;
+    if (!script) { console.warn('[data-facts] codegen returned no script'); return null; }
     let out = await executeRunCompute({ script, data: csv, description: 'data facts for a delegated deliverable' }, userId, client);
     let problem = verify(out);
     if (problem) {
+      console.warn('[data-facts] attempt 1 rejected, repairing:', problem.slice(0, 300).replace(/\n/g, ' | '));
       script = await gen(problem);
-      if (!script) return null;
+      if (!script) { console.warn('[data-facts] repair codegen returned no script'); return null; }
       out = await executeRunCompute({ script, data: csv, description: 'data facts (repaired)' }, userId, client);
       problem = verify(out);
-      if (problem) return null;
+      if (problem) { console.warn('[data-facts] repair also rejected — no facts:', problem.slice(0, 300).replace(/\n/g, ' | ')); return null; }
     }
     return out.trim().slice(0, 4000);
-  } catch { return null; }
+  } catch (e) { console.warn('[data-facts] threw — no facts:', e instanceof Error ? e.message : String(e)); return null; }
 }

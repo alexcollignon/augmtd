@@ -250,7 +250,7 @@ function fakeClient(tasks: Record<string, unknown>) {
     && /serveTimeWords\(briefLine, \{ composedAt: cached\?\.generated_at/.test(home));
   const anchor = src('lib/room/item-anchor.ts');
   gate('D6 the item anchor\'s stored ask (the fallback sentence + the composer read it) passes THE SERVE GUARD (deixis)',
-    /if \(anchor\.ask\) anchor\.ask = stripDeixis\(anchor\.ask\) \|\| null;/.test(anchor));
+    /if \(anchor\.ask\) anchor\.ask = spokenIsoDates\(stripDeixis\(anchor\.ask\)\) \|\| null;/.test(anchor));
   const leaf = src('lib/core/relative-time.ts');
   gate('D7 the floor is a pure client-safe leaf (imports nothing)', !/^import /m.test(leaf));
 

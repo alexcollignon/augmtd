@@ -282,7 +282,14 @@ export async function GET(request: NextRequest) {
       autoPaused: !!w.auto_paused_at,
       lastRunStatus: lastRun?.status ?? null,
       lastRunError: lastRun?.error ?? null,
-      runningProgress: running ? `${(running.step_outputs ?? []).length}/${(w.steps ?? []).length}` : null,
+      // THE STEP IT IS ON, not the steps it finished (UI walk, Oct 1): the row said "running — step
+      // 3/4" while the run's own drawer said "Delivering — step 4/4" for the same moment. One fact,
+      // one formula — the drawer's (components/workflows/process-drawer.tsx): min(done + 1, total).
+      runningProgress: running ? (() => {
+        const total = (w.steps ?? []).length;
+        const done = (running.step_outputs ?? []).length;
+        return total > 0 ? `${Math.min(done + 1, total)}/${total}` : `${done + 1}`;
+      })() : null,
     };
   });
 

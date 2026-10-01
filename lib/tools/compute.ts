@@ -54,6 +54,26 @@ export const runComputeDefinition = {
 
 
 
+/** THE OUTPUT'S TRUE TYPE (W38 — found by the file verifier): the service guesses MIME with Python's
+ *  `mimetypes`, which in the slim job image knows no Office types — every .xlsx/.docx/.pptx came back
+ *  `application/octet-stream`, was stored as such, and the KB indexer then SKIPPED it ("unsupported
+ *  MIME type"), so a produced sheet never became findable. The extension decides whenever the
+ *  service's guess is missing or generic. Pure. */
+const OUTPUT_MIME: Record<string, string> = {
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  xls: 'application/vnd.ms-excel', csv: 'text/csv', tsv: 'text/tab-separated-values', json: 'application/json',
+  pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', svg: 'image/svg+xml',
+  txt: 'text/plain', md: 'text/markdown', html: 'text/html',
+};
+export function outputMime(name: string, given?: string | null): string {
+  const g = String(given ?? '').trim().toLowerCase();
+  if (g && g !== 'application/octet-stream' && g !== 'binary/octet-stream') return g;
+  const ext = String(name ?? '').split('.').pop()?.toLowerCase() ?? '';
+  return OUTPUT_MIME[ext] ?? 'application/octet-stream';
+}
+
 function admin(): SupabaseClient {
   return createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -95,7 +115,7 @@ export async function runComputeForOutputs(
       ok: !!out.ok,
       stdout: (out.stdout ?? '').trim(),
       stderr: (out.stderr ?? '').trim(),
-      outputs: (out.outputs ?? []).map((o) => ({ name: o.name, bytes: Buffer.from(o.b64, 'base64'), mime: o.mime || 'application/octet-stream' })),
+      outputs: (out.outputs ?? []).map((o) => ({ name: o.name, bytes: Buffer.from(o.b64, 'base64'), mime: outputMime(o.name, o.mime) })),
     };
   } catch { return null; }
 }
@@ -176,8 +196,9 @@ export async function executeRunCompute(
     try {
       const path = `compute/${userId}/${jobId}/${o.name}`;
       const bytes = Buffer.from(o.b64, 'base64');
+      const mime = outputMime(o.name, o.mime);
       const { error } = await adminClient.storage.from('work-artifacts')
-        .upload(path, bytes, { contentType: o.mime || 'application/octet-stream', upsert: true });
+        .upload(path, bytes, { contentType: mime, upsert: true });
       if (error) { saved.push(`${o.name} (STORE FAILED: ${error.message})`); continue; }
       saved.push(`${o.name} (${Math.round((o.size ?? bytes.length) / 1024)} KB)`);
       // Index into the KB so find_file / attachments / later steps can use it — and stamp the
@@ -185,7 +206,7 @@ export async function executeRunCompute(
       // Files tab, the grounding, the resolver — not a loose orphan). Chained after the index
       // so the row exists; non-fatal throughout.
       import('@/lib/knowledge/indexer').then(({ indexArtifact }) =>
-        indexArtifact({ artifactId: `compute::${jobId}::${o.name}`, storagePath: path, filename: o.name, mimeType: o.mime || 'application/octet-stream', userId }, adminClient)
+        indexArtifact({ artifactId: `compute::${jobId}::${o.name}`, storagePath: path, filename: o.name, mimeType: mime, userId }, adminClient)
           .then(() => config.entityId
             ? adminClient.from('knowledge_files').update({ entity_id: config.entityId })
                 .eq('user_id', userId).eq('provider_file_id', `compute::${jobId}::${o.name}`).then(() => {})

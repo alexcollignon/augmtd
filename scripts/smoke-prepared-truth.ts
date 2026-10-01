@@ -56,8 +56,8 @@ console.log('\nA · a proposal honors the stated window and the clock');
   const slots = pickFreeSlots({ todayStr: '2026-09-21', tz: 'UTC', busy: [], count: 3, nowMs });
   gate('A3 pickFreeSlots never proposes a slot behind the clock', slots.length === 3 && slots.every((s) => Date.parse(s.startISO) > nowMs) && slotInPast('2026-09-22T10:00:00Z', nowMs));
   const fake = { from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ gte: () => ({ lte: () => ({ limit: async () => ({ data: [] }) }) }) }) }) }) }) } as never;
-  const p = proposeFreeSlots(fake, 'u', { tz: 'UTC', todayStr: '2026-09-23', fromDayStr: '2026-09-30', toDayStr: '2026-10-01', count: 3 });
-  const closed = proposeFreeSlots(fake, 'u', { tz: 'UTC', todayStr: '2026-09-23', fromDayStr: '2026-09-15', toDayStr: '2026-09-16', count: 3 });
+  const p = proposeFreeSlots(fake, 'u', { tz: 'UTC', todayStr: '2026-09-23', fromDayStr: '2026-09-30', toDayStr: '2026-10-01', count: 3, nowMs: Date.parse('2026-09-23T12:00:00Z') });
+  const closed = proposeFreeSlots(fake, 'u', { tz: 'UTC', todayStr: '2026-09-23', fromDayStr: '2026-09-15', toDayStr: '2026-09-16', count: 3, nowMs: Date.parse('2026-09-23T12:00:00Z') });
   // (async gates resolve below)
   const pass_ = src('lib/prepare/pass.ts');
   gate('A4 the pass\'s calendar fallback is CONFINED to the stated window (the ONE confinement returns it; fromDayStr/toDayStr) and stamps proposedFrom',

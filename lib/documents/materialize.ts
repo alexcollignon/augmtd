@@ -22,7 +22,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { DocTheme } from '@/lib/documents/theme';
-import type { DeliverableType, ArtifactContent } from '@/lib/types/inbox';
+import type { DeliverableType, ArtifactContent, DocContent } from '@/lib/types/inbox';
 import type { FrameDiagnostics } from '@/lib/frames/generate-frame';
 
 export type MaterializeArgs = {
@@ -86,7 +86,11 @@ export async function materializeDocument(
   const { parseTypedDeliverable } = await import('@/lib/workflows/typed-output');
   const { buildArtifactFile, getFileExt, getMimeType } = await import('@/lib/artifacts/builders');
 
-  const typed = parseTypedDeliverable(args.content);
+  // THE CHARACTER-ART FLOOR (W38): a chart drawn with characters is not content — every tier below
+  // (the compiler's content floor, the template renderers) reads the cleaned text.
+  const { stripCharacterArt } = await import('@/lib/documents/shape-floor');
+  const content = stripCharacterArt(args.content);
+  const typed = parseTypedDeliverable(content);
   const title = (args.revise?.title || typed?.content.title || args.title).slice(0, 120) || 'Document';
   const request = args.request ?? '';
 
@@ -102,7 +106,7 @@ export async function materializeDocument(
   // the deliverable that lands is an honest document (never a .docx wearing type 'frame').
   const forcedDocType = args.forceType && args.forceType !== 'frame' ? args.forceType : null;
   const type: DeliverableType = compileExt === 'pptx' ? 'presentation' : compileExt === 'xlsx' ? 'spreadsheet' : (forcedDocType ?? 'document');
-  const doc: ArtifactContent = typed ? typed.content : textToDocContent(title, args.content);
+  const doc: ArtifactContent = typed ? typed.content : textToDocContent(title, content);
 
   // ── Theme: explicit override → the one hierarchy → house look. Fail-soft always. ──
   let theme: DocTheme | null = args.theme ?? null;
@@ -118,13 +122,20 @@ export async function materializeDocument(
   // generative lane invents one (found live: a gate's one-line marker became a ranked dashboard
   // of eight fabricated people). Its refusal arrives as the honest null this fall-through already
   // handles, so a thin ask lands as a plain, truthful document instead. ──
+  // W38 — AN EXPLICIT OFFICE KIND BEATS THE WORD TRIGGER (found by the file verifier): the frame
+  // words include "tracker", and the typed protocol (TYPED_OUTPUT_RULE) names trackers as
+  // SPREADSHEETS — so "build a spreadsheet tracker" (a DM excel ask, forceType 'spreadsheet') and an
+  // author's own ```spreadsheet fence titled "… tracker" both shipped as an .html frame instead of
+  // the .xlsx asked for. Precedence: forceType 'frame' (explicit frame) → an explicit office kind
+  // (the author's typed fence, or a forced spreadsheet/presentation) → the frame words.
+  const explicitOffice = !!typed || args.forceType === 'spreadsheet' || args.forceType === 'presentation';
   const wantsFrame = !args.revise && !args.templateFile
-    && (args.forceType === 'frame' || FRAME_WORDS.test(request) || FRAME_WORDS.test(title));
+    && (args.forceType === 'frame' || (!explicitOffice && (FRAME_WORDS.test(request) || FRAME_WORDS.test(title))));
   if (wantsFrame) {
     try {
       const { generateFrameHtml } = await import('@/lib/frames/generate-frame');
       const frame = await generateFrameHtml(client, userId, {
-        title, content: args.content, request, csvText: args.csvText ?? null,
+        title, content, request, csvText: args.csvText ?? null,
         computedFacts: args.computedFacts ?? null, theme,
       }, args.frameDiagnostics);
       if (frame) {
@@ -177,16 +188,34 @@ export async function materializeDocument(
         task: `${directives ? `${directives}\n` : ''}THE REQUEST: ${(request || title).slice(0, 800)}`,
         ext: compileExt, extraFiles: extraFiles.length ? extraFiles : undefined,
         csvText: args.csvText ?? null, theme, computedFacts: facts,
-        contentText: args.content, // THE CONTENT FLOOR
+        contentText: content, // THE CONTENT FLOOR
       });
       if (compiled) {
-        return { bytes: compiled.bytes, ext: compileExt, mime: compiled.mime, type, content: doc, tier: 'compiler' };
+        // The viewer's content takes the file's shape when the text has it (a compiled sheet shows
+        // its tables as a sheet) — else the readable text version, as before.
+        let viewContent: ArtifactContent = doc;
+        if (!typed && (type === 'spreadsheet' || type === 'presentation')) {
+          const { docToSheets, docToSlides } = await import('@/lib/documents/shape-floor');
+          viewContent = (type === 'spreadsheet' ? docToSheets(doc as DocContent) : docToSlides(doc as DocContent)) ?? doc;
+        }
+        return { bytes: compiled.bytes, ext: compileExt, mime: compiled.mime, type, content: viewContent, tier: 'compiler' };
       }
     } catch { /* the tiers below are the floor */ }
   }
 
   // ── TIERS 2+3 — the typed builder / template renderers (one call: buildArtifactFile
   // dispatches on type; the theme rides both). ──
-  const bytes = await buildArtifactFile(type, doc, { theme });
-  return { bytes, ext: getFileExt(type), mime: getMimeType(type), type, content: doc, tier: typed ? 'typed' : 'template' };
+  // THE SHAPE FLOOR (W38): with no typed fence the content is a DocContent, whatever kind was
+  // resolved — a sheet/deck kind gets the document's own tables/sections in that shape, or lands as
+  // an honest document. A builder never receives a shape it cannot read (that threw: no file at all).
+  let outType: DeliverableType = type;
+  let outContent: ArtifactContent = doc;
+  if (!typed && (type === 'spreadsheet' || type === 'presentation')) {
+    const { docToSheets, docToSlides } = await import('@/lib/documents/shape-floor');
+    const shaped = type === 'spreadsheet' ? docToSheets(doc as DocContent) : docToSlides(doc as DocContent);
+    if (shaped) outContent = shaped;
+    else outType = 'document';
+  }
+  const bytes = await buildArtifactFile(outType, outContent, { theme });
+  return { bytes, ext: getFileExt(outType), mime: getMimeType(outType), type: outType, content: outContent, tier: typed ? 'typed' : 'template' };
 }

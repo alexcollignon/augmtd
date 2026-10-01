@@ -9921,6 +9921,89 @@
     }
    ],
    "note": "Eval (Oct 1, W37 narrate.*/prep.*): the status update called a pilot at 94% against a 98% target 'on track' and invented a proposed date; the project state chose one of two budgets; the person state read subjects only and told a delivered report as owed; the meeting panel brief never saw an email (it selected emails.snippet, a column that does not exist); the room prep read a 3,500-character head of its page; the agenda prep read subjects only and obeyed nothing but padded; 'by Monday' became 'Monday 30 September'."
+  },
+  {
+   "id": "delivered-file-truth",
+   "name": "A DELIVERED FILE OPENS AND CARRIES ITS SOURCE'S FIGURES",
+   "aliases": [
+    "THE ATTACHMENT IS THE DELIVERED FILE",
+    "THE BYTES NAME THE FILE",
+    "THE SHAPE FLOOR",
+    "THE TEXT-HYGIENE GATE",
+    "AN EXPLICIT OFFICE KIND BEATS THE WORD TRIGGER"
+   ],
+   "tier": 2,
+   "domain": "documents",
+   "statement": "Every file the product hands a user (a DM or delegated document, a workflow deliverable or its e-mail attachment, a compute output, a frame) opens as the format its name and MIME declare, carries the structure that was asked (headings as real heading styles, the sheet's columns, the deck's slides), states only figures that are raw values of its source or computed by code from it, and carries words, not syntax (no literal markdown, no character-art charts, no undefined/NaN/[object Object]). Mechanisms: an explicit office kind (the author's typed fence, a forced spreadsheet/presentation) beats the frame words; a builder always receives the shape it reads (docToSheets/docToSlides, else an honest document); character art is stripped at the door (stripCharacterArt); the compiler's validation runs the text-hygiene gate (officeHygieneProblems) beside the render gate; tabular material in a DM is shown to the author and aggregated in the sandbox first (tabularBlock + computeDataFacts); compute outputs carry their extension's MIME (outputMime); the served name comes from the stored bytes' extension and keeps the title's letters (downloadHeaders); an e-mail attachment is the stored delivered file (attachmentForArtifact).",
+   "homes": [
+    "lib/documents/materialize.ts",
+    "lib/documents/shape-floor.ts",
+    "lib/documents/office-hygiene.ts",
+    "lib/compute/document-compiler.ts",
+    "lib/compute/data-facts.ts",
+    "lib/compute/tabular.ts",
+    "lib/tools/compute.ts",
+    "lib/work/generate-thread-document.ts",
+    "lib/artifacts/download-name.ts",
+    "lib/artifacts/attachment.ts",
+    "lib/workflows/run-workflow.ts",
+    "app/api/work/threads/[id]/download/route.ts",
+    "lib/knowledge/indexer.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-generated-files",
+     "ids": [
+      "F1"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W38 (uncommitted): tests/unit/generated-files — the code checker (numbers, formulas, language, garbage, format), downloadHeaders, attachment shape checks, docToSheets/docToSlides, stripCharacterArt, tabularBlock, textHygieneProblems, outputMime, and the door's explicit-kind/shape cases called for real (theme null, zero AI). Measured live by scripts/verify-generated-files.ts (12 producers × both tiers on probe #3: real models, the real sandbox and bucket, every stored file opened and judged in code — zero judge; once per wave, ~€0.3/tier)."
+    },
+    {
+     "suite": "smoke-generated-files",
+     "ids": [
+      "F2a",
+      "F2b",
+      "F2c",
+      "F2d",
+      "F2e",
+      "F2f",
+      "F2g",
+      "F2h",
+      "F2i",
+      "F2j",
+      "F2k"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "each floor at its one seat"
+    }
+   ],
+   "fn": "readFileView · unsourcedFigures · evalFormula · downloadHeaders · attachmentForArtifact · docToSheets · docToSlides · stripCharacterArt · tabularBlock · officeHygieneProblems · outputMime · scriptErrorTail · getOrCreateAugmtdSource",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W38 (Oct 1)",
+   "collides_with": [
+    {
+     "law": "one-production-door",
+     "precedence": "domain instance — the floors ride the one door, so every actor's file upgrades at once; the door's tier ladder is unchanged"
+    },
+    {
+     "law": "content-floor",
+     "precedence": "the author's text is still the document's text — character art and leaked syntax are removed as non-content, never reworded"
+    },
+    {
+     "law": "facts-floor",
+     "precedence": "the facts floor now reaches the DM author before it writes (not only the compiler); a sandbox outage keeps the old path and the arithmetic floor still flags"
+    },
+    {
+     "law": "render-verification-gate",
+     "precedence": "both gates must pass; hygiene failures feed the same one reasoned repair, then the template tier is the floor"
+    }
+   ],
+   "note": "Found by the W38 live verifier (Oct 1): an Excel 'tracker' ask and a typed sheet titled 'tracker' shipped as .html frames; a forced sheet/deck over markdown threw in the builder (no file); the workflow e-mail re-rendered the attachment by the CONFIGURED kind (a sheet fed to the Word builder threw; compiled charts were lost); compute .xlsx/.docx outputs were stored as application/octet-stream and skipped by the KB indexer; computeDataFacts' 900-token codegen truncated every script (facts silently null product-wide); a DM deck stated quarter totals +5,000 and a 29,600 year total (true 13,600); a compiled .docx carried literal **bold**, an ASCII bar chart and no heading styles; served filenames lost every accented letter and DM titles were mid-word slices of the ask. The compiler's one reasoned repair was blind: it carried the HEAD of stderr (a screen of Fontconfig cache warnings), never the exception. Indexing a delivered file snowballed 'AUGMTD Files' sources: after one race left two rows, .maybeSingle() errored (ignored) and every later index inserted another (64 on one real account — census only, not swept)."
   }
  ],
  "lessons": [

@@ -201,11 +201,17 @@ export function emailBodyHTML(value: string): string {
 
 /** The words themselves — what "is it empty?" and "did it really change?" are allowed to ask. */
 export function emailBodyText(value: string): string {
+  // A PARAGRAPH IS A BLANK LINE (UI walk, Oct 1): `</p>` used to become ONE newline, so a saved edit
+  // ("<p>Hi Jo,</p><p>Thanks…</p><p>Best,<br>Sam</p>") came back as one paragraph of <br>-joined
+  // lines — the greeting, the body and the sign-off glued together. A line break stays one newline.
   return String(value ?? '')
-    .replace(/<(?:br|\/p|\/div|\/li|\/tr)[^>]*>/gi, '\n')
+    .replace(/<\/p\s*>/gi, '\n\n')
+    .replace(/<(?:br|\/div|\/li|\/tr)[^>]*>/gi, '\n')
     .replace(/<[^>]*>/g, '')
     .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/[ \t]+/g, ' ');
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n');
 }
 
 /**

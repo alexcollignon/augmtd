@@ -1895,7 +1895,7 @@ export async function GET() {
     const internalDomains = internalDomainsOf([self ?? null]);
     // ── THE CALENDAR ADJACENCY FACT (A1's why-now half) — an event in the next 48h whose attendees
     //    overlap this row's counterparty. Real events only; a miss is simply no adjacency.
-    const adjByEmail = new Map<string, { localTime: string | null; title: string | null; eventId: string; today: boolean }>();
+    const adjByEmail = new Map<string, { localTime: string | null; title: string | null; eventId: string; today: boolean; dayWord: string | null }>();
     try {
       const { data: soon } = await soonP; // started with the user-only wave (W17)
       // THE DAY ANCHOR + THE FRESH SEAT (Sep 18): the fact now carries WHICH event it is and
@@ -1905,6 +1905,15 @@ export async function GET() {
         catch { return String(iso).slice(0, 10); }
       };
       const todayLocal = localDate(now.toISOString());
+      const tomorrowLocal = localDate(new Date(now.getTime() + 86_400_000).toISOString());
+      // TIME TRUTH: the day words a not-today adjacency speaks ("tomorrow" / "on Sat").
+      const dayWordOf = (iso: string): string | null => {
+        const d = localDate(iso);
+        if (d === todayLocal) return null;
+        if (d === tomorrowLocal) return 'tomorrow';
+        try { return `on ${new Intl.DateTimeFormat('en-GB', { weekday: 'short', timeZone: userTz }).format(new Date(iso))}`; }
+        catch { return null; }
+      };
       for (const ev of ((soon ?? []) as any[]).filter((m) => !isCancelledEventTitle(m.title))) {
         // `today` is the DAY FRAME'S OWN TEST, not merely a date match: the zone speaks about what
         // is LEFT of the day, so an event that has already ended is not today's shape either — and
@@ -1913,6 +1922,7 @@ export async function GET() {
         const fact = {
           localTime: localHHMM(ev.start_time as string, !!ev.is_all_day), title: (ev.title as string) || null,
           eventId: String(ev.id),
+          dayWord: dayWordOf(ev.start_time as string),
           today: localDate(ev.start_time as string) === todayLocal
             && (!!ev.is_all_day || !Number.isFinite(endsAt) || endsAt >= now.getTime()),
         };
@@ -1981,7 +1991,7 @@ export async function GET() {
     const push = (
       entityId: string, key: string, source: 'reply' | 'notice' | 'commitment',
       f: { who?: string | null; dueDate?: string | null; overdue?: boolean; dueToday?: boolean; prepared?: string | null; preparedKind?: string | null },
-      adj: { localTime: string | null; title: string | null; eventId?: string; today?: boolean } | null,
+      adj: { localTime: string | null; title: string | null; eventId?: string; today?: boolean; dayWord?: string | null } | null,
     ) => {
       // ── Q4 · THE SEAT CONTRACT's three facts, gathered HERE (the one choke) and handed to the
       //    pure verdict. (a) REAL COUNTERPARTY reuses the Q1 floor's own predicate — never a second

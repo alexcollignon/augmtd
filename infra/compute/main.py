@@ -33,6 +33,18 @@ import uuid
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
+
+# W38: the slim image has no /etc/mime.types, so mimetypes knows no Office types and every
+# .xlsx/.docx/.pptx output was returned as application/octet-stream. Registered explicitly (the
+# TS caller also corrects by extension — lib/tools/compute.ts outputMime — so either side suffices).
+for _ext, _mime in {
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".csv": "text/csv",
+    ".md": "text/markdown",
+}.items():
+    mimetypes.add_type(_mime, _ext)
 from pydantic import BaseModel, Field
 
 COMPUTE_SECRET = os.environ.get("COMPUTE_SECRET", "")

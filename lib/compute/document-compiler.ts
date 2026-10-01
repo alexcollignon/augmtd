@@ -16,6 +16,21 @@ import { aiCall } from '@/lib/ai/call';
 import { clipForPrompt, EXCERPT_MARK, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import type { DocTheme } from '@/lib/documents/theme';
 
+/** THE ERROR THE REPAIR NEEDS (W38 — found by the file verifier): the repair note used to carry the
+ *  HEAD of stderr, which in the job image is a screen of "Fontconfig error: No writable cache
+ *  directories" lines — the traceback was cut before its last line, so the "reasoned" repair never
+ *  saw the exception and failed the same way twice. Noise lines dropped; the TAIL kept (Python ends a
+ *  traceback with the exception). Pure. */
+export function scriptErrorTail(stderr: string, max = 700): string {
+  const lines = String(stderr ?? '').split('\n').filter((l) => !/^Fontconfig (error|warning)|^Matplotlib is building the font cache|^\s*$/i.test(l));
+  const text = lines.join('\n').trim();
+  return text.length > max ? `…${text.slice(-max)}` : text;
+}
+
+/** The job prelude: caches the plotting stack wants live in /tmp (the job's only writable scratch),
+ *  so no run spends its stderr on cache warnings. Prepended in code — never the model's discretion. */
+export const SCRIPT_PRELUDE = "import os as _os; _os.environ.setdefault('XDG_CACHE_HOME', '/tmp/.cache'); _os.environ.setdefault('MPLCONFIGDIR', '/tmp/.mpl')\n";
+
 export type CompiledDocument = { name: string; bytes: Buffer; mime: string; stdout: string };
 
 const EXT_MIME: Record<string, string> = {
@@ -82,7 +97,10 @@ export async function compileDocument(
           `1. Write EXACTLY ONE output file: /job/out/deliverable.${args.ext}\n` +
           `2. Charts: matplotlib.use("Agg"); style them with the accent color; readable labels; save to ` +
           `/tmp and embed into the document (never leave a chart as a loose file).\n` +
-          `3. Real document design: a title/cover block, clear headings, consistent fonts — not a text dump.\n` +
+          `3. Real document design: a title/cover block, clear headings, consistent fonts — not a text dump. ` +
+          `Headings use REAL heading styles (python-docx doc.add_heading(text, level) / style "Heading 1"), never bold paragraphs. ` +
+          `THE CONTENT is markdown: render **bold** as bold runs, "- " lines as bullets, | tables | as real tables, "## x" as headings — ` +
+          `NEVER write markdown syntax (**, ##, |---|) into the document as literal text, and never draw ASCII-art charts or rules.\n` +
           (args.ext === 'xlsx'
             ? `4. Spreadsheets: real header styling and LIVE FORMULAS (=SUM/=AVERAGE) for derived cells — never hardcode a derivable number.\n`
             : `4. After writing the file: pages = render_verify("/job/out/deliverable.${args.ext}"); print(f"RENDERED PAGES: {pages}") — this is the shipping gate.\n`) +
@@ -102,9 +120,9 @@ export async function compileDocument(
       ...(args.theme?.logo2 ? [{ name: 'logo2.png', content_b64: args.theme.logo2.dataB64 }] : []),
     ];
 
-    const validate = (r: Awaited<ReturnType<typeof runComputeForOutputs>>): string | null => {
+    const validate = async (r: Awaited<ReturnType<typeof runComputeForOutputs>>): Promise<string | null> => {
       if (!r) return 'The compute service was unreachable.';
-      if (!r.ok) return `The script failed:\n${r.stderr.slice(0, 600) || r.stdout.slice(-400)}`;
+      if (!r.ok) return `The script failed:\n${scriptErrorTail(r.stderr) || r.stdout.slice(-400)}`;
       const out = r.outputs.find((o) => o.name === `deliverable.${args.ext}`);
       if (!out) return `No /job/out/deliverable.${args.ext} was produced (outputs: ${r.outputs.map((o) => o.name).join(', ') || 'none'}).`;
       // Structural validity: OOXML files are zips; PDF has its magic. A corrupt file never ships.
@@ -116,20 +134,24 @@ export async function compileDocument(
       if (args.ext !== 'xlsx' && !/RENDERED PAGES:\s*[1-9]/.test(r.stdout)) {
         return 'The render-verification gate did not pass (no "RENDERED PAGES: n>=1" printed) — the document may not render.';
       }
+      // W38 — THE TEXT-HYGIENE GATE: what renders must be words, not syntax (lib/documents/office-hygiene.ts).
+      const { officeHygieneProblems } = await import('@/lib/documents/office-hygiene');
+      const hygiene = await officeHygieneProblems(out.bytes, args.ext, { expectHeadings: /^\s{0,3}#{1,6}\s/m.test(args.contentText ?? '') });
+      if (hygiene.length) return `The produced .${args.ext} opens, but its text is not clean:\n- ${hygiene.join('\n- ')}`;
       return null;
     };
 
     let script = await gen();
     if (!script) script = await gen(undefined, false); // reasoning-tier empty return → the plain JSON tier
     if (!script) { console.error('[compiler] codegen returned no script'); return null; }
-    let run = await runComputeForOutputs({ script, data: args.csvText ?? undefined, extraFiles, timeout_s: 110 });
-    let problem = validate(run);
+    let run = await runComputeForOutputs({ script: SCRIPT_PRELUDE + script, data: args.csvText ?? undefined, extraFiles, timeout_s: 110 });
+    let problem = await validate(run);
     if (problem) {
       console.error('[compiler] attempt 1 failed:', problem.slice(0, 300));
       script = await gen(problem) ?? await gen(problem, false);
       if (!script) { console.error('[compiler] repair codegen returned no script'); return null; }
-      run = await runComputeForOutputs({ script, data: args.csvText ?? undefined, extraFiles, timeout_s: 110 });
-      problem = validate(run);
+      run = await runComputeForOutputs({ script: SCRIPT_PRELUDE + script, data: args.csvText ?? undefined, extraFiles, timeout_s: 110 });
+      problem = await validate(run);
       if (problem) { console.error('[compiler] attempt 2 failed:', problem.slice(0, 300)); return null; }
     }
     const out = run!.outputs.find((o) => o.name === `deliverable.${args.ext}`)!;
