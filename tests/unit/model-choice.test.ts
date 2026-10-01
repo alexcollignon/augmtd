@@ -1,5 +1,5 @@
 // W36 — THE PRODUCER MODEL, zero AI. The one resolver (lib/ai/model-choice.ts) and its seats:
-//   · PRODUCER_MODEL is empty on every tier (no production change) and a slot resolution is byte-identical;
+//   · PRODUCER_MODEL holds only the owner-approved measured entries (W36) and a slot resolution is byte-identical;
 //   · the precedence: tenant producer > tier producer > tenant slot > tier slot;
 //   · THE PERIMETER: an EU tier never resolves outside EU-resident Bedrock at ANY level;
 //   · the factory, aiCall and the effort follow the RESOLVED model (transport faked at the SDK prototype).
@@ -18,15 +18,22 @@ const OSS = 'openai.gpt-oss-120b-1:0';
 const HAIKU_EU = 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
 describe('no production change', () => {
-  it('PRODUCER_MODEL is empty on every tier', () => {
-    for (const t of TIERS) expect(Object.keys(PRODUCER_MODEL[t] ?? {}), t).toEqual([]);
+  it('PRODUCER_MODEL carries exactly the owner-approved, measured entries (W36) — every EU entry inside the perimeter', () => {
+    const adopted = Object.fromEntries(TIERS.map((t) => [t, Object.keys(PRODUCER_MODEL[t] ?? {}).sort()]));
+    expect(adopted).toEqual({
+      standard: ['commitments.extract', 'commitments.fulfillment'], professional: [], bedrock_private: [],
+      bedrock_optimised: ['work.judge'], private_client: [], on_prem: [],
+    });
+    for (const t of EU_PERIMETER_TIERS) for (const e of Object.values(PRODUCER_MODEL[t] ?? {})) {
+      expect(withinTierPerimeter(t, { ...TIER_DEFAULTS[t].classification, ...e }), t).toBe(true);
+    }
   });
-  it('without a producer (or with one and no config) every tier × slot resolves exactly as the old merge', () => {
+  it('without a producer (or with one and an empty producer table) every tier × slot resolves exactly as the old merge', () => {
     for (const t of TIERS) for (const s of SLOTS) {
       const old = { ...TIER_DEFAULTS[t][s] };
       expect(resolveModelChoice({ tier: t, task: s }).endpoint).toEqual(old);
       for (const p of EFFORT_PRODUCERS) {
-        const r = resolveModelChoice({ tier: t, task: s, producer: p });
+        const r = resolveModelChoice({ tier: t, task: s, producer: p, producerTable: {} });
         expect(r.endpoint).toEqual(old);
         expect(r.source).toBe('tier-slot');
       }
@@ -79,14 +86,14 @@ describe('THE PERIMETER — an EU tier never resolves outside EU-resident Bedroc
   });
   it('a producer override to a non-Bedrock provider or a non-EU profile is REFUSED, the next level serves', () => {
     for (const bad of [{ provider: 'openai' as const, model: 'gpt-6-luna' }, { model: 'us.anthropic.claude-haiku-4-5-20251001-v1:0' }, { model: 'global.anthropic.claude-sonnet-4-5-20250929-v1:0' }]) {
-      const r = resolveModelChoice({ tier: 'bedrock_optimised', task: 'classification', producer: 'work.judge', overrides: { [producerOverrideKey('work.judge')]: bad } });
+      const r = resolveModelChoice({ tier: 'bedrock_optimised', task: 'classification', producer: 'work.judge', producerTable: {}, overrides: { [producerOverrideKey('work.judge')]: bad } });
       expect(r.endpoint.model, JSON.stringify(bad)).toBe(HAIKU_EU);
       expect(r.source).toBe('tier-slot');
       expect(r.refused[0]).toMatchObject({ source: 'tenant-producer' });
     }
   });
   it('a refused tenant producer falls to a PERMITTED slot override, and a non-EU slot override is refused too', () => {
-    const r = resolveModelChoice({ tier: 'bedrock_optimised', task: 'classification', producer: 'work.judge',
+    const r = resolveModelChoice({ tier: 'bedrock_optimised', task: 'classification', producer: 'work.judge', producerTable: {},
       overrides: { classification: { model: OSS }, [producerOverrideKey('work.judge')]: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' } } });
     expect(r).toMatchObject({ source: 'tenant-slot', endpoint: { model: OSS } });
     const s = resolveModelChoice({ tier: 'bedrock_private', task: 'summarization', overrides: { summarization: { provider: 'openai', model: 'gpt-5-mini' } } });

@@ -133,10 +133,20 @@ export const TIER_DEFAULTS: Record<TierType, Record<TaskType, ModelEndpoint>> = 
 // EMPTY on every tier: no production change. Adopting an entry is a measured, one-line decision
 // (scripts/eval-outputs.ts on a probe account carrying the tenant producer override first).
 export const PRODUCER_MODEL: Readonly<Record<TierType, Readonly<Partial<Record<EffortProducer, Partial<ModelEndpoint>>>>>> = Object.freeze({
-  standard: Object.freeze({}),
+  // W36 (Oct 1, owner-approved, measured — scratchpad/w36-split-std.md): Luna ≥ gpt-5-mini on fulfillment
+  // (err .000 vs .042) and commitment extraction (F1 .974 vs .957), 2–5× cheaper; work.judge / room.brief stay.
+  standard: Object.freeze({
+    'commitments.fulfillment': { provider: 'openai' as const, model: 'gpt-6-luna' },
+    'commitments.extract': { provider: 'openai' as const, model: 'gpt-6-luna' },
+  }),
   professional: Object.freeze({}),
   bedrock_private: Object.freeze({}),
-  bedrock_optimised: Object.freeze({}),
+  // W36 (owner-approved, measured — scratchpad/w36-split-eu.md): gpt-oss-120b in-region Frankfurt beats
+  // Haiku 4.5 on the work judge (work-verdict err .029 vs .091, input-ask .065 vs .195), ~5× cheaper.
+  // Understanding (.939 on Haiku), fulfillment, extraction and room.brief stay on Haiku.
+  bedrock_optimised: Object.freeze({
+    'work.judge': { provider: 'bedrock' as const, model: 'openai.gpt-oss-120b-1:0' },
+  }),
   private_client: Object.freeze({}),
   on_prem: Object.freeze({}),
 })

@@ -39,7 +39,12 @@ ok('M1 the resolver, the factory and aiCall pass (precedence · perimeter · eff
 
 console.log('\nM2 · the perimeter holds at every level; no production change');
 const tiers = Object.keys(TIER_DEFAULTS) as TierType[];
-ok('M2a PRODUCER_MODEL is empty on every tier', tiers.every((t) => Object.keys(PRODUCER_MODEL[t] ?? {}).length === 0));
+// ⟲ RE-POINTED (W36, Oct 1 — owner-approved switch): the table now holds exactly the measured entries; every
+// EU entry stays inside the perimeter. A new entry is a measured, owner-approved decision — update this list with it.
+const ADOPTED: Record<string, string[]> = { standard: ['commitments.extract', 'commitments.fulfillment'], bedrock_optimised: ['work.judge'] };
+ok('M2a PRODUCER_MODEL holds exactly the owner-approved entries; EU entries inside the perimeter',
+  tiers.every((t) => JSON.stringify(Object.keys(PRODUCER_MODEL[t] ?? {}).sort()) === JSON.stringify(ADOPTED[t] ?? []))
+  && EU_PERIMETER_TIERS.every((t) => Object.values(PRODUCER_MODEL[t] ?? {}).every((e) => withinTierPerimeter(t, { ...TIER_DEFAULTS[t].classification, ...e }))));
 const slots = Object.keys(TIER_DEFAULTS.standard) as TaskType[];
 const outside: Array<Partial<import('../lib/ai/types').ModelEndpoint>> = [{ provider: 'openai', model: 'gpt-6-luna' }, { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' }, { model: 'global.anthropic.claude-sonnet-4-5-20250929-v1:0' }, { model: 'us.openai.gpt-oss-120b-1:0' }];
 const leaks: string[] = [];
