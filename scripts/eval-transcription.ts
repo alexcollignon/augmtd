@@ -15,8 +15,11 @@
 //   npx tsx scripts/eval-transcription.ts                 # EU probe #2 (default), all four languages
 //   npx tsx scripts/eval-transcription.ts --tier std --only en,pt
 //   flags: --probe k (pool account #k, default 2) · --keep (skip teardown) · --show (print transcripts)
-//          --no-vocab (omit the name vocabulary — the A/B baseline; by default each sample sends the
+//          --stress (add a rarer-names sample per language) · --no-vocab (omit the name vocabulary — the A/B baseline; by default each sample sends the
 //          vocabulary the product would: company + attendee + entity names, plus unrelated decoys)
+// Each sample is scored twice from ONE transcription: as the box returned it ("raw"), and after the
+// app-side vocabulary snap (lib/integrations/meeting-bot/vocabulary-snap.ts) with the same vocabulary
+// ("snap" — what generate-insights stores). Decoys are checked on both.
 // Requires macOS (`say`, `afconvert`) and MEETING_BOT_SERVICE_URL + MEETING_BOT_SECRET in .env.local.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import { config } from 'dotenv';
@@ -31,6 +34,7 @@ import { wordErrorRate, tokensKept, pct } from './lib/eval/quality-metrics';
 import { adminClient } from './lib/eval/engine/live';
 import { resolveProbePool } from './lib/eval/engine/probes';
 import { SYMMETRY_TABLES } from './lib/eval/engine/world';
+import { snapToVocabulary } from '../lib/integrations/meeting-bot/vocabulary-snap';
 
 const argv = process.argv.slice(2);
 const opt = (n: string) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] ?? null : null; };
@@ -68,6 +72,16 @@ const SAMPLES: Sample[] = [
     keep: ['Acme', '12 mai 2026', ['14 heures', '14h'], '7500', 'Initech', 'vendredi'],
     vocab: ['Acme', 'Sam', 'Initech'],
   },
+];
+
+/** `--stress`: rarer invented names (what Whisper actually misspells), one sample per language —
+ *  measures prompt/hotwords + the snap where they have something to do. Same decoys. */
+const STRESS_NAMES = ['Mara Quint', 'Larkwell', 'Teodor Vasko', 'Zentaro', 'Kelvaro'];
+const STRESS: Sample[] = [
+  { lang: 'en-names', voice: 'Samantha', text: 'Please loop in Mara Quint from Larkwell, and ask Teodor Vasko to review the Zentaro proposal with the Kelvaro team.', keep: STRESS_NAMES, vocab: STRESS_NAMES },
+  { lang: 'pt-names', voice: 'Joana', text: 'O Teodor Vasko vai rever a proposta da Zentaro. Depois falamos com a equipa da Kelvaro e com a Mara Quint, da Larkwell.', keep: STRESS_NAMES, vocab: STRESS_NAMES },
+  { lang: 'de-names', voice: 'Anna', text: 'Teodor Vasko prüft das Angebot von Zentaro. Danach sprechen wir mit Mara Quint von Larkwell und dem Team von Kelvaro.', keep: STRESS_NAMES, vocab: STRESS_NAMES },
+  { lang: 'fr-names', voice: 'Thomas', text: "Teodor Vasko va relire la proposition de Zentaro. Ensuite nous parlerons avec Mara Quint de Larkwell et l'équipe de Kelvaro.", keep: STRESS_NAMES, vocab: STRESS_NAMES },
 ];
 
 function synth(dir: string, s: Sample): { file: string; seconds: number } {
@@ -178,29 +192,35 @@ async function main() {
   const ids: string[] = [], paths: string[] = [];
   let fails = 0;
   try {
-    for (const s of SAMPLES) {
-      if (only && !only.includes(s.lang)) continue;
+    for (const s of [...SAMPLES, ...(argv.includes('--stress') ? STRESS : [])]) {
+      if (only && !only.includes(s.lang.split('-')[0])) continue;
       const { file, seconds } = synth(dir, s);
       const r = await transcribe(admin, userId, s, file, tag);
       ids.push(r.id); paths.push(r.storagePath);
       if (argv.includes('--show')) console.log(`\n[${s.lang}] REF: ${s.text}\n[${s.lang}] HYP: ${r.text}`);
-      const wer = wordErrorRate(s.text, r.text);
-      const lost = s.keep.filter((k) => (Array.isArray(k) ? k : [k]).every((alt) => tokensKept([alt], r.text).lost.length));
-      const kept = { kept: s.keep.filter((k) => !lost.includes(k)), lost: lost.map((k) => (Array.isArray(k) ? k[0] : k)) };
-      const leaked = argv.includes('--no-vocab') ? [] : DECOYS.filter((d) => r.text.toLowerCase().includes(d.toLowerCase()));
-      if (leaked.length) kept.lost.push(`decoy leaked: ${leaked.join('/')}`);
-      const ok = !('failed' in r) && wer <= 0.15 && kept.lost.length === 0;
-      if (!ok) fails++;
-      rows.push(`| ${s.lang} | ${ok ? 'PASS' : 'FAIL'} | ${pct(wer)} | ${kept.kept.length}/${s.keep.length}${kept.lost.length ? ` lost: ${kept.lost.join(', ')}` : ''} | ${seconds.toFixed(1)}s | ${(r.ms / 1000).toFixed(1)}s | ${seconds ? (r.ms / 1000 / seconds).toFixed(2) : '—'} |`);
+      // The snap is app-side: it runs with the meeting's vocabulary even when the box was sent none.
+      const vocab = [...s.vocab, ...DECOYS];
+      const snapped = snapToVocabulary(r.text, vocab);
+      if (argv.includes('--show') && snapped.snaps.length) console.log(`[${s.lang}] SNAP: ${snapped.snaps.map((x) => `${x.from} → ${x.to}`).join(' · ')}`);
+      for (const [mode, text] of [['raw', r.text], ['snap', snapped.text]] as const) {
+        const wer = wordErrorRate(s.text, text);
+        const lost = s.keep.filter((k) => (Array.isArray(k) ? k : [k]).every((alt) => tokensKept([alt], text).lost.length));
+        const kept = { kept: s.keep.filter((k) => !lost.includes(k)), lost: lost.map((k) => (Array.isArray(k) ? k[0] : k)) };
+        const leaked = DECOYS.filter((d) => text.toLowerCase().includes(d.toLowerCase()));
+        if (leaked.length) kept.lost.push(`decoy leaked: ${leaked.join('/')}`);
+        const ok = !('failed' in r) && wer <= 0.15 && kept.lost.length === 0;
+        if (!ok && mode === 'snap') fails++;
+        rows.push(`| ${s.lang} | ${mode} | ${ok ? 'PASS' : 'FAIL'} | ${pct(wer)} | ${kept.kept.length}/${s.keep.length}${kept.lost.length ? ` lost: ${kept.lost.join(', ')}` : ''} | ${leaked.length} | ${seconds.toFixed(1)}s | ${(r.ms / 1000).toFixed(1)}s | ${seconds ? (r.ms / 1000 / seconds).toFixed(2) : '—'} |`);
+      }
     }
   } finally {
     if (!argv.includes('--keep')) await teardown(admin, userId, startIso, ids, paths).catch((e) => console.error('teardown failed:', e));
     rmSync(dir, { recursive: true, force: true });
   }
-  console.log('\n| lang | verdict | WER | names/numbers/dates kept | audio | latency (POST → transcript) | RTF |');
-  console.log('|---|---|---|---|---|---|---|');
+  console.log('\n| lang | text | verdict | WER | names/numbers/dates kept | decoys | audio | latency (POST → transcript) | RTF |');
+  console.log('|---|---|---|---|---|---|---|---|---|');
   for (const r of rows) console.log(r);
-  console.log(`\n${fails ? `✗ ${fails} sample(s) below the bar` : '✓ every sample at the bar'} (bar: WER ≤ 15%, every name/number/date kept)`);
+  console.log(`\n${fails ? `✗ ${fails} sample(s) below the bar` : '✓ every sample at the bar'} (bar on the snapped text: WER ≤ 15%, every name/number/date kept, no decoy)`);
   process.exitCode = fails ? 1 : 0;
 }
 

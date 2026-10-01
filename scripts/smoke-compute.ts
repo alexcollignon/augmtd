@@ -332,10 +332,15 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
   // Re-pointed W2.7 (THE CONTEXT BUDGET): the "widened slice" was a raw .slice(0, 7000) that the
   // loop then tail-chopped at 4,000 behind the preamble — the focus block never reached the model.
   // The snapshot now rides whole into the PACKED page as its own budgeted, declared section.
-  check('U2: BOTH global call sites thread the question — answerHomeQuestion and the converse agent loop (the snapshot rides the packed page)',
-    src('lib/home/ask.ts').includes('buildBrainSnapshot(supabase, userId, question)') &&
+  // ⟲ RE-POINTED (Oct 1, stale-gate sweep): the records-only `answerHomeQuestion` lane was RETIRED
+  // in W22 (THE HOME CHAT IS ONE ASSISTANT — smoke-one-assistant O1.3 proves it is gone), so the
+  // converse agent loop is now the ONE global call site. The law (the question threads into the
+  // snapshot, which rides the packed page as its own budgeted section) is asserted there; the
+  // section's label was renamed "the work grounding".
+  check('U2: the ONE global call site threads the question — the converse agent loop (answerHomeQuestion retired W22; the snapshot rides the packed page)',
+    !/export async function answerHomeQuestion/.test(src('lib/home/ask.ts')) &&
     src('lib/converse/index.ts').includes('buildBrainSnapshot(client, userId, text)') &&
-    src('lib/converse/index.ts').includes("{ id: 'grounding', label: 'the room grounding', text: grounding"));
+    src('lib/converse/index.ts').includes("{ id: 'grounding', label: 'the work grounding', text: grounding"));
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
     const { createClient } = await import('@supabase/supabase-js');
     const sbU = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
@@ -538,7 +543,11 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
   check('F1: THE DURABLE HOME CHAT — every exchange persists as a `chat:<uuid>` loose room (history is the default), a reload rehydrates, "New" starts fresh while the old room stays durable; chatting mints no objects',
     ha.includes('THE DURABLE HOME CHAT') && ha.includes("`chat:${crypto.randomUUID()}`") &&
     ha.includes("persistTurn('user', shown)") && ha.includes("persistTurn('system', d.answer") &&
-    ha.includes('/api/room/turns?key=') &&
+    // ⟲ RE-POINTED (Oct 1, stale-gate sweep): the rehydrate read moved out of the panel into the
+    // ONE warm reader (W17 · THE CHAT OPENS FROM ITS LAST PAINT) — loadRoom calls fetchChatTurns,
+    // which owns the `/api/room/turns?key=` read. Same reload law, one module over.
+    ha.includes('fetchChatTurns(key)') &&
+    src('components/home/chat-turns-warm.ts').includes('/api/room/turns?key=') &&
     // RE-POINTED (Sep 13, THE THREADS ARC): the mint-fresh deed left the SIDEBAR — its "New chat"
     // seat retired in the Aug 25 nav wave (Home IS the chat door) and the Sep 7 rework replaced the
     // nav rows with labeled Projects/Chats sections. The LAW is unchanged and now sits at BOTH
@@ -564,8 +573,14 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     // conversation takes the page at CLICK time, exactly as a DM does. Same law, one lane wider.
     src('components/home/home-ask.tsx').includes('const showThread = open && (hasThread || !!dmActor || !!chatRoom);') &&
     !src('components/home/home-ask.tsx').includes('onMouseLeave={() => setHovered(false)}') &&
-    src('components/home/home-ask.tsx').includes('max-w-3xl mx-auto') &&
-    src('components/home/home-ask.tsx').includes('max-h-[calc(100vh-200px)]') && // the column grew with the thread kit (Sep 13)
+    // ⟲ RE-POINTED (Oct 1, stale-gate sweep): the centred reading column now lives in THE ONE
+    // THREAD COMPONENT (thread-shell: `mx-auto … max-w-[760px]`, timeline AND composer), and the
+    // viewport fill replaced the bounded `max-h-[calc(100vh-200px)]` — the live seat is a flex
+    // column that takes the remaining height (`flex min-h-0 flex-1 flex-col`) with the shell's own
+    // scroller the only scroller. Same law (a live conversation is a PAGE), the kit's geometry.
+    src('components/thread/thread-shell.tsx').includes('mx-auto flex min-h-full w-full max-w-[760px]') &&
+    src('components/thread/thread-shell.tsx').includes('min-h-0 flex-grow overflow-y-auto') &&
+    src('components/home/home-ask.tsx').includes("${showThread ? 'flex min-h-0 flex-1 flex-col' : ''}") &&
     src('components/home/home-ask.tsx').includes('<ThreadShell') &&                // ONE thread component renders all three kinds
     // RE-POINTED (Aug 11, THE FRESH FLOOR): Home is still the close, AND it resets to the
     // empty chief chat (DM mode/turns/scope/stored key clear — the placeholder can't stay
@@ -582,7 +597,9 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('components/home/home-ask.tsx').includes('THE HISTORY PICKER DIED') &&
     !src('components/home/home-ask.tsx').includes('toggleHistory') &&
     src('components/home/home-view.tsx').includes('!projectDetailOpen && !chatActive') &&
-    src('components/home/home-ask.tsx').includes('text-[14px] text-neutral-700 leading-[1.65]') && // serif retired Aug 12 (owner call) — the app-sans reading style
+    // ⟲ RE-POINTED (Oct 1, stale-gate sweep): answers no longer style themselves in home-ask — the
+    // ONE thread kit's markdown renderer owns the chat reading style (same sans size/leading/tone).
+    src('components/thread/markdown-view.tsx').includes("chat: 'text-[14px] leading-[1.65] text-neutral-700'") && // serif retired Aug 12 (owner call) — the app-sans reading style
 
     src('app/api/rooms/recent/route.ts').includes('THE CHAT HISTORY') &&
     src('app/api/rooms/recent/route.ts').includes("k.startsWith('chat:')"));
@@ -719,11 +736,16 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('components/home/home-ask.tsx').includes("startsWith('Chat with')"));
 
   check('ST8: THE STREAMING ASK — the chief path answers over SSE with live PROGRESS labels (the ONE progress channel in converse: tool labels speak consequence, fast-path + agent loop both emit); the panel\'s busy line speaks the stage; the JSON path survives for non-panel callers',
-    src('app/api/home/ask/route.ts').includes('text/event-stream') &&
-    src('app/api/home/ask/route.ts').includes('onProgress') &&
+    // ⟲ RE-POINTED (Oct 1, stale-gate sweep): the SSE framing moved into THE ONE STREAM
+    // (W20.B — lib/present/converse-stream.ts, shared with the item door); the route answers
+    // through it. The verdict-command fast path became W22's registry COMMAND FAST PATH
+    // (`matchRegistryCommand` → `command.tool`), which still speaks its progress label first.
+    src('app/api/home/ask/route.ts').includes('return converseStreamResponse(async (send) => {') &&
+    src('lib/present/converse-stream.ts').includes("'Content-Type': 'text/event-stream'") &&
+    src('app/api/home/ask/route.ts').includes("onProgress: (label) => send({ type: 'progress', label })") &&
     src('lib/converse/index.ts').includes('TOOL_PROGRESS') &&
     src('lib/converse/index.ts').includes('progressLabelFor(call.function.name)') &&
-    src('lib/converse/index.ts').includes('progressLabelFor(verdict.command.tool)') &&
+    src('lib/converse/index.ts').includes('opts.onProgress?.(progressLabelFor(command.tool))') &&
     src('components/home/home-ask.tsx').includes('stream: true') &&
     // RE-POINTED (Sep 21, THE STREAM NEVER RETYPES): the panel's four inline SSE branches became
     // ONE pure reducer (components/home/ask-stream.ts) — the law (a progress label reaches the busy
@@ -751,7 +773,11 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     !src('app/api/rooms/adopt/route.ts').includes('.update({ room_key') &&
     src('app/api/rooms/adopt/route.ts').includes('export async function GET') &&
     src('components/home/home-ask.tsx').includes('void adopt(null)') &&
-    src('components/home/home-ask.tsx').includes('roomKey: chatRoomKey(), role, text') &&
+    // ⟲ RE-POINTED (Oct 1, stale-gate sweep): persistTurn hoists the key (`const roomKey =
+    // chatRoomKey()`) so the ADDRESS LAW can compare it after the write lands; the body still
+    // posts the chat's OWN key — turns never move, the binding says where they belong.
+    src('components/home/home-ask.tsx').includes('const roomKey = chatRoomKey();') &&
+    src('components/home/home-ask.tsx').includes('roomKey, role, text,') &&
     src('app/api/home/ask/route.ts').includes("kind: 'entity'"));
 
   check('AB4: THE RAIL COMPOSER FOLD — the room\'s composer IS the one composer (WorkerMentionInput frameless; the bespoke textarea died); a coworker mention becomes the ADDRESS in the sent words (the delegate path speaks names), attach feeds the room\'s ingest funnel immediately, chips/offers still speak through send(raw)',
@@ -759,7 +785,9 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('components/home/item-rail.tsx').includes('frameless') &&
     !src('components/home/item-rail.tsx').includes('<textarea') &&
     src('components/home/item-rail.tsx').includes("placeholder=\"Ask, correct, or hand off…\"") &&
-    src('components/home/item-rail.tsx').includes('const send = async (raw: string)') &&
+    // ⟲ RE-POINTED (Oct 1, stale-gate sweep): send(raw) grew optional re-ask/skills params — still
+    // the one funnel chips/offers speak through; asserted as its signature head, not its full arity.
+    /const send = async \(raw: string[,)]/.test(src('components/home/item-rail.tsx')) &&
     src('components/home/item-rail.tsx').includes('for (const f of files) await attach(f)'));
 
   check('KN1: THE SLIM KNOWLEDGE PANEL — ONE LIBRARY, ONE ADDRESS (owner, Sep 15): /documents is the page, /drive + the retired Settings→Knowledge tab are redirect seats and Settings carries no Knowledge nav seat; the folder grid era is DELETED (drive-client gone); the page is the sovereignty/audit surface: one overview read (kind derives STRUCTURALLY from provider_file_id/source — meeting·attachment·upload·generated), indexing status honest (chunks>0), files name their project (entity_id), name+content search, explicit two-step remove, meeting notes managed from Meetings (never deletable here)',
@@ -911,7 +939,11 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
 
   check('PF2: THE INSTANT SERVE + THE SHEET (owner, Aug 7 — ""drafted" then takes too long"; "show the thread too") — a STORED prepared draft serves on the CACHED judgment alone (one read, no re-judge/resolution; a cached non-reply verdict still refuses — P2 holds, absent cache falls through to the full gate); the summoned stage is a bottom SHEET capped ~72% so the source thread stays visible above it',
     src('app/api/inbox/[id]/draft/route.ts').includes('THE INSTANT SERVE') &&
-    src('app/api/inbox/[id]/draft/route.ts').includes("eq('kind', 'judgment').eq('entity_id', `inbox:${id}`)") &&
+    // ⟲ RE-POINTED (Oct 1, stale-gate sweep): the cached-judgment read goes through the ONE plan
+    // reader (`readPlan`, typed stores) instead of a raw item_plans eq-chain — still ONE read, and
+    // only a cached reply/send_file verdict serves the stored draft.
+    src('app/api/inbox/[id]/draft/route.ts').includes("readPlan(supabase, user.id, 'judgment', `inbox:${id}`)") &&
+    src('app/api/inbox/[id]/draft/route.ts').includes("if (cachedWork === 'reply' || cachedWork === 'send_file') {") &&
     src('app/api/inbox/[id]/draft/route.ts').includes("skipped: 'judged_none' });\n    }\n  }") &&
     src('components/home/item-detail.tsx').includes('THE STAGE IS A SHEET, NOT A CURTAIN') &&
     src('components/home/item-detail.tsx').includes('max-h-[72%]'));
@@ -944,7 +976,12 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     // TURN half of the dispatch result — a data read (`{ modelText }`) has no surface half at all,
     // so it is narrowed to `turn` before these fields are touched. Same law, renamed binding.
     src('lib/converse/index.ts').includes('turn?.options || turn?.delegated') &&
-    src('lib/converse/index.ts').includes('Asking for the sake of asking is a failure') &&
+    // ⟲ RE-POINTED (Oct 1, stale-gate sweep): W22 (THE HOME CHAT IS ONE ASSISTANT) compacted the
+    // loop's preamble — the closing sentence went, the law stayed: offer_choices only for ONE
+    // non-inferable consequential decision, never to confirm reversible steps, at most one per turn
+    // (prompt + the tool's own description both say it).
+    src('lib/converse/index.ts').includes('offer_choices is for ONE genuinely consequential decision you cannot infer — never to confirm ') &&
+    src('lib/converse/index.ts').includes('never for choices you can infer from context, never to confirm reversible actions, at most once per turn') &&
     src('app/api/home/ask/route.ts').includes('turn.options?.length') &&
     src('components/home/home-ask.tsx').includes('options: undefined } : x)));') &&
     src('components/home/home-ask.tsx').includes('void handleSubmit(o.say, [])'));
@@ -1347,10 +1384,19 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('components/home/home-ask.tsx').includes('void openArtifact(d.artifact.threadId, d.artifact.id)') &&
     src('components/home/item-rail.tsx').includes('d.artifact?.id'));
 
+  const { matchRegistryCommand } = await import('../lib/converse/commands');
   check('AO2: THE ADDRESSED-COWORKER FLOOR (found live: "Sofia, put together…" became a to-do on the user\'s OWN plate) — a message OPENING with a real coworker\'s name IS a hand-off (deterministic, roster-read, never a hardcoded name list), and a delegate verdict OUTRANKS a command verdict (the classifier returned BOTH and the command fast-path ran first — the second face of the same bug)',
     src('lib/converse/index.ts').includes('THE ADDRESSED-COWORKER FLOOR') &&
     src('lib/converse/index.ts').includes("eq('is_worker', true)") &&
-    src('lib/converse/index.ts').includes('if (verdict.delegate) verdict.command = null;'));
+    // ⟲ RE-POINTED (Oct 1, stale-gate sweep): W22 retired the model ROUTER, so there is no longer
+    // a verdict carrying BOTH delegate and command to reorder. The command fast path is now
+    // deterministic + start-anchored (lib/converse/commands.ts), so the outranking is STRUCTURAL —
+    // proven here as BEHAVIOUR: an addressed message never matches a registry command (it falls
+    // through to the addressed floor's startHandOff), while the same words unaddressed still do.
+    src('lib/converse/index.ts').includes('return startHandOff(client, userId, scope, m[1], m[2].trim(), text, handoff);') &&
+    ['Sam, find the pricing deck', 'Max, what workflows do I have?', 'Sam: pause the weekly report task', 'Max — show my recordings']
+      .every((t) => matchRegistryCommand(t, { kind: 'global' }) === null) &&
+    matchRegistryCommand('find the pricing deck', { kind: 'global' })?.tool === 'find_file');
 
   // ── CH · CONVERSE HISTORY (the amnesia class, Aug 10 — found live: "yes please" → "I don't
   // have enough context"; a reformat request couldn't see the answer it was reformatting; the
@@ -1358,11 +1404,19 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
   check('CH1: THE PANEL TRANSCRIPT — the chat panel\'s own conversation reaches EVERY converse path, not just the question path: the router classifies with it, the agent loop carries it as REAL messages (full fidelity, never a squeezed grounding block), and a delegation hand-off carries the conversation so a task worded "do it" resolves. E2E replay of the live four-turn failure: scripts/smoke-converse-history.ts (reformat delivered · "yes please" resolved · "ask sofia to do it" delegated to Sofia)',
     src('lib/converse/index.ts').includes('function panelTranscript') &&
     src('lib/converse/index.ts').includes('[dlg.transcript, panelTranscript(opts.history)]') &&
-    src('lib/converse/index.ts').includes('classifyTurn(client, userId, scope,') &&
-    src('lib/converse/index.ts').includes('materialNames ? `${text}') &&
-    src('lib/converse/index.ts').includes('...(history ?? []).slice(-8).map((t) => ({ role: t.role, content:') &&
+    // ⟲ RETIRED clause (Oct 1, stale-gate sweep): "the router classifies with it" — W22 deleted the
+    // model ROUTER (no classifyTurn; smoke-one-assistant O1.1 asserts its absence). There is no
+    // second path left for the transcript to miss.
+    // ⟲ RE-POINTED (Oct 1): the loop's history-as-REAL-messages moved to the pure half
+    // (lib/converse/conversation.ts `historyAsMessages` — budgeted, per-turn clipped through the
+    // excerpt law, omissions declared) and the loop hands its messages straight to the model; the
+    // hand-off now carries the transcript through HandOffCtx → runCoworkerDelegation.
+    src('lib/converse/index.ts').includes('const hist = historyAsMessages(conversationTurns);') &&
+    src('lib/converse/index.ts').includes('history: hist.messages, userContent') &&
+    src('lib/converse/conversation.ts').includes("kept.unshift({ role: t.role === 'user' ? 'user' : 'assistant', content });") &&
     src('lib/converse/index.ts').includes('THE CONVERSATION THIS CAME FROM') &&
-    src('lib/converse/index.ts').includes('verdict.delegate.task, text, transcript, material, momentTheme, opts.attachments ?? [],'));
+    /const handoff: HandOffCtx = \{[\s\S]{0,200}?\n\s+transcript,/.test(src('lib/converse/index.ts')) &&
+    src('lib/converse/index.ts').includes("ctx.transcript ?? '', ctx.material ?? '', ctx.themeOverride ?? null, ctx.attachments ?? [],"));
 
   check('CH2: THE HONESTY-FLOOR MISFIRE GATE — the registry pointer is a RECALL rescue: it fires only when the DENIAL SENTENCE itself names something the registry holds; a capability/format denial whose message merely contains project names never grows a "(a known body of work)" pointer; plural matches get plural grammar',
     src('lib/converse/index.ts').includes('THE MISFIRE GATE') &&
@@ -1378,12 +1432,24 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('components/work/chat-input-bar.tsx').includes('MAX_ATTACHMENTS - attachments.length'));
 
   check('CH4: THE PRODUCTION HAND-OFF (found live: a pasted questionnaire + "please fill this in" returned the bare "I couldn\'t finish that one." while a competitor returned a finished document) — (1) THE PASTE CEILING DIED: the Home ask door accepts 20k chars (was a silent slice(0,500) — the brain answered a request it never saw) and the steer door matches; route budget 180s so a synchronous hand-off is never killed; (2) production without a named coworker DELEGATES to the fit (classifier rule); (3) loop exhaustion = the work + full material handed to Sofia automatically, never a shrug; (4) the delegation prompt mandates [CONFIRM: …] slots inside deliverables — a marked slot beats a dropped question; (5) long pastes collapse in the bubble (presentation only); the filing nudge never decorates an empty answer. E2E replay T5: delegated=Sofia, real artifact, 27 [CONFIRM] marks',
-    src('app/api/home/ask/route.ts').includes('slice(0, 20000)') &&
+    // ⟲ RE-POINTED (Oct 1): THE PASTE CEILING is now a DECLARED cut (W22, the excerpt law — a raw
+    // slice lost a long document's tail silently) and WIDER (60k): asserted as the declared clip at a
+    // ceiling read as a NUMBER ≥ 20k at both doors, never the raw literal it replaced.
+    src('app/api/home/ask/route.ts').includes("clipWithRule(String(body.question ?? '').trim(), PASTE_CEILING)") &&
+    Number((/const PASTE_CEILING = ([\d_]+);/.exec(src('app/api/home/ask/route.ts'))?.[1] ?? '0').replace(/_/g, '')) >= 20000 &&
     src('app/api/home/ask/route.ts').includes('maxDuration = 180') &&
-    src('app/api/items/steer/route.ts').includes('slice(0, 20000)') &&
-    src('lib/converse/index.ts').includes('AND for PRODUCED work') &&
-    src('lib/converse/index.ts').includes('THE EXHAUSTION HAND-OFF') &&
-    src('lib/converse/index.ts').includes('exhausted: !applied.length') &&
+    Number((/clipWithRule\(String\(body\.text \?\? ''\)\.trim\(\), ([\d_]+)\)/.exec(src('app/api/items/steer/route.ts'))?.[1] ?? '0').replace(/_/g, '')) >= 20000 &&
+    // ⟲ RE-POINTED (Oct 1, W22 — THE HOME CHAT IS ONE ASSISTANT): the router classifier died; (2)
+    // "production without a named coworker delegates to the fit" now lives in the loop's own
+    // assign_to_coworker tool contract (registered in the loop's tool list).
+    src('lib/converse/index.ts').includes('produced work WITHOUT naming who — pick the obvious fit yourself') &&
+    src('lib/converse/index.ts').includes('assignToCoworkerDefinition, offerChoicesDefinition]') &&
+    // ⟲ RE-POINTED (Oct 1, W22): (3) "never a shrug at exhaustion" — the synchronous exhaustion
+    // hand-off was deliberately retired (a 30-180 s blocking delegation); the floor now is THE LAST
+    // ROUND HOLDS NO TOOLS: the final round must answer with what it has, so exhaustion can never end
+    // on a bare "couldn't finish". Same intent (no shrug), a cheaper mechanism.
+    src('lib/converse/index.ts').includes('THE LAST ROUND HOLDS NO TOOLS') &&
+    src('lib/converse/index.ts').includes('...(finalRound ? {} : { tools: toolDefs.map(toOpenAITool) })') &&
     src('lib/home/delegate.ts').includes('[CONFIRM: <what\'s needed>]') &&
     // REGRESSION FOUND + FIXED (Sep 13, this reconciliation): clause (5) — long pastes collapse in
     // the bubble — was LOST when the panel's bespoke bubbles ported onto the ONE thread component
@@ -1397,10 +1463,17 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
   check('CH5: THE ATTACHED MATERIAL + TOKEN STREAMING + THE FORMAT-FLOOR FIX (Aug 10 night) — (1) attachment text extracts SYNCHRONOUSLY (/api/home/extract-attach) and rides the ask itself: the classifier sees the names, the loop carries the material as its own turn, a delegation carries it whole — never a race against KB background indexing (E2E T6: delegated with material); (2) the agent loop STREAMS its answer (content deltas → SSE token events → the live preview; done stays authoritative; NUL sentinel clears pre-tool preamble; 15s SSE ping keeps long hand-offs alive) — E2E T7 streams >40 chars through the loop\'s exact client+tools; (3) aiCreate strips response_format json_object for Anthropic endpoints (their compat API began rejecting it — 400 "Input should be json_schema" — which broke EVERY json-shaped call routed to Claude, incl. the Home question path); (4) attach doors accept everything the extractor reads (pptx/xlsx/csv/doc added server + composers + presign extension-fallback for unreliable browser mimes) and the WHOLE WINDOW is the drop zone (a missed drop never navigates away); rejected files say so out loud',
     src('app/api/home/extract-attach/route.ts').includes('extractTextFromAttachment') &&
     src('lib/converse/index.ts').includes('THE ATTACHED MATERIAL') &&
-    src('lib/converse/index.ts').includes('material I attached') &&
+    // ⟲ RE-POINTED (Oct 1, W22): the material no longer rides as a separate "material I attached"
+    // turn — it rides INSIDE the user's own message as declared DATA blocks (userTurnContent, the
+    // UNTRUSTED-INPUT-IS-DATA shape; also gated at smoke-one-assistant O3.3).
+    src('lib/converse/index.ts').includes('userTurnContent(text, opts.attachments ?? [])') &&
+    src('lib/converse/conversation.ts').includes('`ATTACHED FILE "${name}"`') &&
     src('lib/converse/index.ts').includes('onToken(delta.content)') &&
     src('app/api/home/ask/route.ts').includes("{ type: 'token', t }") &&
-    src('app/api/home/ask/route.ts').includes("send({ type: 'ping' })") &&
+    // ⟲ RE-POINTED (Oct 1, W20.B THE ONE STREAM): the 15s keep-alive moved into the shared stream
+    // helper both doors use; the ask route streams through it.
+    src('lib/present/converse-stream.ts').includes("setInterval(() => send({ type: 'ping' }), opts.pingMs ?? 15000)") &&
+    src('app/api/home/ask/route.ts').includes('return converseStreamResponse(') &&
     src('lib/ai/factory.ts').includes("includes('anthropic.com')") &&
     src('app/api/work/threads/[id]/chat-attach/route.ts').includes('presentationml.presentation') &&
     src('app/api/drive/upload/presign/route.ts').includes('MIME_BY_EXT') &&
@@ -1651,8 +1724,12 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
 
   check('DH7: REVISION-IN-PLACE + TEMPLATE-BY-EXAMPLE (the two gaps between us and the Claude document bar) — REVISION: an assistant turn that produced a document sends its card ref back in history ({id, threadId, title} — the client sends what it already renders); the classifier judges `revises` (the conversation is TOLD a document card is open); the delegation door fetches the prior artifact\'s CURRENT bytes behind an OWNERSHIP FLOOR (admin client + client-supplied ids → the thread must be THIS user\'s), mounts them at /job/inputs/current.<ext>, the coworker sees the current TEXT in its prompt (at the runDelegation door so EVERY caller gets it — a direct delegation once asked for the document its caller held), and the result materializes onto the SAME artifact id (row REPLACED never appended; revisions always materialize past the length floor; cacheControl 0 on BOTH upload doors — the 1h CDN default served the pre-revision file to the very click that asked for the change, found live). TEMPLATE: "follow this template" resolves the example FILE (attached office bytes ≤1MB ride ConverseAttachment.file; else a NAMED KB document, filename-token match, storage-backed only) and mounts it at /job/inputs/template.<ext> (clone_slide for pptx design fidelity). THE CONTENT FLOOR: the coworker\'s written deliverable IS the document\'s text — codegen formats, never authors (found live: a template compile had perfect structure and zero real facts). E2E: produce→revise kept the id, replaced the row, added the section, kept the chart; a template compile followed all four section names with the coworker\'s facts',
     src('lib/converse/index.ts').includes('artifact?: { id: string; threadId: string; title: string }') &&
-    src('lib/converse/index.ts').includes('"revises":true|false') &&
-    src('lib/converse/index.ts').includes('THIS CONVERSATION PRODUCED A DOCUMENT') &&
+    // ⟲ RE-POINTED (Oct 1, W22 — the router classifier died): `revises` is no longer a model verdict
+    // the classifier is primed for; it is DETERMINISTIC in the one core — the conversation's most
+    // recent document card (from the history the client sends) becomes the hand-off's revisePrior
+    // when the ask refers to it with an edit verb. Stronger: no model discretion decides revision.
+    src('lib/converse/index.ts').includes('const prior = [...(opts.history ?? [])].reverse().find((h) => h.artifact)?.artifact ?? null;') &&
+    src('lib/converse/index.ts').includes('revisePrior: prior && /\\b(it|this|that|the (?:report|document|doc|deck|file|sheet|chart|slides?))\\b/i.test(text)') &&
     src('lib/converse/index.ts').includes("eq('id', revisePrior.threadId).eq('user_id', userId)") && // the ownership floor
     src('lib/converse/index.ts').includes('async function resolveTemplateFile') &&
     src('lib/converse/index.ts').includes("file?: { dataB64: string; ext: string }") &&
@@ -1711,14 +1788,20 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('components/home/home-ask.tsx').includes('d.artifacts?.length ? d.artifacts : d.artifact'));
 
   check('TR1: THE TRICHOTOMY LAW (plan AH — the prepared promise) — every judged-actionable item lands PREPARED, ASKED, or PARKED; unmeasured silence is structurally dead. Measured live on the owner\'s account (T1): 37 actionable → 23 prepared · 2 asked · 12 SILENT; after the fixes and three passes: 41 prepared · 6 asked · every remainder carrying a RECORDED reason. The fixes, each a class: (1) THE OUTCOME LEDGER — the pass records every candidate\'s did/reason as prep_outcome rows (item_plans, zero-migration); silence became queryable. (2) THE DECISION BRIEF — `decide` was the judge\'s last silent verb (5 live: "requires a go/no-go", "you must now decide" → generic none): one grounded pass lays out {question, options with trade-offs, recommendation} as a pool deliverable + room narration; the material is the only ground. (3) THE READER READS EVERYTHING — getPrepared missed prepared_invite/prepared_forward (a FRESH invite existed while every consumer reported nothing prepared); sent artifacts stay excluded (done ≠ pending). (4) CHASE NEVER SILENT — counterparty fallback chain: spine who/blockedOn → the item\'s own sender → the "Waiting on <Name>:" our own extraction wrote → the item\'s words (user addresses it). (5) DELEGATION HONESTY — an evaluator-rejected delegation left NOTHING in the pool yet reported \'delegated\' (a phantom prepared state); an empty hand-back is now an honest none that retries. (6) NEVER-ATTEMPTED FIRST — under a tight budget (cron: 20-90s/user; 70 leftBehind at 7 MINUTES) unreached items outrank re-visits',
-    src('lib/prepare/pass.ts').includes("kind: 'prep_outcome'") &&
+    // ⟲ RE-POINTED (Oct 1, W7.5): the ledger got ONE WRITER — recordPrepOutcome upserts the
+    // prep_outcome plan row for the pass, anticipation and the re-queue lane alike (the inline
+    // `kind: 'prep_outcome'` literal became the writer's argument). Same ledger, one door.
+    src('lib/prepare/pass.ts').includes("await upsertPlan(admin, userId, 'prep_outcome', key,") &&
+    src('lib/prepare/pass.ts').includes('export async function recordPrepOutcome') &&
     src('lib/prepare/pass.ts').includes('recordOutcome') &&
     src('lib/prepare/pass.ts').includes('async function prepareDecisionBrief') &&
     src('lib/prepare/pass.ts').includes("verdict.work === 'decide'") &&
     src('lib/prepare/pass.ts').includes('"question":"…","options"') &&
     src('lib/prepare/pass.ts').includes('EXCERPT_RULE') &&                       // the brief grounds honestly
     src('lib/prepare/pass.ts').includes("r.did === 'decision'") &&               // narrated like every preparation
-    src('lib/prepare/read.ts').includes("kind: 'reply_draft' | 'nudge_draft' | 'deliverable' | 'invite' | 'forward'") &&
+    // ⟲ RE-POINTED (Oct 1): the reader's kind union became the named `PreparedKind` type and GREW a
+    // lane (paste_pack) — asserted as CONTAINMENT of the five, so a new lane never breaks the law.
+    /export type PreparedKind = 'reply_draft' \| 'nudge_draft' \| 'deliverable' \| 'invite' \| 'forward'/.test(src('lib/prepare/read.ts')) &&
     src('lib/prepare/read.ts').includes('!sd.prepared_invite.sent_at') &&        // sent ≠ pending
     src('lib/prepare/pass.ts').includes('waiting (?:on|for)') &&                 // the chase fallback chain
     src('lib/prepare/pass.ts').includes('a chase is never a silent none') &&
@@ -1755,7 +1838,11 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('components/thread/types.ts').includes('consequence?: string | null') &&
     src('components/home/decision-card.tsx').includes('{ consequence: o.tradeoff }') &&
     src('components/thread/thread-cards.tsx').includes('recommended') &&
-    src('components/home/item-detail.tsx').includes('decisionBrief?.decision?.options.length') &&
+    // ⟲ RE-POINTED (Oct 1, W17 — the ONE derivation both item doors share): "the brief's options
+    // SUPERSEDE the judge's bare labels" moved out of item-detail into lib/room/decision-object
+    // decisionSpecOf, which the deep-dive calls over the view payload (also gated at smoke-one-stage).
+    src('lib/room/decision-object.ts').includes('const options = briefOpts.length >= 2 ? briefOpts : verdictOpts.length >= 2 ? verdictOpts : null;') &&
+    src('components/home/item-detail.tsx').includes('decisionSpecOf({ verdict, prepared: view?.prepared ?? null }') &&
     src('components/home/item-detail.tsx').includes('!p.decision') &&                    // the strip filter
     src('lib/prepare/pass.ts').includes('PLAIN TEXT') &&
     !src('lib/prepare/pass.ts').includes('`**The decision:**') &&
@@ -1798,7 +1885,10 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     // still supplies the brief's own options (with their trade-offs) that the contract rides on.
     src('components/home/decision-card.tsx').includes('decision: {') &&
     src('components/home/decision-card.tsx').includes('tradeoff: opt?.tradeoff ?? null') &&
-    src('components/home/item-detail.tsx').includes('decisionBrief!.decision!.options') &&
+    // ⟲ RE-POINTED (Oct 1, W17): the deep-dive supplies the brief's options (with trade-offs) through
+    // the ONE shared derivation decisionSpecOf (brief options carry `tradeoff` into the contract).
+    src('lib/room/decision-object.ts').includes('options: Array<{ label: string; tradeoff?: string | null }>;') &&
+    src('components/home/item-detail.tsx').includes('decisionSpecOf({ verdict, prepared: view?.prepared ?? null }') &&
     src('lib/converse/index.ts').includes('GROUNDING_TAG_RE') &&
     // RE-POINTED (Sep 18): the chat-lane clock wave wrapped the one-exit strip in
     // enforceWeekdayDatePairs — same site, same strip, one more floor on the way out.
@@ -1818,7 +1908,11 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('docs/experience-spec.md').includes('Transitions are buttons; conversations are text') &&
     src('lib/work/machine.ts').includes('export async function workStateOf') &&
     src('lib/work/machine.ts').includes("'awaiting_decision'") &&
-    src('lib/work/machine.ts').includes('getPrepared') &&                       // never a parallel derivation
+    // ⟲ RE-POINTED (Oct 1, W2.1): THE ONE READER's entry became `preparedState` (getPrepared's
+    // successor — same reader, now carrying the sent stamp); the machine still reads it, never a
+    // parallel derivation.
+    src('lib/work/machine.ts').includes("const { preparedState } = await import('@/lib/prepare/read');") &&
+    src('lib/work/machine.ts').includes('await preparedState(client, userId,') &&
     src('lib/room/render-plan.ts').includes('export function panelPlan') &&
     src('lib/room/render-plan.ts').includes('stageHostsDecision: false') &&
     src('components/home/item-rail.tsx').includes('panelPlan({ hasDecision') &&
@@ -1839,13 +1933,19 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/prepare/pass.ts').includes("const dedupeKey = `requires:${w.entityId}`") &&
     src('lib/prepare/pass.ts').includes('composeAskSpeech') &&
     src('lib/prepare/pass.ts').includes('asked in the room') &&
-    src('lib/prepare/read.ts').includes('sd.prepared_invite.startISO ?? sd.prepared_invite.start') &&
+    // ⟲ RE-POINTED (Oct 1): the reader hoisted the invite to `inv` — the startISO-first read is intact.
+    src('lib/prepare/read.ts').includes('const inv = sd.prepared_invite;') &&
+    src('lib/prepare/read.ts').includes('const startISO = inv.startISO ?? inv.start;') &&
     src('lib/prepare/read.ts').includes("content: sd.nudge_draft.body, by: sd.prepared_by?.worker ?? null") &&
     src('lib/prepare/pass.ts').includes("if (poolKind === 'commitment')") &&
     src('lib/prepare/pass.ts').includes('THE COMMITMENT: ') &&
     src('lib/home/prepare-action.ts').includes("replace(/[.,;:!?)\\]]+$/, '')") &&
-    src('lib/home/item-context.ts').includes("replace(/[.,;:!?)\\]]+$/, '')") &&
-    src('lib/inbox/resolve-connection.ts').includes("replace(/[.,;:!?)\\]]+$/, '')"));
+    // ⟲ RE-POINTED (Oct 1, W1.6 SHARED PRIMITIVES): two of the three regex copies collapsed onto
+    // lib/core/email `firstEmailTrimmed` (TRAILING_PUNCT_RE; behaviour gated in smoke-core-primitives).
+    src('lib/core/email.ts').includes('const TRAILING_PUNCT_RE = /[.,;:!?)\\]]+$/;') &&
+    src('lib/core/email.ts').includes("return hit ? hit.replace(TRAILING_PUNCT_RE, '') : null;") &&
+    src('lib/home/item-context.ts').includes('firstEmailTrimmed(s)') &&
+    src('lib/inbox/resolve-connection.ts').includes('firstEmailTrimmed(v)'));
 
   check('RM1: THE MACHINE REPAIRS FROM THE PILOT SWEEP (Aug 13 — a read-only Opus agent censused a real pilot account against the machine; every derivation lie found became a ladder fix, re-censused CONFIRMED on the same account). (1) DECISION MATERIAL PARITY — the machine accepts the verdict\'s own validated options as decision material, same fallback the door renders (6 of 6 decide items read "preparing" for 17 days while the deep-dive showed a live decision card; now 6/6 awaiting_decision). (2) THE ASK OUTRANKS THE SEND — an open input_checklist makes the primary supplying, never Send-with-known-holes (12 of 19 live asks sat demoted behind a Send button). (3) UNFIREABLE ≠ SEND-SHAPED — an invite with no time / a forward with no recipient carries sendReady:false from the one reader and derives awaiting_input (the send door hard-rejects them; a Send primary that cannot fire is a lie). (4) THE STALENESS FLOOR — a 48h-old judgment with nothing landed and nobody asked derives back to unjudged ("preparing" is transient by spec, not a 17-day graveyard; 17→3 on the account). (5) THE COMMITMENT LANE HOME — a commitment\'s type:draft pool row IS the chase/reply lane (nudge_draft/reply_draft by the pass\'s own title contract), newest-only (stacked repeat nudges collapsed); the machine reads them awaiting_approval with Send primary, per the lane table. Spec updated FIRST (the lifecycle section carries all five)',
     src('lib/work/machine.ts').includes('const decisionMaterial = !!decisionBrief || (Array.isArray(v.options) && v.options.length >= 2)') &&
@@ -1855,7 +1955,9 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/work/machine.ts').includes("if (sendBlocked) return { state: 'awaiting_input'") &&
     src('lib/work/machine.ts').includes('48 * 3_600_000') &&
     src('lib/prepare/read.ts').includes('sendReady?: boolean') &&
-    src('lib/prepare/read.ts').includes('sendReady: !!(sd.prepared_invite.startISO ?? sd.prepared_invite.start)') &&
+    // ⟲ RE-POINTED (Oct 1): same hoist — sendReady reads the startISO-first value (`inv` = prepared_invite).
+    src('lib/prepare/read.ts').includes('const startISO = inv.startISO ?? inv.start;') &&
+    src('lib/prepare/read.ts').includes('sendReady: !!startISO,') &&
     src('lib/prepare/read.ts').includes('sendReady: (sd.prepared_forward.to ?? []).length > 0') &&
     src('lib/prepare/read.ts').includes('sawCommitDraft') &&
     src('lib/prepare/read.ts').includes("startsWith('Nudge — ') ? 'nudge_draft' : 'reply_draft'") &&
@@ -1865,10 +1967,14 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
   check('AJ2: THE SUPPLY LOOP REPAIRS (the ask-journey walk, Aug 13 — an Opus agent walked ask→supply→go-ahead end-to-end on the probe; 8 defects; the deepest: awaiting_input was STRUCTURALLY UNREACHABLE for coworker-executor produce items). D1 — the coworker-supersedes delete fires ONLY when the coworker posted an ask of its OWN (it used to fire unconditionally: a [CONFIRM:]-shell delivery silently destroyed the engine ask AND the go-ahead stamp; the user was never asked). D2 — the evidence-quote law gains a token-subset fallback, still code-verified (substring-only rejected the RIGHT file ~2/3 of runs on word-order variance: "signed Schedule B addendum" vs "Schedule B addendum - signed"). D3 — SUPPLY RE-OPENS THE WORK: a require:* stage newer than the prepare-pass deliverable re-runs the delegation (prior row versioned, reader skips it) — attaching the exact file the ask named no longer leaves the pre-supply shell as the permanent deliverable. D4 — the ingest funnel makes the settleAsksForItem split: engine asks archive WHOLE (no ghost demand line), coworker asks strip component only (their speech stays). D5 — a user-supplied file (type:file) and sent work (type:sent) are NOT prepared work — the machine no longer reads `ready` the instant the user attaches their own material. D8 — THE ASK-DIRECTION FLOOR (JUDGE_VERSION 15): an open engine ask is OUR ask to the USER, never the counterparty\'s debt (found live: the judge flipped produce→chase and drafted a nudge asking the counterparty to send the deliverable WE owed HER). Walked live post-fix: coworker ask supersedes cleanly, re-delegation blocks on the outstanding ask, supply re-opens. QUEUED: D6 (the honest-retry loop has no floor — escalation/cap design) + D7 coverage rides D1/D3',
     src('lib/home/delegate.ts').includes('if (needsInput?.length) {') &&
     src('lib/home/delegate.ts').includes('ask-journey D1') &&
-    src('lib/prepare/requirements.ts').includes('evTokens.every((t) => candText.includes(t))') &&
+    // ⟲ RE-POINTED (Oct 1, W28 THE EVIDENCE CHECK): the token-subset fallback lives in the pure
+    // evidenceInText, per quote fragment over normalised text — still code-verified, never unverified.
+    src('lib/prepare/requirements.ts').includes('return toks.length >= 2 && toks.every((t) => candTextNorm.includes(t));') &&
     src('lib/prepare/pass.ts').includes('SUPPLY RE-OPENS THE WORK') &&
     src('lib/prepare/pass.ts').includes("like('task_id', 'require:%')") &&
-    src('lib/prepare/pass.ts').includes("movedPast && !fresherSupply ? 'superseded:ground-move' : 'superseded:require-supply'") && // RE-POINTED: GL1 — the supersede stamp names its cause (ground move vs supply)
+    // ⟲ RE-POINTED (Oct 1, W9.1 THE ONE DECISION): the stamp still names its cause, now three-way
+    // (supply first, then ground move, then a non-live truth) behind decideRegeneration.
+    src('lib/prepare/pass.ts').includes("version_of: fresherSupply ? 'superseded:require-supply' : movedPast ? 'superseded:ground-move' : 'superseded:truth'") && // RE-POINTED: GL1 — the supersede stamp names its cause (ground move vs supply)
     src('app/api/items/ingest/route.ts').includes('archives WHOLE') &&
     src('app/api/items/ingest/route.ts').includes('archived_at: new Date().toISOString()') &&
     src('lib/prepare/read.ts').includes("if (d.type === 'file' || d.type === 'sent') continue;") &&
@@ -1879,17 +1985,31 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/prepare/ground.ts').includes('export async function groundOf') &&
     src('lib/prepare/ground.ts').includes('export function groundMoved') &&
     src('lib/prepare/read.ts').includes('stale?: boolean') &&
-    src('lib/prepare/read.ts').includes('if (groundMoved(a.ground, current)) a.stale = true;') &&
-    src('lib/work/machine.ts').includes('const live = input.prepared.filter((p) => !p.stale)') && // RE-POINTED: the ladder became pure deriveState (CV2)
+    // ⟲ RE-POINTED (Oct 1, the hand law): the IO reader no longer sets `a.stale` inline — it routes
+    // through the ONE meeting point `markGroundMoved` (machine words → stale, the user's held words →
+    // staleUnderEdit, still live). Same law: a moved ground supersedes machine work.
+    src('lib/prepare/read.ts').includes('if (groundMoved(a.ground, current)) markGroundMoved(a);') &&
+    /export function markGroundMoved[\s\S]{0,120}else a\.stale = true;/.test(src('lib/prepare/read.ts')) &&
+    // ⟲ RE-POINTED (Oct 1, W2.1 TIME TRUTH): the ladder's live filter is the ONE reader's
+    // `isLiveArtifact` (stale · expired · false-claim …), whose first clause is still `!a.stale`.
+    src('lib/work/machine.ts').includes('const live = input.prepared.filter(isLiveArtifact)') &&
+    src('lib/prepare/read.ts').includes('return !a.stale && !a.expired') &&
     src('lib/work/machine.ts').includes("if (superseded) return { state: 'preparing'") &&
     (src('lib/prepare/pass.ts').match(/prepared_from: currentGround/g)?.length ?? 0) >= 6 &&
-    (src('lib/prepare/pass.ts').match(/narrateGroundMove\(admin, userId, w, currentGround\)/g)?.length ?? 0) >= 6 &&
+    // ⟲ RE-POINTED (Oct 1): narrateGroundMove gained the lane kind + the superseded artifact's time
+    // (the delta line names WHAT moved) — still called from every lane.
+    (src('lib/prepare/pass.ts').match(/narrateGroundMove\(admin, userId, w, currentGround, '/g)?.length ?? 0) >= 6 &&
     src('lib/home/delegate.ts').includes('preparedFrom?:') &&
     src('lib/inbox/draft-reply.ts').includes('THE GROUND LAW, content half') &&
     src('lib/inbox/draft-reply.ts').includes('topMessageOf') &&
-    src('app/api/items/view/route.ts').includes("preparedArts.some((a) => a.stale)") &&
+    // ⟲ RE-POINTED (Oct 1, W13.5 THE ON-OPEN TRIP): the view's stale check became the budgeted
+    // `needsReprepareTrip` (any non-live artifact — stale is one of its clauses) fired in after().
+    src('app/api/items/view/route.ts').includes('const tripDue = needsReprepareTrip(preparedArts)') &&
+    src('lib/room/open-kicks.ts').includes('return arts.some((a) => !isLiveArtifact(a));') &&
     src('app/api/inbox/[id]/draft/route.ts').includes('draftSuperseded') &&
-    src('app/api/commitments/[id]/nudge/route.ts').includes('!a.stale') &&
+    // ⟲ RE-POINTED (Oct 1, W9.1 LIVE, not young): the nudge door serves only THE ONE READER's
+    // `live` set (a superseded machine draft is not live and falls through to regeneration).
+    src('app/api/commitments/[id]/nudge/route.ts').includes("const liveDraft = st.live.find((a) => (a.kind === 'nudge_draft'") &&
     src('docs/experience-spec.md').includes('The ground law'));
 
   check('GL2: THE GROUND LAW\'s surface half + the diagnosis riders (a read-only Opus census of the live Stratto room reconstructed the exact sleep: reactivate-on-reply stamps activity then STOPS; the one pass after the inbound was neutralized because a post-inbound regeneration made the last_activity guard permanently dead — age-only protection; the verdict-shaped stripper can kill a wrong-verb artifact but never a wrong-content one). (1) NARRATION EXPIRES WITH THE BRIEF — engine narration older than the brief\'s composition (briefAt on both doors) joins the "earlier (N)" fold; live-component turns and human speech always render (item-rail isExpiredNarration). (2) THE EDITOR\'S PRESENT-TENSE FLOOR — compose sees MACHINE STATE + NEWEST MESSAGE (presentOf, loose door), carries the ONE-CLAIM-ABOUT-WHAT\'S-OWED law, and the sig gains the ground so a new inbound recomposes; ROOM_BRIEF_VERSION 5. (3) THE ALREADY-BOOKED FLOOR — an invite whose attendee already has a calendar event within ±12h of the proposed time prepares NOTHING (found live: the lane prepared an invite duplicating a meeting the counterparty had ALREADY ACCEPTED, at a conflicting time). (4) THE RESCHEDULE RE-BRIEF — the anticipation fire key carries the event\'s start time, so a moved meeting earns a corrected prep brief that REPLACES the old turn in place (the bare-id key briefed once per event FOREVER — the Monday instructions stood for 3 days). QUEUED from the census: the frozen-entity-state contradiction (two caches, one page, neither invalidates the other), composer fragment guard (the lone "his" turn)',
@@ -1916,7 +2036,12 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/entities/state.ts').includes('${verdictDigest}') &&
     src('lib/work/judge.ts').includes("ALREADY ON THE USER'S CALENDAR") &&
     src('lib/work/judge.ts').includes('- ALREADY BOOKED:') &&
-    src('lib/work/judge.ts').includes("filter('attendees', 'cs'") &&
+    // ⟲ RE-POINTED (Oct 1, W8.7 THE JUDGE SEES WHAT THE SETTLE SEES): the judge's bespoke jsonb
+    // containment query died — the booked-calendar fact now arrives through the ONE evidence registry
+    // (calendar row → participants from attendees, declined dropped) matched to the counterparty by
+    // the nominator. Outcome-gated in smoke-evidence-sources (N1 + the legacy-section render).
+    src('lib/evidence/sources.ts').includes('participants: partiesOf(r.attendees)') &&
+    src('lib/work/judge.ts').includes('loadEvidencePool') &&
     src('lib/work/surface-registry.ts').includes('16: THE BOOKED-CALENDAR FACT')); // RE-POINTED to the version log (pins break on bumps)
 
   check('CV1: THE COVERAGE REPAIR (Aug 14 — the census\'s root cause found: 18 profiles shared a 240s budget SEQUENTIALLY with a 20s floor = 360s of work in a 300s route; the route died mid-loop every run and tail users NEVER got a pass — a 22h gap on the owner\'s live account, ~5% judged coverage on the pilot\'s). The sweep now: (1) walks ACTIVE users only — a mail connection OR recent work signal; the sovereign tier has no mailbox, so a connections-only filter would have silenced those accounts\' passes AND their entity-state maintenance entirely; (2) LEAST-RECENTLY-SERVED FIRST — the user longest without a pass leads, so a budget-killed run self-balances instead of starving the same tail forever; (3) a WALL-CLOCK GUARD stops cleanly before the 300s kill and reports usersLeftBehind (never a silent mid-loop death); (4) per-user budget floor 30s / ceiling 120s over the REAL active count. Measured live on the owner: one 120s pass attempted ~30 candidates (judge → trichotomy), drained judged-none items out of the pool, left 151 honestly counted for the next sweep',
@@ -1945,8 +2070,12 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/work/machine.ts').includes('export async function workStatesFor') &&
     src('lib/work/machine.ts').includes('export const STATE_WORDS') &&
     (src('lib/work/machine.ts').match(/deriveState\(\{/g)?.length ?? 0) >= 2 &&
-    src('lib/work/machine.ts').includes('poolRowsToArtifacts') &&
+    // ⟲ RE-POINTED (Oct 1, W16.3 THE ONE READER): the machine no longer maps pool rows at all — the
+    // deck batch reads through `preparedStatesFor` (lib/prepare/read.ts), which maps via the SAME
+    // shared `poolRowsToArtifacts` getPrepared uses. One mapping, now one reader — never a fork.
+    src('lib/work/machine.ts').includes("const { preparedStatesFor } = await import('@/lib/prepare/read')") &&
     src('lib/prepare/read.ts').includes('export function poolRowsToArtifacts') &&
+    /export async function preparedStatesFor[\s\S]*?poolRowsToArtifacts\(pool, 'commitment'\)[\s\S]*?export async function getPrepared/.test(src('lib/prepare/read.ts')) &&
     // ⟲ RE-POINTED (W14.1): the approximation is retired — ONE exact ground path serves deck and room.
     src('lib/work/machine.ts').includes('STALENESS — ONE GROUND PATH') && src('lib/prepare/read.ts').includes('export async function groundsFor('));
 
@@ -1997,7 +2126,12 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     // drawer; the mid-stream handle is dead.
     src('components/home/item-rail.tsx').includes('THE STREAM SHOWS THE PRESENT') &&
     src('components/home/item-rail.tsx').includes('onHistory') &&
-    src('components/home/item-rail.tsx').includes('const visibleTail = fresh.slice(-3)') &&
+    // ⟲ RE-POINTED (Oct 1, W19.B THE ROOM'S CONVERSATION IS A REAL CHAT): the room door still keeps
+    // the newest-three tail, now WIDENED so the reader's own live exchange shows whole (a question is
+    // never cut from its answer); W16's item page shows only the reader's exchange. Everything else
+    // is the record, reported to the drawer — never rendered mid-stream.
+    src('components/home/item-rail.tsx').includes('fresh.filter((_t, i) => i >= fresh.length - 3 || (firstFreshUser >= 0 && i >= firstFreshUser))') &&
+    src('components/home/item-rail.tsx').includes('const historyTurns = stream.filter((t) => !visibleSet.has(t));') &&
     !src('components/home/item-rail.tsx').includes('earlier ({earlier})') &&
     // (7) THE NARRATION FOLLOWS ITS ARTIFACT — UNGATED (the ghost's true root: the draft died
     // through another door a day earlier, apply-verdict's `changed` stayed false, and the
@@ -2022,7 +2156,11 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/workers/seed.ts').includes('LINKEDIN_PROMPT') &&
     src('lib/workers/seed.ts').includes('Keeps your LinkedIn active and credible') &&
     src('lib/workers/seed.ts').includes("name: 'Luca'") &&
-    src('lib/converse/index.ts').includes("runCoworkerDelegation(client, userId, scope, 'clara'") &&
+    // ⟲ RE-POINTED (Oct 1, W25 THE HAND-OFF HAS AN ID): the delegation no longer hard-codes a
+    // fallback coworker — it resolves the ADDRESSED coworker against the user's ACTIVE roster only
+    // (a retired worker can never be a target) and runs in the background under a hand-off id.
+    src('lib/converse/index.ts').includes("runCoworkerDelegation(admin, userId, scope, coworkerWant, task, userText,") &&
+    /from\('custom_agents'\)\.select\('id, name, worker_role'\)\s*\.eq\('user_id', userId\)\.eq\('is_worker', true\)\.eq\('is_active', true\)/.test(src('lib/converse/index.ts')) &&
     !src('lib/converse/index.ts').includes("'sofia'") &&      // no live delegation target (found-live comments keep her name as history)
     !src('lib/converse/index.ts').includes('Sofia — writing') && // no fit-map entry
     !src('lib/integrations/registry.ts').includes('slack-sofia') &&
@@ -2146,9 +2284,13 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
       conv.includes('THE STREAM NEVER RETYPES') &&
       conv.includes('STREAM_HOLD_MS') &&
       conv.includes('flushing = true; onToken(held)') &&
-      conv.includes('if (toolCalls.length) onProgress?.(') &&
-      conv.includes('THE SENTINEL IS RETIRED') &&
-      !/onToken\('\\u0000'\)/.test(conv) &&
+      // ⟲ RE-POINTED (Oct 1, W22 THE ONE LOOP): the loop's callbacks ride its options object `o` —
+      // the held preamble still goes to the transient progress channel, never the bubble.
+      conv.includes('if (toolCalls.length) o.onProgress?.(') &&
+      // ⟲ RETIRED sub-assertion (Oct 1): the 'THE SENTINEL IS RETIRED' comment marker went with the
+      // W22 loop rewrite — a comment proves wording, not behaviour. The behaviour floor replaces it,
+      // widened: the core emits NO reset sentinel anywhere (not just via onToken).
+      !/onToken\('\\u0000'\)/.test(conv) && !conv.includes('\\u0000') && !conv.includes('token_reset') &&
       // the client still ACCEPTS a reset (back-compat), it simply never receives one from us
       src('components/home/home-ask.tsx').includes('askStreamReducer') &&
       // …and the reducer's verdict is what the seated turn READS — not a parallel re-derivation
@@ -2223,11 +2365,17 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
         'Drafted the reply offering both slots — it is on the thread, ready to review.'));
     check('HN5d: an agreement to the assistant\'s OWN offer is routed to the path that HAS HANDS (never answered as a fresh question), carries the directive, and is caught deterministically by ONE tokenless corrective retry if it still re-asks',
       conv.includes('answeringAnOffer') &&
-      conv.includes('verdict.question = false; verdict.open = true') &&
+      // ⟲ RETIRED sub-assertion (Oct 1, W22 THE HOME CHAT IS ONE ASSISTANT): the classifier verdict
+      // this flipped is gone — there is no hand-less question lane left to mis-route an agreement to;
+      // every non-command turn runs THE ONE LOOP with the registry's hands. Covered by
+      // smoke-one-assistant O1.1 (no classifyTurn / no verdict type in the core). The directive +
+      // corrective-retry halves below still hold the forward-motion law.
       conv.includes('FORWARD_MOTION_DIRECTIVE') &&
       conv.includes('repeatsTheQuestion(lastAssistant, loopTurn.say)') &&
       // the retry must not stream a second time over a bubble that already has words
-      /const retry = await agentLoop\([\s\S]{0,600}undefined, \{ transcript/.test(conv) &&
+      // ⟲ RE-POINTED (Oct 1, W22): the retry passes the loop's options object with the streaming
+      // callbacks (`onToken`, `partial`) explicitly cleared — tokenless, same law.
+      /const retry = [^;]{0,80}await agentLoop\(client, userId, scope, text, \{\s*\.\.\.loopOpts, onToken: undefined, partial: undefined,/.test(conv) &&
       // …and the affirmation read never touches the item scope, whose "yes" already means rework
       conv.includes("scope.kind !== 'item' && !!lastAssistant"));
 
@@ -2314,7 +2462,10 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
 
     // ── HN7 · the wiring owed to the finished waves ──
     check('HN7a: THE ANCHOR LAW reaches the lane — the weekday floor is handed the USER\'S OWN recent words (the current ask plus the last user turns, NEVER an assistant turn, which would let the model\'s invented weekday launder itself into the anchor position)',
-      conv.includes("opts.history ?? []).filter((h) => h.role === 'user')") &&
+      // ⟲ RE-POINTED (Oct 1): the floor reads the core's ONE validated `history` (opts.history,
+      // shape-filtered once at the top of converse) — still USER turns only.
+      conv.includes("const history = Array.isArray(opts.history) ? opts.history.filter(") &&
+      conv.includes("const userWords = [text, ...history.filter((h) => h.role === 'user')") &&
       conv.includes('{ userText: userWords }') &&
       !/userWords[\s\S]{0,200}role === 'assistant'/.test(conv));
     check('HN7b: THE FRESH READ — check_calendar\'s `refresh` arg reaches its executor instead of being dropped by the dispatcher, and the loop is told when to set it',
@@ -2386,13 +2537,26 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     const askSrc = src('lib/home/ask.ts');
     const routeSrc = src('app/api/home/ask/route.ts');
     const panelSrc = src('components/home/home-ask.tsx');
+    // ⟲ RE-POINTED (Oct 1, W19.B THE ANSWER RENDERER lives in ONE module): the chips no longer render
+    // inside home-ask.tsx — every answer bubble renders through components/home/ask-answer.tsx, which
+    // home-ask mounts. The law reads at the renderer that exists: no cursor there, nor in the panel.
+    const answerSrc = src('components/home/ask-answer.tsx');
     check('RT7: NO POSITIONAL READ SURVIVES in the renderer — the emit-order cursor is gone and chips resolve through the shared index',
-      !/refs\[refIdx/.test(panelSrc) && !/refIdx/.test(panelSrc) && panelSrc.includes('byTag.get(id)'),
-      /refIdx/.test(panelSrc) ? 'refIdx still present' : '');
+      !/refIdx/.test(panelSrc) && !/refIdx/.test(answerSrc) &&
+      panelSrc.includes("import { Answer } from '@/components/home/ask-answer'") &&
+      answerSrc.includes('const r = byTag.get(id) ?? null') && answerSrc.includes('const byTag = indexByTag(refs)'),
+      /refIdx/.test(panelSrc + answerSrc) ? 'refIdx still present' : '');
+    // ⟲ RE-POINTED (Oct 1, W37 removed the entity ask): lib/home/ask.ts is now the snapshot builder
+    // only — the serving ends are THE ONE CONVERSATION CORE (its exit floor strips through the shared
+    // `stripUnresolvedTags`) and the ask route (persists through the shared `tagOf`); the renderer is
+    // ask-answer.tsx (`resolveAskRefs`). Every end imports the ONE grammar; none parses its own.
+    void askSrc;
     check('RT8: ONE RESOLVER, BOTH ENDS — the serving door and the renderer import lib/home/ask-refs (a grammar owned by two parsers drifts; the entity ask was removed in W37)',
-      askSrc.includes("from '@/lib/home/ask-refs'") &&
-      panelSrc.includes("from '@/lib/home/ask-refs'") &&
-      askSrc.includes('resolveAskRefs(raw'));
+      src('lib/converse/index.ts').includes("import { stripUnresolvedTags } from '@/lib/home/ask-refs'") &&
+      src('lib/converse/index.ts').includes('return stripUnresolvedTags(say, refs)') &&
+      routeSrc.includes("import { tagOf } from '@/lib/home/ask-refs'") &&
+      answerSrc.includes("from '@/lib/home/ask-refs'") &&
+      answerSrc.includes('resolveAskRefs(text, (t) => byTag.get(t)'));
     check('RT9: THE PERSIST DOOR CARRIES THE TAG — both writers (the server door and the panel\'s own) store it beside the label, so a rehydrated turn resolves identically',
       /tagOf\(r\) \? \{ tag: tagOf\(r\) \}/.test(routeSrc) && /r\.tag \? \{ tag: r\.tag \}/.test(panelSrc) &&
       src('lib/room/turns.ts').includes('tag?: string'));

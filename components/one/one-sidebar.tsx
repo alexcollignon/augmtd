@@ -32,7 +32,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   HomeIcon, EnvelopeIcon, VideoCameraIcon, FolderIcon, DocumentTextIcon,
   Cog6ToothIcon, ArrowRightOnRectangleIcon, ShieldCheckIcon,
-  ChatBubbleLeftEllipsisIcon, BoltIcon,
+  ChatBubbleLeftEllipsisIcon, BoltIcon, Bars3Icon, XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { useRecordingContext } from '@/context/recording-context';
 import type { WorkspaceFeatures } from '@/lib/workspace/types';
@@ -89,6 +89,11 @@ export default function OneSidebar({
   const router = useRouter();
   const recording = useRecordingContext();
   const [showUserMenu, setShowUserMenu] = useState(false);
+  // THE PHONE SEAT (mobile walk, Oct 1): below md the 212px column cannot share a 390px screen with
+  // the page — it squeezed every surface to ~180px. It becomes an off-canvas drawer behind a slim
+  // top bar; any navigation closes it. md+ is unchanged (the static column).
+  const [mobileOpen, setMobileOpen] = useState(false);
+  useEffect(() => { setMobileOpen(false); }, [pathname]);
   const menuRef = useRef<HTMLDivElement>(null);
   const [rooms, setRooms] = useState<Rooms>({ pinned: [], conversations: [] });
   // THE ROW MENU (owner, Aug 8 — "the 3 dots on hover of the recents"): manage where you see —
@@ -235,6 +240,7 @@ export default function OneSidebar({
   // never an event nobody hears plus a flag that restores whatever chat was last.
   const openChat = (key: string) => {
     setOpenConvKey(key);
+    setMobileOpen(false);
     if (pathname !== '/home') { router.push(chatHref(key)); return; }
     window.dispatchEvent(new CustomEvent('aug:open-chat', { detail: { key } }));
   };
@@ -273,6 +279,7 @@ export default function OneSidebar({
   // own `?chat=worker:<tid>:<agent>` when Home has cached it, else `?dm=<agent>`, which Home resolves.
   const dmWorker = (w: TeamMate) => {
     setTeamOpen(false);
+    setMobileOpen(false);
     if (pathname !== '/home') { router.push(dmHref(w.id, loadLS<string>(dmThreadLsKey(w.id)))); return; }
     window.dispatchEvent(new CustomEvent('aug:dm-worker', { detail: { agentId: w.id, name: w.name } }));
   };
@@ -331,7 +338,24 @@ export default function OneSidebar({
     .slice(0, CHAT_ROWS_MAX);
 
   return (
-    <div className="flex h-screen w-[212px] flex-col bg-neutral-50 flex-shrink-0 border-r border-neutral-200/60">
+    <>
+    <div className="md:hidden flex h-11 flex-shrink-0 items-center gap-2 border-b border-neutral-200/60 bg-neutral-50 px-2">
+      <button type="button" onClick={() => setMobileOpen(true)} aria-label="Open menu" aria-expanded={mobileOpen}
+        className="flex h-10 w-10 items-center justify-center rounded-lg text-neutral-600 hover:bg-neutral-200/50">
+        <Bars3Icon className="h-5 w-5" />
+      </button>
+      <Image src="/augmtd-logo.png" alt="AUGMTD" width={18} height={18} className="w-[18px] h-[18px]" />
+      <span className="text-[13px] font-semibold tracking-wide text-neutral-800 select-none">augmtd</span>
+    </div>
+    {mobileOpen && (
+      <div className="md:hidden fixed inset-0 z-[70] bg-neutral-900/30" onClick={() => setMobileOpen(false)} aria-hidden="true" />
+    )}
+    <div onClickCapture={(e) => { if ((e.target as HTMLElement).closest?.('a[href]')) setMobileOpen(false); }}
+      className={`fixed inset-y-0 left-0 z-[71] flex h-[100dvh] w-[min(280px,85vw)] flex-col bg-neutral-50 flex-shrink-0 border-r border-neutral-200/60 transition-transform duration-200 motion-reduce:transition-none md:static md:z-auto md:h-screen md:w-[212px] md:translate-x-0 ${mobileOpen ? 'translate-x-0 shadow-xl' : '-translate-x-full'}`}>
+      <button type="button" onClick={() => setMobileOpen(false)} aria-label="Close menu"
+        className="md:hidden absolute right-2 top-1 flex h-10 w-10 items-center justify-center rounded-lg text-neutral-500 hover:bg-neutral-200/50">
+        <XMarkIcon className="h-5 w-5" />
+      </button>
       {/* Wordmark — co-branded when the workspace carries a client logo (the sovereign door). */}
       <div className="flex h-12 items-center gap-2 px-4">
         <Image src="/augmtd-logo.png" alt="AUGMTD" width={18} height={18} className="w-[18px] h-[18px]" />
@@ -700,5 +724,6 @@ export default function OneSidebar({
         </button>
       </div>
     </div>
+    </>
   );
 }

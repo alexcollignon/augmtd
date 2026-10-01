@@ -30,7 +30,9 @@ const CONTEXTS: Array<{ match: HomeView[]; views: Array<{ id: HomeView; label: s
   ] },
 ];
 
-export default function ViewSwitcher({ value, onChange, hidden }: { value: HomeView; onChange: (v: HomeView) => void; hidden?: boolean }) {
+/** `phoneHidden` — at phone width the docked pill would sit on a live conversation's composer (its
+ *  send button), so a live chat/DM hides it there; md+ keeps the island where it always was. */
+export default function ViewSwitcher({ value, onChange, hidden, phoneHidden }: { value: HomeView; onChange: (v: HomeView) => void; hidden?: boolean; phoneHidden?: boolean }) {
   const views = CONTEXTS.find((c) => c.match.includes(value))?.views ?? null;
   const [expanded, setExpanded] = useState(false);
   const [top, setTop] = useState<number | null>(null);
@@ -64,11 +66,11 @@ export default function ViewSwitcher({ value, onChange, hidden }: { value: HomeV
       onMouseEnter={() => !dragging && setExpanded(true)}
       onMouseLeave={() => setExpanded(false)}
       style={top != null ? { top } : undefined}
-      className={`fixed right-5 z-30 flex flex-col overflow-hidden rounded-2xl border border-neutral-200/70 bg-white/88 backdrop-blur-md p-1.5 shadow-[0_10px_34px_-12px_rgba(0,0,0,0.22)] transition-[width,opacity,transform] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${top == null ? 'top-1/2 -translate-y-1/2' : ''} ${expanded ? 'w-[150px]' : 'w-[52px]'} ${hidden ? 'opacity-0 translate-x-4 pointer-events-none' : 'opacity-100'}`}
+      className={`fixed right-5 z-30 flex flex-col overflow-hidden rounded-2xl border border-neutral-200/70 bg-white/88 backdrop-blur-md p-1.5 shadow-[0_10px_34px_-12px_rgba(0,0,0,0.22)] transition-[width,opacity,transform] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${top == null ? 'top-1/2 -translate-y-1/2' : ''} ${expanded ? 'w-[150px]' : 'w-[52px]'} ${hidden ? 'opacity-0 translate-x-4 pointer-events-none' : 'opacity-100'} max-md:!top-auto max-md:bottom-4 max-md:right-3 max-md:translate-y-0 max-md:flex-row max-md:gap-1 max-md:w-auto ${phoneHidden ? 'max-md:hidden' : ''}`}
       role="tablist"
       aria-label="Home views"
     >
-      <div onPointerDown={onGripDown} className={`flex items-center justify-center h-5 mb-1 rounded-lg ${dragging ? 'cursor-grabbing' : 'cursor-grab'} hover:bg-neutral-100/70 transition-colors`} title="Drag to move" aria-hidden="true">
+      <div onPointerDown={onGripDown} className={`max-md:hidden flex items-center justify-center h-5 mb-1 rounded-lg ${dragging ? 'cursor-grabbing' : 'cursor-grab'} hover:bg-neutral-100/70 transition-colors`} title="Drag to move" aria-hidden="true">{/* phone width: a docked bottom pill — no drag, icons only (it sat over the page's content mid-screen) */}
         <div className="grid grid-cols-3 gap-[3px]">{Array.from({ length: 6 }).map((_, i) => <span key={i} className="w-[3px] h-[3px] rounded-full bg-neutral-300" />)}</div>
       </div>
       {views.map((v) => {
@@ -86,7 +88,7 @@ export default function ViewSwitcher({ value, onChange, hidden }: { value: HomeV
             }`}
           >
             <Icon className="w-[18px] h-[18px] flex-shrink-0" />
-            <span className={`text-[13px] font-medium whitespace-nowrap transition-opacity duration-300 ${expanded ? 'opacity-100 delay-100' : 'opacity-0'}`}>{v.label}</span>
+            <span className={`max-md:hidden text-[13px] font-medium whitespace-nowrap transition-opacity duration-300 ${expanded ? 'opacity-100 delay-100' : 'opacity-0'}`}>{v.label}</span>
           </button>
         );
       })}

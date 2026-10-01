@@ -624,7 +624,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                 w.lastRunStatus === 'failed' ? 'bg-red-500' :
                 w.lastRunStatus === 'succeeded' ? 'bg-emerald-500' : 'bg-neutral-300';
               return (
-                <div key={w.id} className="flex items-center gap-3 px-4 py-3">
+                <div key={w.id} className="flex flex-wrap md:flex-nowrap items-center gap-x-3 gap-y-1 px-4 py-3">
                   {/* THE TILE WEARS THE STATE (mockup, Aug 19): identity and status are ONE visual
                       object — the dot sits on the tile's corner, never floating in the gutter. A
                       workflow with no authored mark still gets the house bolt (a row without a
@@ -711,8 +711,9 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
                       {w.ownerName && <><span className="text-neutral-300">·</span><span className="text-neutral-400">owned by {w.ownerName}</span></>}
                     </div>
                   </div>
-                  {/* VISIBLE verbs — a hidden door is no door (owner, Aug 9). */}
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                  {/* VISIBLE verbs — a hidden door is no door (owner, Aug 9). Phone width: they take their
+                      own line under the name (side by side they crushed the name to nothing). */}
+                  <div className="flex items-center gap-1.5 flex-shrink-0 max-md:w-full max-md:pl-[49px]">
                     {/* ONE GLYPH, ONE DEED (owner walk, Sep 13 — "these double play icons are a
                         bit confusing"): the row used to carry ▷ beside ‖, and a PAUSED row carried
                         ▷ beside ▷ — two identical triangles, one firing a single run, the other
@@ -974,15 +975,16 @@ function RunAudit({ workflowId, onOpenDeliverable }: { workflowId: string; onOpe
         const chip = CHIP[r.status] ?? { tone: 'neutral' as const, word: r.status };
         return (
           <div key={r.id} className="px-4 py-2.5">
-            <div className="flex items-center gap-3">
+            {/* Wraps at phone width (mobile walk, Oct 1) — unwrapped, the steps door fell off the card. */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <span className="text-[13px] text-neutral-700 tabular-nums w-[104px] flex-shrink-0">{when(r)}</span>
               <Badge tone={chip.tone}>{chip.word}</Badge>
               {(() => { const v = gateVerdictOf(r); return v ? <GateChip v={v} /> : null; })()}
-              {took(r) && <span className="text-[12px] text-neutral-400">{took(r)}</span>}
+              {took(r) && <span className="text-[12px] text-neutral-400 whitespace-nowrap">{took(r)}</span>}
               <span className="flex-1" />
               {steps.length > 0 && (
                 <button onClick={() => setOpenSteps((o) => (o === r.id ? null : r.id))}
-                  className="inline-flex items-center gap-1 text-[12px] text-neutral-500 hover:text-neutral-800">
+                  className="inline-flex items-center gap-1 whitespace-nowrap text-[12px] text-neutral-500 hover:text-neutral-800">
                   <ChevronDownIcon className={`w-3 h-3 transition-transform ${openSteps === r.id ? 'rotate-180' : ''}`} />
                   {steps.length} steps
                 </button>

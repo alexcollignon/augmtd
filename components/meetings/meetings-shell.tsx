@@ -73,6 +73,7 @@ export default function MeetingsShell({
 
   // ── UI state ─────────────────────────────────────────────────────────────
   const [rightPanel, setRightPanel] = useState<'chat' | 'calendar' | null>('calendar');
+
   const [chatAutoMessage, setChatAutoMessage] = useState<string | undefined>(undefined);
   const [activeMeetingContext, setActiveMeetingContext] = useState<MeetingChatContext | null>(null);
   const [filterPersonEmail, setFilterPersonEmail] = useState<string | null>(null);
@@ -96,7 +97,11 @@ export default function MeetingsShell({
     if (match) {
       setRightPanel(null);
     } else if (pathname === '/meetings') {
-      setRightPanel('calendar');
+      // Phone width (mobile walk, Oct 1): the 316px calendar left the list ~0px wide. There it
+      // starts closed and opens as an overlay over the list (classes below); md+ is unchanged.
+      let phone = false;
+      try { phone = window.matchMedia('(max-width: 767px)').matches; } catch { /* old engines */ }
+      setRightPanel(phone ? null : 'calendar');
     }
   }, [pathname]);
 
@@ -451,7 +456,7 @@ export default function MeetingsShell({
         </div>
 
         {/* ── Right panel ── */}
-        <div className={`flex-shrink-0 bg-neutral-50 flex flex-col transition-[width] duration-200 overflow-hidden ${rightPanel ? 'w-[316px]' : 'w-12'}`}>
+        <div className={`flex-shrink-0 bg-neutral-50 flex flex-col transition-[width] duration-200 overflow-hidden ${rightPanel ? 'w-[316px] max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-20 max-md:w-[min(316px,92vw)] max-md:shadow-xl' : 'w-12'}`}>
           {/* Closed — icon strip */}
           <div className={`flex flex-col items-center pt-3 gap-1.5 transition-opacity duration-150 ${rightPanel ? 'opacity-0 pointer-events-none absolute' : 'opacity-100'}`}>
             {isHome ? (

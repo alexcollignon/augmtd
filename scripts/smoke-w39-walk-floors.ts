@@ -112,5 +112,33 @@ console.log('\nW3 · the laws are registered');
   ok('W3c the board runs this gate', /npx tsx scripts\/smoke-w39-walk-floors\.ts/.test(readFileSync('package.json', 'utf8')));
 }
 
+// ── W4 · THE PHONE SEAT (the Oct 1 mobile walk at 390×844, emulated). Floors, not a law: each is the
+//   structural reason a page was unusable at phone width, held at its one seat. Visual truth is the walk.
+console.log('W4 · the phone seat (390px)');
+{
+  const side = code('components/one/one-sidebar.tsx');
+  ok('W4a the sidebar is an off-canvas drawer below md (static column at md+) with a top-bar opener, and any navigation closes it',
+    /md:static/.test(side) && /-translate-x-full/.test(side) && /aria-label="Open menu"/.test(side)
+    && /useEffect\(\(\) => \{ setMobileOpen\(false\); \}, \[pathname\]\)/.test(side)
+    && (side.match(/setMobileOpen\(false\)/g)?.length ?? 0) >= 4 && /closest\?\.\('a\[href\]'\)/.test(side));
+  ok('W4b the shell stacks the top bar over the page below md', /flex flex-col md:flex-row/.test(code('app/(main)/layout.tsx')));
+  ok('W4c rooms fill the column (never the viewport) at phone width — the top bar would push their composer off-screen',
+    /h-\[100dvh\] max-md:h-full/.test(code('components/entities/entity-room.tsx')) && /h-\[100dvh\] max-md:h-full/.test(code('components/room/room-shell.tsx')));
+  const vs = code('components/home/view-switcher.tsx');
+  ok('W4d the view island docks as a bottom pill on phones and steps aside over a live conversation',
+    /max-md:!top-auto max-md:bottom-4/.test(vs) && /phoneHidden \? 'max-md:hidden'/.test(vs)
+    && /phoneHidden=\{chatActive\}/.test(code('components/home/home-view.tsx')));
+  const ms = code('components/meetings/meetings-shell.tsx');
+  ok('W4e meetings: the folder rail steps aside and the calendar starts closed + overlays on phones',
+    /hidden md:flex w-\[204px\]/.test(code('components/meetings/meetings-left-panel.tsx'))
+    && /setRightPanel\(phone \? null : 'calendar'\)/.test(ms) && /max-md:absolute max-md:inset-y-0 max-md:right-0/.test(ms));
+  ok('W4f documents: the scope rail stacks above the library on phones', /flex flex-col md:flex-row/.test(code('components/knowledge/knowledge-panel.tsx')));
+  const led = code('components/workflows/workflows-ledger.tsx');
+  ok('W4g workflow rows: the verbs wrap under the name, run rows wrap', /flex flex-wrap md:flex-nowrap items-center/.test(led) && /max-md:w-full max-md:pl-\[49px\]/.test(led) && /flex flex-wrap items-center gap-x-3 gap-y-1/.test(led));
+  ok('W4h touch hit areas: ask doors and row deeds grow their hit area on coarse pointers (zero layout shift)',
+    /\[@media\(pointer:coarse\)\]:py-2\.5 \[@media\(pointer:coarse\)\]:-my-2\.5/.test(code('components/thread/ask-rows.tsx'))
+    && /\[@media\(pointer:coarse\)\]:py-2\.5 \[@media\(pointer:coarse\)\]:-my-2\.5/.test(code('components/work/work-row.tsx')));
+}
+
 console.log(`\n${fail ? '❌' : '✅'} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

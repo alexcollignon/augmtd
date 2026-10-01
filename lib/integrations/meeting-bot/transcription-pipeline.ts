@@ -8,6 +8,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { transcribeAudio } from './whisper-client';
 import { transcriptionVocabulary } from './transcription-vocabulary';
+import { snapSegments } from './vocabulary-snap';
 import { storeTranscriptAndGenerateWork } from '@/lib/integrations/meeting-bot/bot-manager';
 
 export interface ProcessAudioFileParams {
@@ -47,7 +48,10 @@ export async function processAudioFile(params: ProcessAudioFileParams): Promise<
 
     // 2. Transcribe via faster-whisper-server
     const vocabulary = await transcriptionVocabulary(adminClient, userId, calendarEventId);
-    const { segments } = await transcribeAudio(audioBuffer, filename, vocabulary);
+    const heard = await transcribeAudio(audioBuffer, filename, vocabulary);
+    // THE VOCABULARY SNAP — same floor the box path gets in generate-insights.
+    const { segments, snaps } = snapSegments(heard.segments, vocabulary);
+    if (snaps.length) console.log(`[TranscriptionPipeline] vocabulary snap: ${snaps.map((x) => `${x.from} → ${x.to}`).join(' · ')}`);
 
     console.log(`[TranscriptionPipeline] Transcribed ${segments.length} segments for: ${title}`);
 

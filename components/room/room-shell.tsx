@@ -27,7 +27,7 @@ export function RoomShell({ conversation, stage, full = false }: {
 }) {
   const hasStage = stage !== null && stage !== undefined && stage !== false;
   return (
-    <div className={`w-full ${full ? 'h-[100dvh]' : 'h-full'} min-h-0 flex flex-row bg-neutral-50 p-2 gap-2`}>
+    <div className={`w-full ${full ? 'h-[100dvh] max-md:h-full' : 'h-full'} min-h-0 flex flex-row bg-neutral-50 p-2 gap-2`}>
       <section className={hasStage
         ? 'hidden lg:flex flex-1 min-w-0 flex-col h-full min-h-0'
         : 'flex flex-1 min-w-0 flex-col h-full min-h-0'}>
