@@ -111,7 +111,8 @@ async function main() {
   }
   {
     const s = src('lib/prepare/pass.ts');
-    const sites = (s.match(/narrateGroundMove\(admin, userId, w, currentGround, '/g) ?? []).length;
+    // ⟲ RE-POINTED (W43): THE ONE commitment-email lane names its artifact by direction (`handKind`).
+    const sites = (s.match(/narrateGroundMove\(admin, userId, w, currentGround, (?:'|handKind,)/g) ?? []).length;
     ok('every ground-move re-prepare names its artifact (superseded is logged at the one narrator)', sites >= 8 && !/narrateGroundMove\(admin, userId, w, currentGround\)/.test(s), `sites=${sites}`);
     ok("   …the narrator writes 'superseded'", /outcome: 'superseded'/.test(s) && /door: 'ground_move'/.test(s));
     ok('the already-booked floor logs done_elsewhere for the invite it strips', /door: 'booked_floor'/.test(s));

@@ -31,6 +31,8 @@ export { FULFILLMENT_LAW_VERSION } from '@/lib/commitments/fulfillment';
 export { EXPIRY_LAW_VERSION } from '@/lib/commitments/expiry';
 /** The reply drafter's attachment/direction law — stored drafts re-draft on a bump. */
 export { DRAFT_LAW_VERSION } from '@/lib/inbox/attachment-context';
+/** W43 · the drafting rules a stored draft was written under (`rules_version`) — an older unsent machine draft is withdrawn and re-prepared on open. */
+export { DRAFT_RULES_VERSION } from '@/lib/prepare/draft-rules';
 /** The staging law a `require:` row was verified under (`metadata.stagingLaw`) — older rows re-verify. */
 export { STAGING_LAW_VERSION } from '@/lib/prepare/staging-law';
 /** The workflow verify gate (verdict sentinel, rules, retry-then-hold). */

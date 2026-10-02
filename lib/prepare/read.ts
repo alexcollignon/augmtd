@@ -23,6 +23,10 @@ import { addresseeOfStamp, addresseeFromNudgeTitle, addresseeWithdrawn, loadUser
 import type { UserForms } from '@/lib/commitments/extraction-truth';
 import { isHandHeld, isPoolRowHandHeld, type HandKind } from '@/lib/prepare/hand';
 import { STAGING_LAW_VERSION } from '@/lib/prepare/staging-law';
+import { draftRulesStale } from '@/lib/prepare/draft-rules';
+import { unsupportedWorkClaims } from '@/lib/prepare/work-claims';
+import { cleanSignOff } from '@/lib/inbox/sign-off';
+import { namesFileKind } from '@/lib/prepare/input-kind';
 // W18.B · A DRAFT SPEAKS THE THREAD'S LANGUAGE — pure leaves (zero IO, client-safe).
 import { draftLanguageMiss } from '@/lib/context/draft-language';
 import { detectLanguage } from '@/lib/inbox/detect-language';
@@ -90,6 +94,15 @@ export type PreparedArtifact = {
    *  `falseClaim` (never live) so the existing re-prepare trip re-drafts only these — no
    *  DRAFT_LAW_VERSION corpus re-draft; this flag only words the reason. */
   wrongLanguage?: boolean;
+  /** W43 · WRITTEN UNDER OLDER DRAFTING RULES (lib/prepare/draft-rules DRAFT_RULES_VERSION): an unsent,
+   *  machine-written (never user-edited, never user-steered) draft whose rules stamp is older. Never live
+   *  (isLiveArtifact) so the on-open re-prepare trip re-drafts it under today's rules — the card is never
+   *  mutated in place. Its reason is the least specific one (withdrawnReasonOf speaks any other first). */
+  rulesStale?: boolean;
+  /** W43.2 · WRITTEN UNDER OLDER RULES BUT PASSES TODAY'S FLOORS: still LIVE (never a blank seat) and due a
+   *  quiet re-prepare — the open trip / the next pass regenerates it, and the old one serves until the new
+   *  one is written. Set only by stampTruth (the facts are in hand there). */
+  refreshDue?: boolean;
   /** TRUE ADDRESSEES (W7.3): who the words are FOR, stamped at production (a legacy nudge's title
    *  carries it). Served so a card can address its To from what the words were written for. */
   addressee?: Addressee | null;
@@ -162,7 +175,25 @@ export type ItemTruthFacts = {
   /** W18.B · the language the item's thread is written in (detected on its own words; the stored
    *  understanding fills a null). Absent/null = the language floor is off (fail-safe). */
   language?: string | null;
+  /** W43.2 · the conversation lives in EMAIL (an inbox item; a commitment with an email source or thread) —
+   *  a paste pack addressed to an email contact fails today's channel floor. */
+  emailConversation?: boolean;
 };
+
+/**
+ * W43.2 · TODAY'S FLOORS FOR A DRAFT WRITTEN UNDER OLDER RULES — the reasons it would not be written today
+ * (beyond the floors stampTruth runs on every draft): an unsupported work claim against the item's own words
+ * · a code-like line in its sign-off · a paste pack for an email conversation with an email contact · a file
+ * riding work whose ask names no file. null = it passes (it keeps serving; a quiet re-prepare is due). Pure.
+ */
+export function staleRulesFailure(a: Pick<PreparedArtifact, 'kind' | 'content' | 'attachment' | 'addressee'>, facts: Pick<ItemTruthFacts, 'text' | 'emailConversation'>): string | null {
+  const text = String(a.content ?? '');
+  if (unsupportedWorkClaims(text, String(facts.text ?? '')).length) return 'work_claim';
+  if (cleanSignOff(text, { name: null, signatureLines: null }).replace(/\s+/g, ' ').trim() !== text.replace(/\s+/g, ' ').trim()) return 'signature_code';
+  if (a.kind === 'paste_pack' && facts.emailConversation && !!a.addressee?.email) return 'channel';
+  if (a.attachment && facts.text && !namesFileKind(facts.text)) return 'attachment_without_ask';
+  return null;
+}
 
 /** W13 · the item's BASE file ids, read off its pool rows (the unstage writer's `role: 'base'`). Pure. */
 export function baseFileIdsOf(pool: Array<Record<string, unknown>>): string[] {
@@ -211,6 +242,9 @@ export function stampTruth<T extends PreparedArtifact>(arts: T[], facts: ItemTru
     //     trip re-drafts only these, through today's checked drafter. Positive evidence only.
     if ((a.kind === 'reply_draft' || a.kind === 'nudge_draft') && !a.hand && facts.language
       && draftLanguageMiss(plainBody(a.content), facts.language)) { a.falseClaim = true; a.wrongLanguage = true; }
+    //   · W43.2 · OLDER DRAFTING RULES — only a draft that FAILS today's floors is withdrawn; one that passes
+    //     keeps serving and is marked for a quiet re-prepare (refreshDue) — never a blank seat.
+    if (a.rulesStale && !a.hand && !a.falseClaim && !staleRulesFailure(a, facts)) { delete a.rulesStale; a.refreshDue = true; }
   }
   return arts;
 }
@@ -303,7 +337,7 @@ async function stripNoticeDrafts<T extends PreparedArtifact>(arts: T[], sd: unkn
   } catch { return arts; }
 }
 
-type CommitFactsRow = { description?: unknown; created_at?: unknown; status?: unknown; direction?: unknown; counterparty?: unknown };
+type CommitFactsRow = { description?: unknown; created_at?: unknown; status?: unknown; direction?: unknown; counterparty?: unknown; source?: unknown; thread_id?: unknown };
 /** A commitment row → its truth facts (the user owes it only on `you_owe`; a chase's words about
  *  what THEY owe are never judged as the user's own deed — fail-safe). */
 export function commitmentTruthFacts(row: CommitFactsRow | null | undefined): ItemTruthFacts | null {
@@ -313,6 +347,7 @@ export function commitmentTruthFacts(row: CommitFactsRow | null | undefined): It
     anchorIso: typeof row.created_at === 'string' ? row.created_at : null,
     obligationOpen: String(row.status ?? '') === 'open' && String(row.direction ?? '') === 'you_owe',
     counterparty: typeof row.counterparty === 'string' ? row.counterparty : null,
+    emailConversation: String(row.source ?? '') === 'email' || !!row.thread_id,
   };
 }
 /** An inbox row's source_data → its truth facts. W14.1 · ONE READER, ONE ANSWER: the obligation is
@@ -330,13 +365,13 @@ export function inboxTruthFacts(sd: unknown): ItemTruthFacts | null {
   // W18.B · the thread's language — the drafter's own precedence (detect on the words first; the
   // stored understanding fills a null). The body is read as text (a stored HTML body converts).
   const language = detectLanguage(plainBody(text)) || languageNameOf(typeof u?.language === 'string' ? u.language : null);
-  return { text: text || null, anchorIso: typeof s.received_at === 'string' ? s.received_at : null, obligationOpen: ownership === 'you_owe', language };
+  return { text: text || null, anchorIso: typeof s.received_at === 'string' ? s.received_at : null, obligationOpen: ownership === 'you_owe', language, emailConversation: true };
 }
 
 type PreparedFrom = { emailId?: string | null; receivedAt?: string | null } | null;
 type SourceData = {
-  draft?: { body?: string; generated_at?: string; sent_at?: string; prepared_from?: PreparedFrom; attachment?: { fileId: string; filename: string; source?: string }; addressee?: unknown; stagingLaw?: unknown } | null;
-  nudge_draft?: { body?: string; generated_at?: string; sent_at?: string; prepared_from?: PreparedFrom; addressee?: unknown } | null;
+  draft?: { body?: string; generated_at?: string; sent_at?: string; prepared_from?: PreparedFrom; attachment?: { fileId: string; filename: string; source?: string }; addressee?: unknown; stagingLaw?: unknown; rules_version?: unknown; steered?: unknown } | null;
+  nudge_draft?: { body?: string; generated_at?: string; sent_at?: string; prepared_from?: PreparedFrom; addressee?: unknown; rules_version?: unknown; steered?: unknown } | null;
   // THE READER READS EVERYTHING (trichotomy T1 find: a fresh prepared invite existed and the
   // canonical reader missed it — every consumer under-reported preparedness for schedule/forward
   // items). Sent artifacts are done work, not pending preparation — they don't render here.
@@ -344,6 +379,14 @@ type SourceData = {
   prepared_forward?: { to?: string[]; note?: string; generated_at?: string; sent_at?: string; prepared_from?: PreparedFrom } | null;
   prepared_by?: { worker?: string; at?: string } | null;
 } | null | undefined;
+
+/** W43 · a stored MACHINE draft written under older drafting rules — never the user's hand, never words the
+ *  user steered (their instruction is theirs). `stamp` holds `rules_version` (+ `steered`). Pure. */
+export function machineDraftRulesStale(stamp: { rules_version?: unknown; steered?: unknown } | null | undefined, handHeld: boolean): boolean {
+  if (handHeld || !stamp) return false;
+  if (stamp.steered === true) return false;
+  return draftRulesStale(stamp);
+}
 
 const groundFrom = (pf: PreparedFrom | undefined): { emailId: string | null; receivedAt: string | null } | null =>
   pf?.receivedAt ? { emailId: pf.emailId ?? null, receivedAt: pf.receivedAt } : null;
@@ -361,6 +404,7 @@ export function inviteExpired(a: Pick<PreparedArtifact, 'kind' | 'invite'>, now:
  *  ground move, not past its own time, not outside the item's stated window, not claiming a deed
  *  the facts deny (W5a). (Sent artifacts never enter the list at all.) */
 export function isLiveArtifact(a: PreparedArtifact): boolean {
+  if (a.rulesStale && !a.hand) return false; // W43 · older drafting rules (the user's hand is never judged)
   return !a.stale && !a.expired && !a.outsideWindow && !a.falseClaim && !a.misaddressed
     && !a.settled && !emptyTextArtifact(a); // W15.2
 }
@@ -378,6 +422,7 @@ export function withdrawnReasonOf(a: PreparedArtifact): string | null {
   if (a.expired) return 'its proposed time already passed';
   if (a.stale) return 'superseded by a newer message';
   if (a.settled) return 'the work is already settled'; // W15.2
+  if (a.rulesStale) return 'it was written under older drafting rules — re-preparing it'; // W43 (the least specific reason)
   if (emptyTextArtifact(a)) return 'it has no words yet'; // W15.2
   return null;
 }
@@ -406,7 +451,10 @@ export function nonLiveKindsOf(st: Pick<PreparedState, 'all'>): Set<PreparedKind
   // A kind that ALSO has a live artifact is not re-prepared on this account (the live one stands).
   const live = new Set(st.all.filter(isLiveArtifact).map((a) => a.kind));
   // W15.2: a SETTLED item's artifacts are never re-prepared (the work is closed, not withdrawn).
-  return new Set(st.all.filter((a) => !a.settled && !isLiveArtifact(a) && !live.has(a.kind)).map((a) => a.kind));
+  const out = new Set(st.all.filter((a) => !a.settled && !isLiveArtifact(a) && !live.has(a.kind)).map((a) => a.kind));
+  // W43.2: a live draft written under older rules is due its quiet re-prepare (the lane replaces it in place).
+  for (const a of st.all) if (a.refreshDue && !a.hand && !a.settled) out.add(a.kind);
+  return out;
 }
 
 /** Stamp the derived time flag on every artifact (in place; returns the same array). */
@@ -451,8 +499,10 @@ export function preparedFromSourceData(sd: SourceData): PreparedArtifact[] {
     // `stagingStale` → withdrawn → the re-prepare trip re-runs the send through today's verifier.
     // The user's hand is never judged (stampTruth skips it).
     const stagingStale = !!sd.draft.attachment && !isHandHeld('reply_draft', sd.draft) && draftStagingStale(sd.draft);
+    const rulesStale = machineDraftRulesStale(sd.draft, isHandHeld('reply_draft', sd.draft));
     out.push({
       ...(stagingStale ? { stagingStale: true } : {}),
+      ...(rulesStale ? { rulesStale: true } : {}),
       kind: 'reply_draft', title: null, content: sd.draft.body,
       by: sd.prepared_by?.worker ?? null, at: sd.draft.generated_at ?? null,
       attachment: sd.draft.attachment ?? null, provenance: null,
@@ -463,7 +513,8 @@ export function preparedFromSourceData(sd: SourceData): PreparedArtifact[] {
   if (sd?.nudge_draft?.body && !sd.nudge_draft.sent_at) {
     // B3 (verb-lane sweep): the pass stamps prepared_by on the nudge lane too — reading null here
     // rendered the chase draft unattributed while every sibling lane said "by Clara".
-    out.push({ kind: 'nudge_draft', title: null, content: sd.nudge_draft.body, by: sd.prepared_by?.worker ?? null, at: sd.nudge_draft.generated_at ?? null, attachment: null, provenance: null, ground: groundFrom(sd.nudge_draft.prepared_from), payload: { store: 'source_data', field: 'nudge_draft' }, addressee: addresseeOfStamp(sd.nudge_draft.addressee), hand: handOf('nudge_draft', sd.nudge_draft) });
+    const nudgeRulesStale = machineDraftRulesStale(sd.nudge_draft, isHandHeld('nudge_draft', sd.nudge_draft));
+    out.push({ ...(nudgeRulesStale ? { rulesStale: true } : {}), kind: 'nudge_draft', title: null, content: sd.nudge_draft.body, by: sd.prepared_by?.worker ?? null, at: sd.nudge_draft.generated_at ?? null, attachment: null, provenance: null, ground: groundFrom(sd.nudge_draft.prepared_from), payload: { store: 'source_data', field: 'nudge_draft' }, addressee: addresseeOfStamp(sd.nudge_draft.addressee), hand: handOf('nudge_draft', sd.nudge_draft) });
   }
   if (sd?.prepared_invite && !sd.prepared_invite.sent_at) {
     const inv = sd.prepared_invite;
@@ -576,7 +627,9 @@ export function poolRowsToArtifacts(rows: Array<Record<string, unknown>>, poolKi
     // THE PASTE PACK reads next: it is neither a commitment's send-shaped draft nor a document to
     // review — it is words with a destination, and its note is the only thing that says so.
     if (meta.pastePack) {
+      const packHeld = isPoolRowHandHeld('paste_pack', d);
       out.push({
+        ...(machineDraftRulesStale(meta as { rules_version?: unknown; steered?: unknown }, packHeld) ? { rulesStale: true } : {}),
         kind: 'paste_pack', title: (d.title as string) ?? null, content: String(d.content),
         by, at, attachment: null, provenance: meta.provenance ?? null, note: meta.note ?? null,
         ground: groundFrom(meta.prepared_from), payload, addressee: addresseeOfStamp(meta.addressee),
@@ -594,9 +647,13 @@ export function poolRowsToArtifacts(rows: Array<Record<string, unknown>>, poolKi
     const lawV = Number((meta as { stagingLaw?: unknown }).stagingLaw);
     const stagingStale = isCommitDraft && d.task_id === 'prepare-pass-docsend' && !!meta.attachment
       && (!Number.isFinite(lawV) || lawV < STAGING_LAW_VERSION);
+    // W43 · a commitment's machine draft written under older drafting rules (hand/steered never judged).
+    const commitRulesStale = isCommitDraft && machineDraftRulesStale(meta as { rules_version?: unknown; steered?: unknown },
+      isPoolRowHandHeld('reply_draft', d) || isPoolRowHandHeld('nudge_draft', d) || isPoolRowHandHeld('deliverable', d));
     out.push({
       ...(addressee ? { addressee } : {}),
       ...(stagingStale ? { stagingStale: true } : {}),
+      ...(commitRulesStale ? { rulesStale: true } : {}),
       kind: isCommitDraft ? (String(d.title ?? '').startsWith('Nudge — ') ? 'nudge_draft' : 'reply_draft') : 'deliverable',
       title: (d.title as string) ?? null, content: String(d.content),
       ground: groundFrom(meta.prepared_from),
@@ -800,7 +857,7 @@ export async function preparedStatesFor(
       // THE ITEM'S OWN FACTS for commitments (W5a) — one batched read, so the window and the
       // completion floors hold on a whole deck exactly as they hold on one item.
       commitIds.length
-        ? client.from('commitments').select('id, description, created_at, status, direction, counterparty, thread_id').eq('user_id', userId).in('id', commitIds)
+        ? client.from('commitments').select('id, description, created_at, status, direction, counterparty, thread_id, source').eq('user_id', userId).in('id', commitIds)
         : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
     ]);
     const commitFacts = new Map<string, ItemTruthFacts | null>();

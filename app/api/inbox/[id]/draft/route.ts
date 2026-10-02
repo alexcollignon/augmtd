@@ -6,6 +6,7 @@ import { loadUserRules } from '@/lib/inbox/rules/load';
 import { setInboxRules, shouldDraftReply } from '@/lib/inbox/classify-item';
 import { loadPlanStepSummaries } from '@/lib/home/item-plan';
 import { DRAFT_LAW_VERSION } from '@/lib/inbox/attachment-context';
+import { draftRulesStamp } from '@/lib/prepare/draft-rules';
 import { stagedFilesOf } from '@/lib/prepare/email-card';
 
 export const maxDuration = 30;
@@ -150,7 +151,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const { inboxTruthFacts } = await import('@/lib/prepare/read');
     const vetted = await draftThroughVet(
       async (objection) => generateReplyDraft(user.id, sd, supabase,
-        [artifactTruth ?? '', objection ? `REVIEWER'S OBJECTION — fix this: ${objection}` : ''].filter(Boolean).join('\n') || null, planSteps),
+        [artifactTruth ?? '', objection ? `REVIEWER'S OBJECTION — fix this: ${objection}` : ''].filter(Boolean).join('\n') || null, planSteps,
+        // W43 · THE ONE VET runs inside the drafter too, on the same facts.
+        { obligationOpen: inboxTruthFacts(sd)?.obligationOpen ?? false, staged: !!freshAttachment }),
       { obligationOpen: inboxTruthFacts(sd)?.obligationOpen ?? false, staged: !!freshAttachment },
     );
     if (vetted.failed) return NextResponse.json({ draft: '', withheld: withheldLine(vetted.failed), ...(readerWithdrew ? { withdrawn: readerWithdrew } : {}) });
@@ -163,7 +166,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       await fileHandVersion(supabase, user.id, { poolKind: 'email', itemId: id, kind: 'reply_draft', content: String(sd.draft.body), editedAt: (sd.draft as { edited_by_user_at?: string }).edited_by_user_at ?? null });
     }
     await supabase.from('inbox_items')
-      .update({ source_data: { ...sd, draft: { body: draft, generated_at: new Date().toISOString(), prepared_from: currentGround, law_version: DRAFT_LAW_VERSION, ...(freshAttachment ? { attachment: freshAttachment } : {}) } } })
+      .update({ source_data: { ...sd, draft: { body: draft, generated_at: new Date().toISOString(), prepared_from: currentGround, law_version: DRAFT_LAW_VERSION, ...draftRulesStamp(), ...(freshAttachment ? { attachment: freshAttachment } : {}) } } })
       .eq('id', id).eq('user_id', user.id);
     const freshFiles = stagedFilesOf(freshAttachment);
     return NextResponse.json({ draft, ...(freshFiles.length ? { attachments: freshFiles } : {}) });

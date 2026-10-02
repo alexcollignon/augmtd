@@ -422,12 +422,19 @@ export async function POST(request: NextRequest) {
       // those claims named; if the rewrite still makes one, the served words carry a NAMED SLOT in its place
       // (slotUnsupportedWork) — never the invented claim.
       const { unsupportedWorkClaims, workClaimObjection, slotUnsupportedWork } = await import('@/lib/prepare/claims-floor');
+      // W43 · THE SIGN-OFF FLOOR (lib/inbox/sign-off cleanSignOff): the user's name + their recurring own
+      // signature lines only — never a code — exactly as the shared drafters finish their words.
+      const [{ cleanSignOff }, { signatureLinesOf }] = await Promise.all([import('@/lib/inbox/sign-off'), import('@/lib/inbox/draft-reply')]);
+      const sigLines = await signatureLinesOf(supabase, user.id, mailbox).catch(() => null);
+      const finishSignOff = (b: string) => (b ? cleanSignOff(b, { name: knownName, signatureLines: sigLines }) : b);
       const promiseMaterial = [context, intent?.trim() ? `The user's instruction: ${intent.trim()}` : ''].filter(Boolean).join('\n\n');
+      // W43 · THE ONE VET carries the work-claims floor too (lib/prepare/truth vetDraft `material`).
+      vetFacts.material = promiseMaterial;
       const generate = async (objection: string | null): Promise<string> => {
-        const first = (await draftInLanguage((languageFix) => generateOnce(objection, languageFix), target, register)).body;
+        const first = finishSignOff((await draftInLanguage((languageFix) => generateOnce(objection, languageFix), target, register)).body);
         const claims = first ? unsupportedWorkClaims(first, promiseMaterial) : [];
         if (!claims.length) return first;
-        const again = (await draftInLanguage((languageFix) => generateOnce([objection, workClaimObjection(claims)].filter(Boolean).join('\n'), languageFix), target, register)).body;
+        const again = finishSignOff((await draftInLanguage((languageFix) => generateOnce([objection, workClaimObjection(claims)].filter(Boolean).join('\n'), languageFix), target, register)).body);
         return slotUnsupportedWork(again || first, promiseMaterial).text;
       };
       const vetted = await draftThroughVet(generate, vetFacts);

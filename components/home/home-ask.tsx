@@ -22,8 +22,9 @@ import { chatCardNodes } from '@/components/home/chat-cards';
 import { chatCardsOfComponent, chatCardsOfPayload, postsOfCardArtifacts, type ChatCards } from '@/lib/present/turn-card';
 import { WorkflowDraftCard, type WorkflowDraft } from '@/components/workflows/workflow-draft-card';
 import { useArtifactViewer } from '@/components/shared/artifact-viewer';
+import { cardHeaderOf, cardLineOf } from '@/components/shared/card-header';
 import { CardStack, CardTargetProvider, ReplyingChip, ReplyQuote, type StackItem } from '@/components/shared/card-stack';
-import { CARD_SUMMARY, summaryTitleOf, type CardDescriptor } from '@/lib/present/behaviour';
+import { CARD_SUMMARY, type CardDescriptor } from '@/lib/present/behaviour';
 import { resolveCardReference, type CardTarget } from '@/lib/present/card-target';
 // THE ONE FRAME RENDERER (frames plan law 2) — the kit's `frame` card composes it; there is no
 // second iframe and no second sandbox anywhere in the repo (gate smoke-threads T38.2).
@@ -1546,7 +1547,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     setPasteNotice(null);
     // REPLY TO A CARD: the pinned card, else an obvious reference resolved against this conversation's
     // cards ("the second one", "that invite"); an ambiguous one is answered with ONE short question.
-    let target: CardTarget | null = cardTarget ? { kind: cardTarget.kind, ref: cardTarget.ref, title: cardTarget.title ?? null, recipient: cardTarget.recipient ?? null } : null;
+    let target: CardTarget | null = cardTarget ? { kind: cardTarget.kind, ref: cardTarget.ref, title: cardHeaderOf(cardTarget).title, recipient: cardTarget.recipient ?? null } : null;
     if (!target && question) {
       const r = resolveCardReference(question, renderedCardsRef.current);
       if (r && 'ask' in r) {
@@ -1557,7 +1558,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       if (r) target = r.target;
     }
     setCardTarget(null);
-    const replyTo = target ? summaryTitleOf(target) : null;
+    const replyTo = target ? cardLineOf(target) : null;
     // THE INSTANT ECHO (owner, Aug 6 — "looked like nothing happened"): the submitted turn and
     // the busy line land SYNCHRONOUSLY, before any routing/roster/upload awaits. Feedback is
     // never gated on the network.

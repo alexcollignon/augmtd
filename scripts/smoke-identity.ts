@@ -19,6 +19,7 @@
  *   npx tsx scripts/smoke-identity.ts --no-census  (the board's form — never depends on data)
  * ════════════════════════════════════════════════════════════════════════════════════════════════
  */
+import { DRAFT_RULES_VERSION } from '../lib/prepare/draft-rules';
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { config } from 'dotenv'; config({ path: '.env.local' });
@@ -124,8 +125,8 @@ function walk(dir: string, out: string[] = []): string[] {
     /loadUserForms\(client, userId\)/.test(code('lib/deeds/held-members.ts')) && /user: derived\.userForms/.test(code('lib/deeds/held-cache.ts')));
   const U = { name: 'Samuel Rivera', aliases: ['sam@acme.test'] };
   gate('E3 pure: a draft addressed to the user is not live on the ledger path',
-    liveFromSourceData({ subject: 's', body: 'b', draft: { body: 'Hi Samuel', generated_at: '2026-09-20T00:00:00Z', addressee: { name: 'Samuel Rivera', email: 'sam@acme.test', via: 'email' } } }, { user: U }).length === 0
-      && liveFromSourceData({ subject: 's', body: 'b', draft: { body: 'Hi Jordan', generated_at: '2026-09-20T00:00:00Z', addressee: { name: 'Jordan Blake', email: 'jordan@globex.test', via: 'email' } } }, { user: U }).length === 1);
+    liveFromSourceData({ subject: 's', body: 'b', draft: { rules_version: DRAFT_RULES_VERSION, body: 'Hi Samuel', generated_at: '2026-09-20T00:00:00Z', addressee: { name: 'Samuel Rivera', email: 'sam@acme.test', via: 'email' } } }, { user: U }).length === 0
+      && liveFromSourceData({ subject: 's', body: 'b', draft: { rules_version: DRAFT_RULES_VERSION, body: 'Hi Jordan', generated_at: '2026-09-20T00:00:00Z', addressee: { name: 'Jordan Blake', email: 'jordan@globex.test', via: 'email' } } }, { user: U }).length === 1);
 
   // ═══ F · CENSUS (read-only) ═══
   const census = !process.argv.includes('--no-census') && process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY;

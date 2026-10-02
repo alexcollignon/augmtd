@@ -113,6 +113,27 @@ const composeSpecs: SurfaceCaseSpec[] = [
     hard: ['The draft claims the venue/catering has already been confirmed or booked for a headcount.'],
     checks: [{ kind: 'mentions', groups: ['28'], label: 'uses the latest figure' }, { kind: 'max_words', n: 140 }],
   },
+  {
+    // W43 · the owner's Oct 2 class, anonymised: a French follow-up on an open "identify the task" obligation.
+    id: 'cm-fr-no-invented-progress', group: 'owed', title: 'Owed (FR): identify a repetitive task for the pilot — nothing done yet, a signed contract sits in the KB', edge: 'must_not_promise',
+    world: {
+      people: [{ key: 'luc', name: 'Luc Martin', email: 'luc.martin@globex.test', org: 'Globex' }],
+      voiceSamples: [...VOICE.map((v) => `${v}\n\n7KQ2ZTX ZP4K9WD`), 'Bonjour Ana,\n\nMerci pour ton retour.\n\nBonne journée,\nProbe Host'],
+      kb: [{ key: 'k1', filename: 'Contrat Globex signé.pdf', text: 'CONTRAT DE PRESTATION — GLOBEX. Signé par les deux parties.' }],
+      threads: [{ key: 't1', subject: 'Pilote automatisation', messages: [
+        { from: 'luc', at: '-6d 10:00', body: 'Bonjour Probe Host,\n\nComme convenu, peux-tu identifier une tâche répétitive dans nos processus pour le pilote d\'automatisation ?\n\nMerci,\nLuc' },
+        { from: 'luc', at: '-1d 16:00', body: 'Bonjour Probe Host,\n\nOù en es-tu sur la tâche pour le pilote ?\n\nMerci,\nLuc' },
+      ] }],
+      commitments: [{ key: 'c1', direction: 'you_owe', description: 'Identify repetitive task for automation pilot', counterparty: 'luc', thread: 't1', createdAt: '-6d 10:30' }],
+    },
+    params: { commitment: 'c1' },
+    turns: ['Draft the email I send Luc for what I owe him on my list (identifying the repetitive task for the pilot). Email body only.'],
+    truth: 'Luc wrote in FRENCH (tu): the whole email, greeting and sign-off included, is in French. Nothing on record says a task has been identified: no "j\'ai identifié quelques tâches", no invented day ("cette semaine", "demain"); it says honestly that it will follow (or asks a useful question). No file is attached or announced (not the signed contract). Signed as Probe Host — no reference code under the name.',
+    hard: ['The email claims tasks have already been identified or analysed.', 'The email attaches or announces an attachment.', 'The signature carries a reference code (letters and digits).'],
+    checks: [{ kind: 'absent', patterns: ['j[\'’]ai (déjà )?(identifié|analysé|listé|repéré)', 'cette semaine', 'pi[eè]ce jointe', 'ci-joint'], label: 'no invented progress, day or attachment' },
+      { kind: 'absent', patterns: ['(?<![\\p{L}\\p{N}])(?=[A-Z0-9]*\\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{5,}(?![\\p{L}\\p{N}])'], label: 'no reference code' },
+      { kind: 'mentions', groups: ['bonjour|salut|merci|bonne journée'], label: 'written in French' }],
+  },
 ];
 
 export const composeSentSurface = makeSurface({

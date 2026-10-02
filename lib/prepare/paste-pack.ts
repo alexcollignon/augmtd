@@ -61,7 +61,13 @@ export type PastePackEligibility = { eligible: boolean; reason: PastePackReason 
  * should therefore still prepare?
  */
 export function pastePackEligibility(
-  input: { work: string; itemKind: 'inbox' | 'commitment'; features: Partial<WorkspaceFeatures> | null },
+  input: {
+    work: string; itemKind: 'inbox' | 'commitment'; features: Partial<WorkspaceFeatures> | null;
+    /** W43 · THE ONE CHANNEL DECISION (lib/prepare/channel decideChannel): where the conversation lives.
+     *  A commitment whose conversation is EMAIL (an email-origin thread, an email contact) is never packed —
+     *  the email lane prepares a real email. Absent → the legacy reading (a commitment has no thread). */
+    channel?: import('@/lib/prepare/channel').ChannelDecision | null;
+  },
 ): PastePackEligibility {
   const no = (why: string): PastePackEligibility => ({ eligible: false, reason: null, why });
   if (!WORD_VERBS.has(input.work)) return no('not a words-shaped verb — its preparation is not a message');
@@ -83,7 +89,8 @@ export function pastePackEligibility(
 
   // THE MAIL-ONLY LANE: a reply is drafted onto an inbox row's own thread. A commitment has none.
   if (input.work === 'reply' && input.itemKind === 'commitment') {
-    return { eligible: true, reason: 'no_mail_thread', why: 'this obligation has no email thread to reply on — the words go wherever it lives' };
+    if (input.channel && input.channel.form !== 'paste_pack') return no(`the conversation is email — ${input.channel.why}`);
+    return { eligible: true, reason: 'no_mail_thread', why: input.channel?.why ?? 'this obligation has no email thread to reply on — the words go wherever it lives' };
   }
 
   return no('the commit door for this verb is reachable — the ordinary lane prepares it');
@@ -152,6 +159,9 @@ export async function preparePastePack(
     // THE OWED DIRECTION: the same drafter, told honestly who owes whom — a message about something
     // the USER owes must never read as a chase for something they are waiting on.
     direction: args.userOwes ? 'you' : 'them',
+    // W43 · THE ONE VET, inside the drafter: nothing rides with a pack (its destination may carry a file,
+    // so the attachment floor is off), and the obligation is open when the user owes it.
+    vet: { obligationOpen: args.userOwes, staged: false, attachmentFloor: false },
     instructions: [
       args.artifactTruth ?? '',
       // THE FACTS the words must respect (W5a): the obligation is OPEN and nothing is staged with
@@ -191,6 +201,7 @@ export async function preparePastePack(
     title, content: body.trim(), ref: null,
     metadata: {
       pastePack: true, pastePackReason: args.reason, note: pastePackNote(args.reason),
+      ...(await import('@/lib/prepare/draft-rules')).draftRulesStamp(), // W43 · the drafting rules it was written under
       prepared_from: currentGround, ...(pa ? { agentName: pa.name } : {}),
       ...(args.addressee !== undefined ? { addressee: args.addressee } : {}),
     },

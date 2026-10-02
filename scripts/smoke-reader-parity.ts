@@ -19,6 +19,7 @@
  *   npx tsx scripts/smoke-reader-parity.ts
  * ════════════════════════════════════════════════════════════════════════════════════════════════
  */
+import { DRAFT_RULES_VERSION } from '../lib/prepare/draft-rules';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
@@ -109,9 +110,9 @@ async function main() {
     && inboxTruthFacts({ subject: 's' })?.obligationOpen === false);
   {
     const arts = (sd: Row) => stampTruth(preparedFromSourceData(sd as never), inboxTruthFacts(sd));
-    const oweArt = arts({ subject: 's', understanding: owe, draft: { body: claimWords, generated_at: T0 } })[0];
-    const awaitArt = arts({ subject: 's', understanding: { ...owe, ownership: 'awaiting' }, draft: { body: claimWords, generated_at: T0 } })[0];
-    const handSd = { body: claimWords, generated_at: T0, ...handStamp('reply_draft', { body: claimWords }, T0) };
+    const oweArt = arts({ subject: 's', understanding: owe, draft: { body: claimWords, generated_at: T0, rules_version: DRAFT_RULES_VERSION } })[0];
+    const awaitArt = arts({ subject: 's', understanding: { ...owe, ownership: 'awaiting' }, draft: { body: claimWords, generated_at: T0, rules_version: DRAFT_RULES_VERSION } })[0];
+    const handSd = { body: claimWords, generated_at: T0, rules_version: DRAFT_RULES_VERSION, ...handStamp('reply_draft', { body: claimWords }, T0) };
     const handArt = arts({ subject: 's', understanding: owe, draft: handSd })[0];
     gate('A2 a machine reply claiming undone work on inbox mail the user OWES is withdrawn; the same words on mail they await stay live; the user\'s own edit is never judged',
       oweArt.falseClaim === true && !isLiveArtifact(oweArt) && withdrawnReasonOf(oweArt) === 'its words claimed work that is not done'
@@ -123,16 +124,16 @@ async function main() {
   console.log('\nB — the inbox lane\'s file match is re-proven');
   {
     const run = (draft: Row, pool: Row[] = []) => stampTruth(proveStagingByPool(preparedFromSourceData({ draft } as never), pool), inboxTruthFacts({ subject: 's' }))[0];
-    const unstamped = run({ body: plainWords, attachment: FILE, prepared: 'pass', generated_at: T0 });
-    const stamped = run({ body: plainWords, attachment: FILE, prepared: 'pass', generated_at: T0, stagingLaw: STAGING_LAW_VERSION });
+    const unstamped = run({ body: plainWords, attachment: FILE, prepared: 'pass', generated_at: T0, rules_version: DRAFT_RULES_VERSION });
+    const stamped = run({ body: plainWords, attachment: FILE, prepared: 'pass', generated_at: T0, rules_version: DRAFT_RULES_VERSION, stagingLaw: STAGING_LAW_VERSION });
     const reqRow = (law: number | null, extra: Row = {}) => ({ id: 'rq', task_id: 'require:the interim report', type: 'file', content: 'x', created_at: T0,
       metadata: { source: 'requirement_resolution', attachment: FILE, ...(law === null ? {} : { stagingLaw: law }), ...extra } });
-    const proven = run({ body: plainWords, attachment: FILE, generated_at: T0 }, [reqRow(STAGING_LAW_VERSION)]);
-    const staleReq = run({ body: plainWords, attachment: FILE, generated_at: T0 }, [reqRow(1)]);
-    const typedSupply = run({ body: plainWords, attachment: FILE, generated_at: T0 }, [reqRow(STAGING_LAW_VERSION, { via: 'typed' })]);
-    const handDraft = { body: plainWords, attachment: FILE, generated_at: T0, ...handStamp('reply_draft', { body: plainWords, attachment: FILE }, T0) };
+    const proven = run({ body: plainWords, attachment: FILE, generated_at: T0, rules_version: DRAFT_RULES_VERSION }, [reqRow(STAGING_LAW_VERSION)]);
+    const staleReq = run({ body: plainWords, attachment: FILE, generated_at: T0, rules_version: DRAFT_RULES_VERSION }, [reqRow(1)]);
+    const typedSupply = run({ body: plainWords, attachment: FILE, generated_at: T0, rules_version: DRAFT_RULES_VERSION }, [reqRow(STAGING_LAW_VERSION, { via: 'typed' })]);
+    const handDraft = { body: plainWords, attachment: FILE, generated_at: T0, rules_version: DRAFT_RULES_VERSION, ...handStamp('reply_draft', { body: plainWords, attachment: FILE }, T0) };
     const hand = run(handDraft);
-    const noFile = run({ body: plainWords, generated_at: T0 });
+    const noFile = run({ body: plainWords, generated_at: T0, rules_version: DRAFT_RULES_VERSION });
     gate('B1 an UNSTAMPED machine attachment reads stagingStale → withdrawn, worded "matched under an older rule"',
       unstamped.stagingStale === true && unstamped.falseClaim === true && !isLiveArtifact(unstamped)
       && withdrawnReasonOf(unstamped) === 'its file was matched under an older rule — re-checking it');
@@ -160,7 +161,7 @@ async function main() {
     const REQUEST_AT = '2026-09-12T08:00:00Z';
     const LBL = 'slides 7&8 details for remaining functions in interim report';
     const docsend = (vof: string | null, extra: Row = {}) => ({ task_id: 'prepare-pass-docsend', type: 'draft', content: claimWords,
-      metadata: { source: 'preparation_pass', attachment: FILE, ...(vof ? { version_of: vof } : {}), ...extra } });
+      metadata: { source: 'preparation_pass', rules_version: DRAFT_RULES_VERSION, attachment: FILE, ...(vof ? { version_of: vof } : {}), ...extra } });
     const rows = carriedDraftFileRows([
       docsend('superseded:unstaged'),
       docsend('superseded:withdrawn'),                                                            // same file → one entry
@@ -208,19 +209,19 @@ async function main() {
         // a notice nobody replies to, carrying a stale-era reply draft → stripped by the notice law
         inbox('i-notice', { subject: 'Your weekly digest', from_address: 'no-reply@acme.example', from_name: 'Acme Notifications', thread_id: 't-notice', received_at: T0,
           understanding: { role: 'one_of_many', relevance: 'awareness', ownership: 'none', mailKind: 'notification' },
-          draft: { body: plainWords, generated_at: T0, prepared_from: { emailId: 'e0', receivedAt: T0 } } }),
+          draft: { body: plainWords, generated_at: T0, rules_version: DRAFT_RULES_VERSION, prepared_from: { emailId: 'e0', receivedAt: T0 } } }),
         // mail the user owes, a machine reply claiming undone work → withdrawn (A)
         inbox('i-owe', { subject: 'The allocation', from_address: 'sam@acme.example', from_name: 'Sam', thread_id: 't-owe', received_at: T0, understanding: owe,
-          draft: { body: claimWords, generated_at: T0, prepared_from: { emailId: 'e1', receivedAt: T0 } } }),
+          draft: { body: claimWords, generated_at: T0, rules_version: DRAFT_RULES_VERSION, prepared_from: { emailId: 'e1', receivedAt: T0 } } }),
         // a legacy doc-send with an unstamped attachment → withdrawn (B)
         inbox('i-docsend', { subject: 'The report', from_address: 'sam@acme.example', thread_id: 't-doc', received_at: T0, understanding: owe,
-          draft: { body: plainWords, attachment: FILE, prepared: 'pass', generated_at: T0 } }),
+          draft: { body: plainWords, attachment: FILE, prepared: 'pass', generated_at: T0, rules_version: DRAFT_RULES_VERSION } }),
         // a reply whose ground moved (a newer inbound on the thread) → superseded
         inbox('i-moved', { subject: 'Next week', from_address: 'sam@acme.example', thread_id: 't-moved', received_at: T0, understanding: { ...owe, ownership: 'awaiting' },
-          draft: { body: plainWords, generated_at: T0, prepared_from: { emailId: 'e2', receivedAt: T0 } } }, { last_activity_at: T0 }),
+          draft: { body: plainWords, generated_at: T0, rules_version: DRAFT_RULES_VERSION, prepared_from: { emailId: 'e2', receivedAt: T0 } } }, { last_activity_at: T0 }),
         // a live, current reply → live in both
         inbox('i-live', { subject: 'Lunch', from_address: 'sam@acme.example', thread_id: 't-live', received_at: T0, understanding: { ...owe, ownership: 'awaiting' },
-          draft: { body: plainWords, generated_at: T0, prepared_from: { emailId: 'e3', receivedAt: T0 } } }),
+          draft: { body: plainWords, generated_at: T0, rules_version: DRAFT_RULES_VERSION, prepared_from: { emailId: 'e3', receivedAt: T0 } } }),
       ],
       commitments: [
         // a commitment whose chase was prepared before a newer inbound landed → superseded (census H(1))
@@ -228,8 +229,8 @@ async function main() {
         { id: 'c-live', user_id: U, description: 'Send the deck', created_at: T0, status: 'open', direction: 'awaiting', counterparty: 'Sam', thread_id: 't-cl' },
       ],
       item_deliverables: [
-        { id: 'p1', user_id: U, kind: 'commitment', entity_id: 'c-moved', task_id: 'prepare-pass-nudge', type: 'draft', title: 'Nudge — Sam', content: plainWords, created_at: T0, metadata: { prepared_from: { emailId: 'e4', receivedAt: T0 } } },
-        { id: 'p2', user_id: U, kind: 'commitment', entity_id: 'c-live', task_id: 'prepare-pass-nudge', type: 'draft', title: 'Nudge — Sam', content: plainWords, created_at: T0, metadata: { prepared_from: { emailId: 'e5', receivedAt: T0 } } },
+        { id: 'p1', user_id: U, kind: 'commitment', entity_id: 'c-moved', task_id: 'prepare-pass-nudge', type: 'draft', title: 'Nudge — Sam', content: plainWords, created_at: T0, metadata: { rules_version: DRAFT_RULES_VERSION, prepared_from: { emailId: 'e4', receivedAt: T0 } } },
+        { id: 'p2', user_id: U, kind: 'commitment', entity_id: 'c-live', task_id: 'prepare-pass-nudge', type: 'draft', title: 'Nudge — Sam', content: plainWords, created_at: T0, metadata: { rules_version: DRAFT_RULES_VERSION, prepared_from: { emailId: 'e5', receivedAt: T0 } } },
         // an inbox pool nudge on the notice → stripped too (both lanes, one law)
         { id: 'p3', user_id: U, kind: 'email', entity_id: 'i-notice', task_id: 'x', type: 'document', title: 'Summary', content: 'A summary of the digest.', created_at: T0, metadata: {} },
       ],

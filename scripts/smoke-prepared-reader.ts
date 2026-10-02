@@ -13,6 +13,7 @@
  * scratchpad script, not this gate — this gate must never depend on data.
  * ════════════════════════════════════════════════════════════════════════════════════════════════
  */
+import { DRAFT_RULES_VERSION } from '../lib/prepare/draft-rules';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
@@ -180,7 +181,8 @@ console.log('\nD · pure tests');
 {
   const future = new Date(Date.now() + 3 * 86_400_000).toISOString();
   const past = new Date(Date.now() - 3 * 86_400_000).toISOString();
-  const row = (over: Record<string, unknown>) => ({ id: 'r', task_id: null, type: 'draft', title: 'x', content: 'body', created_at: '2026-09-20T10:00:00Z', metadata: {}, ...over });
+  // W43: a fresh machine draft carries the current drafting-rules stamp (an unstamped one is withdrawn as older rules).
+  const row = (over: Record<string, unknown>) => ({ id: 'r', task_id: null, type: 'draft', title: 'x', content: 'body', created_at: '2026-09-20T10:00:00Z', ...over, metadata: { rules_version: DRAFT_RULES_VERSION, ...((over.metadata ?? {}) as Record<string, unknown>) } });
 
   const inv = poolRowsToArtifacts([row({ task_id: 'prepare-pass-invite', title: 'Invite — Kickoff', metadata: { invite: { title: 'Kickoff', startISO: future, endISO: future, attendees: ['a@example.com'] }, agentName: 'Clara' } })], 'commitment');
   gate('D1 a pooled commitment INVITE maps to kind invite (not reply_draft), send-ready, with its stored payload and the pool payload ref',

@@ -1,7 +1,7 @@
 {
  "$schema_note": "THE LAWS REGISTRY (W1.4, Sep 22 2026). Machine-readable source of truth; docs/laws-registry.md is rendered from it; scripts/smoke-laws.ts is the meta-gate. Tier 1 = the 14 invariants of docs/stabilization-plan.md PART II (outcome or walk gate required); tier 2 = domain laws (a pure-function test required, named in `fn`); tier 3 = lessons (compact `lessons[]`, no gate obligation) and obsolete laws. Gate kinds: source (asserts source text) · pure (calls a pure function) · outcome (census on DB/probe data) · walk (browser journey). Gate cost: zero-ai · cached · live-ai. Status: holding · broken-live (a Sep 22 audit finding names it) · gateless · obsolete. A gate with status 'planned' must name its wave and does not count as live.",
  "version": 1,
- "generated": "2026-09-29",
+ "generated": "2026-10-02",
  "tiers": {
   "1": "invariant",
   "2": "domain",
@@ -4850,11 +4850,12 @@
     "RELATIVE TIME IS VERIFIED",
     "THE WORK-DONE FORMS",
     "THE CARD RE-VETS ITS CHIPS",
-    "THE INBOX DOOR READS THE ONE READER"
+    "THE INBOX DOOR READS THE ONE READER",
+    "THE WORK-CLAIMS FLOOR IN THE ONE VET (W43)"
    ],
    "tier": 2,
    "domain": "judge-prepare-deck",
-   "statement": "Every machine-written message is vetted by ONE function (lib/prepare/truth vetDraft: a deed claimed on an open obligation, a file claimed with nothing staged, a chase on work the user owes) at every door that serves words — THE ONE READER, the evaluator and the compose door alike. A generated draft that fails is regenerated ONCE with the failure named, else not served (the honest empty state). The compose task for a you_owe commitment frames DELIVERY, never a request to the counterparty; a chase is valid only on awaiting work. A generated commitment draft is pooled once as the commitment's prepared artifact (the pass's shape + prepared_from ground stamp), so the next open serves it through the reader at zero AI and it then obeys the-users-hand-wins. Every relative day claim in a room brief ('N days ago', 'yesterday', 'last week') is code-verified against the page's dated events — an attributed false one is rewritten to its absolute date, anything else unverifiable is dropped. W13.1: the completion floor also reads the WORK-DONE forms — the first-person present perfect of revision verbs ('we've added', 'I've updated'), the passive perfect ('has been updated'), 'is now <state>', 'now includes/contains', 'is ready' (EN/PT/DE/FR; grammatical forms, never topic words; negations, futures and 'ready to' excluded) — and it speaks unless the thing staged IS the work (`stagedIsWork`): a BASE riding the draft is not the work, and a machine draft that attaches the item's base as the answer is withdrawn (`baseAsAnswer`). A draft served with a staged file shows it as a chip (name · open in the one viewer · remove); Send hands the standing chips' ids to a door that loads the bytes itself, all or nothing, before the commit claim; words that say 'attached' with no chip left re-vet on the card (the same attachment floor) and hold Send. W13.2: the inbox draft door (/api/inbox/[id]/draft) serves a stored draft only through THE ONE READER's truth stamp (`storedDraftWithdrawal`): a draft the reader withdraws (riding the item's base, failing the one vet, signed as another mailbox, misaddressed) is a `nonLive` input to decideRegeneration — regenerated there through the one vet (once, else the honest `withheld` empty state the card prints); the user's own edit is never judged.",
+   "statement": "Every machine-written message is vetted by ONE function (lib/prepare/truth vetDraft: a deed claimed on an open obligation, a file claimed with nothing staged, a chase on work the user owes) at every door that serves words — THE ONE READER, the evaluator and the compose door alike. A generated draft that fails is regenerated ONCE with the failure named, else not served (the honest empty state). The compose task for a you_owe commitment frames DELIVERY, never a request to the counterparty; a chase is valid only on awaiting work. A generated commitment draft is pooled once as the commitment's prepared artifact (the pass's shape + prepared_from ground stamp), so the next open serves it through the reader at zero AI and it then obeys the-users-hand-wins. Every relative day claim in a room brief ('N days ago', 'yesterday', 'last week') is code-verified against the page's dated events — an attributed false one is rewritten to its absolute date, anything else unverifiable is dropped. W13.1: the completion floor also reads the WORK-DONE forms — the first-person present perfect of revision verbs ('we've added', 'I've updated'), the passive perfect ('has been updated'), 'is now <state>', 'now includes/contains', 'is ready' (EN/PT/DE/FR; grammatical forms, never topic words; negations, futures and 'ready to' excluded) — and it speaks unless the thing staged IS the work (`stagedIsWork`): a BASE riding the draft is not the work, and a machine draft that attaches the item's base as the answer is withdrawn (`baseAsAnswer`). A draft served with a staged file shows it as a chip (name · open in the one viewer · remove); Send hands the standing chips' ids to a door that loads the bytes itself, all or nothing, before the commit claim; words that say 'attached' with no chip left re-vet on the card (the same attachment floor) and hold Send. W13.2: the inbox draft door (/api/inbox/[id]/draft) serves a stored draft only through THE ONE READER's truth stamp (`storedDraftWithdrawal`): a draft the reader withdraws (riding the item's base, failing the one vet, signed as another mailbox, misaddressed) is a `nonLive` input to decideRegeneration — regenerated there through the one vet (once, else the honest `withheld` empty state the card prints); the user's own edit is never judged. W43: THE ONE VET carries the work-claims floor (lib/prepare/work-claims unsupportedWorkClaims — a day, status, progress or deed about the user's work the writer's material does not support; five languages; 'j'ai identifié…' / 'cette semaine' class) and runs INSIDE both drafters (generateReplyDraft · generateNudgeDraft return only through finishThroughVet over their own material), so the reply, nudge, commitment message, paste pack, compose and every pass lane pass it; the doors with their own model call (compose · sidebar · workflow cover) run the same floor. An unsupported work claim that survives the one rewrite is served as a NAMED SLOT, never the invention.",
    "homes": [
     "app/api/compose/draft/route.ts",
     "app/api/compose/send/route.ts",
@@ -4869,7 +4870,9 @@
     "lib/prepare/read.ts",
     "lib/prepare/truth.ts",
     "lib/room/brief.ts",
-    "lib/room/self-voice.ts"
+    "lib/room/self-voice.ts",
+    "lib/prepare/work-claims.ts",
+    "lib/inbox/draft-reply.ts"
    ],
    "gates": [
     {
@@ -4941,6 +4944,19 @@
      "kind": "source",
      "cost": "zero-ai",
      "note": "W13.2: the inbox draft door reads preparedState → storedDraftWithdrawal → decideRegeneration (never for a hand-held draft) before serving stored words; its fresh words run through draftThroughVet; the card prints the withheld line on the inbox lane"
+    },
+    {
+     "suite": "smoke-w43-draft-truth",
+     "ids": [
+      "V1",
+      "V2",
+      "V3",
+      "V4",
+      "V5"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "W43: vetDraft work_claim floor; draftThroughVet slots; both drafters return through finishThroughVet; compose/sidebar/workflow cover run the floor; tests/unit/w43-draft-truth"
     }
    ],
    "fn": "vetDraft · draftThroughVet · commitmentComposeTask · composeDraftRow · enforceRelativeTimeTruth · relativeDayRange (tests/unit/compose-truth.test.ts) · stagedFilesOf · baseFileIdsOf (tests/unit/staged-truth.test.ts) · storedDraftWithdrawal (tests/unit/staging-self-heal.test.ts)",
@@ -10391,7 +10407,8 @@
     "components/shared/card-stack.tsx",
     "lib/present/card-target.ts",
     "app/api/home/ask/route.ts",
-    "app/api/items/steer/route.ts"
+    "app/api/items/steer/route.ts",
+    "components/shared/card-header.ts"
    ],
    "gates": [
     {
@@ -10456,11 +10473,12 @@
       "E2",
       "E3",
       "E4",
-      "E9"
+      "E9",
+      "E10"
      ],
      "kind": "pure",
      "cost": "zero-ai",
-     "note": "a two-card message RENDERS as one stack with exactly one open; a single card never folds; every card carries the reply affordance; reference resolution (ordinal · recipient · title words · kind; ambiguity asks; a general message is never routed) — tests/unit/card-target.test.ts holds the pure tier"
+     "note": "a two-card message RENDERS as one stack with exactly one open; a single card never folds; every card carries the reply affordance; reference resolution (ordinal · recipient · title words · kind; ambiguity asks; a general message is never routed) — tests/unit/card-target.test.ts holds the pure tier; the header row is ONE formatter (noun once, plain title, counterparty in the detail) — tests/unit/card-header.test.ts"
     },
     {
      "suite": "smoke-one-behaviour",
@@ -10475,7 +10493,7 @@
      "note": "every surface stacks through the one CardStack; provider + chip + transcript quote on both chat surfaces; both doors accept the target and hand the core one instruction while the room records the user's own words"
     }
    ],
-   "fn": "BEHAVIOUR_TABLE · behaviourOf · chatCardNodes · deedCardFor · postsOfCardArtifacts · chatCardsOfPayload · resolveCardReference · targetedQuestion · sanitizeTarget · CARD_SUMMARY",
+   "fn": "BEHAVIOUR_TABLE · behaviourOf · chatCardNodes · deedCardFor · postsOfCardArtifacts · chatCardsOfPayload · resolveCardReference · targetedQuestion · sanitizeTarget · CARD_SUMMARY · cardHeaderOf · plainTitleOf",
    "version_key": null,
    "status": "holding-uncommitted",
    "broken_by": null,
@@ -10540,6 +10558,175 @@
     {
      "law": "sent-in-the-users-name",
      "precedence": "this law decides WHETHER work exists (none, or a verify-first reply); the sent-words law decides what that reply may say"
+    }
+   ]
+  },
+  {
+   "id": "one-channel-decision",
+   "name": "WHERE THE CONVERSATION LIVES DECIDES THE DRAFT",
+   "aliases": [
+    "THE ONE CHANNEL DECISION",
+    "AN EMAIL CONVERSATION GETS AN EMAIL"
+   ],
+   "tier": 2,
+   "domain": "judge-prepare-deck",
+   "statement": "Every drafter / prepare lane reads ONE channel decision (lib/prepare/channel decideChannel, read through channelForItem): an inbox item is its email thread; a commitment whose conversation is email (an email source or thread) with an email counterparty is prepared as an EMAIL — a reply on the thread when the source message is known, else a fresh message to the counterparty; a meeting/manual commitment with an email contact composes an email; a paste pack is the preparation ONLY when the conversation lives off-email (a chat app, the email door off) or no address exists. Once the email lane lands, a machine paste pack standing for the item is retired (filed, never the user's hand).",
+   "homes": [
+    "lib/prepare/channel.ts",
+    "lib/prepare/paste-pack.ts",
+    "lib/prepare/pass.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w43-draft-truth",
+     "ids": [
+      "C1",
+      "C2",
+      "C3",
+      "C4"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "decideChannel table; pastePackEligibility declines an email conversation; the pass asks channelForItem before the pack; a reply on a commitment goes to prepareCommitmentMessage; the pack is retired once the email lands; tests/unit/w43-draft-truth"
+    }
+   ],
+   "fn": "decideChannel · channelForItem",
+   "version_key": "DRAFT_RULES_VERSION",
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W43 (owner walk, Oct 2)",
+   "collides_with": [
+    {
+     "law": "the-users-hand-wins",
+     "precedence": "a user-edited paste pack is never retired by the channel move — the hand wins; only machine packs are filed"
+    }
+   ]
+  },
+  {
+   "id": "file-only-for-file-ask",
+   "name": "A FILE ONLY FOR A FILE ASK",
+   "aliases": [
+    "NO ATTACHMENT WITHOUT AN ASK"
+   ],
+   "tier": 2,
+   "domain": "judge-prepare-deck",
+   "statement": "A file is staged on prepared work only when the work's OWN requirements name a FILE-KIND input (input kind attach, naming a document/contract/deck/…; a send-a-file verdict with no inventory may fall back to a title that names a file) — and the match is searched and verified against THAT requirement, never the bare title. A task whose ask is not a file never gets an attachment; the draft may say 'attached' only when a file is staged (THE ONE VET's attachment floor, run inside every drafter).",
+   "homes": [
+    "lib/prepare/input-kind.ts",
+    "lib/prepare/pass.ts",
+    "lib/inbox/draft-reply.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w43-draft-truth",
+     "ids": [
+      "F1",
+      "F2",
+      "F3"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "fileAskLabels/namesFileKind; both doc-send lanes resolve + verify the file ask; drafted sends state staged to the vet; tests/unit/w43-draft-truth"
+    }
+   ],
+   "fn": "fileAskLabels · namesFileKind",
+   "version_key": "DRAFT_RULES_VERSION",
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W43 (owner walk, Oct 2)",
+   "collides_with": [
+    {
+     "law": "staging-law",
+     "precedence": "this law decides WHETHER a file may be staged at all (a file-kind ask exists); the staging law then decides WHICH file, in time and provenance"
+    }
+   ]
+  },
+  {
+   "id": "signature-recurring-own-lines",
+   "name": "THE SIGNATURE IS THE USER'S RECURRING LINES",
+   "aliases": [
+    "NEVER A CODE IN THE SIGN-OFF"
+   ],
+   "tier": 2,
+   "domain": "judge-prepare-deck",
+   "statement": "A drafted message is signed with the user's name and ONLY the lines that recur at the end of ≥2 of the user's OWN sent messages in that mailbox (the quoted received chain cut off — received mail never contributes); a code-like token or line (mixed letters+digits, a vowel-less all-caps token, a phone/IBAN/long-number run) is never a signature line, and is cut from the name line itself. Every drafter finishes through the same finisher (lib/inbox/draft-reply draftFinisher; the compose door the same cleanSignOff).",
+   "homes": [
+    "lib/inbox/sign-off.ts",
+    "lib/inbox/draft-reply.ts",
+    "app/api/compose/draft/route.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w43-draft-truth",
+     "ids": [
+      "S1",
+      "S2",
+      "S3"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "deriveSignatureLines / cleanSignOff / isCodeLikeLine; every drafter finishes through draftFinisher; tests/unit/w43-draft-truth"
+    }
+   ],
+   "fn": "deriveSignatureLines · cleanSignOff · isCodeLikeLine",
+   "version_key": "DRAFT_RULES_VERSION",
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W43 (owner walk, Oct 2)",
+   "collides_with": [
+    {
+     "law": "every-draft-same-truth",
+     "precedence": "the sign-off is finished BEFORE the one vet judges the words (the vet sees the served text)"
+    }
+   ]
+  },
+  {
+   "id": "older-rules-re-prepare",
+   "name": "A DRAFT WRITTEN UNDER OLDER RULES RE-PREPARES ON OPEN",
+   "aliases": [
+    "DRAFT_RULES_VERSION",
+    "THE RULES STAMP"
+   ],
+   "tier": 2,
+   "domain": "judge-prepare-deck",
+   "statement": "Every prepared draft is stamped with the drafting rules it was written under (rules_version = DRAFT_RULES_VERSION, lib/prepare/draft-rules). THE ONE READER withdraws an unsent, machine-written draft (reply · nudge · message · paste pack) whose stamp is older — never one the user edited or steered, never a sent one — so it is never painted; the on-open re-prepare trip (one per item per window, logged) re-drafts it under today's rules, and a withdrawal the lane did not replace is retired (filed into the version chain) so the open is not due forever. W43.2 · NEVER A BLANK SEAT: only an older draft that FAILS today's floors (the one vet, the language/identity/address floors, plus staleRulesFailure — an unsupported work claim against the item's words, a code in the sign-off, a paste pack for an email contact, a file nobody asked for) is withdrawn; one that passes keeps serving, marked refreshDue, and is re-prepared quietly (open trip / next pass) — replaced only when the new one is written; a passing draft the lane did not replace is re-stamped.",
+   "homes": [
+    "lib/prepare/draft-rules.ts",
+    "lib/prepare/read.ts",
+    "lib/prepare/pass.ts",
+    "lib/room/open-kicks.ts",
+    "lib/core/versions.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w43-draft-truth",
+     "ids": [
+      "R1",
+      "R2",
+      "R3",
+      "R4",
+      "R5",
+      "R6",
+      "R7"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "machineDraftRulesStale at the reader; isLiveArtifact; needsReprepareTrip; every writer stamps; retireRulesStaleDrafts; tests/unit/w43-draft-truth"
+    }
+   ],
+   "fn": "draftRulesStale · machineDraftRulesStale · staleRulesFailure",
+   "version_key": "DRAFT_RULES_VERSION",
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W43 (owner walk, Oct 2)",
+   "collides_with": [
+    {
+     "law": "the-users-hand-wins",
+     "precedence": "the hand wins: a user-edited or steered draft is never withdrawn for older rules"
+    },
+    {
+     "law": "no-mutation-and-address",
+     "precedence": "the stale draft is withdrawn at the reader (never painted) and replaced by the trip — a painted card is never mutated in place"
     }
    ]
   }

@@ -25,7 +25,8 @@ import {
   ChatBubbleBottomCenterTextIcon, ClipboardDocumentIcon, QueueListIcon, ArrowPathIcon, CalendarIcon, Square3Stack3DIcon,
   AdjustmentsHorizontalIcon, CheckCircleIcon, DocumentTextIcon, ArrowUturnLeftIcon, ChevronRightIcon, XMarkIcon,
 } from '@heroicons/react/24/outline';
-import { CARD_SUMMARY, summaryTitleOf, type CardDescriptor, type SummaryIcon } from '@/lib/present/behaviour';
+import { CARD_SUMMARY, type CardDescriptor, type SummaryIcon } from '@/lib/present/behaviour';
+import { cardHeaderOf, cardLineOf } from '@/components/shared/card-header';
 
 const ICON: Record<SummaryIcon, React.ComponentType<{ className?: string }>> = {
   mail: EnvelopeIcon, calendar: CalendarDaysIcon, forward: ArrowUturnRightIcon, decision: ScaleIcon,
@@ -49,7 +50,7 @@ export function ReplyingChip({ target, onClear }: { target: CardDescriptor | nul
     <div className="mb-1.5 flex min-w-0 items-center gap-1.5 self-start rounded-lg border border-indigo-200 bg-indigo-50/70 px-2.5 py-1 text-[12px] text-indigo-800" data-replying-to>
       <ArrowUturnLeftIcon className="h-3.5 w-3.5 flex-shrink-0" />
       <span className="flex-shrink-0 text-indigo-500">Replying to:</span>
-      <span className="min-w-0 truncate font-medium">{summaryTitleOf(target)}</span>
+      <span className="min-w-0 truncate font-medium">{cardLineOf(target)}</span>
       <button type="button" onClick={onClear} aria-label="Stop replying to this card"
         className="ml-0.5 flex-shrink-0 rounded p-0.5 text-indigo-400 transition-colors hover:bg-indigo-100 hover:text-indigo-700">
         <XMarkIcon className="h-3.5 w-3.5" />
@@ -71,16 +72,16 @@ export function ReplyQuote({ title }: { title: string }) {
 function CardHeader({ d, open, stacked, onToggle }: { d: CardDescriptor; open: boolean; stacked: boolean; onToggle?: () => void }) {
   const t = useCardTarget();
   const Icon = ICON[CARD_SUMMARY[d.kind].icon];
-  const noun = CARD_SUMMARY[d.kind].noun;
-  const title = summaryTitleOf(d);
+  // THE ONE FORMATTER (components/shared/card-header.ts): the noun once, the work's plain title, the detail.
+  const h = cardHeaderOf(d);
+  const noun = h.noun;
   const targeted = t?.target?.id === d.id;
   const label = (
     <>
       <Icon className="h-3.5 w-3.5 flex-shrink-0 text-neutral-400" />
       <span className="flex-shrink-0 font-medium text-neutral-500">{noun}</span>
-      {title !== noun && <span className="min-w-0 truncate text-neutral-800">{title}</span>}
-      {d.recipient && <span className="min-w-0 flex-shrink truncate text-neutral-400">· {d.recipient}</span>}
-      {d.state && <span className="flex-shrink-0 text-neutral-400">· {d.state}</span>}
+      {h.title && <span className="min-w-0 truncate text-neutral-800">{h.title}</span>}
+      {h.detail && <span className="min-w-0 flex-shrink truncate text-neutral-400">· {h.detail}</span>}
     </>
   );
   return (

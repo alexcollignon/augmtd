@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { foldAccents, nameTokens, sameAttendee, norm, emailDenotesName } from '@/lib/projects/identity';
+import { DRAFT_RULES_VERSION } from '@/lib/prepare/draft-rules';
 import { denotesUser } from '@/lib/commitments/extraction-truth';
 import {
   deriveSelfIdentity, pickSelfRow, planSelfRepair, refusesSelfMerge, isForeignAdoptee, isPureSelfRow,
@@ -117,8 +118,8 @@ describe('THE MERGE GUARD', () => {
 
 describe('ONE READER — the held ledger reads the LIVE verdict', () => {
   const USER = { name: 'Samuel Rivera', aliases: ['sam@acme.test'] };
-  const sdMisaddressed = { subject: 'hi', body: 'hello', draft: { body: 'Hi Samuel,', generated_at: '2026-09-20T10:00:00Z', addressee: { name: 'Samuel Rivera', email: 'sam@acme.test', via: 'email' } } };
-  const sdGood = { subject: 'hi', body: 'hello', draft: { body: 'Hi Jordan,', generated_at: '2026-09-20T10:00:00Z', addressee: { name: 'Jordan Blake', email: 'jordan.blake@globex.test', via: 'email' } } };
+  const sdMisaddressed = { subject: 'hi', body: 'hello', draft: { rules_version: DRAFT_RULES_VERSION, body: 'Hi Samuel,', generated_at: '2026-09-20T10:00:00Z', addressee: { name: 'Samuel Rivera', email: 'sam@acme.test', via: 'email' } } };
+  const sdGood = { subject: 'hi', body: 'hello', draft: { rules_version: DRAFT_RULES_VERSION, body: 'Hi Jordan,', generated_at: '2026-09-20T10:00:00Z', addressee: { name: 'Jordan Blake', email: 'jordan.blake@globex.test', via: 'email' } } };
   it('a draft addressed to the user is not live', () => {
     expect(liveFromSourceData(sdMisaddressed, { user: USER })).toEqual([]);
     expect(liveFromSourceData(sdGood, { user: USER }).map((a) => a.kind)).toEqual(['reply_draft']);

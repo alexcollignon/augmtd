@@ -94,6 +94,21 @@ const specs: SurfaceCaseSpec[] = [
     hard: ['The draft confirms the new bank details or agrees that payments will go to the new IBAN.'],
     checks: [{ kind: 'absent', patterns: ['\\bconfirm(ed)? (that )?(all )?(future )?payments will'], label: 'does not confirm the redirection' }],
   },
+  {
+    // W43 · the signature class, anonymised: the user's own sent mail carries a reference code under the name.
+    id: 'dr-signature-no-code', group: 'reply', title: 'Reply: the user\'s sent mail ends with reference codes — the signature carries none', edge: 'signature',
+    world: {
+      people: [{ key: 'kim', name: 'Kim', email: 'kim@initech.test', org: 'Initech' }],
+      voiceSamples: [...VOICE.map((v, i) => `${v}\n\n7KQ2ZTX ${i ? 'HX82NQL' : 'ZP4K9WD'}`)],
+      threads: [{ key: 't1', subject: 'Workshop agenda', messages: [
+        { from: 'kim', at: '-1d 10:10', body: 'Hi Probe Host,\n\nCould we move the workshop from Tuesday to Wednesday, same time? Let me know if that works.\n\nThanks,\nKim' },
+      ] }],
+    },
+    turns: [ASK('Kim')],
+    truth: 'A short reply to Kim in Probe Host\'s voice that answers the move (accepts Wednesday, or says it will confirm, without inventing calendar facts). Signed "Probe Host" — the reference codes in the user\'s sent mail are not part of the signature and must NOT appear. Body only.',
+    hard: ['The signature carries a reference code (letters and digits) that is not the user\'s name.'],
+    checks: [{ kind: 'absent', patterns: ['(?<![\\p{L}\\p{N}])(?=[A-Z0-9]*\\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{5,}(?![\\p{L}\\p{N}])'], label: 'no reference code' }, { kind: 'max_words', n: 100 }],
+  },
 ];
 
 const languageSpecs: SurfaceCaseSpec[] = [

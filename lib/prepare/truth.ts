@@ -25,6 +25,8 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 import { statedWindow, type StatedWindow } from '@/lib/commitments/extraction-truth';
+import { unsupportedWorkClaims, workClaimObjection, slotUnsupportedWork } from '@/lib/prepare/work-claims';
+import { DRAFT_RULES_VERSION } from '@/lib/prepare/draft-rules';
 
 /** The provenance of a proposed slot — WHO vouches for it. The card's annotation renders from
  *  this, never from `proposed` alone: `stated_window` = code-verified inside the window the item's
@@ -177,7 +179,8 @@ export const COMPLETION_CLAIM_PATTERNS: ReadonlyArray<RegExp> = [
   /(?<!\p{L})(?:j'ai|nous avons)\s+(?:(?!pas(?!\p{L})|jamais(?!\p{L}))\S+\s+){0,3}?(?:mis à jour|ajouté|complété|révisé|corrigé|intégré|modifié|inclus)(?!\p{L})/iu,
   /(?<!\p{L})(?:a|ont)\s+été\s+(?:\S+\s+){0,2}?(?:mis(?:e|es)? à jour|ajouté(?:e|s|es)?|complété(?:e|s|es)?|révisé(?:e|s|es)?|corrigé(?:e|s|es)?|intégré(?:e|s|es)?|modifié(?:e|s|es)?)(?!\p{L})/iu,
   /(?<!\p{L})(?:inclut|incluent|contient|contiennent|comprend|comprennent)\s+(?:désormais|maintenant)(?!\p{L})/iu,
-  /(?<!\p{L})(?:est|sont)\s+(?:maintenant\s+|désormais\s+)?(?:prêt|prête|prêts|prêtes|à jour)(?!\p{L})/iu,
+  // W43: a CONDITIONAL readiness ("dès que la note est prête", "quand … est prêt") announces nothing done.
+  /(?<!(?<!\p{L})(?:dès que|dès qu|quand|lorsque|lorsqu|une fois que|une fois qu|si|avant que|avant qu|jusqu['’]à ce que|jusqu['’]à ce qu)[\s'’]+(?:[^\s'’.!?]+[\s'’]+){0,5})(?<!\p{L})(?:est|sont)\s+(?:maintenant\s+|désormais\s+)?(?:prêt|prête|prêts|prêtes|à jour)(?!\p{L})/iu,
 ];
 
 /** The first completion claim a text makes (the matched phrase), or null. Pure. */
@@ -459,11 +462,17 @@ export type DraftVetFacts = {
   /** The attachment floor speaks (default true). Off for a PASTE PACK (its destination may carry
    *  the file) and for an evaluator caller that stated no `staged` fact. */
   attachmentFloor?: boolean;
+  /** W43 · THE WORK-CLAIMS FLOOR, IN THE ONE VET: everything the writer was given (the thread, the
+   *  item, the user's guidance, the brain context). When present, a day, status, progress or deed the
+   *  draft states about the user's work that NONE of it supports fails the vet (lib/prepare/work-claims
+   *  `unsupportedWorkClaims` — deterministic, 5 languages). Absent → the floor is silent (fail-safe: a
+   *  floor speaks only with its facts in hand — THE ONE READER has no writer's material). */
+  material?: string | null;
 };
 
 /** Which floor a draft failed, the words that tripped it, and the ONE objection a regeneration is
  *  handed (the same wording the evaluator stores). */
-export type DraftVetFailure = { floor: 'completion' | 'attachment' | 'chase'; claim: string; objection: string };
+export type DraftVetFailure = { floor: 'completion' | 'attachment' | 'chase' | 'work_claim'; claim: string; objection: string };
 
 /** The objection for a tripped chase floor — one wording. */
 export function chaseObjection(claim: string): string {
@@ -489,7 +498,20 @@ export function vetDraft(text: string | null | undefined, facts: DraftVetFacts):
     const chase = chaseWordsIn(text);
     if (chase) return { floor: 'chase', claim: chase, objection: chaseObjection(chase) };
   }
+  // W43 · A MESSAGE CLAIMS ONLY THE WORK THE RECORD SHOWS — the last floor, and the only one with a
+  // SERVABLE fallback (the claim's span becomes a named slot — `settleWorkClaims`), never a withholding.
+  if (typeof facts.material === 'string') {
+    const claims = unsupportedWorkClaims(String(text ?? ''), facts.material);
+    if (claims.length) return { floor: 'work_claim', claim: claims[0].span, objection: workClaimObjection(claims) };
+  }
   return null;
+}
+
+/** W43 · the work-claims floor's LAST WORD on a body that passed every other floor: each unsupported
+ *  span becomes its named slot (never the invented claim). Identity when no material was stated. Pure. */
+export function settleWorkClaims(text: string, facts: Pick<DraftVetFacts, 'material'>): string {
+  if (typeof facts.material !== 'string' || !text) return text;
+  return slotUnsupportedWork(text, facts.material).text;
 }
 
 /**
@@ -533,13 +555,23 @@ export async function draftThroughVet(
   const second = String(await generate(f1.objection).catch(() => '') ?? '').trim();
   const f2 = second ? vetDraft(second, facts) : f1;
   if (second && !f2) return { body: second, failed: null, attempts: 2 };
+  // W43 · an unsupported WORK CLAIM is the one failure with a true servable form: the rewrite (else the
+  // first draft) with every unsupported span replaced by its named slot — provided nothing else fails.
+  // (the rewrite first; the first draft when the rewrite tripped another floor — W43 walk: a rewrite that
+  // dropped "c'est en cours" said "dès que c'est prêt" and the first, servable draft was lost).
+  const servable = [second, first].find((x) => !!x && !vetDraft(x, { ...facts, material: undefined }));
+  if (servable && [f1, f2].some((f) => f?.floor === 'work_claim')) {
+    return { body: settleWorkClaims(servable, facts), failed: null, attempts: 2 };
+  }
   return { body: '', failed: f2 ?? f1, attempts: 2 };
 }
 
 /** The honest words the compose door returns when a draft failed the vet twice — the card's empty
  *  state reads it (never a draft that says what is not true). */
 export function withheldLine(failed: DraftVetFailure): string {
-  return failed.floor === 'chase'
+  return failed.floor === 'work_claim'
+    ? 'I held back a draft that stated progress or a date nothing on record shows — write it yourself, or tell me where it stands.'
+    : failed.floor === 'chase'
     ? 'I held back a draft that chased them for something you owe — write it yourself, or tell me what to say.'
     : failed.floor === 'attachment'
       ? 'I held back a draft that said a file was attached when none is — write it yourself, or attach the file first.'
@@ -564,6 +596,7 @@ export function composeDraftRow(args: {
   return {
     user_id: args.userId, kind: 'commitment', entity_id: args.commitmentId, type: 'draft',
     title: `${lead} — ${name || 'recipient to confirm'}`.slice(0, 100), content: args.body, ref: null,
-    metadata: { source: 'compose', prepared: 'compose', prepared_from: args.preparedFrom, ...args.addresseeStamp },
+    // W43 · stamped with the drafting rules it was written under (THE ONE READER re-prepares an older one).
+    metadata: { source: 'compose', prepared: 'compose', prepared_from: args.preparedFrom, rules_version: DRAFT_RULES_VERSION, ...args.addresseeStamp },
   };
 }

@@ -26,6 +26,7 @@
  *   npx tsx scripts/smoke-staged-truth.ts
  * ════════════════════════════════════════════════════════════════════════════════════════════════
  */
+import { DRAFT_RULES_VERSION } from '../lib/prepare/draft-rules';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
@@ -349,7 +350,7 @@ console.log('\nC · the staged file shows as a chip, Send attaches exactly the c
       && /const reusedDraft = !!existingDraft\?\.body && !sendWithdrawn;/.test(pass_)
       && /prepareDocSend\(admin, userId, w, verdict, nonLive\)/.test(pass_));
     // The inbox draft door (the READER BYPASS).
-    const sdOf = (draft: Record<string, unknown>) => ({ subject: 'Interim report', body: 'Please add slides 7 and 8.', received_at: REQUEST_AT, draft });
+    const sdOf = (draft: Record<string, unknown>) => ({ subject: 'Interim report', body: 'Please add slides 7 and 8.', received_at: REQUEST_AT, draft: { rules_version: DRAFT_RULES_VERSION, ...draft } }); // W43: fresh drafts carry the rules stamp
     const onBase = preparedFromSourceData(sdOf({ body: 'Here is the report.', attachment: { fileId: 'f-old', filename: OLD_REPORT.filename, source: 'kb' } }) as never);
     stampTruth(onBase, { text: 'x', anchorIso: null, obligationOpen: false, baseFileIds: ['f-old'] });
     const live = preparedFromSourceData(sdOf({ body: 'Thanks — the updated report follows on Friday.' }) as never);

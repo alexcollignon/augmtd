@@ -16,6 +16,7 @@
  *   npx tsx scripts/smoke-item-actions.ts        exit 1 on any failure
  * ════════════════════════════════════════════════════════════════════════════════════════════════
  */
+import { DRAFT_RULES_VERSION } from '../lib/prepare/draft-rules';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import {
@@ -303,7 +304,7 @@ async function main() {
     const st = await preparedStatesFor(fakeClient(tables) as never, U, [
       { kind: 'commitment', id: 'c-done' },
       { kind: 'inbox', id: 'i-done', row: { source_data: { subject: 'Re: deck', draft: { body: 'Thanks Sam — sending it today.' } }, status: 'completed' } as never },
-      { kind: 'inbox', id: 'i-open', row: { source_data: { subject: 'Re: deck', draft: { body: 'Thanks Sam — sending it today.' } }, status: 'pending' } as never },
+      { kind: 'inbox', id: 'i-open', row: { source_data: { subject: 'Re: deck', draft: { body: 'Thanks Sam — sending it today.', rules_version: DRAFT_RULES_VERSION } }, status: 'pending' } as never },
     ]);
     gate('ST4 the batched reader stamps every artifact on a CLOSED commitment / inbox row settled → nothing live (still in `all`, readable)',
       (st.get('commitment:c-done')?.all.length ?? 0) > 0 && st.get('commitment:c-done')?.live.length === 0
