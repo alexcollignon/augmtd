@@ -425,7 +425,7 @@ REPLY MODE — follow exactly:
     }
 
     if (mode === 'inbox' && emailContext) {
-      systemPrompt += `\n\nA specific email is in focus (shown above as FOCUSED EMAIL). When the user asks to draft, write, or suggest a reply — emit REPLY_DRAFT:{"body":"..."} exactly as described above. This automatically opens the reply box and injects the draft. Write a short intro sentence first (e.g. "Here's a draft reply:"), then emit the token on its own next line. EMAIL BODY FORMAT: "Hi [sender name],\\n\\nThank you for reaching out...\\n\\nBest regards,\\n${signName}" — greeting, blank line between paragraphs, sign-off, name. Use \\n for newlines inside JSON. Never emit OPEN_COMPOSE or UPDATE_DRAFT in this case.`;
+      systemPrompt += `\n\nA specific email is in focus (shown above as FOCUSED EMAIL). When the user asks to draft, write, or suggest a reply — emit REPLY_DRAFT:{"body":"..."} exactly as described above. This automatically opens the reply box and injects the draft. Write a short intro sentence first (e.g. "Here's a draft reply:"), then emit the token on its own next line. EMAIL BODY FORMAT: greeting + the sender's name, blank line between paragraphs, sign-off, then ${signName} — the WHOLE body (greeting and sign-off too) in the language and register of the focused email (e.g. a French email gets "Bonjour …," and "Cordialement,", never "Hi"/"Best regards"). Use \\n for newlines inside JSON. Never emit OPEN_COMPOSE or UPDATE_DRAFT in this case.`;
 
       if (emailItemId) {
         const folderList = availableFolders?.length
@@ -563,7 +563,12 @@ Format (COLON separator, never parentheses): UPDATE_MEETING:{"notes":"...","acti
       if (!m) return tail;
       let token: Record<string, unknown>;
       try { token = JSON.parse(m[2]) as Record<string, unknown>; } catch { return tail; }
-      const body = typeof token.body === 'string' ? token.body : '';
+      // W42 · THE FRAME FOLLOWS THE BODY (lib/context/draft-language alignDraftFrame): a greeting/sign-off
+      // in another language than the body ("Hi …, Best regards" around French) is rewritten in code.
+      const rawBody = typeof token.body === 'string' ? token.body : '';
+      const { alignDraftFrame, addressRegisterOf } = await import('@/lib/context/draft-language');
+      const body = rawBody ? alignDraftFrame(rawBody, null, addressRegisterOf(focusedItemBlock || rawBody)) : '';
+      if (body !== rawBody) { token = { ...token, body }; tail = `${m[1]}:${JSON.stringify(token)}${tail.slice(m[0].length)}`; }
       const claims = body ? unsupportedWorkClaims(body, material) : [];
       if (!claims.length) return tail;
       // The last word is a slot, never the invention: a rewrite that fails (or still claims) serves the

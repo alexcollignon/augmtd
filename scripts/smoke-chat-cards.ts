@@ -32,6 +32,7 @@ import {
   claimFloorSay, CLAIM_WITHOUT_CARD_LINE,
 } from '../lib/present/turn-card';
 import { chatCardNodes } from '../components/home/chat-cards';
+import { NON_CARD_TURN_FIELDS } from '../lib/present/behaviour';
 import { sseFrame } from '../lib/present/converse-stream';
 import { splitSseFrames } from '../components/home/ask-stream-read';
 import { correctStatedZone } from '../lib/core/zoned-time';
@@ -78,7 +79,8 @@ console.log('\nB · THE INVERSE GATE — returned == persisted == rendered');
   // Every field of the core's turn type is classified: a CARD (the table) or a known non-card surface.
   const block = core.slice(core.indexOf('export type ConverseTurn = {'), core.indexOf('\n};', core.indexOf('export type ConverseTurn = {')));
   const fields = [...block.matchAll(/^\s{2}([a-zA-Z]+)\??:/gm)].map((m) => m[1]);
-  const NON_CARD = ['say', 'refs', 'files', 'applied', 'draft', 'learned', 'entityName', 'delegated', 'commit', 'openStage', 'options', 'workflowDraft', 'artifact', 'artifacts'];
+  // ⟲ RE-POINTED (one-component-one-behaviour): the non-card list has ONE home — the behaviour table.
+  const NON_CARD: readonly string[] = NON_CARD_TURN_FIELDS;
   const unclassified = fields.filter((f) => !NON_CARD.includes(f) && !(CARD_TURN_FIELDS as readonly string[]).includes(f));
   ok('B1 every ConverseTurn field is either a card in the ONE table or a known non-card surface', fields.length > 10 && unclassified.length === 0, `unclassified: ${unclassified.join(', ')}`);
   ok('B2 every card in the table is a field the core returns', CARD_TURN_FIELDS.every((f) => fields.includes(f)));
@@ -120,7 +122,7 @@ console.log('\nC · THE RAIL RENDERS THE SAME CARDS (rendered)');
   const bulk = render(chatCardNodes({ bulkDeeds: [{ deedId: 'b1' }] }, 'k').map((n) => React.createElement('div', { key: n.id }, n.node)));
   ok('C3 a bulk deed renders its host (it re-reads the stored deed)', bulk.length > 0);
   ok('C4 the rail mounts the renderer in the turn body and a card turn is never narration',
-    /cardNodes\.map\(\(c\) => <div key=\{c\.id\} className="mt-1\.5">\{c\.node\}<\/div>\)/.test(rail)
+    /* ⟲ RE-POINTED (one-component-one-behaviour · stacks + targeting, Oct 2) */ /\.\.\.cardNodes\.map\(\(c\) => \(\{ d: c\.d, node: c\.node \}\)\)/.test(rail) && /<CardStack stackKey=/.test(rail)
     && /hasCards\(t\.cards\)/.test(src('components/home/room-chat.ts')));
 }
 

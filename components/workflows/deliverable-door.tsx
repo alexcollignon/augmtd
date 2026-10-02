@@ -15,16 +15,14 @@
 //    the moment the run finished. A thread accumulates every run's output, so picking `artifacts[0]`
 //    would show LAST WEEK's briefing under this morning's run. An unfinished run has no completed_at
 //    to measure against and honestly falls back to the newest artifact the thread holds.
-//  • `useDeliverableDoor` — the fetch + the portalled viewer. THE OVERLAY LAW: portalled to body,
-//    because a `fixed` box inside a transform-animated ancestor positions against the transform,
-//    not the viewport (the sheet floated mid-page when it lived in the tree).
+//  • `useDeliverableDoor` — the fetch + THE ONE VIEWER (portalled to body by the viewer itself —
+//    THE OVERLAY LAW: a `fixed` box inside a transform-animated ancestor positions against the
+//    transform, not the viewport).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { useCallback, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useCallback } from 'react';
 import { toast } from 'sonner';
-import { ThreadArtifactsPanel } from '@/components/work/chat-artifact-panel';
-import type { DocumentArtifact } from '@/lib/types/inbox';
+import { useArtifactViewer } from '@/components/shared/artifact-viewer';
 
 /** Only what the pick needs — the full artifact shape lives in lib/types/inbox. */
 export type RunArtifactLike = { id?: string; title?: string; generated_at?: string };
@@ -49,47 +47,22 @@ export function runDeliverable<T extends RunArtifactLike>(
   );
 }
 
-type PanelState = {
-  thread: { id: string; title: string; artifacts?: DocumentArtifact[] };
-  initialId: string | null;
-};
-
 /**
- * The one door. `open(threadId, artifactId, workflowId?)` fetches the run's thread and mounts the
- * viewer; `door` is the portal to render (null when nothing is open).
+ * The one door. `open(threadId, artifactId, workflowId?)` fetches the run's thread and raises THE ONE
+ * VIEWER (components/shared/artifact-viewer.tsx — law `one-component-one-behaviour`): the same viewer
+ * every chat's document card opens, beside the page on desktop, a full sheet on a phone. `door` is
+ * the node to render (null when nothing is open). Its own fixed panel retired into that viewer.
  *
  * `onOpen` is the caller's OWN side effect at the moment of opening — the ledger stamps the review
  * signal there. It fires before the fetch: reviewing is the deed of opening, not of loading.
  */
 export function useDeliverableDoor(opts?: { onOpen?: (workflowId?: string) => void }) {
-  const [panel, setPanel] = useState<PanelState | null>(null);
-  const onOpen = opts?.onOpen;
-
+  const onOpenSide = opts?.onOpen;
+  const viewer = useArtifactViewer({ onError: () => toast.error("Couldn't open that document just now — try again.") });
+  const openViewer = viewer.open;
   const open = useCallback(async (threadId: string, artifactId: string | null, workflowId?: string) => {
-    onOpen?.(workflowId);
-    try {
-      const d = await fetch(`/api/work/threads/${threadId}/messages`).then((r) => (r.ok ? r.json() : null));
-      const th = d?.thread as { id: string; title?: string; artifacts?: DocumentArtifact[] } | null;
-      if (!th) throw new Error('thread');
-      setPanel({ thread: { id: th.id, title: th.title ?? 'Work', artifacts: th.artifacts ?? [] }, initialId: artifactId });
-    } catch {
-      toast.error("Couldn't open that document just now — try again.");
-    }
-  }, [onOpen]);
-
-  const door = panel && typeof document !== 'undefined'
-    ? createPortal(
-        <div className="fixed right-0 top-0 z-[60] h-screen w-[min(720px,94vw)] border-l border-neutral-200 shadow-[-12px_0_40px_-24px_rgba(23,23,23,0.25)] bg-neutral-50">
-          <ThreadArtifactsPanel
-            thread={panel.thread}
-            onClose={() => setPanel(null)}
-            initialDetailId={panel.initialId}
-            onArtifactsUpdate={(arts) => setPanel((p) => (p ? { ...p, thread: { ...p.thread, artifacts: arts } } : p))}
-          />
-        </div>,
-        document.body,
-      )
-    : null;
-
-  return { open, door, isOpen: !!panel };
+    onOpenSide?.(workflowId);
+    await openViewer({ kind: 'thread', threadId, artifactId });
+  }, [onOpenSide, openViewer]);
+  return { open, door: viewer.node, isOpen: viewer.isOpen };
 }

@@ -470,6 +470,10 @@ export async function reprocessTranscripts(
       let workItemsCreated = 0;
 
       for (const item of actionItems) {
+        // W42 · ONE DIRECTION RULE ON EVERY PATH: the reprocess path mints only the USER's own tasks, exactly as
+        // storeTranscriptAndGenerateWork does — an action assigned to someone else is never the user's to-do.
+        const isUserTask = (item as { isUserTask?: boolean | null }).isUserTask === true || (item as { isUserTask?: boolean | null }).isUserTask == null || !item.assignee;
+        if (!isUserTask) { console.log(`[MeetingBot] reprocess: skipping non-user task: ${item.action} (assignee: ${item.assignee})`); continue; }
         const { error } = await supabase
           .from('inbox_items')
           .insert({

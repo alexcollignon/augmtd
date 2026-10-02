@@ -8,7 +8,7 @@
 // Phase 1: single in-session thread ("New" clears it); History / multi-thread + inline actions come next.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import React, { useRef, useState, useEffect, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { EyeSlashIcon, FolderIcon } from '@heroicons/react/24/outline';
 import { WorkerMentionInput } from '@/components/workers/worker-mention-input';
@@ -19,9 +19,12 @@ import type { StandaloneEmailDraft } from '@/lib/prepare/email-card';
 import { askStreamReducer, initialAskStream, type AskStreamEvent } from '@/components/home/ask-stream';
 import { isConverseStream, readConverseStream } from '@/components/home/ask-stream-read';
 import { chatCardNodes } from '@/components/home/chat-cards';
-import { chatCardsOfComponent, chatCardsOfPayload } from '@/lib/present/turn-card';
+import { chatCardsOfComponent, chatCardsOfPayload, postsOfCardArtifacts, type ChatCards } from '@/lib/present/turn-card';
 import { WorkflowDraftCard, type WorkflowDraft } from '@/components/workflows/workflow-draft-card';
-import { ThreadArtifactsPanel } from '@/components/work/chat-artifact-panel';
+import { useArtifactViewer } from '@/components/shared/artifact-viewer';
+import { CardStack, CardTargetProvider, ReplyingChip, ReplyQuote, type StackItem } from '@/components/shared/card-stack';
+import { CARD_SUMMARY, summaryTitleOf, type CardDescriptor } from '@/lib/present/behaviour';
+import { resolveCardReference, type CardTarget } from '@/lib/present/card-target';
 // THE ONE FRAME RENDERER (frames plan law 2) — the kit's `frame` card composes it; there is no
 // second iframe and no second sandbox anywhere in the repo (gate smoke-threads T38.2).
 import { FrameCard } from '@/components/frames/frame-card';
@@ -37,7 +40,7 @@ import type { ChangePointer } from '@/components/home/change-card';
 import { isChangeSpec, type ChangeSpec } from '@/lib/present/change';
 import type { BulkDeed as BulkDeedLike } from '@/lib/deeds/words';
 import type { PreparedInviteLike } from '@/lib/prepare/invite-card';
-import { ThreadShell } from '@/components/thread';
+import { ThreadShell, ThreadCardView } from '@/components/thread';
 // W17 · the ONE placeholder primitive (shape per wait; no spinner).
 import { PreparingShape } from '@/components/thread/preparing-slot';
 import type { ThreadCard, ThreadItem } from '@/components/thread';
@@ -153,6 +156,12 @@ type Turn = { role: 'user' | 'assistant'; text: string; refs?: Ref[];
    *  POINTER (`{changeId}`) and the host re-reads through `GET /api/changes/[id]`, so a change
    *  applied elsewhere (or expired) never finds a reloaded card still offering Apply. */
   changes?: Array<{ changeId: string; spec?: ChangeSpec; pointer?: ChangePointer }>;
+  /** A coworker's LinkedIn post (law `one-component-one-behaviour`) — rendered by THE ONE chat-card renderer. */
+  posts?: ChatCards['posts'];
+  /** REPLY TO A CARD — the card (its header title) this user message was explicitly about. */
+  replyTo?: string;
+  /** A stage verb's inline deed card (reply · forward · invite) — the ONE chat-card renderer. */
+  stageDeeds?: ChatCards['stageDeeds'];
   /** THE EMAIL CARD (Sep 21) — the chief's own drafted reply, on the SAME card every other producer
    *  lands. Two shapes, one kind: `itemId` points at a matched inbox item (the card reads that
    *  item's prepared reply), `draft` carries a STANDALONE one for the first paint. Durable — it
@@ -770,6 +779,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         collections?: Array<{ id: string; kind: string; params?: Record<string, string | number | boolean> }>;
         events?: Array<{ eventId?: string; id?: string; proposal?: EventProposal | null }>;
         changes?: Array<{ changeId?: string }>;
+        /** The render registry's typed cards the message carried (`cardArtifact` — a LinkedIn post). */
+        artifacts?: unknown[];
         trace?: unknown[];
         activity?: unknown; durationMs?: unknown; stopped?: unknown;
       } }>)
@@ -777,7 +788,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           && (String(m.content ?? '').trim() || m.metadata?.workflow_drafts?.length
             || m.metadata?.email_drafts?.length || m.metadata?.invite_cards?.length
             || m.metadata?.collections?.length || m.metadata?.events?.length
-            || m.metadata?.changes?.length))
+            || m.metadata?.changes?.length || postsOfCardArtifacts(m.metadata?.artifacts).length))
         .map((m) => (m.role === 'user'
           ? { role: 'user' as const, text: m.content, ...(m.created_at ? { at: m.created_at } : {}) }
           : {
@@ -803,6 +814,10 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                 : {}),
               ...(m.metadata?.invite_cards?.length
                 ? { invites: m.metadata.invite_cards.map((iv) => ({ inviteId: iv.id, invite: iv.invite })) }
+                : {}),
+              // …and THE LINKEDIN POST, as itself (one reader for the live frame and the reload).
+              ...(postsOfCardArtifacts(m.metadata?.artifacts, name).length
+                ? { posts: postsOfCardArtifacts(m.metadata?.artifacts, name) }
                 : {}),
               // …and THE COLLECTION, as a POINTER and nothing else (the chief room's law, one
               // surface over): the stored metadata carries `{kind, params}` and the ONE host
@@ -915,22 +930,30 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   };
   // THE HISTORY PICKER DIED (owner, Aug 7): the SIDEBAR owns history — Recent + All
   // conversations are the one thread list; a second picker inside the panel was redundant.
-  // ── THE ARTIFACT PANEL (brick 3 — the one surface owns its outputs): a document card opens
-  // the SAME ThreadArtifactsPanel the worker page uses, as a right-side overlay HERE — viewer,
-  // versions, download, delete, all without leaving the conversation. ──
-  const [artifactPanel, setArtifactPanel] = useState<{ thread: { id: string; title: string; artifacts?: DocumentArtifact[] }; initialId: string | null } | null>(null);
-  const openArtifact = async (tid: string, artifactId: string) => {
+  // ── THE ONE VIEWER (law `one-component-one-behaviour`): a document card's Open raises THE SAME
+  // viewer every surface opens (components/shared/artifact-viewer.tsx) — beside the conversation on
+  // desktop, a full sheet on a phone. The docked pane that pushed this column aside
+  // (a 608px right margin) and opened ITSELF on every arrival is retired: an arrival is a card; only the
+  // reader's click opens the viewer. The same flight that opens it folds the thread's doc cards (a
+  // revision lands on the card that already stood, wearing its new version word).
+  const foldThread = useCallback((tid: string, arts: DocumentArtifact[]) => {
+    setTurns((prev) => foldDocCards(prev, tid, arts));
+  }, []);
+  const viewer = useArtifactViewer({
+    onThreadArtifacts: foldThread,
+    onError: () => setTurns((prev) => [...prev, { role: 'assistant', text: "Couldn't open that document just now — try again." }]),
+  });
+  const openArtifact = (tid: string, artifactId: string) => { void viewer.open({ kind: 'thread', threadId: tid, artifactId }); };
+  // ── REPLY TO A CARD (law `one-component-one-behaviour`): the card the next message is about.
+  const [cardTarget, setCardTarget] = useState<CardDescriptor | null>(null);
+  const renderedCardsRef = useRef<CardDescriptor[]>([]);
+  // An ARRIVAL never opens anything — it only settles the thread's doc cards (never a twin).
+  const foldArrival = async (tid: string) => {
     try {
       const d = await fetch(`/api/work/threads/${tid}/messages`).then((r) => (r.ok ? r.json() : null));
-      const th = d?.thread as { id: string; title?: string; artifacts?: DocumentArtifact[] } | null;
-      if (!th) throw new Error();
-      setArtifactPanel({ thread: { id: th.id, title: th.title ?? 'Work', artifacts: th.artifacts ?? [] }, initialId: artifactId });
-      // ONE FLIGHT, TWO USES: the same artifact list the panel opens on settles the thread's doc
-      // cards — a revision folds onto the card that already stood, wearing its new version word.
-      setTurns((prev) => foldDocCards(prev, tid, th.artifacts ?? []));
-    } catch {
-      setTurns((prev) => [...prev, { role: 'assistant', text: "Couldn't open that document just now — try again." }]);
-    }
+      const arts = (d?.thread as { artifacts?: DocumentArtifact[] } | null)?.artifacts;
+      if (arts) foldThread(tid, arts);
+    } catch { /* the card stands as it arrived */ }
   };
 
   // ── THE SCOPE CHIP + THE ADOPTION CASCADE (one-surface § context controls): the conversation
@@ -1288,6 +1311,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const events: NonNullable<Turn['events']> = [];
       // …and THE CONFIRM CARD: the live spec paints at once; the pointer survives on the message.
       const changes: NonNullable<Turn['changes']> = [];
+      // …and THE LINKEDIN POST (the render registry's typed card) — its own card, live and reloaded.
+      const posts: NonNullable<Turn['posts']> = [];
       // THE TRACE, accumulated in EXECUTION order; `traceIds` maps a tool-call id to its slot so a
       // completion settles the line it opened (a coworker may run three calls before any returns).
       const trace: TraceEntry[] = [];
@@ -1304,7 +1329,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const setCards = () => setTurns((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
-        if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, cards: [...cards], drafts: [...drafts], workflowDrafts: [...wfDrafts], invites: [...invites], collections: [...collections], events: [...events], changes: [...changes] };
+        if (last?.role === 'assistant' && last.author === w.name) next[next.length - 1] = { ...last, cards: [...cards], drafts: [...drafts], workflowDrafts: [...wfDrafts], invites: [...invites], collections: [...collections], events: [...events], changes: [...changes], posts: [...posts] };
         return next;
       });
       const setTrace = () => setTurns((prev) => {
@@ -1381,12 +1406,16 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
                 ...(event.artifact.type === 'frame' ? { frame: { artifactId: event.artifact.id } } : {}),
               });
               refs.push({ kind: 'document', tid, artifactId: event.artifact.id }); setCards();
-              void openArtifact(tid, event.artifact.id);
+              void foldArrival(tid);
             }
             else if (event.type === 'artifact' && event.artifact) {
-              // A typed REGISTRY render is the one card with no identity of its own in this
-              // payload — it stays a link to the thread that holds it, and points at nothing.
-              cards.push({ label: event.artifact.title ?? event.artifact.type ?? 'Prepared work', sub: `by ${first}`, href: threadHref }); setCards();
+              // A typed REGISTRY render arrives AS ITSELF (law `one-component-one-behaviour`): a
+              // LinkedIn post is its own card (the post as it reads, its one door Copy) — never the
+              // self-link labelled with its raw type word it used to be. A type no row knows stays
+              // a quiet link to the thread that holds it.
+              const got = postsOfCardArtifacts(event.artifact, w.name);
+              if (got.length) { posts.push(...got); setCards(); }
+              else { cards.push({ label: event.artifact.title ?? 'Prepared work', sub: `by ${first}`, href: threadHref }); setCards(); }
             }
             else if (event.type === 'email_draft' && event.draft) {
               drafts.push({ draft: event.draft, tid, agentId: w.id });
@@ -1432,7 +1461,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           } catch { /* partial frame */ }
         }
       }
-      const made = cards.length || drafts.length || wfDrafts.length || invites.length || collections.length || events.length || changes.length;
+      const made = cards.length || drafts.length || wfDrafts.length || invites.length || collections.length || events.length || changes.length || posts.length;
       const said = acc.trim() || (made ? `${first} produced the work below.` : `${first} finished without a written reply.`);
       patchLast(said, undefined, worked());
       if (made) setCards();
@@ -1515,6 +1544,20 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     setPendingFiles([]);
     setPendingPastes([]);
     setPasteNotice(null);
+    // REPLY TO A CARD: the pinned card, else an obvious reference resolved against this conversation's
+    // cards ("the second one", "that invite"); an ambiguous one is answered with ONE short question.
+    let target: CardTarget | null = cardTarget ? { kind: cardTarget.kind, ref: cardTarget.ref, title: cardTarget.title ?? null, recipient: cardTarget.recipient ?? null } : null;
+    if (!target && question) {
+      const r = resolveCardReference(question, renderedCardsRef.current);
+      if (r && 'ask' in r) {
+        setOpen(true);
+        setTurns((prev) => [...prev, { role: 'user', text: question }, { role: 'assistant', text: r.ask }]);
+        return;
+      }
+      if (r) target = r.target;
+    }
+    setCardTarget(null);
+    const replyTo = target ? summaryTitleOf(target) : null;
     // THE INSTANT ECHO (owner, Aug 6 — "looked like nothing happened"): the submitted turn and
     // the busy line land SYNCHRONOUSLY, before any routing/roster/upload awaits. Feedback is
     // never gated on the network.
@@ -1525,7 +1568,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     // The bubble shows the user's OWN words + chips for what rode with them; `sent` keeps the
     // literal string the brain was given (the attachment note included), so history stays exact.
     const chips = [...files.map((f) => f.name), ...mentions.map((m) => m.label)];
-    setTurns((prev) => [...prev, { role: 'user', text: said, sent: shown, ...(chips.length ? { chips } : {}), ...(pastes.length ? { pasted: pastes } : {}), ...(skills ? { skillPick: skills } : {}) }]);
+    setTurns((prev) => [...prev, { role: 'user', text: said, sent: shown, ...(chips.length ? { chips } : {}), ...(pastes.length ? { pasted: pastes } : {}), ...(skills ? { skillPick: skills } : {}), ...(replyTo ? { replyTo } : {}) }]);
     // W23.A · a SEND always lands the reader on their own words (and follows the answer from there).
     pinToEnd();
     setBusy(true);
@@ -1540,14 +1583,16 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
           // A paste bound for a coworker rides that thread's OWN attach door, as a text file —
           // material, never inline words.
           const pasteFiles = pastes.map((p, k) => new File([p.text], pastedAsFileName(p, k), { type: 'text/plain' }));
-          await askWorker(question || (files.length ? 'Here are the files.' : 'Here is the pasted text.'), w, {
+          // A coworker's lane takes the reference as a quoted line its model reads (and the transcript keeps).
+          const wq = question || (files.length ? 'Here are the files.' : 'Here is the pasted text.');
+          await askWorker(target ? `↪ ${CARD_SUMMARY[target.kind].noun} "${replyTo}": ${wq}` : wq, w, {
             mentions: mentions.filter((m) => !(m.type === 'coworker' && m.id === w.id)),
             files: [...files, ...pasteFiles], echoed: true, ...(skills ? { skills } : {}),
           });
           return;
         }
       }
-      await askChief(question || (files.length ? '' : 'Pasted text.'), files, mentions, shown, skills, { pastes });
+      await askChief(question || (files.length ? '' : 'Pasted text.'), files, mentions, shown, skills, { pastes, ...(target ? { target } : {}) });
     } finally { setBusy(false); setStage(null); setLiveText(''); liveTextRef.current = ''; }
   };
 
@@ -1571,7 +1616,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     skills?: SkillPick,
     // W22.B · `pastes` ride as MATERIAL; `retry` re-asks an already-echoed, already-persisted question
     // through the same door (its `base` is the conversation BEFORE that question).
-    opts: { pastes?: PastedPiece[]; retry?: { asked: string; base: Turn[] } } = {},
+    opts: { pastes?: PastedPiece[]; retry?: { asked: string; base: Turn[] }; target?: CardTarget } = {},
   ) => {
     let sendQ = opts.retry ? opts.retry.asked : question;
     const pastes = opts.pastes ?? [];
@@ -1641,7 +1686,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
     try {
       // STREAMING ASK (Aug 6): SSE — `progress` events narrate the core's live stage (the busy
       // line speaks them), `done` carries the answer. A non-SSE response (error JSON) falls back.
-      const res = await fetch('/api/home/ask', { method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(sentRoomKey ? { roomKey: sentRoomKey } : {}), ...(attachments.length ? { attachments } : {}), ...(wire.pasted ? { pasted: wire.pasted } : {}), ...(scope ? { entityId: scope.id } : {}), ...skillsBody(skills) }) });
+      const res = await fetch('/api/home/ask', { method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: sendQ, history, stream: true, ...(sentRoomKey ? { roomKey: sentRoomKey } : {}), ...(attachments.length ? { attachments } : {}), ...(wire.pasted ? { pasted: wire.pasted } : {}), ...(scope ? { entityId: scope.id } : {}), ...(opts.target ? { target: opts.target } : {}), ...skillsBody(skills) }) });
       let d: { delegated?: { agentName?: string; agentId?: string; background?: boolean; handoffId?: string } | null; activity?: unknown; durationMs?: unknown; answer?: string; refs?: Ref[]; focus?: { id: string; name: string }; options?: Array<{ label: string; say: string }>; artifact?: { id: string; title: string; threadId: string; agentName: string; type?: string }; artifacts?: Array<{ id: string; title: string; threadId: string; agentName: string; type?: string }>; workflowDraft?: WorkflowDraft; invite?: { id: string; invite: PreparedInviteLike }; bulkDeed?: { id: string; deed: BulkDeedLike }; emailDraft?: { id: string; itemId?: string; draft?: StandaloneEmailDraft }; collection?: { id: string; spec: CollectionSpec }; event?: { id?: string; spec: EventSpec }; change?: { id: string; spec: ChangeSpec } } = {};
       // THE STREAM NEVER RETYPES: the reducer's own verdict decides whether the seated turn
       // animates — it must be the thing the component reads, not a parallel re-derivation.
@@ -1701,7 +1746,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       const handOff = handOffOf(d.delegated, sentRoomKey, shown, Date.now());
       if (handOff) updateHandOffs((prev) => [...prev.filter((h) => h.id !== handOff.id), handOff]);
       setTurns((prev) => { pendingAnimate.current = st.animate ? prev.length : -1; return [...prev, { role: 'assistant', text: d.answer || "I couldn't answer that just now.", refs: d.refs ?? [], ...(handOff ? { handoffId: handOff.id } : {}), ...(activity ? { activity } : {}), durationMs, ...(d.options?.length ? { options: d.options } : {}), ...(d.workflowDraft ? { workflowDrafts: [d.workflowDraft] } : {}), ...chatCardsOfPayload(d as Record<string, unknown>), ...skillTurnFields(d), ...artCard }]; });
-      if (d.artifact) void openArtifact(d.artifact.threadId, d.artifact.id);
+      if (d.artifact) void foldArrival(d.artifact.threadId);
       if (d.answer && !sentRoomKey) persistTurn('system', d.answer, d.refs ?? []);
       if (d.focus && !scope && !temp) setScopeHint(d.focus);
     } catch {
@@ -1778,6 +1823,9 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   const items = useMemo<ThreadItem[]>(() => {
     const dm = workerRoomRef.current;
     const out: ThreadItem[] = [];
+    // The cards this conversation shows, oldest → newest (a reference's resolution reads them).
+    const seen: CardDescriptor[] = [];
+    const chatId = dm ? `dm:${dm.id}` : 'home';
     const seatId = cosSeat?.agentId ?? 'cos';
     const seatName = cosSeat?.name ?? 'Your assistant';
     // W22.B · THE SEAT'S LABEL IS THE ROLE'S LABEL — one source (lib/workers/roles.ts ROLE_LABELS),
@@ -1845,6 +1893,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             ),
           });
         }
+        // REPLY TO A CARD: the message names the card it was about, as a quoted reference.
+        if (t.replyTo) cards.unshift({ kind: 'custom', id: `${key}-replyto`, node: <ReplyQuote title={t.replyTo} /> });
         out.push({
           type: 'user_bubble', id: key,
           text: t.text,
@@ -1868,7 +1918,12 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       }
       // A produced document speaks the grammar's own card — a DOCUMENT opens the artifact panel
       // HERE (brick 3); a registry render still points at its page.
-      (t.cards ?? []).forEach((c, j) => cards.push(
+      // ONE COMPONENT, ONE BEHAVIOUR — THE STACK: every card this message carries is gathered with its
+      // descriptor and rendered by THE ONE CardStack (components/shared/card-stack.tsx): one card →
+      // open; several → folded to their header rows, the first open; every card replyable.
+      const stack: StackItem[] = [];
+      const artCards: ThreadCard[] = [];
+      (t.cards ?? []).forEach((c, j) => artCards.push(
         // ── THE FRAME RENDERS IN THE THREAD (W4-A, Sep 22) ──────────────────────────────────────
         // A frame is a LIVING deliverable: it used to arrive here as a generic "Open →" pointer
         // whose only word for itself was "frame", while the one renderer sat one click away in the
@@ -1909,19 +1964,29 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
       ));
       // THE EMAIL CARD — one rendering per kind: the Home thread mounts the SAME component the
       // coworker DM and the item rooms mount, and its Send is the same coworker door.
-      (t.drafts ?? []).forEach((d, j) => cards.push({
-        kind: 'custom', id: `${key}-email-${j}`,
+      artCards.forEach((kc, j) => {
+        const c = (t.cards ?? [])[j];
+        stack.push({ d: { id: kc.id ?? `${key}-doc-${j}`, kind: c?.frame ? 'frame' : 'document', title: c?.label ?? null, ref: c?.art?.id ?? c?.href ?? `${key}-doc-${j}` },
+          node: <ThreadCardView card={kc} /> });
+      });
+      (t.drafts ?? []).forEach((d, j) => stack.push({
+        d: { id: `${key}-email-${j}`, kind: 'coworker_email', title: d.draft.subject ?? null, recipient: d.draft.to?.[0] ?? null, ref: d.draft.id ?? `${d.tid}:${j}` },
         node: <EmailCard coworker={{ threadId: d.tid, agentId: d.agentId, draft: d.draft }} />,
       }));
-      (t.workflowDrafts ?? []).forEach((wd, j) => cards.push({
-        kind: 'custom', id: `${key}-wf-${j}`, node: <WorkflowDraftCard draft={wd} />,
+      (t.workflowDrafts ?? []).forEach((wd, j) => stack.push({
+        d: { id: `${key}-wf-${j}`, kind: 'workflow_draft', title: (wd as { name?: string }).name ?? null, ref: (wd as { token?: string }).token ?? `${key}-wf-${j}` },
+        node: <WorkflowDraftCard draft={wd} />,
       }));
       // THE CHAT'S CARDS — ONE RENDERER for the Home thread and the item rooms (components/home/
       // chat-cards.tsx, W20.B): the chief's email draft, the invite, the bulk deed, the collection,
       // the event and the confirm card, each the SAME kit host every surface mounts. "Ask about it"
       // and "suggest another time" speak through THIS composer (clicks are words).
       chatCardNodes(t, key, { onAsk: (text) => { setPrefill(text); focusComposer(); }, onSuggestAnother: focusComposer })
-        .forEach((c) => cards.push({ kind: 'custom', id: c.id, node: c.node }));
+        .forEach((c) => stack.push({ d: c.d, node: c.node }));
+      if (stack.length) {
+        seen.push(...stack.map((x) => x.d));
+        cards.push({ kind: 'custom', id: `${key}-stack`, node: <CardStack items={stack} stackKey={`${chatId}:${key}`} /> });
+      }
       // THE SENSIBLE ASK — a tap SPEAKS its message through the composer (clicks are utterances);
       // the chips consume on tap (ephemeral scaffolding).
       if (t.options?.length) cards.push(optionChips(t, i, key));
@@ -2049,6 +2114,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
         if (at < 0) out.push(item); else out.splice(at + 1, 0, item);
       });
     }
+    renderedCardsRef.current = seen;
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turns, busy, stage, liveText, animateIdx, cosSeat, followedByTurn, slow, handOffs, liveRoom]);
@@ -2172,6 +2238,8 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
               </p>
             </div>
           )}
+          {/* REPLY TO A CARD — the reader always sees which card their next message is about. */}
+          <ReplyingChip target={cardTarget} onClear={() => setCardTarget(null)} />
           <WorkerMentionInput
             frameless
             onSubmit={(text, mentions, skills) => { void handleSubmit(text, mentions, skills); }}
@@ -2237,7 +2305,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
   );
 
   return (
-    <section className={`w-full ${showThread ? 'flex min-h-0 flex-1 flex-col' : ''} transition-[margin] duration-300 ease-out motion-reduce:transition-none ${artifactPanel ? 'lg:mr-[608px]' : ''}`}>
+    <section className={`w-full ${showThread ? 'flex min-h-0 flex-1 flex-col' : ''} `}>
       {/* PAGE MODE: a live conversation renders directly on the page in a centered reading
           column (Claude's anatomy) — never inside a floating card. With the artifact pane
           docked, the column keeps reading-width beside it (the section margin makes room).
@@ -2256,6 +2324,7 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             History popover, no New session — the scroll-back IS the history, day dividers mark
             the days, and the sidebar's All conversations still lists the thread. */}
         {showThread ? (
+          <CardTargetProvider target={cardTarget} setTarget={(d) => { setCardTarget(d); if (d) focusComposer(); }}>
           <ThreadShell
             kind={dmActor ? 'dm' : 'home'}
             className={dmPane ? 'min-h-0 flex-1' : 'min-h-0 flex-1 !bg-transparent'}
@@ -2264,24 +2333,12 @@ export default function HomeAsk({ suggestions }: { suggestions: string[] }) {
             items={items}
             composerNode={composerBlock}
           />
+          </CardTargetProvider>
         ) : composerBlock}
       </div>
-      {/* THE ARTIFACT PANE (brick 3, reworked Aug 8 — owner: "doesn't make sense to have an
-          overlay on top of chat; should be workable like Claude"): DOCKED, NON-MODAL — no dim,
-          no backdrop; the conversation shifts left (the section's margin) and BOTH stay live.
-          Editing is the conversation: "make it shorter" continues the same worker thread, the
-          new version arrives, and the pane refreshes to it. Close = the pane's own ✕. */}
       {skillDraft.node}
-      {artifactPanel && (
-        <div className="fixed right-0 top-0 z-40 h-screen w-[min(720px,94vw)] border-l border-neutral-200 shadow-[-12px_0_40px_-24px_rgba(23,23,23,0.25)] bg-neutral-50">
-          <ThreadArtifactsPanel
-            thread={artifactPanel.thread}
-            onClose={() => setArtifactPanel(null)}
-            initialDetailId={artifactPanel.initialId}
-            onArtifactsUpdate={(arts) => setArtifactPanel((p) => (p ? { ...p, thread: { ...p.thread, artifacts: arts } } : p))}
-          />
-        </div>
-      )}
+      {/* THE ONE VIEWER — raised only by a card's Open (never on arrival), beside the conversation. */}
+      {viewer.node}
     </section>
   );
 }

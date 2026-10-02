@@ -24,9 +24,14 @@ import { ItemRail, type RailView } from '@/components/home/item-rail';
 import { FacePile } from '@/components/thread/avatar-status';
 import { ItemDetail, type ReportedDecision } from '@/components/home/item-detail';
 import { RoomShell } from '@/components/room/room-shell';
+import { ArtifactViewer, ArtifactCard, DeliverableBody } from '@/components/shared/artifact-viewer';
+import { deedCardFor } from '@/components/home/chat-cards';
+import { PastePackById } from '@/components/prepared/paste-pack-card';
+import type { StageVerb } from '@/lib/present/behaviour';
+import type { DeedItemKind } from '@/lib/present/turn-card';
 import { FiledIcon } from '@/components/room/filed-icon';
 import { pushDealTurn } from '@/components/home/item-rail';
-import { railCoversItem, moveTargetId, mountsEmailCard, boardRowItemId, prepAnchorKey, refDoorHref, stageDoorHref, preparedCardLabel, isWaitingNudge, moveForLane, type BoardLane } from '@/lib/room/presentation';
+import { moveTargetId, mountsEmailCard, boardRowItemId, prepAnchorKey, refDoorHref, preparedCardLabel, isWaitingNudge, moveForLane, type BoardLane } from '@/lib/room/presentation';
 import { EmailCard } from '@/components/home/email-card';
 import { AddItemPicker } from '@/components/entities/add-item-picker';
 import GanttChart from '@/components/entities/gantt-chart';
@@ -74,7 +79,11 @@ type BoardItem = { id: string;
   /** WHAT is prepared (the deed's shape), served beside WHO prepared it — see the detail route.
    *  'email_draft' = this row has an outgoing email written and waiting: the email card's object. */
   preparedKind?: 'email_draft' | null;
-  preparedRef?: string | null; blockedOn?: string | null; priority?: 'high' | 'low' | null };
+  preparedRef?: string | null;
+  /** WHAT `preparedRef` is (served by the detail route — one-component-one-behaviour): a paste pack
+   *  and a message draft are DEEDS (their inline cards), a document an ARTIFACT (the one viewer). */
+  preparedRefKind?: 'paste_pack' | 'draft' | 'document' | null;
+  blockedOn?: string | null; priority?: 'high' | 'low' | null };
 type HistoryLine = { at: string; kind: string; who: string | null; text: string; ref: string };
 type Detail = {
   entity: {
@@ -447,118 +456,17 @@ function HistoryList({ lines, onOpen }: { lines: HistoryLine[]; onOpen?: (href: 
   );
 }
 
-// ── B5 — the ARTIFACT PLANE for prepared work: a pool deliverable renders IN the main card (title,
-// by-whom, when, content) with the room's conversation beside it — the Claude pattern applied to
-// work. The chat can discuss it; a chat-driven REWORK (new pool version) is the queued next half. ──
-function DeliverableFocus({ id, title, meta }: {
-  id: string; title: string; meta: { by: string | null; at: string | null } | null;
-}) {
-  const [state, setState] = useState<{ text?: string; loading: boolean }>({ loading: true });
-  useEffect(() => {
-    let alive = true;
-    fetch('/api/files/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ref: { kind: 'deliverable', id } }) })
-      .then((r) => r.json()).then((dd) => { if (alive) setState({ text: dd.text, loading: false }); })
-      .catch(() => { if (alive) setState({ loading: false }); });
-    return () => { alive = false; };
-  }, [id]);
-  return (
-    <div className="flex-1 min-h-0 overflow-y-auto">
-      <div className="px-6 pt-5 pb-8 max-w-[760px]">
-        <h1 className="text-[19px] font-semibold tracking-tight text-neutral-900">{title}</h1>
-        {meta && (meta.by || meta.at) && (
-          <p className="text-[12px] text-neutral-400 mt-1">{meta.by ? `Prepared by ${meta.by}` : 'Prepared'}{meta.at ? ` · ${meta.at}` : ''}</p>
-        )}
-        <div className="mt-4">
-          {state.loading ? (
-            <p className="text-[13px] text-neutral-400">Loading…</p>
-          ) : state.text ? (
-            <p className="whitespace-pre-wrap text-[13.5px] text-neutral-800 leading-relaxed">{state.text}</p>
-          ) : (
-            <p className="text-[13px] text-neutral-400">Couldn&apos;t load this one.</p>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
+// (B5's DeliverableFocus — a pool deliverable rendered in the room's split stage — RETIRED into THE
+//  ONE VIEWER, components/shared/artifact-viewer.tsx DeliverableBody: law `one-component-one-behaviour`.)
 
 // FILE PREVIEW — the modal that lived here RETIRED into the ONE viewer (Sep 9,
 // components/ui/attachment-lightbox.tsx): one component for every file the user taps, anywhere in
 // the product, with ‹ › across the whole list it was opened from. A second file modal is a build
 // error (gate T25) — this was the fourth lookalike.
 
-// STATUS UPDATE (5C) — one reasoned compose over the deal's judged state, editable, shared by YOUR
-// explicit action only (Copy, or Send through the user's own connected mailbox).
-function StatusUpdateModal({ entityId, dealName, onClose }: { entityId: string; dealName: string; onClose: () => void }) {
-  const [text, setText] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [to, setTo] = useState('');
-  const [suggested, setSuggested] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    fetch(`/api/entities/${entityId}/status-update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-      .then((r) => r.json()).then((d) => { if (!alive) return; setText(d.text ?? ''); setSuggested(d.suggestedTo ?? null); setLoading(false); })
-      .catch(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
-  }, [entityId]);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-  const copy = () => { navigator.clipboard.writeText(text).then(() => toast('Copied')).catch(() => {}); };
-  const send = async () => {
-    const rcpt = to.trim();
-    if (!rcpt || !text.trim() || sending) return;
-    setSending(true);
-    try {
-      const bodyHTML = text.split(/\n{2,}/).map((par) => `<p>${par.replace(/\n/g, '<br/>')}</p>`).join('');
-      const res = await fetch('/api/compose/send', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: [rcpt], subject: `Update — ${dealName}`, bodyHTML }),
-      });
-      if (!res.ok) throw new Error();
-      toast('Sent'); onClose();
-    } catch { toast('Send failed — try again'); } finally { setSending(false); }
-  };
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" onClick={onClose}>
-      <div className="absolute inset-0 bg-neutral-900/30 backdrop-blur-[2px]" />
-      <div onClick={(e) => e.stopPropagation()} className="relative w-full max-w-xl rounded-2xl border border-neutral-200 bg-white shadow-xl flex flex-col overflow-hidden">
-        <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-neutral-100">
-          <span className="min-w-0 flex-1 text-[13px] font-semibold text-neutral-800 truncate">Status update — {dealName}</span>
-          <button onClick={onClose} className="flex-shrink-0 text-neutral-300 hover:text-neutral-600 transition-colors"><XMarkIcon className="w-4 h-4" /></button>
-        </div>
-        {loading ? (
-          <div className="h-48 flex items-center justify-center text-[13px] text-neutral-400">Composing from what I know…</div>
-        ) : (
-          <>
-            <textarea
-              value={text} onChange={(e) => setText(e.target.value)} rows={10}
-              className="m-4 mb-2 rounded-xl border border-neutral-200 p-3 text-[13px] text-neutral-800 leading-relaxed outline-none focus:border-indigo-300 resize-none"
-            />
-            <div className="flex items-center gap-2 px-4 pb-4">
-              <input
-                value={to} onChange={(e) => setTo(e.target.value)}
-                placeholder={suggested ? `Send to… (${suggested}?)` : 'Send to…'}
-                className="min-w-0 flex-1 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[12.5px] text-neutral-700 placeholder:text-neutral-300 outline-none focus:border-indigo-300 transition-colors"
-              />
-              {suggested && !to && (
-                <button onClick={() => setTo(suggested)} className="flex-shrink-0 text-[12px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors">Use suggestion</button>
-              )}
-              <button onClick={copy} className="flex-shrink-0 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[12.5px] font-medium text-neutral-600 hover:border-neutral-300 transition-colors">Copy</button>
-              <button onClick={send} disabled={!to.trim() || !text.trim() || sending}
-                className="flex-shrink-0 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 px-3 py-1.5 text-[12.5px] font-medium text-white transition-colors">
-                {sending ? 'Sending…' : 'Send'}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
+// (STATUS UPDATE 5C's modal is RETIRED — nothing opened it since the owner removed its menu row on
+//  Sep 15; the compose route stays for the share flow's future door. A modal no action reaches is a
+//  claim with no surface.)
 
 // ══ THE CONVERSATIONS TAB — THREE GROUPS, ONE GRAMMAR (W19.C, owner walk Sep 28) ══════════════════
 // One tab used to mix three lists — "Saved chats", an unlabeled run of email threads, and (in the
@@ -749,31 +657,34 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
   // item raises that stage on arrival — Open lands on the PREPARED thing, never the bare thread.
   // The NONCE makes the intent re-fireable (a second click after ✕ must raise again — the same
   // state value fired nothing; found live Aug 7).
-  const [focusStage, seNorthwindStage] = useState<'reply' | 'forward' | 'invite' | null>(null);
-  const [stageNonce, setStageNonce] = useState(0);
+  // ONE COMPONENT, ONE BEHAVIOUR (lib/present/behaviour.ts): a focused item is a READ in THE ONE
+  // VIEWER; its deeds are inline cards in THIS conversation. `roomDeeds` are the deeds the reader asked
+  // for from that read (the item's Reply / Forward verbs) — each mounts its OWN card here, once.
+  const [deliverable, setDeliverable] = useState<{ id: string; title: string; by: string | null } | null>(null);
+  const [roomDeeds, setRoomDeeds] = useState<Array<{ stage: StageVerb; itemId: string; itemKind: DeedItemKind; v: number }>>([]);
+  const summonRoomDeed = (stage: StageVerb, itemId: string, itemKind: DeedItemKind = 'email') =>
+    setRoomDeeds((prev) => {
+      const hit = prev.find((x) => x.stage === stage && x.itemId === itemId);
+      return hit ? prev.map((x) => (x === hit ? { ...x, v: x.v + 1 } : x)) : [...prev, { stage, itemId, itemKind, v: 0 }];
+    });
   // THE PLACEMENT TABLE (experience-spec "THE MACHINE"): the focused item's decision is an EXCHANGE
   // component, so it renders in the room's CONVERSATION pane — the embedded item reports it up and
   // the room's own rail hosts it. The stage used to grow a second card here (found live: left on
   // the deep-dive, right in the project room — one component, two seats).
   const [focusDecision, seNorthwindDecision] = useState<ReportedDecision | null>(null);
-  // A decision transition lands its draft in the ITEM's lane — the embedded detail holds its
-  // own fetches, so the room INJECTS the fresh draft down (found on the walked journey: the
-  // draft existed while the composer sat empty; a remount raced the item's loads and lost focus).
-  const [injectedDraft, setInjectedDraft] = useState<{ body: string; v: number } | null>(null);
+  // A decision transition's draft lands as the room's reply CARD for that item (re-read fresh) — never
+  // injected into a second editor on a stage.
   // THE ONE SYSTEM (Aug 5): openHref only FOCUSES. The click-echo narrations and "want me on
   // it?" offers that used to be pushed here were a parallel author — they contradicted the
   // responder's brief because they reasoned from a different slice at a different time. The
   // room's opening (brief · MOVE · offers) now says everything; a focus is spatial, not speech.
   const openHref = (href: string | null, _narrate = false) => {
     const f = focusFromHref(href);
-    seNorthwindStage(null); // a plain focus carries no stage intent (onStage re-sets after)
     // THE SAME DOOR SHOWS THE SAME VIEW, EVERY TIME (owner walk, Sep 14: click 1 gave the raw
     // thread, click 2 gave the thread plus a floating composer). The stage state used to SURVIVE a
     // plain focus — the embedded item keeps its mount (same key), so an intent from an earlier
     // click stayed raised while the new focus carried none. The nonce now bumps on EVERY focus, so
     // the pair (intent, signal) fully determines the view: no intent means stages down.
-    setStageNonce((n) => n + 1);
-    setInjectedDraft(null); // an injected draft belongs to the item it was made for
     if (f) seNorthwinded(f);
     else if (href) router.push(href);
   };
@@ -794,7 +705,6 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
   // THE ONE VIEWER — an index into the room's OWN viewable files, so ‹ › walk this drawer's list
   // (a lone file grows no arrows). A file the store cannot serve is not offered as viewable.
   const [previewAt, setPreviewAt] = useState<number | null>(null);
-  const [statusShare, setStatusShare] = useState(false);
   // The room's ARCHIVED chat sessions (Filed → Conversations). Fetched only while the drawer is
   // open — inventory nobody is looking at is not worth a request — and re-read when New chat
   // closes one (the nonce is that deed's own echo, not a poll).
@@ -1052,16 +962,8 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
     ...(d?.board.doing ?? []).map((r) => ({ r, lane: 'doing' as const })),
     ...(d?.board.waiting ?? []).map((r) => ({ r, lane: 'waiting' as const })),
   ];
-  const openPrepared = (r: BoardItem, lane: BoardLane) => {
-    if (isWaitingNudge(lane, r) && r.preparedRef) {
-      seNorthwinded({ kind: 'deliverable', id: r.preparedRef, title: preparedCardLabel(lane, r, clipLabel(r.title, 52)) });
-      return;
-    }
-    openHref(r.href, false);
-  };
   // THE CTA SAYS WHAT IT DOES: a move whose target is a waiting row's nudge reads "Review nudge"
   // (lib/room/presentation moveForLane) — the served view is re-read, never mutated.
-  const roomMove = rail?.entity?.move ?? rail?.move ?? null;
   // Memoised on the two payloads it reads, so the rail's `view` keeps its identity between renders.
   const railView: RailView | null = useMemo(() => {
     const mv = rail?.entity?.move;
@@ -1235,7 +1137,8 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
           // table — conversation pane, every door). Same contract as the deep-dive's own rail: the
           // choice travels WITH its option/tradeoff/why (THE FORWARD-MOTION LAW), lands as a user
           // turn in the ROOM's conversation, and the answer follows. Silence after a click is a bug.
-          decision={focused?.kind === 'email' && focusDecision && focusDecision.options.length >= 2 ? {
+          // ONE BEHAVIOUR ON EVERY KIND: a focused commitment's decision rides up exactly as a mail's does.
+          decision={focused && focused.kind !== 'deliverable' && focusDecision && focusDecision.options.length >= 2 ? {
             ...focusDecision,
             // THE DEED LIVES IN THE HOST (W3-C, Sep 22): this room and the item deep-dive each
             // re-typed the same steer fetch, the same contract and the same fallback sentence.
@@ -1247,7 +1150,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
               // The consequence must be VISIBLE (forward motion): the fresh draft is injected
               // into the embedded item's composer, which opens on it — a click's work is never
               // a further click away.
-              if (outcome.draft) { refresh(); setInjectedDraft((p) => ({ body: String(outcome.draft), v: (p?.v ?? 0) + 1 })); }
+              if (outcome.draft) { refresh(); summonRoomDeed('reply', focused.id, focused.kind === 'email' ? 'email' : 'commitment'); }
               pushDealTurn(entityId, outcome.say, { key: `decide:${focused.id}` });
             },
             onDismiss: () => seNorthwindDecision(null),
@@ -1264,43 +1167,60 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
             // three-card cap (a CTA pointing at a card the stream declined to render is the
             // lying-door class).
             const ordered = [...rows].sort((a, b) => (boardRowItemId(a.r) === cardRowId ? -1 : boardRowItemId(b.r) === cardRowId ? 1 : 0));
-            return ordered.slice(0, 3).map(({ r, lane }) => ({
-              ...(cardRowId === boardRowItemId(r) ? {
-                // ══ THE CARD CONTRACT REACHES THE PROJECT THREAD (owner walk, Sep 14) ═══════════
-                // "Why isn't this using the email component we did? is it because it's a project?"
-                // It was: the item room mounted the real EmailCard and the project room served the
-                // same prepared reply as a bare row, so the deliverable could only be read by
-                // leaving the conversation for a stage. THE CARD KIND IS THE ONE RENDERING OF ITS
-                // DELIVERABLE KIND, IN EVERY THREAD (threads-plan: EVERY THREAD, EVERY PRODUCER) —
-                // so the same card, the same host, the same one Send, here.
-                //
-                // Its facts come from the item the ROOM'S OWN BOARD names (the card reads the
-                // prepared draft the pass wrote and the pinned brief already speaks — it never
-                // drafts on its own), and its "Thread →" is the deep read: the room's existing
-                // focus door, i.e. exactly what /item opens. One machine, two depths.
-                node: (
-                  // No `onSent` here BY DESIGN: the card already announces its send on the ONE deed
-                  // channel (announceDeed → DEED_EVENT), which this room listens to and re-reads
-                  // from. A second callback for the same fact is a second path to one truth.
-                  <EmailCard item={{ id: boardRowItemId(r) }} onOpenThread={() => openHref(r.href, false)} />
-                ),
-              } : {}),
-              // THE WRITER'S SHAPE (W2.1): the anchor key must equal the dedupe key the prepare
-              // pass wrote on its narration turn — `prep:<spineId>` (`prep:inbox:<id>` /
-              // `prep:commit:<id>`) — or the card never seats at its own moment in the story; it
-              // just appends at the end, silently. `prepAnchorKey` is the ONE reader-side producer.
-              key: `prep-${boardRowItemId(r)}`,
-              // THE EXCERPT-HONESTY LAW REACHES THE CARD LABEL (owner walk, Sep 7): a hard
-              // slice(44) cut "…Thursday 11h with A and B" down to "…with A" — a card
-              // that quietly dropped a co-attendee and read as a contradiction of the brief
-              // beside it. A clip ends at a word boundary and DECLARES itself.
-              label: preparedCardLabel(lane, r, clipLabel(r.title, 52)),
-              by: r.prepared && r.prepared !== 'draft' ? r.prepared : null,
-              // A nudge opens AS the nudge (its prepared deliverable) — the work it chases is one
-              // click further, through the row's own kind-carrying door.
-              onOpen: () => openPrepared(r, lane),
-              anchorKey: prepAnchorKey(r.id.startsWith('commit:') ? 'commitment' : 'inbox', boardRowItemId(r)),
-            }));
+            // THE CARD CONTRACT REACHES THE PROJECT THREAD (owner walk, Sep 14 — "why isn't this using the
+            // email component we did? is it because it's a project?") — and now for EVERY deed kind:
+            // ══ ONE COMPONENT, ONE BEHAVIOUR (lib/present/behaviour.ts — owner, Oct 2) ══════════════
+            // Every prepared row arrives AS ITS OWN COMPONENT, never a "Prepared — … Open →" link row
+            // into a split stage:
+            //   · an outgoing EMAIL on an inbox row → THE EmailCard (the reply), the item room's card;
+            //   · a NUDGE on a waiting commitment → THE EmailCard's compose lane (the same card the
+            //     commitment door mounts — editable, its own Send);
+            //   · a prepared DOCUMENT → the compact artifact card whose Open raises THE ONE VIEWER;
+            //   · anything else prepared on an item → the item's read in the one viewer, whose verbs
+            //     hand each deed back to THIS conversation as its inline card.
+            const fromRows = ordered.slice(0, 3).map(({ r, lane }) => {
+              const rid = boardRowItemId(r);
+              const isCommit = r.id.startsWith('commit:') || /kind=(commitment|followup)/.test(r.href);
+              const label = preparedCardLabel(lane, r, clipLabel(r.title, 52));
+              const base = {
+                key: `prep-${rid}`, label,
+                by: r.prepared && r.prepared !== 'draft' ? r.prepared : null,
+                // THE WRITER'S SHAPE (W2.1): the anchor key equals the prepare pass's narration key.
+                anchorKey: prepAnchorKey(isCommit ? 'commitment' : 'inbox', rid),
+                onOpen: () => openHref(r.href, false),
+              };
+              if (mountsEmailCard(r)) {
+                return { ...base, artifactKind: 'reply_draft' as const,
+                  // No `onSent` BY DESIGN: the card announces its send on the ONE deed channel.
+                  node: <EmailCard item={{ id: rid }} onOpenThread={() => openHref(r.href, false)} /> };
+              }
+              if (r.preparedRef && r.preparedRefKind === 'paste_pack') {
+                return { ...base, artifactKind: 'paste_pack' as const,
+                  node: <PastePackById id={r.preparedRef} title={clipLabel(r.title, 80)} by={base.by} /> };
+              }
+              if (isCommit && (isWaitingNudge(lane, r) || r.preparedRefKind === 'draft')) {
+                return { ...base, artifactKind: 'nudge_draft' as const,
+                  node: <EmailCard compose={{ kind: 'commitment', id: rid }} /> };
+              }
+              if (r.preparedRef) {
+                const open = () => setDeliverable({ id: r.preparedRef!, title: clipLabel(r.title, 80),
+                  by: r.prepared && r.prepared !== 'draft' ? r.prepared : null });
+                return { ...base, artifactKind: 'deliverable' as const, onOpen: open,
+                  node: <ArtifactCard title={clipLabel(r.title, 80)} owner={base.by} onOpen={open} /> };
+              }
+              return base;
+            });
+            // THE DEEDS THE READER ASKED FOR (the focused item's Reply / Forward, a decision's draft) —
+            // each its own inline card, once (a row already showing that deed's card is the door).
+            const deeds = roomDeeds
+              .filter((dd) => !(dd.stage === 'reply' && fromRows.some((x) => x.key === `prep-${dd.itemId}` && 'node' in x && x.node)))
+              .map((dd) => ({
+                key: `deed-${dd.stage}-${dd.itemId}`, label: dd.stage === 'forward' ? 'Forward' : dd.stage === 'invite' ? 'Invite' : 'Reply',
+                artifactKind: (dd.stage === 'reply' ? 'reply_draft' : dd.stage) as 'reply_draft' | 'forward' | 'invite',
+                summoned: true, onOpen: () => {},
+                node: <div key={dd.v}>{deedCardFor(dd.stage, dd.itemKind, dd.itemId)}</div>,
+              }));
+            return [...fromRows, ...deeds];
           })()}
           // THE ONE-NAVIGATION LAW (Aug 4): a rail link inside the room opens IN the room — the
           // same focus/summoned-stage opener the board rows use (openHref narrates + mounts the
@@ -1311,72 +1231,32 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
             openHref(href, true);
             return true;
           }}
-          // A chat stage verb / the merged action card focuses the item ON the room's stage WITH
-          // its stage raised (the prepared work is the first thing seen) — never a bare thread,
-          // never a page navigation out of the room.
-          // THE ROOM NEVER RAISES A REPLY COMPOSER (owner walk round 2, Sep 14: "click 1 → the
-          // stage, click 2 → the inline card" — two views from one button).
-          //
-          // The inconsistency was never a timing bug to tighten; it was the FALLBACK ITSELF. A CTA
-          // that opens a card when a card happens to be mounted and a composer overlay when it
-          // isn't will always have two behaviours, and the reader meets whichever the payload's
-          // state chose for them. So the room's answer is ONE: an email deed flows in the thread —
-          // its card is the editor — and the deepest this door goes is the THREAD (the same place
-          // the card's own "Thread →" lands). A reply stage is unreachable from here, by
-          // construction; forward/invite keep their stages (their cards are not in the thread yet).
-          //
-          // W19.C · THE KIND RIDES TO THE DOOR: the rail hands a RAW id (moveTargetId strips the
-          // kind), so the address is resolved from this room's own board row / the move's ref — a
-          // commitment opens as a commitment, never as a mail thread that does not exist.
-          onStage={(stage, itemId) => {
-            const hit = laneRows.find(({ r }) => boardRowItemId(r) === itemId);
-            if (hit && isWaitingNudge(hit.lane, hit.r)) { openPrepared(hit.r, hit.lane); return true; }
-            const href = stageDoorHref(itemId, laneRows.map(({ r }) => r), roomMove?.ref ?? null);
-            openHref(href, false);
-            if (stage === 'reply' || !href.includes('kind=email')) return true;
-            seNorthwindStage(stage === 'forward' ? 'forward' : 'invite');
-            setStageNonce((n) => n + 1);
-            return true;
-          }}
         />
       ) : <RoomConversationSkeleton />}
-      stage={
-        // THE STAGE MOUNTS ONLY FOR A FOCUSED ARTIFACT (threads Phase 3). The docked pane of filed
-        // truth is gone — it is SUMMONED into the drawer below. With nothing focused, the
-        // conversation is the whole room, capped at the kit's own 760px column.
-        e && focused ? (
-        <div className="flex-1 min-w-0 flex flex-col h-full min-h-0 overflow-hidden">
-          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-            {/* Breadcrumb — you never left the room; one tap back to its first paint. */}
-            <div className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2 border-b border-neutral-100">
-              <button onClick={() => { seNorthwinded(null); refresh(); }} className="inline-flex items-center gap-1 text-[12.5px] font-medium text-neutral-500 hover:text-neutral-800 transition-colors">
-                <ChevronLeftIcon className="w-3.5 h-3.5" />{e.name}
-              </button>
-              <span className="text-[12px] text-neutral-300">›</span>
-              <span className="text-[12px] text-neutral-400">{focused.kind === 'email' ? 'this conversation' : focused.kind === 'meeting' ? 'this meeting' : focused.kind === 'deliverable' ? 'prepared work' : 'this task'}</span>
-            </div>
-            {focused.kind === 'deliverable' ? (
-              <DeliverableFocus id={focused.id} title={focused.title}
-                meta={(d?.statusBrief?.deliverables ?? []).find((dv) => dv.ref === focused.id) ?? null} />
-            ) : (
-              <ItemDetail key={`${focused.kind}-${focused.id}`} id={focused.id} kind={focused.kind} embedded injectedDraft={injectedDraft}
-                initialStage={focusStage ?? undefined} stageSignal={stageNonce}
-                // THE PRESENTATION LAW (lib/room/presentation): when the rail's merged action
-                // card covers this item, the truth pane never duplicates its buttons.
-                // …AND A DEED PRESENTS EXACTLY ONCE (Sep 14): the thread now RENDERS the card for
-                // `cardRowId`, so opening that item's deep read must not grow a second EmailCard
-                // beneath the first — same law, one more way the room could have broken it.
-                hideArtifactCards={railCoversItem(rail?.move?.ref, focused.id) || cardRowId === focused.id}
-                // The decision rides UP to the room's rail (the placement table) — never a second
-                // card on this stage.
-                onDecision={seNorthwindDecision} />
-            )}
-          </div>
-        </div>
-        ) : null
-      }
     />
       </div>
+
+      {/* ══ THE ONE VIEWER (law `one-component-one-behaviour`) — a focused item reads HERE, beside the
+          conversation (a sheet on a phone): its thread / notes / source. It never mounts a deed: the
+          item's verbs hand each deed back to the conversation (onDeed) as its own inline card, and the
+          decision rides up to the conversation (onDecision). The 52% split stage is retired. ══ */}
+      <ArtifactViewer open={!!(e && focused && focused.kind !== 'deliverable')} onClose={() => { seNorthwinded(null); refresh(); }}
+        title={e?.name ?? ''}
+        meta={focused?.kind === 'email' ? 'this conversation' : focused?.kind === 'meeting' ? 'this meeting' : 'this task'}>
+        {focused && focused.kind !== 'deliverable' ? (
+          <ItemDetail key={`${focused.kind}-${focused.id}`} id={focused.id} kind={focused.kind} embedded
+            // THE PRESENTATION LAW: the conversation already shows this item's cards — the read never
+            // grows a second copy (embedded IS a read).
+            hideArtifactCards
+            onDeed={(stage, itemId) => summonRoomDeed(stage, itemId, focused.kind === 'email' ? 'email' : focused.kind === 'meeting' ? 'meeting' : 'commitment')}
+            // The decision rides UP to the room's conversation (the placement table).
+            onDecision={seNorthwindDecision} />
+        ) : null}
+      </ArtifactViewer>
+      {/* …and a prepared DELIVERABLE reads in the same one viewer. */}
+      <ArtifactViewer open={!!deliverable} onClose={() => setDeliverable(null)} title={deliverable?.title ?? ''}>
+        {deliverable ? <DeliverableBody id={deliverable.id} by={deliverable.by} /> : null}
+      </ArtifactViewer>
 
       {/* ══ THE FILED DRAWER — THE ONE COMPONENT (components/room/filed-drawer.tsx) ════════════════
           The pane itself — the overlay law, the three ways out, the reduced-motion floor, and the
@@ -1446,7 +1326,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
                   {adding && <AddItemPicker anchorRef={addAnchorRef} onClose={() => setAdding(false)} onPick={(it) => { setAdding(false); setMembership(it.id, it.kind, entityId); }} />}
                 </div>
                 <TaskList board={d.board} onRefresh={refresh} onDetach={detachItem} entityId={entityId} onOpen={(href) => { setDrawerOpen(false); openHref(href); }}
-                  onPreviewDeliverable={(name, id) => { setDrawerOpen(false); seNorthwinded({ kind: 'deliverable', id, title: name }); }} />
+                  onPreviewDeliverable={(name, id) => { setDrawerOpen(false); setDeliverable({ id, title: name, by: null }); }} />
 
                 {/* "Might belong here" — the JUDGE's membership verdicts AND the room's standing
                     bring-in proposal, beside the list they join. ONE AGENDA PER ROOM (Sep 7): the
@@ -1557,7 +1437,7 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
                       <div>
                         <GroupHeader icon={DocumentTextIcon} label="Deliverables" count={produced.length} />
                         <DeliverableRows deliverables={produced}
-                          onPreviewDeliverable={(name, ref) => { setDrawerOpen(false); seNorthwinded({ kind: 'deliverable', id: ref, title: name }); }} />
+                          onPreviewDeliverable={(name, ref) => { setDrawerOpen(false); setDeliverable({ id: ref, title: name, by: null }); }} />
                       </div>
                     )}
                   </div>
@@ -1596,7 +1476,6 @@ export default function EntityRoom({ entityId, onBack, initialTab, initialDetail
       {previewAt !== null && viewableFiles.length > 0 && (
         <AttachmentLightbox files={viewableFiles} index={previewAt} onIndex={setPreviewAt} onClose={() => setPreviewAt(null)} />
       )}
-      {statusShare && e && <StatusUpdateModal entityId={entityId} dealName={e.name} onClose={() => setStatusShare(false)} />}
 
       {/* ══ THE DELETION SPEAKS BEFORE IT ACTS ══════════════════════════════════════════════════
           TRUTH BEFORE PRESENTATION at the one irreversible door in this room. The dialog names the

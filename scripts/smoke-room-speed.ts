@@ -254,18 +254,25 @@ async function main() {
   // ═══ E · THE OUTCOME LEDGER (W3.2 follow-up) ═══
   console.log('\nE · the send surfaces carry what we prepared');
   {
+    // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the item doors' own composers (the reply
+    // overlay, ComposePanel, the follow-up overlay) are RETIRED — the ONE send surface for every one of
+    // those deeds is the inline EmailCard, so the ledger's seed is asserted where the Send now lives.
     const detail = src('components/home/item-detail.tsx');
-    gate('E1 EmailDetail send carries the seeded draft as aiDraft (HTML, like customMessage)',
-      /customMessage: html, attachments: atts\.attachments, \.\.\.\(draft \? \{ aiDraft: draftToHTML\(draft\) \} : \{\}\)/.test(detail));
-    gate('E2 ComposePanel send carries `prepared` (itemKind mapped, the drafter\'s seed; a blank seed prepared nothing)',
-      /prepared: initialHTML && initialHTML !== '<p><\/p>'\s*\? \{ itemKind: kind === 'email' \|\| kind === 'awareness' \? 'inbox' : kind, itemId: entityId, bodyHTML: initialHTML \}\s*: null,/.test(detail));
-    gate('E3 the FollowUp nudge send carries the seeded nudge as aiDraft (plain text, like body)',
-      /body: text, attachments: atts\.attachments, \.\.\.\(draft \? \{ aiDraft: draft \} : \{\}\)/.test(detail));
+    const card = src('components/home/email-card.tsx');
+    gate('E1 the reply lane (EmailCard item) send carries what we prepared as aiDraft (HTML, like customMessage)',
+      /customMessage: emailBodyHTML\(text\), aiDraft: variantBodies\[EMAIL_BASE_VARIANT\] \?\? undefined/.test(card)
+      && !/function ComposePanel|<ReplyEditor/.test(detail));
+    gate('E2 the compose lane (commitment nudge · meeting follow-up) send carries `prepared` (the door\'s seed; a blank seed prepared nothing)',
+      /prepared: servedRef\.current\.trim\(\)\s*\? \{ itemKind: compose!\.kind, itemId: compose!\.id, bodyHTML: emailBodyHTML\(servedRef\.current\) \}\s*: null,/.test(card));
+    gate('E3 the follow-up door mounts THE ONE compose-lane card (no second nudge send surface)',
+      /node: <EmailCard key=\{`nudge-\$\{nudgeV\}`\} compose=\{\{ kind: 'commitment', id \}\}/.test(detail)
+      && !/api\/commitments\/\$\{id\}\/nudge`, \{\s*method: 'PATCH'/.test(detail));
     const sr = src('app/api/inbox/[id]/send-reply/route.ts');
     const cs = src('app/api/compose/send/route.ts');
     const ng = src('app/api/commitments/[id]/nudge/route.ts');
     gate('E4 each door reads the field the surface now sends (aiDraft · prepared · aiDraft)',
       /aiDraft/.test(sr) && /raw\.prepared/.test(cs) && /aiDraft/.test(ng));
+    void ng;
   }
 
   console.log(`\n${pass} passed, ${failures.length} failed`);

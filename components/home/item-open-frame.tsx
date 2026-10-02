@@ -169,7 +169,7 @@ export function ItemOpenFrame({ docked, id: idProp, kind: kindProp, origin = 'ro
   // the page-bg wash behind, the surface sliding in — so the deep-dive landing is a fill, never a
   // re-layout, and the Home is visibly backgrounded from the first frame.
   return (
-    <div className="fixed inset-y-0 right-0 left-[212px] z-40 flex flex-col pointer-events-none">
+    <div className="fixed inset-y-0 right-0 lg:right-[var(--viewer-w,0px)] left-[212px] z-40 flex flex-col pointer-events-none">
       <div className={`absolute inset-0 bg-neutral-50/70 transition-opacity duration-300 ease-out ${entered ? 'opacity-100' : 'opacity-0'}`} />
       <div className={`relative pointer-events-auto flex-1 min-h-0 flex flex-col bg-white border-l border-neutral-200 transition-all duration-300 ease-out ${entered ? 'translate-x-0 opacity-100' : 'translate-x-6 opacity-0'}`}>
         <div className="flex-1 min-h-0 flex flex-col">{frame}</div>

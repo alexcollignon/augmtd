@@ -276,7 +276,11 @@ export function hasSection(text: string, phrase: RegExp): boolean {
   return text.split('\n').some((line) => {
     const l = line.trim().replace(/^#{1,6}\s*/, '').replace(/^(\*\*|__)|(\*\*|__)$/g, '')
       .replace(/^[^\p{L}\p{N}]+/u, '').replace(/[:\s*_]+$/, '');
-    return re.test(l) && l.length < 80;
+    if (re.test(l) && l.length < 80) return true;
+    // W42 (measurement): a one-line section "Done: <its line>" — the label before the colon IS the heading
+    // (the user asked for "one line each"; a 120-char line was read as no section at all).
+    const label = /^([^:\n]{1,40}):\s+\S/.exec(l)?.[1]?.replace(/[*_]/g, '').trim();
+    return !!label && new RegExp(`^(?:${re.source})\\s*$`, re.flags).test(label);
   });
 }
 

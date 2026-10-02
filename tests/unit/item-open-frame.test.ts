@@ -22,7 +22,8 @@ describe('the click paints its own frame', () => {
 
   it('renders the room\'s frame from the row\'s href alone — the modal geometry, busy, a ghost name, no data', () => {
     const html = render(createElement(ItemOpenFrame, { docked: true, id: 'abc', kind: 'commitment', origin: 'client' }));
-    expect(html).toContain('fixed inset-y-0 right-0 left-[212px] z-40');
+    // one-component-one-behaviour: the modal yields the one viewer's width on desktop.
+    expect(html).toContain('fixed inset-y-0 right-0 lg:right-[var(--viewer-w,0px)] left-[212px] z-40');
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain('h-[52px]');
     expect(html).toContain('animate-pulse'); // the name is not held → a ghost bar, never a guess

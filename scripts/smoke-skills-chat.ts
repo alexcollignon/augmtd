@@ -53,7 +53,7 @@ ok('F1 Home ask resolves the chief\'s skills and hands them to the core',
 ok('F2 item steer resolves the chief\'s skills and hands them to the core',
   /resolveSkillsForTurn\(supabase, user\.id, \{ kind: 'chief' \}, sanitizeSkillPick\(body\.skills\)\)/.test(steer)
   // ⟲ RE-POINTED W22: the door also hands the core its background hand-off context (…door) and its token stream.
-  && steer.includes('converse(supabase, user.id, scope, text, { ...(onProgress ? { onProgress } : {}), skills, ...door, ...(onToken ? { onToken } : {}) })'));
+  && /* ⟲ RE-POINTED (one-component-one-behaviour · stacks + targeting, Oct 2) */ steer.includes('converse(supabase, user.id, coreScope, coreText, { ...(onProgress ? { onProgress } : {}), skills, ...door, ...(onToken ? { onToken } : {}) })'));
 ok('F3 the coworker DM resolves the addressed coworker\'s skills (the old assigned-only block is gone)',
   /resolveSkillsForTurn\(supabase, user\.id, agentId \? \{ kind: 'agent', agentId \} : null, sanitizeSkillPick\(rawSkills\)\)/.test(dm)
   && !/buildSkillsBlock\(/.test(dm) && /contextParts\.push\(turnSkills\.block\)/.test(dm));

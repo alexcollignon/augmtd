@@ -95,7 +95,10 @@ export const ARTIFACTS_OF_STATE: Record<ItemPageState, readonly ItemArtifactKind
   // an ask stands — or a staged send the door would refuse (its own card says what is missing)
   awaiting_input: ['ask', 'input_gate', 'invite', 'forward'],
   awaiting_approval: ['reply_draft', 'nudge_draft', 'invite', 'forward'],
-  ready: ['deliverable', 'paste_pack', 'document', 'frame'],
+  // ONE COMPONENT, ONE BEHAVIOUR (lib/present/behaviour.ts): a DEED outranks an ARTIFACT for the one
+  // widget — a paste pack (its words + Copy) is the page's action; a prepared document stays one Open
+  // away (its compact card in the drawer → the one viewer). The one-widget law is unchanged.
+  ready: ['paste_pack', 'deliverable', 'document', 'frame'],
   // a booked meeting: the event itself (never a new invite — W16); a judged revisit date: nothing
   scheduled: ['booked_event'],
   // nothing to do on the page — the header's Done / Dismiss suffice

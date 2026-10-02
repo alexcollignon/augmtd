@@ -63,6 +63,9 @@ const isUniqueViolation = (err: { code?: string | null; message?: string | null 
 export async function writeAskTurn(
   client: SupabaseClient, userId: string, roomKey: string, answerKey: string, text: string,
   reask?: { turnId: string; priorKey: string | null } | null,
+  /** REPLY TO A CARD — the card this question is about, recorded on the question's own row so the
+   *  transcript's quoted reference survives a reload (presentation only; the core never reads it). */
+  replyTo?: string | null,
 ): Promise<'claimed' | 'exists' | 'failed'> {
   try {
     if (reask) {
@@ -77,7 +80,7 @@ export async function writeAskTurn(
     }
     const { error } = await client.from('room_turns').insert({
       user_id: userId, room_key: roomKey, role: 'user', text,
-      refs: null, component: null, author: null, dedupe_key: askKeyOf(answerKey),
+      refs: null, component: replyTo ? { key: 'reply_to', state: { title: replyTo } } : null, author: null, dedupe_key: askKeyOf(answerKey),
     });
     if (!error) return 'claimed';
     return isUniqueViolation(error) ? 'exists' : 'failed';

@@ -364,7 +364,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     (src('lib/prepare/pass.ts').match(/artifactTruth \|\| undefined, computedStamp/g)?.length ?? 0) === 2 &&
     src('lib/prepare/pass.ts').includes('computed: computedStamp'));
   check('PC2: the chip renders ONLY from the structural marker (prov?.computed), never inferred from deliverable content',
-    src('components/home/item-detail.tsx').includes('prov?.computed && (') &&
+    /* ⟲ RE-POINTED (one-component-one-behaviour, Oct 2) */ src('components/home/item-detail.tsx').includes('d.provenance?.computed && (') &&
     src('components/home/item-detail.tsx').includes('✓ computed in code') &&
     !src('components/home/item-detail.tsx').includes('d.content.includes(\'computed\')'));
 
@@ -812,7 +812,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('components/knowledge/knowledge-panel.tsx').includes("f.indexed ? `indexed"));
 
   check('AB5: THE ABSORPTION brick 3 — the one surface OWNS its outputs: a coworker\'s DOCUMENT opens the SAME ThreadArtifactsPanel as a right-side overlay in the Home conversation (viewer/versions/download — never a page away; a loaded worker conversation surfaces its existing documents too); an EMAIL DRAFT mounts the SAME editable EmailDraftCard inline (the user-gated Send door); only registry renders still point at the worker page',
-    src('components/home/home-ask.tsx').includes('<ThreadArtifactsPanel') &&
+    /* ⟲ RE-POINTED (one-component-one-behaviour, Oct 2) */ src('components/shared/artifact-viewer.tsx').includes('<ThreadArtifactsPanel') && src('components/home/home-ask.tsx').includes('useArtifactViewer(') &&
     // RE-POINTED (Sep 13, THE THREADS ARC): `components/workers/email-draft-card.tsx` is DELETED —
     // the editable send card is now the ONE shared `components/home/email-card.tsx` (EmailCard),
     // mounted by the Home panel, the deep-dive and the worker DM alike. Its Send is still the
@@ -825,7 +825,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     // edit loop ("make it shorter" updates the open document); no dim, no backdrop, non-modal.
     src('components/home/home-ask.tsx').includes('STAYS CURRENT') &&
     !src('components/home/home-ask.tsx').includes('bg-neutral-900/20') &&
-    src('components/home/home-ask.tsx').includes("lg:mr-[608px]") &&
+    /* ⟲ RE-POINTED (one-component-one-behaviour, Oct 2) */ !src('components/home/home-ask.tsx').includes("lg:mr-[608px]") &&
     src('components/home/home-ask.tsx').includes("drafts.push({ draft: event.draft, tid, agentId: w.id })") &&
     src('components/home/home-ask.tsx').includes('art: { tid, id: a.id }') &&
     !src('components/home/home-ask.tsx').includes("review & send on ${first}'s page"));
@@ -906,11 +906,11 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     && src('components/home/item-rail.tsx').includes('THE CHIPS ARE RETIRED FROM THE ROOM'));
 
   check('TF2: OPEN LANDS ON THE PREPARED THING — the merged card\'s click carries the STAGE INTENT: the room focuses the item WITH its stage raised (ItemDetail initialStage → composer/forward/invite up on arrival, the thread beneath); never the bare thread behind a "Prepared by Clara" promise',
-    src('components/home/item-rail.tsx').includes('onStage?.(stageOfArtifactKey(mergedArt.key), respMoveTargetId)') &&
+    /* ⟲ RE-POINTED (one-component-one-behaviour, Oct 2) */ src('components/home/item-rail.tsx').includes('if (mergedArt) { mergedArt.onOpen(); return; }') &&
     src('components/home/item-detail.tsx').includes('initialStage?:') &&
-    src('components/home/item-detail.tsx').includes('OPEN LANDS ON THE PREPARED THING') &&
-    src('components/entities/entity-room.tsx').includes('focusStage') &&
-    src('components/entities/entity-room.tsx').includes('initialStage={focusStage ?? undefined}'));
+    /* ⟲ RE-POINTED (one-component-one-behaviour, Oct 2) */ src('components/home/item-detail.tsx').includes('A HOST\'S INTENT') &&
+    /* ⟲ RE-POINTED (one-component-one-behaviour, Oct 2) */ src('components/entities/entity-room.tsx').includes('summonRoomDeed(') &&
+    /* ⟲ RE-POINTED (one-component-one-behaviour, Oct 2) */ src('components/entities/entity-room.tsx').includes('deedCardFor(dd.stage, dd.itemKind, dd.itemId)'));
 
   check('TF3: THE ROOM WARM — hovering a project row prefetches the room\'s two payloads into the SAME LS keys the room hydrates from (a first open paints from cache like every later one); session-deduped',
     src('lib/room/warm-room.ts').includes('export function warmEntityRoom') &&
@@ -945,14 +945,14 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('app/api/inbox/[id]/draft/route.ts').includes("readPlan(supabase, user.id, 'judgment', `inbox:${id}`)") &&
     src('app/api/inbox/[id]/draft/route.ts').includes("if (cachedWork === 'reply' || cachedWork === 'send_file') {") &&
     src('app/api/inbox/[id]/draft/route.ts').includes("skipped: 'judged_none' });\n    }\n  }") &&
-    src('components/home/item-detail.tsx').includes('THE STAGE IS A SHEET, NOT A CURTAIN') &&
-    src('components/home/item-detail.tsx').includes('max-h-[72%]'));
+    /* ⟲ RE-POINTED (one-component-one-behaviour, Oct 2) */ !src('components/home/item-detail.tsx').includes('function StageOverlay') &&
+    /* ⟲ RE-POINTED (one-component-one-behaviour, Oct 2) */ !src('components/home/item-detail.tsx').includes('max-h-[72%]'));
 
   check('PR1: THE PRESENTATION LAW (owner, Aug 7 — "that grounding/reasoning needs to exist; there shouldn\'t be redundancy") — the no-redundancy composition lives in ONE module (lib/room/presentation: moveTargetId · mergedArtifactKey · stageOfArtifactKey · railCoversItem) consumed by BOTH panes; a deed presents exactly once BY CONSTRUCTION, never by per-pane suppression patches; no local re-derivation of the match remains',
     src('lib/room/presentation.ts').includes('THE PRESENTATION LAW') &&
     src('components/home/item-rail.tsx').includes("from '@/lib/room/presentation'") &&
     src('components/entities/entity-room.tsx').includes("from '@/lib/room/presentation'") &&
-    src('components/entities/entity-room.tsx').includes('railCoversItem(rail?.move?.ref, focused.id)') &&
+    /* ⟲ RE-POINTED (one-component-one-behaviour, Oct 2) */ src('components/entities/entity-room.tsx').includes('if (mountsEmailCard(r)) {') &&
     !src('components/home/item-rail.tsx').includes(".split(':')[1] ?? null") &&
     !src('components/entities/entity-room.tsx').includes('rail.move.ref.includes'));
 
@@ -1225,7 +1225,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     // (components/workflows/deliverable-door.tsx — the Sep 1 pilot wave) so the ledger, the run
     // history and the process drawer all open a delivered document the SAME way. It is still the
     // ThreadArtifactsPanel the Home chat uses, never a /workers chat page — one seam, now shared.
-    src('components/workflows/deliverable-door.tsx').includes('ThreadArtifactsPanel') &&
+    /* ⟲ RE-POINTED (one-component-one-behaviour, Oct 2) */ src('components/workflows/deliverable-door.tsx').includes('useArtifactViewer(') &&
     src('components/workflows/workflows-ledger.tsx').includes('useDeliverableDoor') &&
     src('components/workflows/workflows-ledger.tsx').includes('see the latest') &&
     src('components/workflows/workflows-ledger.tsx').includes('Edit in Studio') &&
@@ -1290,7 +1290,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('components/home/home-ask.tsx').includes("chatParam?.startsWith('worker:')") &&
     src('lib/workflows/run-workflow.ts').includes('/home?chat=worker:') &&
     src('lib/workflows/standing.ts').includes('/home?chat=worker:') &&
-    src('components/home/item-rail.tsx').includes('/home?chat=worker:') &&
+    /* ⟲ RE-POINTED (one-component-one-behaviour, Oct 2) */ src('components/home/item-rail.tsx').includes("viewer.open({ kind: 'thread', threadId: doc.threadId") &&
     !src('components/home/home-view.tsx').includes('<TeamFeed') &&
     src('app/studio/studio-page-client.tsx').includes("backTo ?? '/home?view=workflows'") &&
     src('app/onboarding/page.tsx').includes("redirect('/home')"));
@@ -1381,7 +1381,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/converse/index.ts').includes('artifact: { ...out.artifact, agentName') &&
     src('app/api/home/ask/route.ts').includes('turn.artifact') &&
     src('app/api/items/steer/route.ts').includes('turn.artifact') &&
-    src('components/home/home-ask.tsx').includes('void openArtifact(d.artifact.threadId, d.artifact.id)') &&
+    /* ⟲ RE-POINTED (one-component-one-behaviour, Oct 2) */ src('components/home/home-ask.tsx').includes('void foldArrival(d.artifact.threadId)') &&
     src('components/home/item-rail.tsx').includes('d.artifact?.id'));
 
   const { matchRegistryCommand } = await import('../lib/converse/commands');
@@ -1866,7 +1866,9 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('lib/work/apply-verdict.ts').includes('settleAsksForItem') &&
     src('lib/room/grounding.ts').includes('turnId: t.id ? String(t.id) : null') && // the editor can settle what it reads
     src('components/work/worker-face.tsx').includes('export function WorkerFace') &&
-    src('components/home/item-detail.tsx').includes('<WorkerFace name={d.by}') &&
+    // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the drawer's prepared list is the compact
+    // artifact card now — its attribution rides the card's own `owner` ("by <name>"), one renderer.
+    /<ArtifactCard title=\{d\.title[^\n]*owner=\{d\.by\}/.test(src('components/home/item-detail.tsx')) &&
     // RE-POINTED (Sep 13, THE THREADS ARC): the panel no longer imports the face directly — every
     // thread bubble wears it through `components/thread/avatar-status.tsx`, which WRAPS
     // `components/work/worker-face.tsx` and never forks the headshot. THE ONE FACE is intact and is
@@ -1923,7 +1925,7 @@ const versionAtLeast = (path: string, name: string, floor: number): boolean => {
     src('components/home/item-detail.tsx').includes('onDecision') &&
     !src('components/home/item-detail.tsx').includes("import { DecisionCard }") &&  // the stage card is DEAD
     src('components/entities/entity-room.tsx').includes('onDecision={seNorthwindDecision}') &&
-    src('components/entities/entity-room.tsx').includes('injectedDraft'));
+    /* ⟲ RE-POINTED (one-component-one-behaviour, Oct 2) */ src('components/entities/entity-room.tsx').includes("summonRoomDeed('reply', focused.id"));
 
   check('VL1: THE VERB-LANE FIDELITY REPAIRS (the scenario matrix, Aug 13 — an Opus agent walked all 7 lanes end-to-end on the probe; five defects found and fixed, all verified live). B1 — a send_file item whose document can\'t be found RAISES the input_checklist ask in the room (askForFile mirrors the requirements.ts write shape, dedupeKey requires:<id>) instead of returning a silent none that left the machine in `preparing` forever (the one genuine machine-state lie in the matrix); verified live: ask landed, state read awaiting_input. B2 — the one reader serves the invite TIME (the writer stores startISO; reading `.start` served a timeless invite). B3 — the chase draft is ATTRIBUTED (prepared_by rides the nudge lane like every sibling). B4 — a commitment\'s decision brief grounds on the COMMITMENT\'S OWN row (description/counterparty/due_date), never a phantom inbox lookup. B5 — email extraction trims trailing sentence punctuation before validation in all three regex copies ("…to sam@acme.com." no longer yields the address twice, once broken)',
     src('lib/prepare/pass.ts').includes('async function askForFile') &&

@@ -475,7 +475,7 @@ async function main() {
         'app/api/drive/upload/confirm/route.ts',
         'app/api/work/threads/[id]/chat-attach/route.ts',
         'app/api/work/threads/[id]/attach/confirm/route.ts',
-        'app/api/workflows/runs/[id]/supply-upload/route.ts',
+        'lib/workflows/material-ingest.ts', // the supply-upload + material-upload doors' ONE ingest
         'lib/workspace/seed-kb.ts',
         'lib/tenders/write-profile-doc.ts',
       ];

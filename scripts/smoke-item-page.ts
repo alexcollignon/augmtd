@@ -284,7 +284,9 @@ console.log('\nS · a booked meeting is scheduled — the event widget, never a 
   gate('S8 serve-time: the view serves the booked event id on `scheduled` and `withCounterparty: false` on a lone invite; every door mounts an invite only with a counterparty',
     /eventId: st\.state === 'scheduled' \? st\.scheduledEventId \?\? null : null/.test(view)
     && /a\.kind === 'invite' && inviteParty === false \? \{ withCounterparty: false \}/.test(view)
-    && (detail.match(/p\.kind === 'invite' && p\.invite\?\.withCounterparty !== false/g) ?? []).length === 3
+    // ⟲ RE-POINTED (one-component-one-behaviour): the email door reads the predicate twice (the mount and
+    // the summoned flag) — every door still mounts an invite only with a counterparty.
+    && (detail.match(/p\.kind === 'invite' && p\.invite\?\.withCounterparty !== false/g) ?? []).length >= 3
     && /if \(view\.machineState\?\.eventId\) mounted\.booked_event = true;/.test(read('components/home/item-rail.tsx')));
   gate('S9 the header subtitle says "scheduled — <when>" and never "Due" on a scheduled item',
     /\{data\?\.dueDate && !scheduled && </.test(detail) && (detail.match(/\{scheduledMetaOf\(view\)\}/g) ?? []).length >= 3);
@@ -311,8 +313,11 @@ console.log('\nD · the surfaces render through the one composition');
     && (detail.match(/emphasis: doneEmphasisOf\(view, /g) ?? []).length === 3 && !/resolveEmphasisOf/.test(detail));
   gate('D5 every mounted action card declares the ARTIFACT it renders (the table maps it to its kit widget) — and the handoff gate / meeting event ride the rail as the gate / event widget',
     /artifactKind: 'reply_draft' as const/.test(detail) && /artifactKind: 'nudge_draft' as const/.test(detail)
-    && (detail.match(/artifactKind: 'invite' as const/g) ?? []).length === 3 && /artifactKind: 'forward' as const/.test(detail)
-    && /artifactKind: leadArts\[0\]\.kind as ItemArtifactKind/.test(detail) && /artifactKind: 'looks_done' as const/.test(detail)
+    // ⟲ RE-POINTED (one-component-one-behaviour): + the meeting door's summoned invite (4); the lead strip
+    // split by class — a paste pack (deed) and a deliverable (artifact) each declare their own kind.
+    && (detail.match(/artifactKind: 'invite' as const/g) ?? []).length === 4 && /artifactKind: 'forward' as const/.test(detail)
+    && /artifactKind: 'paste_pack' as const/.test(detail) && /artifactKind: 'deliverable' as const/.test(detail)
+    && /artifactKind: 'looks_done' as const/.test(detail)
     && /gate=\{gateStanding && gateNode \? \{ kind: handoff\?\.gateKind === 'input' \? 'input_gate' : 'gate', node: gateNode \} : null\}/.test(detail)
     && /<EventCard pointer=\{\{ eventId: view\.sourceMeeting\.addressId \}\} \/>/.test(detail)
     && !/widget: '/.test(detail));
@@ -323,7 +328,7 @@ console.log('\nD · the surfaces render through the one composition');
     && !/moveCard|ctaOffer|gapLine|foldedAsk|mergedArt|pinnedNode/.test(block)
     && /if \(!itemPage\) items\.push\(\{\s*type: 'pinned'/.test(rail)
     && /if \(!itemPage && liftedAsk && !foldedAsk\)/.test(rail) && /if \(!itemPage && decision && decision\.options\.length >= 2\)/.test(rail)
-    && /if \(!itemPage\) visibleTail\.forEach/.test(rail) && /if \(!itemPage\) endArtifacts\.forEach/.test(rail));
+    && /if \(!itemPage\) visibleTail\.forEach/.test(rail) && /* ⟲ RE-POINTED (one-component-one-behaviour · stacks + targeting, Oct 2) */ /if \(!itemPage && endArtifacts\.length\)/.test(rail));
   gate('D7 a widget is offered only when its card is MOUNTED on the page (the table picks from mounted artifacts only)',
     /for \(const a of artifacts \?\? \[\]\) if \(a\.artifactKind && a\.node\) mounted\[a\.artifactKind\] = true;/.test(block)
     && /if \(gate\?\.node\) mounted\[gate\.kind\] = true;/.test(block));

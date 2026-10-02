@@ -34,7 +34,7 @@ import {
 import { Badge, BackLink, Button, SegmentedControl } from '@/components/ui';
 import ProcessDrawer from '@/components/workflows/process-drawer';
 import RunRecordDrawer, { type RecordRunOutputs } from '@/components/workflows/run-record-drawer';
-import RunMaterialSheet, { asksForMaterial, type RunMaterial } from '@/components/workflows/run-material-sheet';
+import RunMaterialSheet, { asksForMaterial, runRequestBody, type RunMaterial } from '@/components/workflows/run-material-sheet';
 import { FramesTab } from '@/components/frames/frames-tab';
 // THE OUTCOME DOOR + THE LIVE BEAT — both shared with the ledger and the process drawer.
 import { runDeliverable, useDeliverableDoor } from '@/components/workflows/deliverable-door';
@@ -402,7 +402,7 @@ export function WorkflowDetail({
       const r = await fetch(`/api/workflows/${workflowId}/run`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         // THE MATERIAL DOOR: the field exists on the body only when the user gave something.
-        body: material?.text ? JSON.stringify({ material }) : '{}',
+        body: runRequestBody(material),
       });
       const j = (await r.json().catch(() => ({}))) as { error?: string };
       if (!r.ok) { toast.error(j.error ?? 'Could not start the run'); return; }
@@ -630,6 +630,7 @@ export function WorkflowDetail({
       {/* THE MATERIAL DOOR — the same sheet the ledger row's play button mounts. */}
       <RunMaterialSheet
         open={materialOpen}
+        workflowId={workflowId}
         workflowName={name}
         acceptsMaterial={acceptsMaterial}
         hasReactionDoors={hasDoors}

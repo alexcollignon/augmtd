@@ -460,9 +460,9 @@ async function main() {
     ok('the refusal\'s "sample material" remedy is SPOKEN and BACKED by a real door',
       /sample material/i.test(nothingToReactTo({ when: 'a tender lands' }))
       && /material\?:\s*\{/.test(runRoute)
-      && /materialBlock\(body\.material\)/.test(runRoute)
+      && /materialBlock\(body\.material\b/.test(runRoute)
       && sheetExists && mounts.length >= 1,
-      `sheet=${sheetExists} mounts=${mounts.length} route=${/materialBlock\(body\.material\)/.test(runRoute)}`);
+      `sheet=${sheetExists} mounts=${mounts.length} route=${/materialBlock\(body\.material\b/.test(runRoute)}`);
   }
 
   // ── P7c–P7e — LIVE, at the door (probe host; every fixture swept) ──────────────────────────

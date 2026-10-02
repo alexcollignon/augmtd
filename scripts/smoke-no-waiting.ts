@@ -145,8 +145,11 @@ async function main() {
       /const viewReply = \(view\?\.prepared \?\? \[\]\)\.find\(\(p\) => p\.kind === 'reply_draft'/.test(detail)
       && /preparedBody=\{draft\}/.test(detail)
       && /const \[loading, setLoading\] = useState\(!coworker && !standalone && !seededBody\)/.test(code('components/home/email-card.tsx')));
-    gate('A13 the follow-up seeds its nudge from the view (the prepared list), never from a per-open door call',
-      /const viewNudge = \(view\?\.prepared \?\? \[\]\)\.find/.test(detail));
+    // ⟲ RE-POINTED (one-component-one-behaviour): the follow-up's nudge IS the EmailCard compose card,
+    // mounted from the view's live prepared list — the door buys no draft on open.
+    gate('A13 the follow-up mounts its nudge from the view (the prepared list), never from a per-open door call',
+      /const followNudgeLive = \(view\?\.prepared \?\? \[\]\)\.some/.test(detail)
+      && !/api\/commitments\/\$\{id\}\/nudge`, \{ method: 'POST' \}/.test(detail));
   }
 
   // ═══ B · NO WATERFALL ═══
@@ -164,8 +167,10 @@ async function main() {
       /if \(viewReply\?\.content\) \{ draftAskedRef\.current = true; return; \}/.test(detail)
       && /if \(work && !REPLY_WORKS\.has\(work\)\)/.test(detail)
       && (detail.match(/fetch\(`\/api\/inbox\/\$\{id\}\/draft`, \{ method: 'POST' \}\)/g) ?? []).length === 1);
-    gate('B5 the follow-up\'s nudge door (which may draft) is asked only when the reader summons the composer without a prepared nudge',
-      /if \(!composerOpen \|\| draft !== null \|\| viewNudge\?\.content \|\| nudgeAskedRef\.current\) return;/.test(detail));
+    // ⟲ RE-POINTED (one-component-one-behaviour): the composer is retired; the drafting door (the compose
+    // lane's /api/compose/draft) is asked only by a MOUNTED card — live nudge, or the reader's own summon.
+    gate('B5 the follow-up\'s drafting door is asked only when a nudge card mounts (a live nudge, or the reader summoned it)',
+      /\.\.\.\(followNudgeLive \|\| nudgeSummoned \? \[\{/.test(detail) && !/nudgeAskedRef/.test(detail));
     const warm = code(WARM);
     gate('B6 the hover warm fires the view AND the kind\'s object read in ONE beat (Promise.all), into the keys the page paints from — and it is the ONLY object warm (the row states intent only)',
       /await Promise\.all\(\[fetchItemView\(t\.kind, t\.id, \{ warm: true \}\), warmItemObjectOnce\(t\.kind, t\.id\)\]\)/.test(warm)

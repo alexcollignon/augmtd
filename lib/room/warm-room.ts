@@ -32,7 +32,8 @@ import { ROOM_CACHE_MAX_AGE_MS } from '@/lib/room/no-mutation';
 // freshness problem to tune; it is a key problem. BUMP THIS whenever a room payload's SHAPE
 // changes: every old envelope becomes unreadable by construction, and there is no transitional
 // window in which a surface reasons over a payload that predates its own law.
-const ROOM_CACHE_SHAPE = 'v2';
+// v3 (W42): board rows carry `preparedRefKind` — a cached v2 payload lacks it, so old rooms refetch.
+const ROOM_CACHE_SHAPE = 'v3';
 export const roomDetailKey = (entityId: string) => `aug-entity-detail-${ROOM_CACHE_SHAPE}-${entityId}`;
 export const roomRailKey = (entityId: string) => `aug-entity-rail-${ROOM_CACHE_SHAPE}-${entityId}`;
 /** The room's CONVERSATION envelope. Keyed by the ROOM key (the entity id for a deal room,

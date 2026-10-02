@@ -66,6 +66,10 @@ export function renderResolved(rw: ResolvedWorld, scope: RenderScope = {}): stri
         L.push('', m.body.trim());
         if (scope.upTo && m.key === scope.upTo) stop = true;
       }
+      if (t.preparedInvite) {
+        const pi = t.preparedInvite;
+        L.push('', `[A calendar invite I have prepared on this thread but NOT sent yet: "${pi.title}" · ${mailDate(pi.start, rw.tz)}–${localClock(pi.end, rw.tz)} · to ${pi.attendees.map(who).join(', ')}]`);
+      }
     }
   }
   if (scope.commitments !== false && rw.commitments.length) {
@@ -73,7 +77,10 @@ export function renderResolved(rw: ResolvedWorld, scope: RenderScope = {}): stri
     for (const c of rw.commitments) {
       const cp = c.counterparty ? ('free' in c.counterparty ? c.counterparty.name : who(c.counterparty as ResolvedParty)) : 'someone';
       const dir = c.direction === 'you_owe' ? `I owe ${cp}` : `${cp} owes me`;
-      L.push(`- ${dir}: ${c.description}${c.due ? ` — due ${c.due}` : ''} (noted ${localDate(c.createdAt, rw.tz)})`);
+      // W42 · the row's state and the user's deeds on it (a settled task, a task done then restored).
+      const deeds = (c.history ?? []).map((h) => `${h.action === 'done' ? 'marked done' : 'restored (reopened)'} ${localDate(h.at, rw.tz)}`);
+      const state = c.status === 'done' ? ' [DONE]' : deeds.length ? ' [OPEN]' : '';
+      L.push(`- ${dir}: ${c.description}${c.due ? ` — due ${c.due}` : ''} (noted ${localDate(c.createdAt, rw.tz)})${state}${deeds.length ? ` — history: ${deeds.join(', then ')}` : ''}`);
     }
   }
   if (scope.calendar !== false && rw.events.length) {

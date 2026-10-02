@@ -117,7 +117,12 @@ export function worldFactsFor(c: EvalCase, now: Date = clockNow()): string {
   }
   const items = w.threads.filter((t) => t.itemKey);
   if (items.length) L.push(`INBOX STATE: ${items.length} thread(s) on record, each an inbox item that is UNREAD and PENDING (not yet opened or handled by the user): ${items.map((t) => `"${t.subject}"`).join(', ')}.`);
-  if (w.commitments.length) L.push(`COMMITMENTS on record (all OPEN): ${w.commitments.map((x) => `"${x.description}"${x.due ? ` due ${x.due}` : ''}`).join('; ')}.`);
+  if (w.commitments.length) {
+    const allOpen = w.commitments.every((x) => x.status !== 'done');
+    L.push(`COMMITMENTS on record${allOpen ? ' (all OPEN)' : ''}: ${w.commitments.map((x) => `"${x.description}"${x.due ? ` due ${x.due}` : ''}${allOpen ? '' : ` [${x.status === 'done' ? 'DONE' : 'OPEN'}]`}${x.history?.length ? ` (history: ${x.history.map((h) => h.action).join(' → ')})` : ''}`).join('; ')}.`);
+  }
+  const staged = w.threads.filter((t) => t.preparedInvite);
+  if (staged.length) L.push(`STAGED (prepared, NOT sent): ${staged.map((t) => `the invite "${t.preparedInvite!.title}" on "${t.subject}"`).join('; ')}.`);
   if (w.projects.length) L.push(`PROJECTS on record (tracked): ${w.projects.map((p) => `"${p.name}"`).join(', ')}.`);
   if (w.events.length) L.push(`CALENDAR entries on record: ${w.events.length}. Nothing else is on the calendar.`); else L.push('CALENDAR: no entries on record (any stated availability is not from a calendar).');
   if (w.kb.length) L.push(`FILES on record: ${w.kb.map((d) => d.filename).join(', ')}.`); else L.push('FILES: none on record (nothing is attached anywhere).');

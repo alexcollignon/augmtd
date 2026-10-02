@@ -28,47 +28,10 @@ import { createClient } from '@/lib/supabase/server';
 // Extraction + embedding of a ≤4MB document runs inline (law 2) — this ceiling covers it.
 export const maxDuration = 300;
 
-/** THE CHAT-ATTACH GUARD'S CLASS (Vercel's request-body limit) — bigger material has its own door. */
-const MAX_SUPPLY_BYTES = 4 * 1024 * 1024;
-
-/** Everything lib/attachments/text-extractor can actually read — the allowlist never drifts BELOW
- *  the extractor's real ability (the Aug 10 lesson: pptx/xlsx/csv/doc were rejected at a door that
- *  the extractor handled fine). */
-const CONTENT_TYPES = [
-  'application/pdf',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  'text/csv',
-  'text/plain',
-  'text/markdown',
-  'image/jpeg',
-  'image/jpg',
-  'image/png',
-  'image/webp',
-];
-
-/** A browser's `file.type` is unreliable for dragged Office files — the extension is the truth of
- *  last resort (the same map the chat-attach door keeps). */
-function mimeFromFilename(filename: string): string | null {
-  const ext = filename.split('.').pop()?.toLowerCase();
-  const map: Record<string, string> = {
-    pdf: 'application/pdf',
-    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    doc: 'application/msword',
-    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    csv: 'text/csv',
-    txt: 'text/plain',
-    md: 'text/markdown',
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    webp: 'image/webp',
-  };
-  return ext ? (map[ext] ?? null) : null;
-}
+// THE ALLOWLIST, THE SIZE CEILING (the chat-attach guard's class, 4MB), the user-scoped storage, the
+// shared indexer, the honest 422 and the nothing-hollow cleanup all live in ONE place now —
+// lib/workflows/material-ingest.ts — shared with the Run-with-material sheet's file door. This route
+// keeps what is ITS OWN: the run's visibility rule and the provenance (`run:<id>`).
 
 // POST /api/workflows/runs/[id]/supply-upload  — multipart, field `file`.
 // → { kbFileId, name }, which the caller hands to the resume door as { input: { kbFileId } }.
@@ -96,78 +59,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!form || !(file instanceof File)) {
       return NextResponse.json({ error: 'file is required' }, { status: 400 });
     }
-    if (file.size > MAX_SUPPLY_BYTES) {
-      return NextResponse.json({
-        error: `That file is ${(file.size / (1024 * 1024)).toFixed(1)}MB — this box takes up to 4MB. Upload it in Knowledge instead, then pin it here.`,
-      }, { status: 413 });
-    }
-    const mimeType = CONTENT_TYPES.includes(file.type)
-      ? file.type
-      : mimeFromFilename(file.name);
-    if (!mimeType || !CONTENT_TYPES.includes(mimeType)) {
-      return NextResponse.json({
-        error: `I can't read ${file.name}. Send a PDF, Word, Excel, PowerPoint, CSV, text or image file — or paste what the run needs.`,
-      }, { status: 400 });
-    }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'document';
-    // User-scoped, and marked as what it is: material handed to a specific run.
-    const storagePath = `${user.id}/supply/${runId}/${crypto.randomUUID()}-${safeName}`;
-    const { error: upErr } = await admin.storage
-      .from('drive-uploads')
-      .upload(storagePath, buffer, { contentType: mimeType, upsert: true });
-    if (upErr) {
-      console.error('[supply-upload] storage', upErr);
-      return NextResponse.json({ error: 'Could not store that file. Try again.' }, { status: 500 });
-    }
-
-    /** Nothing hollow is left behind on any refusal path. */
-    const cleanUp = async (fileId?: string | null) => {
-      try { await admin.storage.from('drive-uploads').remove([storagePath]); } catch { /* best-effort */ }
-      if (fileId) {
-        try { await admin.from('knowledge_chunks').delete().eq('file_id', fileId); } catch { /* best-effort */ }
-        try { await admin.from('knowledge_files').delete().eq('id', fileId); } catch { /* best-effort */ }
-      }
-    };
-
-    // THE ONE INGEST SEAM (lib/knowledge/indexer) — the same function every human upload rides, so
-    // this file is a Knowledge document like any other: searchable, chunked, embedded, re-pinnable.
-    // NOTE THE ABSENT ARGUMENT: no `onIndexed`. That is law 1, and it is enforced by omission.
-    const { indexUploadedFile } = await import('@/lib/knowledge/indexer');
-    let kbFileId: string;
-    try {
-      kbFileId = await indexUploadedFile(
-        { buffer, filename: file.name, mimeType, userId: user.id, storagePathInBucket: storagePath, bucket: 'drive-uploads' },
-        admin,
-      );
-    } catch (e) {
-      console.error('[supply-upload] index', e);
-      await cleanUp();
-      return NextResponse.json({ error: 'Could not read that file. Try pasting it instead.' }, { status: 500 });
-    }
-
-    // LAW 2, VERIFIED AGAINST THE ROW THE STATION WILL READ (not against our own hopes): the
-    // resolver reads `extracted_text`, so that is what must be real before we hand back an id.
-    const { data: row } = await admin.from('knowledge_files')
-      .select('id, filename, extracted_text').eq('id', kbFileId).maybeSingle();
-    const text = String((row as { extracted_text?: string | null } | null)?.extracted_text ?? '').trim();
-    if (!text) {
-      await cleanUp(kbFileId);
-      return NextResponse.json({
-        error: `There's no readable text in ${file.name} — try pasting it instead.`,
-      }, { status: 422 });
-    }
-
-    // THE FILE SPINE: the KB row says where it came from — material handed to this run.
-    try {
-      const { stampFileMeta } = await import('@/lib/knowledge/ingest');
-      await stampFileMeta(admin, kbFileId, { kind: 'upload', ref: `run:${runId}` });
-    } catch { /* provenance is a nicety; the material is the deed */ }
+    // User-scoped, and marked as what it is: material handed to a specific run. NOTE: no door seam
+    // is handed to the ingest (law 1 — it has none to hand; see material-ingest.ts).
+    const { ingestMaterialFile } = await import('@/lib/workflows/material-ingest');
+    const res = await ingestMaterialFile(admin, user.id, file, {
+      storagePrefix: `${user.id}/supply/${runId}`,
+      ref: `run:${runId}`,
+      oversizeRemedy: 'Upload it in Knowledge instead, then pin it here.',
+    });
+    if (!res.ok) return NextResponse.json({ error: res.error }, { status: res.status });
 
     return NextResponse.json({
-      kbFileId,
-      name: String((row as { filename?: string } | null)?.filename ?? file.name),
+      kbFileId: res.kbFileId,
+      name: res.name,
     });
   } catch (e) {
     console.error('[supply-upload]', e);

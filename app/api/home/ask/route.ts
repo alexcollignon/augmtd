@@ -5,6 +5,7 @@ import { createClient as createAdmin } from '@supabase/supabase-js';
 import { converse, type ConverseHistoryTurn, type ConverseAttachment } from '@/lib/converse';
 import { tagOf } from '@/lib/home/ask-refs';
 import { cardPayloadOf, cardTurnOf, normalizeTurnCards } from '@/lib/present/turn-card';
+import { sanitizeTarget, targetedQuestion } from '@/lib/present/card-target';
 import { converseStreamResponse, turnAbortFor } from '@/lib/present/converse-stream';
 // W23.B — the answer's receipt (activity + duration + stopped) and the chat's own title.
 import { recordAnswerMeta } from '@/lib/converse/answer-meta';
@@ -38,13 +39,18 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient();
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    const body = (await request.json()) as { question?: string; history?: ConverseHistoryTurn[]; stream?: boolean; entityId?: string; attachments?: ConverseAttachment[]; pasted?: Array<{ text?: string; name?: string }>; roomKey?: string; skills?: unknown };
+    const body = (await request.json()) as { question?: string; history?: ConverseHistoryTurn[]; stream?: boolean; entityId?: string; attachments?: ConverseAttachment[]; pasted?: Array<{ text?: string; name?: string }>; roomKey?: string; skills?: unknown; target?: unknown };
     // THE PASTE CEILING DIED (Aug 10, found live): a pilot pasted a full questionnaire and the
     // old slice(0, 500) silently discarded everything past character 500 — the brain answered a
     // request it never saw. W22: the ceiling is a DECLARED cut (the excerpt law — a raw 20k slice lost
     // a long document's tail silently), and the core marks the pasted part as DATA.
     const q = clipWithRule(String(body.question ?? '').trim(), PASTE_CEILING);
     if (!q) return NextResponse.json({ error: 'question required' }, { status: 400 });
+    // REPLY TO A CARD (law `one-component-one-behaviour`): a message pinned to a card reaches the core
+    // as ONE instruction about THAT object (a new version of it, never a general answer). The user's
+    // own words stay what the room records; only the core's input carries the instruction.
+    const cardTarget = sanitizeTarget(body.target);
+    const coreQ = cardTarget ? targetedQuestion(q, cardTarget) : q;
     // THE ANSWER SURVIVES THE TAB (Aug 26, found live): the client used to persist the system
     // turn AFTER consuming the whole SSE stream — a mid-stream reload/navigation left an orphan
     // room (the ask with no reply). When the panel passes its chat room key, the SERVER persists
@@ -184,6 +190,10 @@ export async function POST(request: NextRequest) {
       // collection · event · change ride the answer and mount inline. Nothing has been sent, acted,
       // or applied — each card's own click is the deed.
       ...cardPayloadOf(turn),
+      // ONE COMPONENT, ONE BEHAVIOUR (lib/present/behaviour.ts): a stage verb the core raised ("Opening
+      // the forward for review") rides the answer so the chat mounts that deed's OWN inline card —
+      // the Home door used to drop it, leaving the claim standing over nothing.
+      ...(turn.openStage ? { openStage: turn.openStage } : {}),
       // The filing nudge never decorates a failed/empty answer (found live: a wrong "File it"
       // chip beside a dead reply compounds the miss).
       ...(focus && turn.say?.trim() && !turn.failure ? { focus } : {}),
@@ -206,7 +216,7 @@ export async function POST(request: NextRequest) {
       return converseStreamResponse(async (send) => {
         const skills = await skillsPromise;
         const [turn, focus] = await Promise.all([
-          converse(supabase, user.id, scope, q, {
+          converse(supabase, user.id, scope, coreQ, {
             history, attachments, skills, ...door,
             onProgress: (label) => send({ type: 'progress', label }),
             // TOKEN STREAMING: the answer materializes live; `done` still carries the final
@@ -225,7 +235,7 @@ export async function POST(request: NextRequest) {
       }, { label: 'home/ask', abort: turnAbort, keepAlive: (p) => after(() => p.then(() => {})) });
     }
     const skills = await skillsPromise;
-    const [turn, focus] = await Promise.all([converse(supabase, user.id, scope, q, { history, attachments, skills, ...door }), focusOf()]);
+    const [turn, focus] = await Promise.all([converse(supabase, user.id, scope, coreQ, { history, attachments, skills, ...door }), focusOf()]);
     normalizeTurnCards(turn);
     await persistAnswer(turn);
     return NextResponse.json(payloadOf(turn, focus, await offerPromise));

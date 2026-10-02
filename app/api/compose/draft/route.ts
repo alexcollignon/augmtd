@@ -424,10 +424,10 @@ export async function POST(request: NextRequest) {
       const { unsupportedWorkClaims, workClaimObjection, slotUnsupportedWork } = await import('@/lib/prepare/claims-floor');
       const promiseMaterial = [context, intent?.trim() ? `The user's instruction: ${intent.trim()}` : ''].filter(Boolean).join('\n\n');
       const generate = async (objection: string | null): Promise<string> => {
-        const first = (await draftInLanguage((languageFix) => generateOnce(objection, languageFix), target)).body;
+        const first = (await draftInLanguage((languageFix) => generateOnce(objection, languageFix), target, register)).body;
         const claims = first ? unsupportedWorkClaims(first, promiseMaterial) : [];
         if (!claims.length) return first;
-        const again = (await draftInLanguage((languageFix) => generateOnce([objection, workClaimObjection(claims)].filter(Boolean).join('\n'), languageFix), target)).body;
+        const again = (await draftInLanguage((languageFix) => generateOnce([objection, workClaimObjection(claims)].filter(Boolean).join('\n'), languageFix), target, register)).body;
         return slotUnsupportedWork(again || first, promiseMaterial).text;
       };
       const vetted = await draftThroughVet(generate, vetFacts);

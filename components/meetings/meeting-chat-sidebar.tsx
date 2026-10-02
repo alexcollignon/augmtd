@@ -3,8 +3,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ThreadTimeline, ThreadComposer, type ThreadItem } from '@/components/thread';
 import { useCosSeat } from '@/hooks/use-cos-seat';
-import { PaperAirplaneIcon, ArrowTopRightOnSquareIcon, ChatBubbleLeftRightIcon, ChevronRightIcon, CalendarIcon } from '@heroicons/react/24/outline';
+import { ArrowTopRightOnSquareIcon, ChatBubbleLeftRightIcon, ChevronRightIcon, CalendarIcon } from '@heroicons/react/24/outline';
 import { Button, IconButton } from '@/components/ui';
+import { EmailCard } from '@/components/home/email-card';
+import { PastePackCard } from '@/components/prepared/paste-pack-card';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -186,25 +188,27 @@ function ProcessChip({ process, onOpenProcess }: {
   );
 }
 
-function ReplyDraftButton({ body }: { body: string }) {
-  const [state, setState] = useState<'idle' | 'copied'>('idle');
+// THE REPLY DRAFT IS THE EMAIL CARD (law `one-component-one-behaviour` — lib/present/behaviour.ts):
+// the follow-up this chat drafted renders as THE SAME inline, editable EmailCard every other surface
+// mounts — the meeting's compose lane (recipients from its attendees, Send behind the commit door),
+// seeded with the words this chat wrote. The copy-only "Copy draft →" button it replaced was a
+// second door to the same deed with none of the card's fields. A meeting this reader cannot send
+// for (no transcript of their own) keeps the words as the paste pack — Copy is then the honest door.
+function ReplyDraft({ body, transcriptId }: { body: string; transcriptId?: string }) {
   return (
-    <Button
-      variant="soft"
-      size="sm"
-      onClick={() => { navigator.clipboard.writeText(body); setState('copied'); setTimeout(() => setState('idle'), 2000); }}
-      className="mt-2"
-    >
-      <PaperAirplaneIcon className="w-3 h-3 flex-shrink-0" />
-      {state === 'copied' ? 'Copied ✓' : 'Copy draft →'}
-    </Button>
+    <div className="mt-2">
+      {transcriptId
+        ? <EmailCard compose={{ kind: 'meeting', id: transcriptId }} preparedBody={body} />
+        : <PastePackCard title="Follow-up draft" body={body} note="Copy it into your email" />}
+    </div>
   );
 }
 
 // ── Message renderer ──────────────────────────────────────────────────────────
 
-function MessageContent({ content, onOpenWorkflow, onOpenProcess }: {
+function MessageContent({ content, onOpenWorkflow, onOpenProcess, transcriptId }: {
   content: string;
+  transcriptId?: string;
   onOpenWorkflow: (title: string, skill?: string) => void;
   onOpenProcess?: (processId: string) => void;
 }) {
@@ -220,7 +224,7 @@ function MessageContent({ content, onOpenWorkflow, onOpenProcess }: {
         <ProcessChip process={openProcess} onOpenProcess={onOpenProcess} />
       )}
       {replyDraft?.body && (
-        <ReplyDraftButton body={replyDraft.body} />
+        <ReplyDraft body={replyDraft.body} transcriptId={transcriptId} />
       )}
     </div>
   );
@@ -340,7 +344,7 @@ export default function MeetingChatSidebar({
         kind: 'custom', id: 'content',
         node: (
           <div className="text-[13px] leading-[1.55] text-neutral-800">
-            <MessageContent content={msg.content} onOpenWorkflow={onOpenWorkflow} onOpenProcess={onOpenProcess} />
+            <MessageContent content={msg.content} onOpenWorkflow={onOpenWorkflow} onOpenProcess={onOpenProcess} transcriptId={meetingContext.transcriptId} />
           </div>
         ),
       }] : undefined,

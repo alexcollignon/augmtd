@@ -25,13 +25,16 @@ export async function POST(
     /** THE MATERIAL DOOR (relay canvas W2, law 7): the thing to work on, handed in by hand. It
      *  rides as the run's TRIGGER CONTEXT — which is also what makes a reaction workflow
      *  testable, since the reaction refusal is keyed on that context being empty. */
-    material?: { text?: string; name?: string };
+    material?: { text?: string; name?: string; files?: Array<{ kbFileId?: string }> };
   };
   const isTest = body.test === true;
 
-  // Whitespace-honest, excerpt-marked (materialBlock owns the cut) — never a silent 20k chop.
-  const { materialBlock } = await import('@/lib/workflows/inputs');
-  const material = materialBlock(body.material);
+  // ATTACHED FILES (the sheet's file door, POST /api/workflows/[id]/material-upload, already turned
+  // each into a Knowledge document whose text was verified at upload). Deduped and capped here too —
+  // a hand-written body can never carry more than the door offers.
+  const { MATERIAL_FILES_MAX } = await import('@/lib/workflows/material-files');
+  const { materialFileIds, resolveMaterialFiles, stampMaterialFilesForRun } = await import('@/lib/workflows/material-ingest');
+  const fileIds = materialFileIds(body.material?.files, MATERIAL_FILES_MAX);
 
   // Allow owner OR any company member if shared — RLS handles the access check
   const { data: wf, error: wfErr } = await supabase
@@ -52,6 +55,19 @@ export async function POST(
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
+
+  // THE FILES RIDE AS TEXT, READ FROM THE PERSON'S OWN ROWS — resolved BEFORE a run exists, so an
+  // unreadable or foreign file is an honest refusal at the door, never a silent empty run.
+  let attached: Array<{ kbFileId: string; name: string; text: string }> = [];
+  if (fileIds.length) {
+    const res = await resolveMaterialFiles(admin, user.id, fileIds);
+    if (!res.ok) return NextResponse.json({ error: res.error }, { status: res.status });
+    attached = res.files;
+  }
+
+  // Whitespace-honest, excerpt-marked (materialBlock owns every cut) — never a silent 20k chop.
+  const { materialBlock } = await import('@/lib/workflows/inputs');
+  const material = materialBlock(body.material, attached);
 
   // Concurrency guard: no overlapping manual + scheduled runs
   const { data: existing } = await supabase
@@ -81,6 +97,7 @@ export async function POST(
   }
 
   const runId = (run as { id: string }).id;
+  if (attached.length) await stampMaterialFilesForRun(admin, user.id, workflowId, runId, attached.map((f) => f.kbFileId));
 
   // Fire the executor after the response is sent
   after(async () => {

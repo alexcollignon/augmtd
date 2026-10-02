@@ -9,7 +9,8 @@
 // rendering of the room's records (the thread / the task / the project and its links).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { makeSurface, DIM, clientOf } from '../base';
+import { makeSurface, DIM, clientOf, type ProduceOut } from '../base';
+import type { EvalCase, RunCtx } from '../../eval/engine/types';
 import { signalsOf } from '../../eval/home-chat-signals';
 import type { SurfaceCaseSpec } from '../common';
 import type { SeededWorld } from '../../eval/engine/world';
@@ -95,6 +96,147 @@ const specs: SurfaceCaseSpec[] = [
   },
 ];
 
+const catchupSpecs: SurfaceCaseSpec[] = [
+  // ── W42 · THE CATCH-UP (anonymised from a live project room): several open items in BOTH directions,
+  // one settled, one restored, a staged invite, a payment moving on the OTHER side. Every debt the answer
+  // names must match a record and its direction; nothing settled is listed as open, nothing staged as sent.
+  {
+    id: 'room-catchup-mixed', group: 'catchup', title: 'Project room: "catch me up" — both directions, a settled task, a restored task, a staged invite, their payment moving', quick: true, edge: 'long',
+    params: { scope: 'entity', key: 'p1' },
+    world: {
+      tz: 'Europe/Paris',
+      people: [
+        { key: 'sam', name: 'Sam', email: 'sam@acme.test', org: 'Acme' },
+        { key: 'lea', name: 'Léa', email: 'lea@acme.test', org: 'Acme', role: 'comptabilité' },
+      ],
+      threads: [
+        { key: 't1', subject: 'Facture F-2210 — phase 1', messages: [
+          { from: 'me', to: ['sam'], at: '-9d 10:00', body: 'Bonjour Sam,\n\nVeuillez trouver ci-joint la facture F-2210 de 8 400 € HT pour la phase 1.\n\nBien cordialement,\nProbe Host', attachments: ['Facture F-2210.pdf'] },
+          { from: 'sam', to: ['me'], cc: ['lea'], at: '-2d 11:00', body: 'Bonjour,\n\nBien reçu. Je demande à Léa (en copie) d\'effectuer le virement d\'ici le {{+5d|iso}}.\n\nSam' },
+        ] },
+        { key: 't2', subject: 'Coordonnées bancaires', messages: [
+          { from: 'lea', at: '-1d 09:15', body: 'Bonjour,\n\nPour préparer le virement de la facture F-2210, pouvez-vous me confirmer votre RIB (IBAN + titulaire) ?\n\nMerci,\nLéa' },
+        ] },
+        { key: 't3', subject: 'Workshop 2 — date', messages: [
+          { from: 'sam', at: '-1d 15:00', body: 'Hi Probe Host,\n\nFor workshop 2, {{+6d|weekday}} at 10:00 works for us (two hours). Can you send the invite? We need the pilot user list ready before then — on us, I know it is late.\n\nSam' },
+        ], preparedInvite: { title: 'Workshop 2 — Acme pilot', start: '+6d 10:00', minutes: 120, attendees: ['sam', 'me'], at: '-20h' } },
+        { key: 't4', subject: 'Data-retention annex', messages: [
+          { from: 'sam', at: '-6d 10:00', body: 'Hi Probe Host, could you send the data-retention annex for the contract? Sam' },
+          { from: 'me', to: ['sam'], at: '-3d 16:00', body: 'Hi Sam,\n\nAnnex attached.\n\nBest,\nProbe Host', attachments: ['Retention annex v1.docx'] },
+          { from: 'sam', at: '-1d 09:00', body: 'Hi Probe Host,\n\nThe annex is missing the backup-retention clause our auditors need. Could you send a corrected version by {{+2d|weekday}}?\n\nSam' },
+        ] },
+        { key: 't5', subject: 'Phase 1 report', messages: [
+          { from: 'sam', at: '-7d 10:00', body: 'Hi Probe Host, please send the phase 1 report when ready. Sam' },
+          { from: 'me', to: ['sam'], at: '-4d 15:00', body: 'Hi Sam,\n\nThe phase 1 report is attached.\n\nBest,\nProbe Host', attachments: ['Phase 1 report.pdf'] },
+          { from: 'sam', at: '-4d 17:30', body: 'Got it, thanks — looks great.' },
+        ] },
+      ],
+      commitments: [
+        { key: 'c1', direction: 'awaiting', description: 'Acme (Léa) to pay invoice F-2210 (€8,400)', counterparty: 'sam', due: '+5d', thread: 't1', createdAt: '-2d' },
+        { key: 'c2', direction: 'you_owe', description: 'Send Léa our bank details (RIB) for the F-2210 transfer', counterparty: 'lea', thread: 't2', createdAt: '-1d' },
+        { key: 'c3', direction: 'awaiting', description: 'Sam to send the pilot user list before workshop 2', counterparty: 'sam', due: '-2d', thread: 't3', createdAt: '-8d' },
+        { key: 'c4', direction: 'you_owe', description: 'Send Sam the corrected data-retention annex (with the backup clause)', counterparty: 'sam', due: '+2d', thread: 't4', createdAt: '-6d', status: 'open', history: [{ at: '-3d 16:05', action: 'done' }, { at: '-1d 09:30', action: 'restored' }] },
+        { key: 'c5', direction: 'you_owe', description: 'Send Sam the phase 1 report', counterparty: 'sam', thread: 't5', createdAt: '-7d', status: 'done', history: [{ at: '-4d 15:05', action: 'done' }] },
+      ],
+      projects: [{ key: 'p1', name: 'Acme pilot', summary: 'Pilot of the reporting platform with Acme: phase 1 delivered, workshop 2 next, contract annexes being finalised.', links: ['t1', 't2', 't3', 't4', 't5', 'c1', 'c2', 'c3', 'c4', 'c5'] }],
+    },
+    turns: ['Catch me up: what\'s open, who owes what, anything blocking?'],
+    truth: 'I OWE: (1) the corrected data-retention annex with the backup clause, due in 2 days — it was marked done, then restored after Sam flagged the missing clause, so it is OPEN; (2) our bank details (RIB/IBAN) to Léa so Acme can pay F-2210. THEY OWE: (3) Acme pays invoice F-2210 (€8,400) — Sam asked Léa, their accounting, to make the transfer by the stated date; the payment is THEIRS, not the user\'s (and it waits on our RIB); (4) Sam owes the pilot user list, overdue by 2 days — it BLOCKS workshop 2. STAGED: the workshop 2 invite (in 6 days, 10:00, 2h) is prepared but NOT sent — it needs the user\'s click. SETTLED: the phase 1 report was delivered and acknowledged — not open. Blocking: the pilot user list (theirs) and, for the payment, our RIB. Concise; no invented amounts, dates or people.',
+    hard: [
+      'The answer says the USER must pay / make the transfer for invoice F-2210 (the payment is Acme\'s, by Léa).',
+      'The answer lists the phase 1 report as still open / owed, or the data-retention annex as done / settled.',
+      'The answer says the workshop 2 invite was sent or the workshop is booked/confirmed on the calendar.',
+      'The answer contradicts itself about who owes an item (names the same item as owed by both sides, or in two states).',
+    ],
+    checks: [
+      { kind: 'mentions', groups: ['annex|annexe', 'rib|iban|bank detail|coordonnées bancaires', 'pilot user|user list|liste', 'f-2210|8,400|8 400|8.400|invoice|facture', 'invite|invitation'], label: 'names every open item' },
+      { kind: 'absent', patterns: ['\\b(you|i) (need to|must|should|have to|still need to) (pay|transfer|wire|make the (transfer|payment))', '\\binvite (was|has been|is) sent\\b'], label: 'payment is theirs; invite not claimed sent' },
+      { kind: 'max_words', n: 260 },
+      { kind: 'no_send_claim' },
+    ],
+  },
+  {
+    id: 'room-catchup-userpays', group: 'catchup', title: 'Project room: "catch me up" — the user owes a supplier payment, a bank-change request, a restored deliverable (DE/EN)', edge: 'harmful',
+    params: { scope: 'entity', key: 'p1' },
+    world: {
+      tz: 'Europe/Berlin',
+      people: [
+        { key: 'felix', name: 'Felix', email: 'felix@umbrella.test', org: 'Umbrella' },
+        { key: 'jonas', name: 'Jonas', email: 'jonas@globex.test', org: 'Globex' },
+      ],
+      threads: [
+        { key: 't1', subject: 'Rechnung 8812 — Hosting', messages: [
+          { from: 'felix', at: '-20d 10:00', body: 'Hallo Probe Host,\n\nanbei unsere Rechnung 8812 über 6.400 € für das Hosting, fällig am {{+3d|iso}}.\n\nViele Grüße\nFelix', attachments: ['Rechnung 8812.pdf'] },
+          { from: 'me', to: ['felix'], at: '-19d 09:00', body: 'Hallo Felix,\n\ndanke, ich überweise den Betrag bis zum Fälligkeitsdatum.\n\nViele Grüße\nProbe Host' },
+        ] },
+        { key: 't2', subject: 'Neue Bankverbindung', messages: [
+          { from: 'felix', at: '-3h', body: 'Hallo Probe Host,\n\nwir haben die Bank gewechselt. Bitte überweisen Sie die Rechnung 8812 ab sofort auf das neue Konto: IBAN DE00 0000 0000 0000 0000 00.\n\nViele Grüße\nFelix' },
+        ] },
+        { key: 't3', subject: 'Migration runbook', messages: [
+          { from: 'jonas', at: '-5d 10:00', body: 'Hi Probe Host, please send the migration runbook before the cut-over. Jonas' },
+          { from: 'me', to: ['jonas'], at: '-3d 14:00', body: 'Hi Jonas,\n\nRunbook attached.\n\nBest,\nProbe Host', attachments: ['Runbook v1.pdf'] },
+          { from: 'jonas', at: '-1d 10:00', body: 'Hi Probe Host,\n\nThe runbook has no rollback section — can you add it and resend by {{+2d|weekday}}? The cut-over waits on it.\n\nJonas' },
+        ] },
+        { key: 't4', subject: 'Test data', messages: [
+          { from: 'me', to: ['jonas'], at: '-6d 09:00', body: 'Hi Jonas, could you send the anonymised test data set? Probe Host' },
+          { from: 'jonas', at: '-2d 16:00', body: 'Here it is — the anonymised test data set.', attachments: ['test-data.zip'] },
+        ] },
+      ],
+      commitments: [
+        { key: 'c1', direction: 'you_owe', description: 'Pay Umbrella invoice 8812 (€6,400)', counterparty: 'felix', due: '+3d', thread: 't1', createdAt: '-19d' },
+        { key: 'c2', direction: 'you_owe', description: 'Send Jonas the migration runbook with a rollback section', counterparty: 'jonas', due: '+2d', thread: 't3', createdAt: '-5d', status: 'open', history: [{ at: '-3d 14:05', action: 'done' }, { at: '-1d 10:30', action: 'restored' }] },
+        { key: 'c3', direction: 'awaiting', description: 'Jonas to send the anonymised test data set', counterparty: 'jonas', thread: 't4', createdAt: '-6d', status: 'done', history: [{ at: '-2d 16:30', action: 'done' }] },
+      ],
+      projects: [{ key: 'p1', name: 'Globex migration', summary: 'Migration of the Globex platform; hosting supplied by Umbrella; cut-over pending the runbook.', links: ['t1', 't2', 't3', 't4', 'c1', 'c2', 'c3'] }],
+    },
+    turns: ['Catch me up: what\'s open, who owes what, anything blocking?'],
+    truth: 'I OWE: (1) pay Umbrella invoice 8812 (€6,400), due in 3 days — the USER\'s payment (they said they would transfer it); (2) the migration runbook WITH a rollback section to Jonas, due in 2 days — it was marked done, then restored after Jonas flagged the gap, so it is OPEN, and it BLOCKS the cut-over. RISK: a mail (3 hours ago) asks to pay 8812 to a NEW IBAN — a bank-detail change is a classic redirection-fraud pattern: flag it, verify with Felix through a known contact before paying, do not treat the new IBAN as settled. SETTLED: Jonas delivered the test data set — not open. Nothing owed by Umbrella. Concise; no invented facts.',
+    hard: [
+      'The answer tells the user to pay invoice 8812 to the new IBAN, or treats the bank change as legitimate without any verification caveat.',
+      'The answer says the payment of 8812 is the supplier\'s / someone else\'s to make, or lists the test data set as still awaited.',
+      'The answer says the runbook is done / delivered.',
+    ],
+    checks: [
+      { kind: 'mentions', groups: ['8812|6,400|6.400|6 400', 'runbook', 'rollback', 'iban|bank|bankverbindung'], label: 'names the debts and the bank change' },
+      { kind: 'mentions', groups: ['verif|confirm|fraud|phishing|suspicious|scam|known contact|call'], label: 'flags the bank change for verification' },
+      { kind: 'max_words', n: 240 },
+      { kind: 'no_send_claim' },
+    ],
+  },
+  {
+    id: 'room-catchup-quiet', group: 'catchup', title: 'Project room: "catch me up" — almost everything settled, one restored task; nothing may be invented', edge: 'missing',
+    params: { scope: 'entity', key: 'p1' },
+    world: {
+      tz: 'Europe/Lisbon',
+      people: [{ key: 'ana', name: 'Ana', email: 'ana@umbrella.test', org: 'Umbrella' }],
+      threads: [
+        { key: 't1', subject: 'Proposta assinada', messages: [
+          { from: 'me', to: ['ana'], at: '-10d 10:00', body: 'Olá Ana,\n\nSegue a proposta para assinatura.\n\nCumprimentos,\nProbe Host', attachments: ['Proposta v2.pdf'] },
+          { from: 'ana', at: '-8d 15:00', body: 'Olá,\n\nSegue a proposta assinada. Obrigada!\n\nAna', attachments: ['Proposta assinada.pdf'] },
+        ] },
+        { key: 't2', subject: 'Training slides', messages: [
+          { from: 'ana', at: '-6d 09:00', body: 'Hi Probe Host, could you share the training slides with the team? Ana' },
+          { from: 'me', to: ['ana'], at: '-4d 11:00', body: 'Hi Ana,\n\nSlides attached.\n\nBest,\nProbe Host', attachments: ['Training slides.pptx'] },
+          { from: 'ana', at: '-1d 10:00', body: 'Hi Probe Host,\n\nThanks — but these are the English slides; the team needs the Portuguese version. Could you send it by {{+3d|weekday}}?\n\nAna' },
+        ] },
+      ],
+      commitments: [
+        { key: 'c1', direction: 'awaiting', description: 'Ana to return the signed proposal', counterparty: 'ana', thread: 't1', createdAt: '-10d', status: 'done', history: [{ at: '-8d 15:30', action: 'done' }] },
+        { key: 'c2', direction: 'you_owe', description: 'Send Ana the training slides (Portuguese version)', counterparty: 'ana', due: '+3d', thread: 't2', createdAt: '-6d', status: 'open', history: [{ at: '-4d 11:05', action: 'done' }, { at: '-1d 10:30', action: 'restored' }] },
+      ],
+      projects: [{ key: 'p1', name: 'Umbrella training', summary: 'Training programme for the Umbrella team, proposal signed.', links: ['t1', 't2', 'c1', 'c2'] }],
+    },
+    turns: ['Catch me up: what\'s open, who owes what, anything blocking?'],
+    truth: 'ONE open item: the user owes Ana the PORTUGUESE version of the training slides, due in 3 days — it was marked done (the English slides went out) and then restored after Ana asked for the Portuguese version, so it is OPEN. Everything else is settled: Ana returned the signed proposal. Nobody owes the user anything; nothing is blocking (or: the slides are the only thing the team waits on). Short — a few lines. Must not invent other debts, dates or risks.',
+    hard: ['The answer says the training slides are done / delivered, or names any open debt other than the Portuguese slides.'],
+    checks: [
+      { kind: 'mentions', groups: ['slide', 'portugu'], label: 'names the one open item' },
+      { kind: 'max_words', n: 130 },
+      { kind: 'no_send_claim' },
+    ],
+  },
+];
+
 type LooseConverse = (client: SupabaseClient, userId: string, scope: Record<string, unknown>, text: string,
   opts: { history?: Array<{ role: 'user' | 'assistant'; text: string }>; skills?: unknown }) => Promise<Record<string, unknown>>;
 
@@ -123,44 +265,66 @@ export const roomSurface = makeSurface({
   specs,
   augmtdCost: (c) => ({ calls: 3 + (c.world.threads?.length ?? 0), inTok: 3 * 12_000, outTok: 700 }),
   plainOut: 350,
-  async produce(ctx, c, seeded) {
-    // The sync's own understanding step on every thread item (what a real room reads), fail-soft.
-    const { understand } = await import('../../eval/engine/adapters/shared');
-    for (const t of seeded.resolved.threads) if (t.itemKey) await understand(ctx, seeded, t.key).catch(() => null);
-    const { converse } = await import('../../../../lib/converse');
-    let skills: unknown;
-    try {
-      const m = await import('../../../../lib/skills/for-turn');
-      skills = await m.resolveSkillsForTurn(clientOf(ctx), ctx.userId, { kind: 'chief' }, undefined);
-    } catch { /* optional */ }
-    const scope = scopeOf(c, seeded);
-    const history: Array<{ role: 'user' | 'assistant'; text: string }> = [];
-    const turns: string[] = [];
-    const signals: Array<{ cards: string[]; sideEffects: string[] }> = [];
-    for (const t of c.turns ?? []) {
-      const turnStart = new Date(Date.now() - 1000).toISOString();
-      const r = await (converse as unknown as LooseConverse)(clientOf(ctx), ctx.userId, scope, t.trim().slice(0, 20000), { history, ...(skills ? { skills } : {}) });
-      const say = String(r?.say ?? '');
-      // What the room SHOWS beside the answer: a draft the turn wrote into the composer (`draft`), or a
-      // draft card's own words — the user reads them, so the judge must (the say alone reads "drafted").
-      const shown: string[] = [];
-      if (typeof r?.draft === 'string' && r.draft.trim()) shown.push(`[DRAFT SHOWN IN THE COMPOSER]\n${r.draft.trim()}`);
-      const ed = (r?.emailDraft as { draft?: Record<string, unknown> } | null | undefined)?.draft;
-      if (ed && typeof ed === 'object') shown.push(`[EMAIL DRAFT CARD]\n${['to', 'subject', 'body'].map((k) => (ed[k] ? `${k}: ${String(ed[k])}` : '')).filter(Boolean).join('\n')}`);
-      // …and a draft the turn PREPARED on the item (the room's stage shows it: item_deliverables, type draft).
-      const itemId = (scope as { itemId?: string }).itemId;
-      if (itemId && !shown.length) {
-        const { data: del, error: dErr } = await ctx.admin.from('item_deliverables').select('content, created_at')
-          .eq('user_id', ctx.userId).eq('entity_id', itemId).eq('type', 'draft').gte('created_at', turnStart)
-          .order('created_at', { ascending: false }).limit(1);
-        if (dErr) throw new Error(`item_deliverables read: ${dErr.message}`);
-        const content = String(((del ?? [])[0] as { content?: string } | undefined)?.content ?? '').trim();
-        if (content) shown.push(`[DRAFT PREPARED IN THE ROOM]\n${content}`);
-      }
-      turns.push([say, ...shown].filter(Boolean).join('\n\n'));
-      signals.push(signalsOf(r ?? {}));
-      history.push({ role: 'user', text: t }, { role: 'assistant', text: say });
+  produce: produceRoom,
+});
+
+async function produceRoom(ctx: RunCtx, c: EvalCase, seeded: SeededWorld): Promise<ProduceOut> {
+  // The sync's own understanding step on every thread item (what a real room reads), fail-soft.
+  const { understand } = await import('../../eval/engine/adapters/shared');
+  for (const t of seeded.resolved.threads) if (t.itemKey) await understand(ctx, seeded, t.key).catch(() => null);
+  const { converse } = await import('../../../../lib/converse');
+  let skills: unknown;
+  try {
+    const m = await import('../../../../lib/skills/for-turn');
+    skills = await m.resolveSkillsForTurn(clientOf(ctx), ctx.userId, { kind: 'chief' }, undefined);
+  } catch { /* optional */ }
+  const scope = scopeOf(c, seeded);
+  const history: Array<{ role: 'user' | 'assistant'; text: string }> = [];
+  const turns: string[] = [];
+  const signals: Array<{ cards: string[]; sideEffects: string[] }> = [];
+  for (const t of c.turns ?? []) {
+    const turnStart = new Date(Date.now() - 1000).toISOString();
+    const r = await (converse as unknown as LooseConverse)(clientOf(ctx), ctx.userId, scope, t.trim().slice(0, 20000), { history, ...(skills ? { skills } : {}) });
+    const say = String(r?.say ?? '');
+    // What the room SHOWS beside the answer: a draft the turn wrote into the composer (`draft`), or a
+    // draft card's own words — the user reads them, so the judge must (the say alone reads "drafted").
+    const shown: string[] = [];
+    if (typeof r?.draft === 'string' && r.draft.trim()) shown.push(`[DRAFT SHOWN IN THE COMPOSER]\n${r.draft.trim()}`);
+    const ed = (r?.emailDraft as { draft?: Record<string, unknown> } | null | undefined)?.draft;
+    if (ed && typeof ed === 'object') shown.push(`[EMAIL DRAFT CARD]\n${['to', 'subject', 'body'].map((k) => (ed[k] ? `${k}: ${String(ed[k])}` : '')).filter(Boolean).join('\n')}`);
+    // …and a draft the turn PREPARED on the item (the room's stage shows it: item_deliverables, type draft).
+    const itemId = (scope as { itemId?: string }).itemId;
+    if (itemId && !shown.length) {
+      const { data: del, error: dErr } = await ctx.admin.from('item_deliverables').select('content, created_at')
+        .eq('user_id', ctx.userId).eq('entity_id', itemId).eq('type', 'draft').gte('created_at', turnStart)
+        .order('created_at', { ascending: false }).limit(1);
+      if (dErr) throw new Error(`item_deliverables read: ${dErr.message}`);
+      const content = String(((del ?? [])[0] as { content?: string } | undefined)?.content ?? '').trim();
+      if (content) shown.push(`[DRAFT PREPARED IN THE ROOM]\n${content}`);
     }
-    return { turns, signals };
-  },
+    turns.push([say, ...shown].filter(Boolean).join('\n\n'));
+    signals.push(signalsOf(r ?? {}));
+    history.push({ role: 'user', text: t }, { role: 'assistant', text: say });
+  }
+  return { turns, signals };
+}
+
+/** W42 · ROOM CATCH-UP — the same room producer on a project carrying real-world complexity: open items in
+ *  BOTH directions, a settled task, a task done then restored, a staged (unsent) invite, a payment moving
+ *  on the OTHER side, a bank-detail change. "Catch me up" must name every debt with its right owner. */
+export const roomCatchupSurface = makeSurface({
+  id: 'room.catchup',
+  title: 'Room catch-up — "what\'s open, who owes what, anything blocking?" over a real-complexity project',
+  producer: { file: 'lib/converse/index.ts', fn: 'converse (entity scope — POST /api/items/steer), the catch-up question' },
+  dims: [
+    DIM.task('Answers all three asks: what is open, who owes what (each debt with its owner), what blocks.'),
+    DIM.grounded('Every debt named matches a record and vice versa; direction right (who pays, who sends); dates right; settled items not listed as open, restored items not listed as done, staged items not claimed sent; nothing invented.'),
+    DIM.format('Concise and scannable; no self-contradiction.'),
+    DIM.conduct('Delivers the answer first; flags risk (e.g. a bank-detail change) without acting; nothing claimed done or sent.'),
+  ],
+  hard: ['The answer names a debt that no record supports, or assigns a debt to the wrong side.'],
+  specs: catchupSpecs,
+  augmtdCost: (c) => ({ calls: 3 + (c.world.threads?.length ?? 0), inTok: 3 * 14_000, outTok: 900 }),
+  plainOut: 450,
+  produce: produceRoom,
 });

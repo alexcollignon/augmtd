@@ -14,7 +14,7 @@
 // `getPrepared` (the one prepared reader), and this is simply the one way to draw it.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 export interface PastePackCardProps {
   /** The artifact's title ("Words for — …"). */
@@ -57,6 +57,22 @@ export function PastePackCard({ title, body, note, by, className }: PastePackCar
       </div>
     </div>
   );
+}
+
+/** THE SAME CARD, addressed by its pool row (a host that holds only the ref — the project room's
+ *  prepared row): the words are read through the one preview door, then the card is the card. */
+export function PastePackById({ id, title, note, by }: { id: string; title?: string | null; note?: string | null; by?: string | null }) {
+  const [body, setBody] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/files/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ref: { kind: 'deliverable', id } }) })
+      .then((r) => r.json()).then((d) => { if (alive) setBody(String(d?.text ?? '')); })
+      .catch(() => { if (alive) setBody(''); });
+    return () => { alive = false; };
+  }, [id]);
+  if (body === null) return <div className="h-24 w-full max-w-[640px] animate-pulse rounded-xl border border-gray-200 bg-white" />;
+  if (!body.trim()) return null;
+  return <PastePackCard title={title} body={body} note={note ?? null} by={by ?? null} />;
 }
 
 export default PastePackCard;

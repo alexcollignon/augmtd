@@ -12,7 +12,10 @@ export function enforceUserSignOff(body: string, userName: string | null | undef
   for (let i = lines.length - 1; i >= 0; i--) {
     const l = lines[i].trim();
     if (!l) continue;
-    if (wrong.has(l.replace(/[*_]/g, '').toLowerCase())) lines[i] = lines[i].replace(l, first);
+    const bare = l.replace(/[*_]/g, '');
+    // W42: a name PLACEHOLDER in any language ("[Ihr Name]", "[Votre nom]", "[o meu nome]", "[Su nombre]") is wrong too.
+    const placeholder = /^\[[^\]]{0,24}\b(name|nom|nome|nombre|vorname)\b[^\]]{0,12}\]$/i.test(bare);
+    if (wrong.has(bare.toLowerCase()) || placeholder) lines[i] = lines[i].replace(l, first);
     break;
   }
   return lines.join('\n');

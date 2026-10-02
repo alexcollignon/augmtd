@@ -32,6 +32,8 @@ import { deedWords } from '@/lib/evidence/sources';
 import { getPersonEntities, type PersonEntity } from '@/lib/entities/people';
 import { normalizeEmail } from '@/lib/core/email';
 import { withdrawnReasonOf } from '@/lib/prepare/read';
+import { asksPaymentDetailChange, mentionsPaymentDetails } from '@/lib/prepare/risky-asks';
+import { isPaymentAct } from '@/lib/commitments/quote-actor';
 import { askIsMoot, verdictRequireLabels } from '@/lib/room/ask-mootness';
 import { obligationAnchorOf } from '@/lib/work/obligation-anchor'; // W20.C · THE ONE ANCHOR
 /** W20.C · the board's keys + the current message's clock — THE ONE ANCHOR reads `received_at`. */
@@ -73,6 +75,13 @@ export type BoardEntry = {
    *  ownership — the move floor's "others owe and their date has not passed" fact (lib/room/cta-law
    *  moveNotYetDue). Absent = unknown (the floor then never fires). */
   direction?: string | null;
+  /** W42 · DONE THEN RESTORED: the date this row was last reopened after a settlement (activity
+   *  `restored`), so the page states it ONCE, plainly — never "settled" and "open" side by side. */
+  reopenedAt?: string | null;
+  /** W42 · the row's own words ask to CHANGE where payments go (lib/prepare/risky-asks) — security-marked. */
+  changeRequest?: boolean;
+  /** W42 · the conversation the row lives on — an inbox row and a commitment on ONE thread are one matter. */
+  threadId?: string | null;
 };
 
 // ── THE ROOM'S EVIDENCE POOL (W5a): ONE bounded pool per user, memoized briefly — the grounding is
@@ -236,6 +245,65 @@ export type GroundingOptions = {
   /** The CoS seat reading this page (lib/workers/cos-seat). Absent = no collapse, as before. */
   speaker?: string | null;
 };
+
+/** W42 · WHO OWES, ON THE LINE (pure): the row's owner in words the answer can repeat. */
+export function whoOwesWords(direction: string | null | undefined, who: string | null | undefined, judgedWork?: string | null, kind?: string): string {
+  const d = String(direction ?? '');
+  // A row the judge found settled/moveless is no debt of anyone's — never "waiting on" (an invented debt).
+  if (judgedWork === 'none' || judgedWork === 'looks_done') return 'no open move on either side (judged settled / nothing to do)';
+  if (d === 'you_owe') return `THE USER OWES this${who ? ` (to ${who})` : ''}`;
+  if (d === 'awaiting' && kind === 'inbox') return `the user awaits ${who || 'their'} reply on this thread — an awaited answer, not a deliverable; if the thread shows it answered or delivered, it is settled`;
+  if (d === 'awaiting') return `WAITING ON ${who || 'the other side'} (they owe it; the user does not)`;
+  if (d === 'none') return 'no one owes a move (awareness)';
+  return 'owner not recorded';
+}
+
+/**
+ * W42 · WHAT A ROW IS, STATED ON ITS LINE (pure): a staged invite is prepared work waiting for the user's send —
+ * not a debt, no due date of its own; their payment that waits on the user's bank details names that row as
+ * what holds it; a payment-detail CHANGE request is security-marked (never pay/update/acknowledge; verify via a
+ * contact the user already holds).
+ */
+export function boardRowNotes(board: Array<Pick<BoardEntry, 'ref' | 'title' | 'direction' | 'prepared' | 'changeRequest' | 'judgedWork'> & { kind?: string; threadId?: string | null; due?: string | null }>, today?: string,
+  settled: Array<{ title: string; direction: string | null; threadId: string | null }> = []): Map<string, { staged: boolean; noDue: boolean; lines: string[]; sameAs?: string }> {
+  const out = new Map<string, { staged: boolean; noDue: boolean; lines: string[]; sameAs?: string }>();
+  const add = (ref: string, line: string, staged = false, noDue = staged) => {
+    const e = out.get(ref) ?? { staged: false, noDue: false, lines: [] };
+    e.lines.push(line); e.staged = e.staged || staged; e.noDue = e.noDue || noDue; out.set(ref, e);
+  };
+  const detailsOwed = board.filter((b) => b.direction === 'you_owe' && mentionsPaymentDetails(b.title) && !b.changeRequest);
+  for (const b of board) {
+    if (b.prepared.some((p) => /^calendar invite/.test(p))) {
+      add(b.ref, 'STAGED, NOT SENT: a prepared calendar invite waiting for the user\'s click — prepared work, not a debt; it has no due date of its own, is never "overdue" or "late", and is never "sent" or "booked"', true);
+    }
+    if (b.direction === 'awaiting' && isPaymentAct(b.title) && detailsOwed.length) {
+      add(b.ref, `HELD BY THE USER: this payment waits on the user's bank details ("${detailsOwed[0].title}") — that is what blocks it`);
+      for (const d of detailsOwed) add(d.ref, `BLOCKS their payment ("${b.title}") — say so under what is blocking`);
+    }
+    // ONE MATTER, ONE ROW: the thread an open commitment lives on is that commitment — the inbox row is its
+    // conversation, never a second debt with a second date.
+    // (Same thread AND same owner — one thread may carry two matters: the invite the user owes and the list they owe.)
+    const twin = b.kind === 'inbox' && b.threadId && !b.prepared.some((p) => /^calendar invite/.test(p))
+      ? board.find((x) => x.kind === 'commitment' && x.threadId === b.threadId && x.direction === b.direction) : undefined;
+    const closed = !twin && b.kind === 'inbox' && b.threadId && b.direction === 'awaiting'
+      ? settled.find((c) => c.threadId === b.threadId && c.direction === 'awaiting') : undefined;
+    if (closed) {
+      add(b.ref, `SETTLED: what was awaited on this thread ("${closed.title}") is DONE — nobody owes anything here; never list it as open or awaited`, false, true);
+      const e = out.get(b.ref)!; e.sameAs = 'settled';
+    }
+    if (twin) {
+      add(b.ref, `SAME MATTER as "${twin.title}" — the conversation of that one item: never list it separately, never give it a date of its own`, false, true);
+      const e = out.get(b.ref)!; e.sameAs = twin.ref;
+    }
+    if (today && b.direction === 'awaiting' && b.kind === 'commitment' && /^\d{4}-\d{2}-\d{2}/.test(String(b.due ?? '')) && String(b.due).slice(0, 10) < today) {
+      add(b.ref, 'OVERDUE ON THEIR SIDE — name it under what is blocking (whatever waits on it is held)');
+    }
+    if (b.changeRequest) {
+      add(b.ref, 'SECURITY — A REQUEST TO CHANGE PAYMENT DETAILS (a classic redirection-fraud pattern): never tell the user to pay, use, update or "acknowledge" the new account and never list it as an owed reply; the only safe move is the user verifying it by calling a contact they ALREADY hold for this company — nothing changes until then');
+    }
+  }
+  return out;
+}
 
 export async function assembleRoomGrounding(
   client: SupabaseClient, userId: string, scope: RoomScope, opts: GroundingOptions = {},
@@ -414,6 +482,8 @@ export async function assembleRoomGrounding(
       who: (sd.from_name as string) || (sd.from_address as string) || null,
       due: ((sd.understanding as { deadline?: string } | undefined)?.deadline) ?? null,
       direction: ((sd.understanding as { ownership?: string } | undefined)?.ownership) ?? null,
+      changeRequest: asksPaymentDetailChange(`${String(sd.subject ?? '')}\n${String(sd.body ?? '')}`),
+      threadId: (sd.thread_id as string) ?? null,
       judgedWork: j?.work ?? null, judgedReason: j?.reason ? clipLabel(j.reason, 120) : null,
       prepared: prep.list, expired: prep.expired, withdrawn: prep.withdrawn, preparedBy: prep.by, attachments,
       evidence: evidenceByRef.get(`inbox:${String(it.id)}`) ?? [],
@@ -430,6 +500,8 @@ export async function assembleRoomGrounding(
       who: (c.counterparty as string) ?? null,
       due: (c.due_date as string) ?? null,
       direction: (c.direction as string | null) ?? null,
+      changeRequest: asksPaymentDetailChange(String(c.description ?? '')),
+      threadId: (c.thread_id as string) ?? null,
       judgedWork: j?.work ?? null, judgedReason: j?.reason ? clipLabel(j.reason, 120) : null,
       prepared: cprep.list, expired: cprep.expired, withdrawn: cprep.withdrawn, preparedBy: cprep.by, attachments: [],
       evidence: evidenceByRef.get(`commit:${String(c.id)}`) ?? [],
@@ -598,8 +670,10 @@ export async function assembleRoomGrounding(
   }
   // THE LEDGER NOW (W19.A): the settled rows, stated as settled, AHEAD of the synthesis — so any
   // consumer's head-clip keeps the rows and loses the older prose, never the reverse.
+  const liveRefs = new Set(board.map((b) => b.ref));
   const settledNow = ledger
-    .filter((l) => (l.ref.startsWith('inbox:') || l.ref.startsWith('commit:')) && isClosedLedgerLine(l.text))
+    // W42: a row on the LIVE board is open now — it is never also listed as settled (one row, one state).
+    .filter((l) => (l.ref.startsWith('inbox:') || l.ref.startsWith('commit:')) && isClosedLedgerLine(l.text) && !liveRefs.has(l.ref))
     .slice(0, 6)
     .map((l) => {
       const how = /\(dismissed/.test(l.text) ? 'dismissed' : /^DONE — /.test(l.text) ? 'done' : 'handled';
@@ -622,12 +696,39 @@ export async function assembleRoomGrounding(
     return `[${id}] ${f.filename}${f.summary ? ` — ${clipForPrompt(String(f.summary), 100)}` : ''}`;
   });
 
+  // W42 · DONE THEN RESTORED — read once from the activity ledger for the live rows (one query).
+  if (board.length) {
+    try {
+      const ids = board.map((b) => b.id);
+      const { data: rest, error: restErr } = await client.from('activity_events').select('entity_id, created_at')
+        .eq('user_id', userId).eq('type', 'restored').in('entity_id', ids).order('created_at', { ascending: false }).limit(200);
+      if (!restErr) {
+        const last = new Map<string, string>();
+        for (const r of (rest ?? []) as Array<{ entity_id: string; created_at: string }>) if (!last.has(r.entity_id)) last.set(r.entity_id, r.created_at);
+        for (const b of board) b.reopenedAt = last.get(b.id) ?? null;
+      }
+    } catch { /* the reopen fact is an enhancement */ }
+  }
+
   // W37 · a due day is stated with its weekday and where it stands from today ("in 4 days (Monday 5 October
   // 2026)") — a bare ISO day was read as the wrong weekday ("due Tue 5 Oct").
   const boardTz = await tzP;
   const dueWords = (due: string) => (/^\d{4}-\d{2}-\d{2}/.test(due) ? `${due.slice(0, 10)}, ${dayRelativeTo(due.slice(0, 10), new Date(), boardTz)}` : due);
+  // W42 · A SETTLED MATTER STAYS SETTLED ON ITS THREAD: the linked commitments already closed (one bounded read
+  // of the room's own links), so an inbox row whose awaited thing is done is never re-listed as owed.
+  let settledCommits: Array<{ title: string; direction: string | null; threadId: string | null }> = [];
+  if (commitIds.length) {
+    const { data: done, error: doneErr } = await client.from('commitments').select('description, direction, thread_id')
+      .in('id', commitIds).eq('user_id', userId).in('status', ['done', 'dismissed']);
+    if (!doneErr) settledCommits = ((done ?? []) as Array<{ description: string | null; direction: string | null; thread_id: string | null }>)
+      .map((c) => ({ title: clipLabel(String(c.description ?? ''), 90), direction: c.direction, threadId: c.thread_id }));
+  }
+  const notes = boardRowNotes(board, new Intl.DateTimeFormat('en-CA', { timeZone: boardTz }).format(new Date()), settledCommits);
   const boardLines = board.map((b) =>
-    `- [${b.ref}] (${b.kind}) "${b.title}"${b.who ? ` · with ${b.who}` : ''}${b.due ? ` · due ${dueWords(b.due)}` : ''}` +
+    `- [${b.ref}] (${b.kind}) "${b.title}"${b.who ? ` · with ${b.who}` : ''}${notes.get(b.ref)?.sameAs ? '' : ` · ${whoOwesWords(b.direction, b.who, b.judgedWork, b.kind)}`}${b.due && !notes.get(b.ref)?.noDue ? ` · due ${dueWords(b.due)}` : ''}` +
+    `${(notes.get(b.ref)?.lines ?? []).map((n) => ` · ${n}`).join('')}` +
+    // W42: a row that was settled and then restored is OPEN — the page says so once, plainly.
+    `${b.reopenedAt ? ` · REOPENED ${String(b.reopenedAt).slice(0, 10)} (it was marked done, then restored — it is OPEN now; say that once, plainly)` : ''}` +
     `${b.judgedWork ? ` · judged: ${b.judgedWork}` : ' · not yet judged'}` +
     `${b.prepared.length ? ` · PREPARED: ${b.prepared.join(' + ')}${b.preparedBy ? ` (by ${b.preparedBy})` : ''}` : ' · nothing prepared yet'}` +
     // TIME TRUTH: a past-time invite is stated as expired on the line itself — never "prepared".
@@ -647,14 +748,17 @@ export async function assembleRoomGrounding(
     // The blocker sits with the position it belongs to — the composer speaks it INSIDE the position,
     // never as a second alarm (the standalone amber block died with the right pane).
     entity?.blocking ? `WATCH-OUT (what is blocking this work right now): ${clipForPrompt(entity.blocking, 300)}` : null,
-    entity?.whoOwesYou.length ? `THE USER OWES: ${entity.whoOwesYou.join('; ')}` : null,
-    entity?.whoOwesThem.length ? `OWED TO THE USER: ${entity.whoOwesThem.join('; ')}` : null,
+    // W42 · ONE LIST FOR WHO OWES WHAT: with a live board, "who owes what" is the board's rows (each
+    // line states its owner) — the synthesis's older lists once named three debts while the cards under
+    // the answer showed a different three. They speak only when there is no board to speak from.
+    !board.length && entity?.whoOwesYou.length ? `THE USER OWES: ${entity.whoOwesYou.join('; ')}` : null,
+    !board.length && entity?.whoOwesThem.length ? `OWED TO THE USER: ${entity.whoOwesThem.join('; ')}` : null,
     entity?.nextMove ? `THE SYNTHESIZED NEXT MOVE: ${entity.nextMove.title}` : null,
   ].filter(Boolean);
   const body = [
     entity ? `THE WORK: "${entity.name}"${entity.tracked ? ' (a tracked project)' : ' (recognized, untracked)'}` : `THE WORK: a standalone item`,
     settledNow.length ? `THE LEDGER NOW — SETTLED (these rows are closed: never speak them as owed, due, overdue or blocking; the rows win over any summary below):\n${settledNow.join('\n')}` : null,
-    board.length ? `THE LIVE BOARD (each item: judged work + what is ACTUALLY prepared — these are the only truths about preparedness).\nA document listed as ATTACHED TO IT is IN OUR POSSESSION and was sent to the user BY the counterparty: never say it is missing or was not received, never ask for it to be resent, and never propose sending the counterparty their own document back.\n${board.some((b) => b.evidence.length) ? `${BOARD_EVIDENCE_RULE}\n` : ''}${boardLines.join('\n')}${boardOmitted ? `\n(NOTE: ~${boardOmitted} older linked item${boardOmitted === 1 ? '' : 's'} not shown — never claim this list is everything.)` : ''}` : null,
+    board.length ? `THE LIVE BOARD (each item: who owes it + judged work + what is ACTUALLY prepared — these rows are the ONE list of open work: any "what's open / who owes what" comes from them, one row each, never a debt that is not a row here — in whatever format the user asked for).\nA document listed as ATTACHED TO IT is IN OUR POSSESSION and was sent to the user BY the counterparty: never say it is missing or was not received, never ask for it to be resent, and never propose sending the counterparty their own document back.\n${board.some((b) => b.evidence.length) ? `${BOARD_EVIDENCE_RULE}\n` : ''}${boardLines.join('\n')}${boardOmitted ? `\n(NOTE: ~${boardOmitted} older linked item${boardOmitted === 1 ? '' : 's'} not shown — never claim this list is everything.)` : ''}` : null,
     // THE GROUND WINS: the world's record sits DIRECTLY UNDER the board it may contradict, so no
     // reader can consume the judged verbs without also reading what has actually happened since —
     // and so it survives every clip a consumer applies to the tail of this page.

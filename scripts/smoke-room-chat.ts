@@ -175,7 +175,7 @@ async function main() {
   }
   {
     const route = src('app/api/items/steer/route.ts');
-    const iAsk = route.indexOf('claim = await writeAskTurn('), iConv = route.indexOf('await converse(supabase, user.id, scope, text')  /* ⟲ RE-POINTED W20: the door hands the core its progress callback when it streams */, iLive = route.indexOf('await questionStillLive(');
+    const iAsk = route.indexOf('claim = await writeAskTurn('), iConv = route.indexOf('await converse(supabase, user.id, coreScope, coreText') /* ⟲ RE-POINTED (one-component-one-behaviour · stacks + targeting, Oct 2) */   /* ⟲ RE-POINTED W20: the door hands the core its progress callback when it streams */, iLive = route.indexOf('await questionStillLive(');
     ok('A6 the door writes (claims) the question BEFORE the reasoning and re-checks it is live AFTER', iAsk > 0 && iConv > iAsk && iLive > iConv);
     ok('A6 the answer is written only under the claim', /const claimed = claim === 'claimed'/.test(route)
       && /else if \(claimed && chatRoomKey && answerKey\) \{[\s\S]{0,400}writeAnswerTurn\(/.test(route));

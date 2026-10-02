@@ -169,6 +169,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     const emailDraft = new Set<string>();
     const preparedBy = new Map<string, string>();
     const preparedRef = new Map<string, string>(); // commit id → deliverable id (the tappable preview)
+    // ONE COMPONENT, ONE BEHAVIOUR: WHAT that deliverable is, so the room renders it by its table row
+    // (a paste pack is a deed — its own card; a message draft is a deed — the email card; a document
+    // is an artifact — the compact card → the one viewer). Read from the row's own stored shape.
+    const preparedRefKind = new Map<string, 'paste_pack' | 'draft' | 'document'>();
     const reviewNotes: string[] = [];              // B1b — evaluator objections → the brief's Watch-outs
     const briefDeliverables: Array<{ id: string; title: string | null; by: string | null; at: string | null }> = [];
     // Conversations + attachments (R3d) ride the same read.
@@ -209,7 +213,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     let coworkerDocs: Array<{ name: string; source: string; at: string | null }> = [];
     {
       for (const d of (dl ?? []) as Array<Record<string, unknown>>) {
-        const meta = (d.metadata ?? {}) as { agentName?: string; worker?: string; review?: { objection?: string }; version_of?: string; decisionBrief?: boolean };
+        const meta = (d.metadata ?? {}) as { agentName?: string; worker?: string; review?: { objection?: string }; version_of?: string; decisionBrief?: boolean; pastePack?: boolean };
         // THE ONE READER'S RULES apply HERE too (owner, Aug 13: three "Reply draft — steered"
         // lines + decision rows read as clutter): version rows are the LEDGER (the current reply
         // lives on sd.draft, already surfaced as the item's prepared chip) — they never list, and
@@ -220,7 +224,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         const by = meta.agentName ?? meta.worker ?? null;
         const eidRaw = d.entity_id as string;
         if (d.type === 'draft' || d.type === 'document') {
-          if (!preparedBy.has(eidRaw)) { preparedBy.set(eidRaw, by ? String(by).split(' ')[0] : 'draft'); preparedRef.set(eidRaw, d.id as string); }
+          const kindOf = meta.pastePack ? 'paste_pack' as const : d.type === 'draft' ? 'draft' as const : 'document' as const;
+          if (!preparedBy.has(eidRaw)) {
+            preparedBy.set(eidRaw, by ? String(by).split(' ')[0] : 'draft'); preparedRef.set(eidRaw, d.id as string);
+            preparedRefKind.set(eidRaw, kindOf);
+          } else if (preparedRefKind.get(eidRaw) === 'document' && kindOf !== 'document') {
+            // A DEED OUTRANKS AN ARTIFACT for the row's one card (the document stays in Details).
+            preparedRef.set(eidRaw, d.id as string); preparedRefKind.set(eidRaw, kindOf);
+          }
           briefDeliverables.push({ id: d.id as string, title: (d.title as string) ?? null, by: by ? String(by).split(' ')[0] : null, at: (d.created_at as string) ?? null });
         }
         if (meta.review?.objection) reviewNotes.push(String(meta.review.objection)); // B1b watch-outs
@@ -245,6 +256,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         // WHAT was prepared, not who by — the one fact a card's candidacy may be decided on.
         preparedKind: emailDraft.has(rawId) ? 'email_draft' as const : null,
         preparedRef: preparedRef.get(rawId) ?? null, // → the deliverable preview (5B.3)
+        preparedRefKind: preparedRefKind.get(rawId) ?? null, // → which table row renders it (one-component-one-behaviour)
         // The GUARDED counterparty (spine: never self, never automated) — the room's waiting groups
         // key on this, never raw `who`, so "Waiting on <the user>" is impossible by construction.
         blockedOn: (w as { blockedOn?: string | null }).blockedOn ?? null,

@@ -556,9 +556,11 @@ console.log('\nT4 · THE COWORKER DM — a MODE of the one surface, not a surfac
     // so an `artifact` frame now lands as a LINK card into the thread that holds it. That is the
     // live surface's DELIBERATE choice (its own comment says so), not an accident, and this gate
     // pins it so a future registry rebuild is a decision, never a silent regression.
-    gate('T4.6 a typed `artifact` frame lands as a LINK card by design (the render registry has no live mount)',
+    // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): a typed `artifact` frame the table KNOWS (a
+    // LinkedIn post) arrives AS ITS OWN CARD through the one reader; only a type no row knows stays a link.
+    gate('T4.6 a typed `artifact` frame lands as its own card when the table knows its type (else a quiet link)',
       !!dm && /event\.type === 'artifact' && event\.artifact/.test(dm)
-      && /no identity of its own in this/.test(dm)
+      && /postsOfCardArtifacts\(event\.artifact, w\.name\)/.test(dm) && /A type no row knows stays/.test(dm)
       && !fs.existsSync(path.join(ROOT, 'components/work/artifacts/registry.tsx')));
   }
 
@@ -766,7 +768,8 @@ console.log('\nT6 · THE ROOM’S CONVERSATION — the rail, through the ONE kit
     && /kind: 'proposal', id: 'move'/.test(rail)
     && /confirmLabel: resp\.move\.label/.test(rail)
     && /\{moveCard && <div className="pt-0\.5"><ThreadCardView card=\{moveCard\} \/><\/div>\}/.test(rail)
-    && /stageOfArtifactKey\(mergedArt\.key\), respMoveTargetId/.test(rail)
+    // ⟲ RE-POINTED (one-component-one-behaviour): a merged (card-less) artifact's door is its own Open.
+    && /if \(mergedArt\) \{ mergedArt\.onOpen\(\); return; \}/.test(rail)
     // …and the old seat is really gone (no second move renderer anywhere in the rail)
     && !/pinnedActions/.test(rail));
   // ⟲ RE-POINTED (W3.5, Sep 22 — registry precedence #1: "the stitched field-assembly fallback is
@@ -942,12 +945,12 @@ console.log('\nT7 · THE HEADER + THE DRAWER — the right pane collapses; the w
 
   // THE PANE IS GONE — the stage mounts only for a focused artifact, and a null stage means the
   // conversation is the whole room (the shell's own law, so no door can re-dock a pane by accident).
-  gate('T7.4 no docked pane: the stage mounts ONLY for a focused artifact',
-    !!room && /stage=\{[\s\S]{0,400}e && focused \? \(/.test(room) && /\) : null\s*\n\s*\}/.test(room));
-  gate('T7.5 the shell treats a null stage as a full-width conversation',
-    !!shell && /const hasStage = stage !== null/.test(shell)
-    && /hasStage\s*\n?\s*\? 'hidden lg:flex flex-1/.test(shell) && /: 'flex flex-1 min-w-0/.test(shell)
-    && /stage: React\.ReactNode \| null;/.test(shell));
+  // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the split stage is RETIRED — a focused item
+  // reads in THE ONE VIEWER (beside the conversation; a sheet on a phone), and the shell has one child.
+  gate('T7.4 no docked pane: a focused item reads in the one viewer, never a split stage',
+    !!room && !/\bstage=\{/.test(room) && /<ArtifactViewer open=\{!!\(e && focused && focused\.kind !== 'deliverable'\)\}/.test(room));
+  gate('T7.5 the shell is the conversation, full width — no stage prop, no aside',
+    !!shell && !/<aside/.test(shell) && !/\bstage\??:/.test(shell) && /className="flex flex-1 min-w-0 flex-col h-full min-h-0"/.test(shell));
 
   // THE HANDLE + THE DRAWER — summoned, viewport-fixed (THE OVERLAY LAW), three ways out.
   // ⚠️ RE-POINTED (owner walk, Sep 15: "Filed — weird label, find something easier to understand").
@@ -2028,7 +2031,8 @@ console.log('\nT14 · CROSS-PROJECT NAV — warm before the click, a frame after
   gate('T14.3a THE ROOM NEVER RENDERS A VOID \u2014 a null view stands in the room\u2019s own shape, not in nothing',
     !!room && /conversation=\{rail \? \(/.test(room)
     && /\) : <RoomConversationSkeleton \/>\}/.test(room)
-    && !/conversation=\{rail \? \([\s\S]*?\) : null\}/.test(room));
+    // (scoped to the conversation prop itself — a later `) : null}` elsewhere in the room is not it)
+    && !/\) : null\}/.test(room.slice(room.indexOf('conversation={rail ? ('), room.indexOf('<RoomConversationSkeleton />}'))));
   gate('T14.3b ONE SHAPE, TWO MOMENTS \u2014 the boundary and the room share the skeleton (a drifting ghost re-layouts)',
     !!skel && /export function RoomConversationSkeleton\(/.test(skel)
     // presentational purity: safe in a server loading.tsx AND a client room
@@ -2268,9 +2272,10 @@ console.log('\nT15 · THE ITEM ROOM IS THE PROJECT ROOM — same header, same ha
     && !/bg-rose-|bg-red-/.test(detail?.match(/<header className="flex-shrink-0 flex items-center gap-3 h-\[52px\][\s\S]*?<\/header>/)?.[0] ?? ''));
 
   // THE STAGE IS SUMMONED — no docked second pane at rest, on ANY kind.
-  gate('T15.5 the shell receives a NULL stage at rest (the source material is summoned, never docked)',
-    !!detail && /stage=\{room\.stageOpen \? \(/.test(detail) && /\) : null\}/.test(detail)
-    && !!shell && /const hasStage = stage !== null/.test(shell));
+  // ⟲ RE-POINTED (one-component-one-behaviour): the summoned source reads in THE ONE VIEWER, closed at rest.
+  gate('T15.5 the source material is summoned into the one viewer, never docked (closed at rest)',
+    !!detail && /<ArtifactViewer open=\{room\.stageOpen\} onClose=\{room\.onLowerStage\}/.test(detail)
+    && /<RoomShell conversation=\{rail\} \/>/.test(detail));
   // RE-POINTED (Sep 9, owner walk — "I see the thread button on top, not clear; maybe move it to
   // the component as the others"): a kind whose source material READS (a mail thread) no longer
   // summons a stage for it at all — it reads in the drawer's own Thread section, and the card owns
@@ -2278,11 +2283,11 @@ console.log('\nT15 · THE ITEM ROOM IS THE PROJECT ROOM — same header, same ha
   // summon handle. The law is unchanged where it still applies; the seat moved where it didn't.
   gate('T15.6 every kind starts with its stage DOWN, and every stage lowers (no docked pane anywhere)',
     !!detail && (detail.match(/const \[sourceOpen, setSourceOpen\] = useState\(false\);/g) ?? []).length === 2
-    && (detail.match(/const stageOpen = sourceOpen \|\|/g) ?? []).length === 2
-    && (detail.match(/const lowerStage = \(\) =>/g) ?? []).length === 4
-    // …and the two reading kinds raise their stage only on a DEED, never to "show me the thread".
-    && /const stageOpen = composerOpen \|\| forwarding \|\| inviteOpen;/.test(detail)
-    && /const stageOpen = composerOpen \|\| inviteOpen;/.test(detail));
+    // ⟲ RE-POINTED (one-component-one-behaviour): only a SOURCE that reads raises (the meeting's notes,
+    // a parked gate's commitment) — the two reading kinds raise NOTHING: their deeds are inline cards.
+    && /const stageOpen = sourceOpen;/.test(detail) && /const stageOpen = sourceOpen \|\| \(isHandoff && inviteOpen\);/.test(detail)
+    && (detail.match(/const lowerStage = \(\) =>/g) ?? []).length === 2
+    && (detail.match(/stageOpen: false,/g) ?? []).length === 2);
   gate('T15.6b the summon door is VISIBLE chrome where it exists, and ABSENT where the drawer reads the source',
     !!detail && /onClick=\{room\.stageOpen \? room\.onLowerStage : room\.onSummonStage\}/.test(detail)
     && /\{room\.sourceLabel\}<\/button>/.test(detail)
@@ -2298,11 +2303,13 @@ console.log('\nT15 · THE ITEM ROOM IS THE PROJECT ROOM — same header, same ha
     // …and it never doubles as a ⋯ row.
     && !/label: 'Open the thread'/.test(detail));
   gate('T15.7 the raised stage wears the room’s breadcrumb (one tap lowers it; you never left the room)',
-    !!detail && /onClick=\{room\.onLowerStage\}/.test(detail) && /\{clipTitle\(room\.title, 30\)\}/.test(detail)
-    && /\{room\.stageLabel\}/.test(detail));
-  gate('T15.8 the summoned SHEET survives inside it (reply · follow-up · invite · forward, one frame, one Send)',
-    !!detail && /function StageOverlay/.test(detail) && (detail.match(/<StageOverlay/g) ?? []).length >= 3
-    && /absolute inset-x-0 bottom-0 z-20 max-h-\[72%\]/.test(detail));
+    // ⟲ RE-POINTED (one-component-one-behaviour): the viewer's own header names the room and what is open.
+    !!detail && /title=\{room\.title\} meta=\{room\.stageLabel\}/.test(detail));
+  // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the summoned SHEET is RETIRED — reply · follow-up
+  // · invite · forward are their inline cards in the conversation (one frame per deed, one Send).
+  gate('T15.8 no summoned sheet survives (reply · follow-up · invite · forward are inline cards, one Send each)',
+    !!detail && !/function StageOverlay|<StageOverlay/.test(detail)
+    && !/absolute inset-x-0 bottom-0 z-20 max-h-\[72%\]/.test(detail));
   // RE-POINTED (W7.3 ONE STAGE, Sep 23 — found live: the commitment door's "Source" handle and a
   // nudge row summoned a split stage holding the OLD ComposePanel while the email door wore the kit
   // EmailCard in the conversation). The commitment door's stage now exists ONLY for a parked gate;
@@ -2316,7 +2323,9 @@ console.log('\nT15 · THE ITEM ROOM IS THE PROJECT ROOM — same header, same ha
     && /const stageOpen = sourceOpen \|\| \(isHandoff && inviteOpen\);/.test(detail)
     && /gate=\{gateStanding && gateNode \?/.test(detail));
   gate('T15.8c THE JUDGE NEVER RAISES A STAGE — the meeting door keeps its person-raised composer; the commitment door has NO composer stage at all (W7.3)',
-    !!detail && (detail.match(/const \[composeRaised, setComposeRaised\] = useState\(false\);/g) ?? []).length === 1
+    // ⟲ RE-POINTED (one-component-one-behaviour): no door raises a composer at all now — the meeting's
+    // person-summoned follow-up is its inline card (setComposing → the EmailCard compose lane).
+    !!detail && !/composeRaised/.test(detail) && /onClick: \(\) => setComposing\(true\)/.test(detail)
     && !/setComposing\(true\);/.test(detail.slice(detail.indexOf('function CommitmentDetail')))
     && !/stageOpen = sourceOpen \|\| composing/.test(detail));
 
@@ -2357,7 +2366,8 @@ console.log('\nT15 · THE ITEM ROOM IS THE PROJECT ROOM — same header, same ha
     && !/tabs\.push\(\{[\s\S]{0,200}GapLine/.test(detail));
   gate('T15.13 the drawer is the ONLY seat for that inventory (the stage stopped carrying it on the loose door)',
     !!detail && !/\{!embedded && railView && <ContextStrip/.test(detail)
-    && (detail.match(/\{embedded && <PreparedLead/g) ?? []).length >= 2
+    // ⟲ RE-POINTED (one-component-one-behaviour): embedded IS A READ — the drawer is the ONLY mount.
+    && (detail.match(/<PreparedLead /g) ?? []).length === 1
     && !/^\s*<PreparedLead prepared=\{view\?\.prepared \?\? null\} \/>$/m.test(detail));
 
   // KIND VARIANCE IS DATA — the frame takes chrome, never a layout branch.
@@ -2482,10 +2492,12 @@ console.log('\nT16 · THE INVITE CARD — filled, selectable in-card, committed 
   gate('T16.15 the RAIL mounts the real card in the stream (an artifact whose kind has a card carries it as `node`; the generic Open row is then structurally absent)',
     !!rail && /node\?: React\.ReactNode/.test(rail)
     && /art\.node\s*\n?\s*\? \{\s*\n?\s*kind: 'custom'/.test(rail));
-  gate('T16.16 the item rooms mount it at every door — the stream, the embedded stage, and the summoned stage — all the SAME component',
-    !!detail && (detail.match(/<InviteCard/g) ?? []).length >= 6
+  // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the embedded stage and the summoned stage are RETIRED —
+  // every door mounts the invite as ONE inline card in its conversation (email · commitment · follow-up · meeting).
+  gate('T16.16 the item rooms mount it at every door as the SAME inline conversation card (no stage copy, no "Review invite" button)',
+    !!detail && (detail.match(/<InviteCard/g) ?? []).length === 4
     && /node: <InviteCard kind="email"/.test(detail)
-    && /artifactList\.map\(\(art\) => art\.node \?/.test(detail));
+    && !/artifactList\.map\(\(art\) => art\.node \?/.test(detail) && !/>Review invite</.test(detail));
   gate('T16.17 the people typeahead has ONE implementation, shared by the invite’s attendees and the forward’s recipients',
     (() => {
       const defs = sourceFiles('components').filter((f) => /function PeopleSuggestInput/.test(read(f) || ''));
@@ -2827,7 +2839,8 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
         && mounts.includes('components/home/item-detail.tsx')
         && mounts.includes('components/home/home-ask.tsx')
         && mounts.includes('components/entities/entity-room.tsx')
-        && mounts.every((f) => /^components\/(home|thread|room|entities)\//.test(f));
+        // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): + the meeting chat (a live conversation surface).
+        && mounts.every((f) => /^components\/(home|thread|room|entities|meetings)\//.test(f));
     })()
     // the card's own chrome (recipient chips, the direction tabs, the tone menu) exists in the KIT alone
     && (() => {
@@ -2836,7 +2849,7 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
       return renders.length === 1 && renders[0] === 'components/thread/thread-cards.tsx';
     })());
   gate('T18.16 the ITEM ROOM mounts it in the stream as the reply artifact’s own card (the generic Open row is then structurally absent)',
-    !!detail && /node: <EmailCard\s*\n?\s*item=\{\{ id/.test(detail)
+    !!detail && /node: <EmailCard[\s\S]{0,240}?item=\{\{ id/.test(detail)
     && !!rail && /art\.node\s*\n?\s*\? \{\s*\n?\s*kind: 'custom'/.test(rail));
   gate('T18.17 THE CARD IS THE CTA — a node-carrying artifact is never merged away into the pinned text line',
     !!rail && /mergedArtifactKey\(respMove, \(artifacts \?\? \[\]\)\.filter\(\(a\) => !a\.node\)\)/.test(rail));
@@ -2984,9 +2997,11 @@ console.log('\nT18 · THE EMAIL CARD — one kind, one host, two doors, the one 
     // prepared reply, a standalone one) — which is the law being kept, not broken. What must stay
     // singular is the component, and T18.15/T18.21a hold that.
     // ⟲ RE-POINTED W20 (A CLAIM RENDERS IN EVERY CHAT): the chat's cards mount through ONE renderer shared by the Home chat and the item rooms (components/home/chat-cards.tsx) and persist/rehydrate through ONE table (lib/present/turn-card.ts) — same hosts, same pointers, one home.
-    !!homeAsk && (homeAsk.match(/<EmailCard\b/g) ?? []).length === 1 && ((read('components/home/chat-cards.tsx') || '').match(/<EmailCard\b/g) ?? []).length === 2
+    // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the one renderer also owns the stage verbs' deed
+    // cards (deedCardFor: the item reply + the compose lane; the invite) — same hosts, one file.
+    !!homeAsk && (homeAsk.match(/<EmailCard\b/g) ?? []).length === 1 && ((read('components/home/chat-cards.tsx') || '').match(/<EmailCard\b/g) ?? []).length === 5 /* + the compose lane: a reply-to-a-card revision of a commitment message */
     && /<EmailCard coworker=/.test(homeAsk) && /<EmailCard item=/.test(read('components/home/chat-cards.tsx') || '') && /<EmailCard standalone=/.test(read('components/home/chat-cards.tsx') || '')
-    && (homeAsk.match(/<InviteCard\b/g) ?? []).length === 0 && ((read('components/home/chat-cards.tsx') || '').match(/<InviteCard\b/g) ?? []).length === 1
+    && (homeAsk.match(/<InviteCard\b/g) ?? []).length === 0 && ((read('components/home/chat-cards.tsx') || '').match(/<InviteCard\b/g) ?? []).length === 2
     && (homeAsk.match(/<WorkflowDraftCard\b/g) ?? []).length === 1
     // both lanes end in the SAME turn fields the one mount reads
     && /drafts: m\.metadata\.email_drafts\.map\(\(dr\) => \(\{ draft: dr, tid, agentId \}\)\)/.test(homeAsk)
@@ -3188,8 +3203,8 @@ console.log('\nT20 · THE DEED MOVES THE BRIEF — the room never claims a deed 
     && /export function announceDeed\(\): void/.test(echo)
     && !/detail:/.test(echo));
   gate('T20.9b every send surface echoes it — invite (which fired NOTHING before), email, forward, the chat-approved commit',
-    ['components/home/invite-card.tsx', 'components/home/email-card.tsx',
-     'components/home/item-detail.tsx', 'components/home/item-rail.tsx']
+    // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the item doors' own send surfaces retired into the cards.
+    ['components/home/invite-card.tsx', 'components/home/email-card.tsx', 'components/home/item-rail.tsx']
       .every((f) => /announceDeed\(\)/.test(read(f) ?? '')));
   gate('T20.9c the reader’s OWN deed replaces in place (reason `user`), while the poll stays frozen — the law’s own exception, not a loophole',
     !!room && /window\.addEventListener\(DEED_EVENT, onPrepared\)/.test(room)
@@ -4204,7 +4219,8 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
       const route = read('app/api/items/steer/route.ts') || '';
       const conv = read('lib/converse/index.ts') || '';
       // ⟲ RE-POINTED W20 (SHOW THE WORK): the door hands the core its progress callback when it streams.
-      return /converse\(supabase, user\.id, scope, text[,)]/.test(route)
+      /* ⟲ RE-POINTED (one-component-one-behaviour · stacks + targeting, Oct 2) */ 
+      return /converse\(supabase, user\.id, (?:scope|coreScope), (?:text|coreText)[,)]/.test(route)
         && /await import\('@\/lib\/inbox\/draft-reply'\)/.test(conv)
         && /generateReplyDraft\(userId, sd, client, instr\)/.test(conv)
         // and it never assembles an attachment block of its own
@@ -4387,7 +4403,7 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   // 1 — THE CARD REACHES THE PROJECT THREAD
   gate('T28.1 the project room mounts the ONE EmailCard for its prepared reply (same host, same Send)',
     !!room && /import \{ EmailCard \} from '@\/components\/home\/email-card'/.test(room)
-    && /<EmailCard item=\{\{ id: boardRowItemId\(r\) \}\}/.test(room)
+    && /<EmailCard item=\{\{ id: rid \}\}/.test(room) && /const rid = boardRowItemId\(r\);/.test(room)
     && /THE CARD CONTRACT REACHES THE PROJECT THREAD/.test(room));
   gate('T28.2 …and it is the SAME component the item room mounts (one rendering, never a project fork)',
     !!detail && /<EmailCard/.test(detail)
@@ -4412,7 +4428,8 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
         // ⟲ RE-POINTED (stabilization W2.1, Sep 22): the same import now also carries `prepAnchorKey`
         // (the ONE reader-side prep anchor producer) — the predicate's home is unchanged.
         // ⟲ RE-POINTED W19: the import also carries the kind-carrying door + lane-label producers.
-        && /import \{ railCoversItem, moveTargetId, mountsEmailCard, boardRowItemId(?:, prepAnchorKey)?[^}]*\} from '@\/lib\/room\/presentation'/.test(room)
+        // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): railCoversItem left with the split stage.
+        && /import \{ moveTargetId, mountsEmailCard, boardRowItemId(?:, prepAnchorKey)?[^}]*\} from '@\/lib\/room\/presentation'/.test(room)
         // the room no longer decides candidacy on a token string of its own (the LABEL may still
         // read `prepared`; what may not is the filter that decides whether a card mounts)
         && !/filter\([^)]*prepared === 'draft'/.test(room)
@@ -4447,7 +4464,8 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
         const detail = read('components/home/item-detail.tsx') ?? '';
         return /cachedWork === 'reply' \|\| cachedWork === 'send_file'/.test(draftRoute)
           && /await fetch\(`\/api\/inbox\/\$\{item!\.id\}\/send-reply`/.test(card)
-          && /fetch\(`\/api\/inbox\/\$\{id\}\/send-reply`/.test(detail)
+          // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the card's Send is now the ONLY one on the item door.
+          && !/\/send-reply`/.test(detail)
           // the file half of a send_file rides the card's own attach surface
           && /onAttachFile: \(\) => fileInputRef\.current\?\.click\(\)/.test(card)
           && /onAttachFromKb: \(\) => setKbPickerOpen\(true\)/.test(card);
@@ -4456,7 +4474,7 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   gate('T28.4h the card-bearing row LEADS the three-card cap — a CTA can never point at a card the stream declined to render',
     // ⟲ RE-POINTED W19: the rows carry their LANE ({ r, lane }) so a waiting row's card says it is a nudge.
     !!room && /const ordered = \[\.\.\.rows\]\.sort\(\(a, b\) => \(boardRowItemId\(a\.r\) === cardRowId \? -1 : boardRowItemId\(b\.r\) === cardRowId \? 1 : 0\)\);/.test(room)
-    && /return ordered\.slice\(0, 3\)\.map\(\(\{ r, lane \}\) =>/.test(room));
+    && /const fromRows = ordered\.slice\(0, 3\)\.map\(\(\{ r, lane \}\) =>/.test(room));
   gate('T28.4i ONE DEED CHANNEL — the card announces its send once (announceDeed → DEED_EVENT); the room does not wire a second callback for the same fact',
     !!room && !/<EmailCard[\s\S]{0,200}onSent=/.test(room)
     && /window\.addEventListener\(DEED_EVENT, onPrepared\)/.test(room)
@@ -4481,8 +4499,10 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
       const i = rail!.indexOf('const moveClick = resp?.move');
       const seg = rail!.slice(i, i + 2600);
       // the mail branch stands BEFORE the two rungs that end in a stage…
-      return seg.indexOf("onStage?.('reply', id)") > 0
-        && seg.indexOf('if (moveIsMail) {') < seg.indexOf("onStage?.('reply', id)")
+      // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the last rung summons the reply CARD inline (summonDeed),
+      // never a stage — and the mail branch still stands before it.
+      return seg.indexOf("summonDeed('reply', id)") > 0
+        && seg.indexOf('if (moveIsMail) {') < seg.indexOf("summonDeed('reply', id)")
         // …it goes no deeper than the thread…
         && /if \(moveHref && !selfTarget\) \{ go\(moveHref\); return; \}/.test(seg)
         // …and with nowhere to go it speaks, in the room's own ephemeral idiom (never persisted)
@@ -4492,19 +4512,22 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   gate('T28.4f ONE EDITOR, ONE PLACE — a stage whose item is edited elsewhere raises NO composer, and the card and the overlay can never both stand',
     (() => {
       const det = read('components/home/item-detail.tsx') ?? '';
-      return /if \(hideArtifactCards\) return;/.test(det)
-        && /const replyCardInStage = embedded && !hideArtifactCards/.test(det)
-        && /\{composerOpen && !replyCardInStage && \(/.test(det);
+      // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the overlay is GONE — the card is the only editor.
+      return /if \(hideArtifactCards \|\| !initialStage\) return;/.test(det)
+        && !/composerOpen|replyCardInStage|<ReplyEditor/.test(det);
     })());
   gate('T28.4g THE SAME DOOR SHOWS THE SAME VIEW EVERY TIME — a plain focus bumps the signal and lowers the stages (no intent, no raise)',
-    !!room && /setStageNonce\(\(n\) => n \+ 1\);\s*\n\s*setInjectedDraft\(null\)/.test(room)
+    // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): a focus carries NO stage intent at all (the room
+    // holds none); an intent only ever summons a card.
+    !!room && !/seNorthwindStage|setStageNonce|setInjectedDraft/.test(room)
     && (() => {
       const det = read('components/home/item-detail.tsx') ?? '';
-      return /if \(!initialStage\) \{ lowerStage\(\); return; \}/.test(det)
+      return /if \(hideArtifactCards \|\| !initialStage\) return;/.test(det)
         && /\}, \[stageSignal, hideArtifactCards\]\);/.test(det);
     })());
   gate('T28.5 A DEED PRESENTS EXACTLY ONCE — the deep read never grows a second card for the same item',
-    !!room && /hideArtifactCards=\{railCoversItem\(rail\?\.move\?\.ref, focused\.id\) \|\| cardRowId === focused\.id\}/.test(room));
+    // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the deep read in the one viewer IS A READ, always.
+    !!room && /kind=\{focused\.kind\} embedded\s*\n(?:\s*\/\/[^\n]*\n)*\s*hideArtifactCards\n/.test(room));
   gate('T28.6 an artifact that CARRIES a card is never merged into the pinned card as a sentence',
     !!rail && /mergedArtifactKey\(respMove, \(artifacts \?\? \[\]\)\.filter\(\(a\) => !a\.node\)\)/.test(rail));
 
@@ -4515,7 +4538,7 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     && (() => {
       const i = rail!.indexOf('const moveClick = resp?.move');
       const seg = rail!.slice(i, i + 900);
-      return seg.indexOf('focusCard(cardForMove.key)') < seg.indexOf('onStage?.(stageOfArtifactKey');
+      return seg.indexOf('focusCard(cardForMove.key)') < seg.indexOf('mergedArt.onOpen()');
     })());
   gate('T28.8 the door has a REAL destination — ONE producer for the card’s DOM handle, written by the wrapper, read by the CTA',
     !!rail && /const cardDomId = \(artifactKey: string\) => `aug-card-\$\{artifactKey\}`;/.test(rail)
@@ -4595,13 +4618,13 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
           .filter((f) => /export function boardRowItemId\(/.test(read(f) ?? '')).length === 1;
     })());
   gate('T28.28 EVERY ROW DEED ADDRESSES THE RAW ROW — the card’s id, the anchor key, and every per-item route in the room',
-    !!room && /<EmailCard item=\{\{ id: boardRowItemId\(r\) \}\}/.test(room)
+    !!room && /<EmailCard item=\{\{ id: rid \}\}/.test(room) && /const rid = boardRowItemId\(r\);/.test(room)
     // ⟲ RE-POINTED (stabilization W2.1, Sep 22): the anchor key is the WRITER's shape (`prep:<spineId>`,
     // lib/prepare/pass.ts) produced by `prepAnchorKey` from the raw row id — `prep:<rawId>` never
     // matched a persisted narration, so every card appended at the stream's end. The raw-row law
     // still holds: the helper is handed boardRowItemId(r).
-    && /anchorKey: prepAnchorKey\(.*boardRowItemId\(r\)\)/.test(room)
-    && /cardRowId === boardRowItemId\(r\)/.test(room)
+    && /anchorKey: prepAnchorKey\(.*, rid\)/.test(room)
+    && /boardRowItemId\(a\.r\) === cardRowId/.test(room)
     // no per-item route in this room is still handed the spine key
     && !/\/api\/(?:inbox|commitments)\/\$\{w\.id\}/.test(room)
     && !/id: w\.id \}\)/.test(room));
@@ -4626,11 +4649,10 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   gate('T28.30 NO HYDRATION FALLBACK — the room can never raise a reply composer, so one button cannot have two behaviours',
     // ⟲ RE-POINTED W19: the door's address now carries the item's KIND (stageDoorHref — a
     // commitment never opens as an email); a reply stage still only ever opens the thread.
-    !!room && /const href = stageDoorHref\(itemId, laneRows\.map\(\(\{ r \}\) => r\), roomMove\?\.ref \?\? null\);/.test(room)
-    && /if \(stage === 'reply' \|\| !href\.includes\('kind=email'\)\) return true;/.test(room)
-    && /THE ROOM NEVER RAISES A REPLY COMPOSER/.test(room)
-    // …and the only remaining stage intents are the two whose cards are not in the thread yet
-    && /seNorthwindStage\(stage === 'forward' \? 'forward' : 'invite'\)/.test(room));
+    // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the room raises NO stage of any kind — forward and
+    // invite are inline cards now too (deedCardFor), so the last two intents are gone with the stage.
+    !!room && !/seNorthwindStage|stageDoorHref|onStage=/.test(room)
+    && /deedCardFor\(dd\.stage, dd\.itemKind, dd\.itemId\)/.test(room));
   gate('T28.31 THE SHAPE RIDES THE KEY — a room payload’s shape change invalidates every cached envelope (no stale-shape first open)',
     (() => {
       const warm = read('lib/room/warm-room.ts') ?? '';
@@ -4844,7 +4866,7 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
     !!rail && (() => {
       const i = rail!.indexOf('const send = async (raw: string');
       // ⟲ RE-POINTED W19: the send door grew its answer-key preamble — the window widens, the law is unchanged.
-      const seg = rail!.slice(i, i + 4200);
+      const seg = rail!.slice(i, i + 5600); // ⟲ RE-POINTED (Oct 2): the send now resolves its card target first
       // no durable write on either failure path of the one send door…
       return !/addTurn\(\{ role: 'system', text: d\.error/.test(seg)
         && /setTurns\(\(prev\) => \[\.\.\.prev, \{ role: 'system', text: d\.error \|\| "That didn't go through/.test(seg);
@@ -4936,13 +4958,15 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   // ⟲ RE-POINTED W18: the item page passes `null` (no door — the source card above unfolds the
   // conversation in place); every other item-lane mount still gets the host's door or its own address.
   gate('T29.7 the reply card\'s door IS STRUCTURAL — host-supplied or its own address, except where the host says none (null)',
-    !!card && /const openThread = onOpenThread === null \? undefined : \(onOpenThread \?\? \(item \? \(\) => router\.push\(`\/item\/\$\{item\.id\}\?kind=email`\) : undefined\)\);/.test(card)
+    // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): its own door reads the thread in THE ONE VIEWER
+    // (never a navigation out of the chat).
+    !!card && /const openThread = onOpenThread === null \? undefined : \(onOpenThread \?\? \(item\s*\n?\s*\? \(\) => \{ void threadViewer\.open\(\{ kind: 'email_thread', itemId: item\.id/.test(card)
     // ⟲ RE-POINTED (W15.1): the handler only — the kit owns the one label ("Open thread").
     && /\.\.\.\(openThread \? \{ onOpenThread: openThread \} : \{\}\)/.test(card)
     // the unfillable state points at the thread through the same derivation
     && /\{openThread && \(/.test(card)
     // and both room mounts still hand it the door they own
-    && !!room && /<EmailCard item=\{\{ id: boardRowItemId\(r\) \}\} onOpenThread=/.test(room)
+    && !!room && /<EmailCard item=\{\{ id: rid \}\} onOpenThread=/.test(room)
     && !!detail && /onOpenThread=\{null\}/.test(detail));
 
   // …AND IT IS ALWAYS IN VIEW (owner walk, Sep 14: "where is the option to open email thread?" +
@@ -5455,7 +5479,8 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
   // ── D2 · REVIEW OPENS THE ONE PANEL ──
   gate('T31.5 REVIEW RAISES THE ONE PANEL — the host\'s only doc deed is openArtifact, and the kit itself raises nothing',
     /onReview: \(\) => void openArtifact\(c\.art!\.tid, c\.art!\.id\)/.test(host31)
-    && /<ThreadArtifactsPanel/.test(host31)
+    // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the panel is THE ONE VIEWER's (the host holds the hook).
+    && /useArtifactViewer\(/.test(host31) && /<ThreadArtifactsPanel/.test(read('components/shared/artifact-viewer.tsx') ?? '')
     // presentational purity holds for the new kind too
     && !/fetch\(/.test(kit31) && !/useRouter/.test(kit31));
 
@@ -5472,8 +5497,9 @@ console.log('\nT25 · THE CONTEXT DRAWER READS, THE ROWS MEAN, THE FILES OPEN');
         && f !== 'components/work/chat-artifact-panel.tsx');
       return definers.length === 1 && definers[0].replace(/\\/g, '/') === 'components/work/chat-artifact-panel.tsx'
         && mounts.length === 1 && mounts[0] === definers[0]
-        && hosts.length >= 2
-        && hosts.every((f) => /from '@\/components\/work\/chat-artifact-panel'/.test(read(f) ?? ''));
+        // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): ONE host left — THE ONE VIEWER.
+        && hosts.filter((f) => /from '@\/components\/work\/chat-artifact-panel'/.test(read(f) ?? '')).length === 1
+        && hosts.filter((f) => /from '@\/components\/work\/chat-artifact-panel'/.test(read(f) ?? ''))[0] === 'components/shared/artifact-viewer.tsx';
     })());
 
   gate('T31.7 A REVISION LANDS ON THE SAME CARD — the fold reads the STORED chain (one version-utils), keeps ONE card per chain, and repoints it at the current version',
@@ -6606,7 +6632,8 @@ console.log('\nT36 · THE DECISION AND THE FORWARD — the last two room objects
   gate('T36.11 THE PREPARED FORWARD ARRIVES AS ITSELF — its artifact row mounts the card instead of degrading to "Open →", and both deep-dive seats mount the same host',
     /key: 'forward', label: 'Forward prepared/.test(detail36)
     && /node: <ForwardCard kind="email" entityId=\{id\}/.test(detail36)
-    && (detail36.match(/<ForwardCard\b/g) ?? []).length === 3
+    // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): ONE seat — the conversation card (the stage copies retired).
+    && (detail36.match(/<ForwardCard\b/g) ?? []).length === 1
     && /import ForwardCard from '@\/components\/home\/forward-card'/.test(detail36));
 
   // ── 4 · PRESENTATIONAL PURITY, AND THE HARNESS ────────────────────────────────────────────────

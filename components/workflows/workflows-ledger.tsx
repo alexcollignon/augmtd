@@ -31,7 +31,7 @@ import { ExpandableRows } from '@/components/home/expandable-rows';
 import ProcessDrawer, { GateChip, GateFindings } from '@/components/workflows/process-drawer';
 // THE ONE CREATION CARD — this page mounts it, it does not re-draw it (W3-B, Sep 22).
 import { WorkflowDraftCard, buildConfirmBody, type WorkflowDraft } from '@/components/workflows/workflow-draft-card';
-import RunMaterialSheet, { asksForMaterial, type RunMaterial } from '@/components/workflows/run-material-sheet';
+import RunMaterialSheet, { asksForMaterial, runRequestBody, type RunMaterial } from '@/components/workflows/run-material-sheet';
 import { WorkflowMark } from '@/components/workflows/workflow-detail';
 import { PROCESS_BUCKETS, GATE_WORDS } from '@/lib/workflows/process-state';
 import type { ProcessRow } from '@/lib/workflows/process-state';
@@ -315,9 +315,10 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
       const r = await fetch(`/api/workflows/${w.id}/run`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         // THE MATERIAL DOOR: the field exists on the body only when the user gave something.
-        body: material?.text ? JSON.stringify({ material }) : '{}',
+        body: runRequestBody(material),
       });
-      if (!r.ok) { toast.error('The run could not start.'); return; }
+      // The door's own sentence (an attached file it could not read, a run already in flight).
+      if (!r.ok) { const j = (await r.json().catch(() => null)) as { error?: string } | null; toast.error(j?.error || 'The run could not start.'); return; }
       toast.success(`"${w.name}" is running — the deliverable lands in ${HOME_WORD[w.home] ?? w.home}.`);
       setTimeout(() => void refresh(true), 4000);
       setTimeout(() => void refresh(true), 20000);
@@ -901,6 +902,7 @@ export default function WorkflowsLedger({ tab = 'workflows' }: { tab?: 'workflow
           play button when this workflow asks what a hand-run should work on. */}
       <RunMaterialSheet
         open={!!materialFor}
+        workflowId={materialFor?.id ?? ''}
         workflowName={materialFor?.name ?? ''}
         acceptsMaterial={materialFor?.inputs?.acceptMaterial}
         hasReactionDoors={(materialFor?.doors?.length ?? 0) > 0}

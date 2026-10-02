@@ -87,6 +87,12 @@ export function resolveAskRefs<T extends object>(
       seen.add(tag); refs.push({ ...r, tag }); keep.push(tag);
     }
     out += text.slice(last, m.index);
+    // W42 · THE CHIP SAYS THE NAME ONCE ("on Acme ACME" — the owner walk, Oct 2): prose that
+    // ends with the very name a single resolved chip shows drops its copy; the chip carries it.
+    if (keep.length === 1) {
+      const r = refs.find((x) => x.tag === keep[0]) as { label?: unknown } | undefined;
+      out = dropEchoedName(out, typeof r?.label === 'string' ? r.label : '');
+    }
     // A stripped tag takes its own leading space with it, so removing notation never leaves a
     // double space or an orphaned gap before punctuation.
     if (keep.length) out += `[${keep.join(', ')}]`;
@@ -95,6 +101,19 @@ export function resolveAskRefs<T extends object>(
   }
   out += text.slice(last);
   return { text: out.replace(/[ \t]+([.,;:!?])/g, '$1').trim(), refs };
+}
+
+/** Pure: `prose` with a trailing copy of `name` removed (case/accent-insensitive, word-bounded), so a
+ *  chip placed right after a name never renders the name twice. Unchanged when it does not end so. */
+export function dropEchoedName(prose: string, name: string): string {
+  const label = String(name ?? '').replace(/^["'“”«»]+|["'“”«»]+$/g, '').trim();
+  if (label.length < 2) return prose;
+  const body = prose.replace(/[ \t]+$/, '');
+  const tail = body.slice(-label.length);
+  const before = body.slice(0, body.length - label.length);
+  if (tail.localeCompare(label, undefined, { sensitivity: 'base' }) !== 0 || /[\p{L}\p{N}]$/u.test(before)) return prose;
+  // Keep the separating space before the chip ("on [E1]" renders "on <chip>").
+  return `${before.replace(/[ \t]+$/, '')} `;
 }
 
 /** The renderer's reader: tag → ref. Refs without a tag are LEGACY (stored before this law) and
