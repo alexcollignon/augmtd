@@ -279,6 +279,13 @@ console.log('\nE · stacks and reply-to-a-card');
     && /\.\.\.\(opts\.target \? \{ target: opts\.target \} : \{\}\)/.test(homeAsk) && /\.\.\.\(target \? \{ target \} : \{\}\)/.test(rail));
   ok('E8 with no target, both send paths resolve an obvious reference against the conversation\'s cards and ASK when it is ambiguous',
     /resolveCardReference\(question, renderedCardsRef\.current\)/.test(homeAsk) && /resolveCardReference\(t, seenCardsRef\.current\)/.test(rail));
+  const noisy = render(React.createElement(CardTargetProvider, { target: null, setTarget: () => {} }, React.createElement(CardStack, { stackKey: 'kh', items: [
+    { d: { id: 'h1', kind: 'paste_pack' as const, title: 'Prepared — "Arrange payment transfer with Sam"', ref: 'commit:1' }, node: React.createElement('p', null, 'x') },
+    { d: { id: 'h2', kind: 'nudge_draft' as const, title: 'Nudge ready — waiting on Riley: "Send the statement of work"', ref: 'commit:2' }, node: React.createElement('p', null, 'y') },
+  ] })));
+  ok('E10 the header row is ONE formatter (components/shared/card-header.ts): the noun once, the plain title — no "Prepared —", no quotes — the counterparty in the detail',
+    /cardHeaderOf\(d\)/.test(stackSrc) && /Arrange payment transfer with Sam/.test(noisy) && !/Prepared/.test(noisy) && !/&quot;/.test(noisy)
+    && (noisy.match(/Words to paste/g) ?? []).length === 1 && /· Riley/.test(noisy) && !/Nudge ready/.test(noisy));
   const cs = [
     { id: 'a', kind: 'reply_draft' as const, title: 'Pilot pricing', recipient: 'sam@acme.test', ref: 'i1' },
     { id: 'b', kind: 'invite' as const, title: 'Kickoff call', ref: 'v1' },

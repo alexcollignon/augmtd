@@ -12,8 +12,9 @@ import { ASSIST_SURFACES } from './surfaces/assist';
 import { DECOR_SURFACES } from './surfaces/decor';
 import { NARRATE_SURFACES } from './surfaces/narrate';
 import { BUILD_SURFACES } from './surfaces/build';
+import { prepCommitmentSurface } from './surfaces/prep';
 
-export const SURFACES: AnyAdapter[] = [dmSurface, roomSurface, stepSurface, handoffSurface, draftSurface, ...MORE_SURFACES, ...SENT_SURFACES, ...ASSIST_SURFACES, ...DECOR_SURFACES, ...NARRATE_SURFACES, ...BUILD_SURFACES, roomCatchupSurface, draftLanguageSurface];
+export const SURFACES: AnyAdapter[] = [dmSurface, roomSurface, stepSurface, handoffSurface, draftSurface, ...MORE_SURFACES, ...SENT_SURFACES, ...ASSIST_SURFACES, ...DECOR_SURFACES, ...NARRATE_SURFACES, ...BUILD_SURFACES, roomCatchupSurface, draftLanguageSurface, prepCommitmentSurface];
 
 export function selectSurfaces(ids: string[] | null): AnyAdapter[] {
   if (!ids?.length) return SURFACES;

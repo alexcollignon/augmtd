@@ -3,7 +3,7 @@
 
 import { conductBlock } from '@/lib/ai/conduct';
 import { getAIClient, aiCreate } from '@/lib/ai/factory';
-import { COMPLETION_HONESTY_RULE } from '@/lib/prepare/truth';
+import { COMPLETION_HONESTY_RULE, vetDraft, settleWorkClaims, type DraftVetFacts } from '@/lib/prepare/truth';
 import { buildVoiceBlock, buildMeetingFollowupContext } from '@/lib/context/voice-context';
 import { renderBrainContext } from '@/lib/context/brain-context';
 import { detectLanguage } from '@/lib/inbox/detect-language';
@@ -81,6 +81,70 @@ export function mailboxIdentityRule(mb: DraftMailbox | null | undefined): string
     `identities, and never invent one — when unsure, sign with the name alone.`;
 }
 
+// ── W43 · THE SIGNATURE IS THE USER'S RECURRING LINES (lib/inbox/sign-off deriveSignatureLines) ──────
+// The user's own sent mail in THIS mailbox (the voice exemplars' scope), read once per 10 minutes per
+// (user, mailbox): the lines that recur at the end of ≥2 of their own messages. null = unreadable (the
+// floor then drops only code-like lines — fail-safe). Received mail never contributes (is_from_user).
+const sigMemo = new Map<string, { at: number; p: Promise<string[] | null> }>();
+export function signatureLinesOf(client: DBClient, userId: string, mailbox: DraftMailbox | null | undefined): Promise<string[] | null> {
+  const key = `${userId}|${mailbox?.connectionId ?? ''}|${mailbox?.address ?? ''}`;
+  const hit = sigMemo.get(key);
+  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.p;
+  const p = (async () => {
+    const [{ voiceScopeFilter }, { deriveSignatureLines }] = await Promise.all([
+      import('@/lib/context/voice-context'), import('@/lib/inbox/sign-off'),
+    ]);
+    const scoped = voiceScopeFilter(mailbox ?? null);
+    let q = client.from('emails').select('body, html_body').eq('user_id', userId).eq('is_from_user', true);
+    if (scoped) q = q.or(scoped);
+    const { data, error } = await q.order('received_at', { ascending: false }).limit(20);
+    if (error) return null;
+    const bodies = ((data ?? []) as Array<{ body?: string | null; html_body?: string | null }>)
+      .map((r) => plainBody(String(r.body || r.html_body || ''))).filter((b) => b.trim());
+    // Fewer than two own messages prove nothing recurring — unknown (the floor then drops only codes).
+    return bodies.length >= 2 ? deriveSignatureLines(bodies) : null;
+  })().catch(() => null);
+  sigMemo.set(key, { at: Date.now(), p });
+  return p;
+}
+
+/** W43 · THE FACTS A DRAFTER'S CALLER STATES (lib/prepare/truth DraftVetFacts minus the material, which
+ *  the drafter assembles itself from everything it was given). `staged` defaults to false: a drafter that
+ *  was not told a file rides with the words knows none does. */
+export type DrafterVet = Pick<DraftVetFacts, 'obligationOpen' | 'staged' | 'stagedIsWork' | 'attachmentFloor'>;
+
+/**
+ * W43 · EVERY DRAFT PASSES THE ONE VET, INSIDE THE DRAFTER — so no caller can bypass it. The drafted words
+ * are finished (the user's sign-off, the signature floor), then vetted (lib/prepare/truth vetDraft: the
+ * completion claim · the attachment claim · the inverted chase · the work-claims floor over the drafter's
+ * own material); a failure regenerates ONCE with the objection named; an unsupported work claim that
+ * survives is served as a NAMED SLOT; any other failure is withheld (''), the caller's honest not-prepared
+ * state. One log line per intervention.
+ */
+async function finishThroughVet(
+  first: string,
+  regenerate: (objection: string) => Promise<string>,
+  finish: (body: string) => string,
+  facts: DraftVetFacts,
+  label: string,
+): Promise<string> {
+  const a = finish(first);
+  if (!a) return '';
+  const f1 = vetDraft(a, facts);
+  if (!f1) return a;
+  const b = finish(await regenerate(f1.objection).catch(() => '') || '');
+  const f2 = b ? vetDraft(b, facts) : f1;
+  if (b && !f2) { console.log(`[draft-vet] ${label}: ${f1.floor} fixed on the rewrite`); return b; }
+  // The rewrite first; the first draft when the rewrite tripped a non-servable floor the first one did not.
+  const servable = [b, a].find((x) => !!x && !vetDraft(x, { ...facts, material: undefined }));
+  if (servable && [f1, f2].some((f) => f?.floor === 'work_claim')) {
+    console.log(`[draft-vet] ${label}: unsupported work claim slotted ("${(f2 ?? f1).claim.slice(0, 60)}")`);
+    return settleWorkClaims(servable, facts);
+  }
+  console.warn(`[draft-vet] ${label}: withheld — ${(f2 ?? f1).floor} ("${(f2 ?? f1).claim.slice(0, 60)}")`);
+  return '';
+}
+
 async function buildAssistantSkillsBlock(client: DBClient, userId: string): Promise<string> {
   try {
     const pa = await getDraftingAssistant(client, userId);
@@ -101,6 +165,9 @@ export async function generateReplyDraft(
   // calendar invite the plan sends, and a promise the draft makes ("I'll send the deck") is the SAME
   // commitment as the corresponding task, not a duplicated orphan. Non-fatal: absent → today's behavior.
   planSteps?: string[] | null,
+  /** W43 · THE ONE VET's facts this caller holds (what the user owes · what is staged). Omitted → nothing
+   *  staged and no open obligation stated: the attachment + work-claims floors still speak. */
+  vet?: DrafterVet | null,
 ): Promise<string> {
   const from = String(sourceData.from || sourceData.from_address || '');
   const fromName = String(sourceData.from_name || '');
@@ -220,6 +287,7 @@ ${clipForPrompt(body, 1200)}
   const { asksPaymentDetailChange, RISKY_CHANGE_REPLY, riskyAgreementIn, riskyAgreementObjection, dropRiskyAgreement } = await import('@/lib/prepare/risky-asks');
   const riskyAsk = asksPaymentDetailChange(`${subject}\n${body}`);
   let riskFix = '';
+  let vetFix = ''; // W43 · the one vet's objection, appended last on its single rewrite
   const writeReply = async (languageFix: string | null): Promise<string> => {
     const res = await aiCreate(ai, {
       model, max_tokens: 600, temperature: 0.6,
@@ -259,6 +327,7 @@ ${clipForPrompt(body, 1200)}
         // LANGUAGE RULE — LAST, so it wins over the voice examples above (recency + explicit target).
         langRule +
         (riskFix ? `\n\n${riskFix}` : '') +
+        (vetFix ? `\n\nREVIEWER'S OBJECTION — fix this: ${vetFix}` : '') +
         (languageFix ? `\n\n${languageFix}` : '') }],
     });
     return res.choices?.[0]?.message?.content?.trim() || '';
@@ -278,20 +347,38 @@ ${clipForPrompt(body, 1200)}
   // availability or a dated commitment on the user's behalf, the claims floor checks it against the thread
   // and the user's guidance; an unsupported one becomes a [SLOT] the user fills. Only then (a regex
   // precheck), so an ordinary reply costs nothing extra.
+  // Everything the drafter itself was grounded in (the thread, the meeting follow-up, the brain, the plan,
+  // attachments, the user's guidance) — a slot fires only on what NONE of it supports.
+  const material = [`Subject: ${subject}`, earlierContext, body, String(meetingFollowup ?? ''), String(brainBlock ?? ''), String(planBlock ?? ''), String(attachBlock ?? ''), String(registerFact ?? ''),
+    instructions ? `The user's guidance: ${instructions}` : ''].filter((x) => x && x.trim()).join('\n\n');
   if (checked.body) {
     const { COMMITMENT_OR_AVAILABILITY, groundClaims } = await import('@/lib/prepare/claims-floor');
     if (COMMITMENT_OR_AVAILABILITY.test(checked.body)) {
-      // Everything the drafter itself was grounded in (the thread, the meeting follow-up, the brain, the plan,
-      // attachments, the user's guidance) — a slot fires only on what NONE of it supports.
-      const material = [`Subject: ${subject}`, earlierContext, body, String(meetingFollowup ?? ''), String(brainBlock ?? ''), String(planBlock ?? ''), String(attachBlock ?? ''), String(registerFact ?? ''),
-        instructions ? `The user's guidance: ${instructions}` : ''].filter((x) => x && x.trim()).join('\n\n');
       checked.body = (await groundClaims(client, userId, { draft: checked.body, material, focus: 'commitments' })).text;
     }
-    const { enforceUserSignOff } = await import('@/lib/inbox/sign-off');
-    checked.body = enforceUserSignOff(checked.body, userName, await coworkerNames(client, userId));
-    checked.body = fixHonorificName(checked.body, fromName); // W42: an honorific takes the surname
   }
-  return checked.body;
+  if (!checked.body) return checked.body;
+  // W43 · THE SIGN-OFF IS THE USER'S (name + recurring own lines, never a code) and THE ONE VET runs here,
+  // inside the drafter, for every caller.
+  const finish = await draftFinisher(client, userId, userName, mailbox, fromName);
+  return finishThroughVet(checked.body, async (objection) => {
+    vetFix = objection;
+    try { return (await draftInLanguage(writeReply, detected, frameRegister)).body; } finally { vetFix = ''; }
+  }, finish, { obligationOpen: !!vet?.obligationOpen, staged: !!vet?.staged, stagedIsWork: vet?.stagedIsWork, attachmentFloor: vet?.attachmentFloor, material }, 'reply');
+}
+
+/** W43 · THE SIGN-OFF FINISHER every drafter runs (pure once built): the user's name over a wrong identity,
+ *  the signature floor (recurring own lines only, never a code), an honorific that takes the surname. */
+async function draftFinisher(client: DBClient, userId: string, userName: string, mailbox: DraftMailbox | null, recipientName?: string | null): Promise<(body: string) => string> {
+  const [{ enforceUserSignOff, cleanSignOff }, wrongNames, signatureLines] = await Promise.all([
+    import('@/lib/inbox/sign-off'), coworkerNames(client, userId), signatureLinesOf(client, userId, mailbox),
+  ]);
+  return (body: string) => {
+    if (!body) return body;
+    let out = enforceUserSignOff(body, userName, wrongNames);
+    out = cleanSignOff(out, { name: userName, signatureLines });
+    return recipientName ? fixHonorificName(out, recipientName) : out;
+  };
 }
 
 // Voice-grounded NUDGE draft — a polite follow-up from the user to a counterparty they are WAITING
@@ -310,7 +397,9 @@ export async function generateNudgeDraft(
      *  keeps its exact behaviour by omitting it. */
     direction?: 'them' | 'you' | 'new';
     /** W11.1 — the conversation this message belongs to: its MAILBOX scopes the voice + signature. */
-    threadId?: string | null },
+    threadId?: string | null;
+    /** W43 · THE ONE VET's facts this caller holds (lib/prepare/truth DraftVetFacts). */
+    vet?: DrafterVet | null },
   client: DBClient,
 ): Promise<string> {
   const recipientEmail = (opts.counterparty || '').match(/[^\s<>"]+@[^\s<>"]+/)?.[0] || null;
@@ -340,7 +429,8 @@ export async function generateNudgeDraft(
   const who = opts.counterparty || 'the recipient';
   const aged = typeof opts.ageDays === 'number' && opts.ageDays > 0 ? ` It has been about ${opts.ageDays} day${opts.ageDays === 1 ? '' : 's'} without a response.` : '';
   const { client: ai, model } = await getAIClient(userId, 'conversation', client);
-  const checked = await draftInLanguage(async (languageFix) => { // W18.B — the same output check
+  let vetFix = ''; // W43 · the one vet's objection, appended last on its single rewrite
+  const writeNudge = async (languageFix: string | null) => { // W18.B — the same output check
     const res = await aiCreate(ai, {
       model, max_tokens: 400, temperature: 0.6,
       messages: [{ role: 'user', content:
@@ -357,6 +447,12 @@ export async function generateNudgeDraft(
             `${userName} OWES THEM: "${opts.description}". ${userName} is the one on the hook here — write it as ` +
             `an update/hand-over from ${userName}, never as a chase and never as a request for something from ` +
             `${who}. Keep it warm and short. Address ${who} and sign as ${userName} — NEVER sign as the recipient. ` +
+            // W43 · the delivery states only what the material above gives (eval prep.commitment, EU: "Remote works
+            // best for us", invented names): the answer itself when it is there; otherwise that it follows — never a
+            // decision, a name, a figure or a date the user has not given. Plain prose, no markdown.
+            `Deliver the answer or the thing itself ONLY when the context above states it; when it does not, say plainly ` +
+            `that it will follow — never decide, name, quantify or date anything on ${userName}'s behalf that nothing above states. ` +
+            `Plain email prose — no markdown, no bold, no headings. ` +
             // THE COMPLETION RULE (W5a): an update about an open obligation speaks status, never a deed.
             `${COMPLETION_HONESTY_RULE} `
           : `You are ${userName}. Write a brief, friendly NUDGE from ${userName} to ${who}, following up on ` +
@@ -375,11 +471,22 @@ export async function generateNudgeDraft(
         `\n${conductBlock('draft')}\n` +
         `${mailboxIdentityRule(mailbox) ? `${mailboxIdentityRule(mailbox)} ` : ''}` +
         `Return ONLY the message body — no subject line, no preamble, no surrounding quotes.` +
+        (vetFix ? `\n\nREVIEWER'S OBJECTION — fix this: ${vetFix}` : '') +
         (languageFix ? `\n\n${languageFix}` : '') }],
     });
     return res.choices?.[0]?.message?.content?.trim() || '';
-  }, mirrorLang, mirrorText ? addressRegisterOf(mirrorText) : null);
-  return checked.body;
+  };
+  const register = mirrorText ? addressRegisterOf(mirrorText) : null;
+  const checked = await draftInLanguage(writeNudge, mirrorLang, register);
+  if (!checked.body) return checked.body;
+  // W43 · the sign-off finisher + THE ONE VET, inside the drafter (every nudge / message / pack caller).
+  const material = [opts.description, opts.counterparty ? `Recipient: ${opts.counterparty}` : '', mirrorText ? `Their latest message:\n${mirrorText}` : '',
+    String(brainBlock ?? ''), opts.instructions ? `The user's guidance: ${opts.instructions}` : ''].filter((x) => x && x.trim()).join('\n\n');
+  const finish = await draftFinisher(client, userId, userName, mailbox, null);
+  return finishThroughVet(checked.body, async (objection) => {
+    vetFix = objection;
+    try { return (await draftInLanguage(writeNudge, mirrorLang, register)).body; } finally { vetFix = ''; }
+  }, finish, { obligationOpen: !!opts.vet?.obligationOpen, staged: !!opts.vet?.staged, stagedIsWork: opts.vet?.stagedIsWork, attachmentFloor: opts.vet?.attachmentFloor, material }, opts.direction === 'you' ? 'message' : opts.direction === 'new' ? 'compose' : 'nudge');
 }
 
 

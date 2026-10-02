@@ -16,6 +16,7 @@
  *   npx tsx scripts/smoke-prepared-truth.ts
  * ════════════════════════════════════════════════════════════════════════════════════════════════
  */
+import { DRAFT_RULES_VERSION } from '../lib/prepare/draft-rules';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
@@ -132,7 +133,8 @@ console.log('\nB · prepared words never claim an undone deed');
     && /return \{ status: 'failed' \};\s*\}\s*\}/.test(pp));
   const dr = src('lib/inbox/draft-reply.ts');
   gate('B6 the drafters (reply + the owed-direction nudge) carry the ONE completion rule',
-    /import \{ COMPLETION_HONESTY_RULE \} from '@\/lib\/prepare\/truth';/.test(dr)
+    // ⟲ RE-POINTED (W43): the same import also brings THE ONE VET into the drafter.
+    /import \{ COMPLETION_HONESTY_RULE\b[^}]*\} from '@\/lib\/prepare\/truth';/.test(dr)
     && (dr.match(/\$\{COMPLETION_HONESTY_RULE\}/g) ?? []).length >= 2
     && /NEVER claim that work is finished/.test(COMPLETION_HONESTY_RULE));
   const rd = src('lib/prepare/read.ts');
@@ -140,15 +142,16 @@ console.log('\nB · prepared words never claim an undone deed');
     // ⟲ RE-POINTED (W7.3): + `misaddressed` (TRUE ADDRESSEES) and the commitment selects gained
     // `counterparty` — what an addressed draft must agree with.
     // ⟲ RE-POINTED (W15.2): + the settled and empty-words floors; every earlier floor still required.
-    /export function isLiveArtifact\(a: PreparedArtifact\): boolean \{\s*return !a\.stale && !a\.expired && !a\.outsideWindow && !a\.falseClaim && !a\.misaddressed\s*&& !a\.settled && !emptyTextArtifact\(a\);/.test(rd)
+    // ⟲ RE-POINTED (W43): + the older-drafting-rules floor first (never the user's hand).
+    /export function isLiveArtifact\(a: PreparedArtifact\): boolean \{\s*if \(a\.rulesStale && !a\.hand\) return false;[^\n]*\n\s*return !a\.stale && !a\.expired && !a\.outsideWindow && !a\.falseClaim && !a\.misaddressed\s*&& !a\.settled && !emptyTextArtifact\(a\);/.test(rd)
     && /export function stampTruth</.test(rd)
     && (rd.match(/stampTruth\(/g) ?? []).length >= 2
     // ⟲ RE-POINTED (W11.1): + `thread_id` (the signature floor finds the thread's mailbox).
     // ⟲ RE-POINTED (W14.1 · ONE READER, ONE ANSWER): the single reader IS the batched reader over one
     // item — one commitment-facts select serves both (the per-item select is gone by construction).
     && /const states = await preparedStatesFor\(client, userId, \[\{ kind, id: item\.id \}\]\);/.test(rd)
-    && /select\('id, description, created_at, status, direction, counterparty(?:, thread_id)?'\)\.eq\('user_id', userId\)\.in\('id', commitIds\)/.test(rd));
-  const row = (over: Record<string, unknown>) => ({ id: 'r', task_id: null, type: 'draft', title: 'x', content: 'body', created_at: '2026-09-20T10:00:00Z', metadata: {}, ...over });
+    && /select\('id, description, created_at, status, direction, counterparty(?:, thread_id)?(?:, source)?'\)\.eq\('user_id', userId\)\.in\('id', commitIds\)/.test(rd));
+  const row = (over: Record<string, unknown>) => ({ id: 'r', task_id: null, type: 'draft', title: 'x', content: 'body', created_at: '2026-09-20T10:00:00Z', ...over, metadata: { rules_version: DRAFT_RULES_VERSION, ...((over.metadata ?? {}) as Record<string, unknown>) } }); // W43: a fresh machine draft carries the current rules stamp
   const facts = commitmentTruthFacts({ description: 'Redistribute the group allocation', created_at: '2026-09-18T10:00:00Z', status: 'open', direction: 'you_owe' });
   const pack = stampTruth(poolRowsToArtifacts([row({ type: 'document', content: live, metadata: { pastePack: true, note: 'Words ready', agentName: 'Clara' } })], 'commitment'), facts);
   gate('B8 pure: a false pack is not live, earns no badge and no lead kind', pack[0].falseClaim === true && !isLiveArtifact(pack[0]) && badgeOf(pack) === null && leadKindOf(pack) === null);
@@ -160,7 +163,7 @@ console.log('\nB · prepared words never claim an undone deed');
 // ═══ C · ONE CLAIM: header ↔ brief ═══
 console.log('\nC · the header speaks the same claim as the brief');
 {
-  const row = (over: Record<string, unknown>) => ({ id: 'r', task_id: null, type: 'draft', title: 'x', content: 'body', created_at: '2026-09-20T10:00:00Z', metadata: {}, ...over });
+  const row = (over: Record<string, unknown>) => ({ id: 'r', task_id: null, type: 'draft', title: 'x', content: 'body', created_at: '2026-09-20T10:00:00Z', ...over, metadata: { rules_version: DRAFT_RULES_VERSION, ...((over.metadata ?? {}) as Record<string, unknown>) } }); // W43: a fresh machine draft carries the current rules stamp
   const facts = commitmentTruthFacts({ description: 'Redistribute the group allocation', created_at: '2026-09-18T10:00:00Z', status: 'open', direction: 'you_owe' });
   const pack = stampTruth(poolRowsToArtifacts([row({ type: 'document', content: "I've finished the redistribution. Here's the updated breakdown.", metadata: { pastePack: true } })], 'commitment'), facts);
   const st = deriveState({ open: true, verdict: { work: 'reply' }, judgedAt: new Date().toISOString(), prepared: pack, liveAsk: false, sentStamp: false });
@@ -173,7 +176,8 @@ console.log('\nC · the header speaks the same claim as the brief');
     // ⟲ RE-POINTED (W13.5): ONE trip predicate for both open paths (lib/room/open-kicks needsReprepareTrip
     // — any artifact !isLiveArtifact), proven over every non-live flag in smoke-room-truth C1.
     && /const tripDue = needsReprepareTrip\(preparedArts\)/.test(view)
-    && /return arts\.some\(\(a\) => !isLiveArtifact\(a\)\);/.test(src('lib/room/open-kicks.ts')));
+    // ⟲ RE-POINTED (W43.2): + a live draft written under older rules (refreshDue) — re-prepared quietly.
+    && /return arts\.some\(\(a\) => !isLiveArtifact\(a\) \|\| \(!!a\.refreshDue && !a\.hand\)\);/.test(src('lib/room/open-kicks.ts')));
   const detail = src('components/home/item-detail.tsx');
   gate('C4 the header word is the machine\'s word (machineWordOf reads view.machineState) — one derivation, no second author',
     /function machineWordOf\(view: ItemViewData \| null\): string \| null \{\s*const m = view\?\.machineState;/.test(detail));
@@ -231,11 +235,14 @@ console.log('\nF · W5c: hidden artifacts re-prepare, leave the brief, and never
     && withdrawnReasonOf(outside[0]) === 'outside the window they stated');
   const pass_ = src('lib/prepare/pass.ts');
   gate('F2 every lane\'s freshness guard reads the non-live set — a young-but-hidden artifact is never "already on it" (invite ×2 · nudge ×2 · reply · delegate · paste pack)',
-    /nonLive = nonLiveKindsOf\(await preparedState\(admin, userId,/.test(pass_)
+    // ⟲ RE-POINTED (W43): the reader's state is held (the older-rules retirement reads it too).
+    /const st = await preparedState\(admin, userId,[^\n]*\n\s*nonLive = nonLiveKindsOf\(st\);/.test(pass_)
     // ⟲ RE-POINTED (W9.1 — the clock left): every lane hands the non-live set to THE ONE DECISION
     // (lib/prepare/hand.ts decideRegeneration), where a withdrawn machine artifact regenerates.
     && (pass_.match(/groundMoved: movedPast, nonLive: untrueInvite/g) ?? []).length === 2
-    && (pass_.match(/groundMoved: movedPast, nonLive: untrueNudge/g) ?? []).length === 2
+    // ⟲ RE-POINTED (W43): the commitment half is THE ONE commitment-email lane (prepareCommitmentMessage).
+    && (pass_.match(/groundMoved: movedPast, nonLive: untrueNudge/g) ?? []).length === 1
+    && /handHeld: isPoolRowHandHeld\(handKind, existing\), groundMoved: movedPast, nonLive: untrue,/.test(pass_)
     && /nonLive: !!nonLive\?\.has\('reply_draft'\)/.test(pass_)
     && /nonLive: !!untrueDeliverable/.test(pass_)
     && /supersede: nonLive\.has\('paste_pack'\)/.test(pass_)

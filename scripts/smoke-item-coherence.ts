@@ -239,7 +239,8 @@ console.log('\nG · voice + signature are scoped to the mailbox the thread lives
     && mailboxIdentityRule(null) === '' && mailboxIdentityRule({ connectionId: 'c', address: null }) === '');
   const p = src('lib/prepare/pass.ts');
   gate('G5 every nudge lane hands the drafter its thread (commitment · inbox · doc-send)',
-    /threadId: commitThreadId \}/.test(p) && /threadId: nudgeThread \}/.test(p) && /threadId: cAddr\.row\?\.thread_id \?\? null \}/.test(p)
+    // ⟲ RE-POINTED (W43): the commitment + doc-send lanes also hand THE ONE VET's facts after the thread.
+    /threadId: commitThreadId[,}]/.test(p) && /threadId: nudgeThread \}/.test(p) && /threadId: cAddr\.row\?\.thread_id \?\? null[,}]/.test(p)
     && /buildVoiceBlock\(user\.id, voiceRecipient, supabase, mailbox(?:, \{ language: \w+ \})?\)/ /* ⟲ W18.B: + the exemplars' language */.test(src('app/api/compose/draft/route.ts')));
 }
 

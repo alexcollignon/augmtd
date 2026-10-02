@@ -4,6 +4,7 @@
 // next touch, demoted/restamped/held by the same pick, and an AI outage never unstages. Zero AI (the
 // model call is a stub), zero DB (an in-memory query recorder).
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { DRAFT_RULES_VERSION } from '@/lib/prepare/draft-rules';
 
 // ── the stubs: the model call, retrieval, the room's writers, the pool writer ──
 const ai = vi.hoisted(() => ({ pick: null as null | ((prompt: string) => unknown), prompts: [] as string[] }));
@@ -185,7 +186,7 @@ describe('THE ONE RESOLVER re-verifies an older-law row on its next touch (outco
 });
 
 describe('the inbox draft door reads THE ONE READER', () => {
-  const sd = (draft: Record<string, unknown>) => ({ subject: 'Interim report', body: 'Please add slides 7 and 8.', received_at: '2026-09-10T14:59:47Z', draft });
+  const sd = (draft: Record<string, unknown>) => ({ subject: 'Interim report', body: 'Please add slides 7 and 8.', received_at: '2026-09-10T14:59:47Z', draft: { rules_version: DRAFT_RULES_VERSION, ...draft } });
   it('a stored draft riding the item\'s BASE is withdrawn, and the door regenerates it (decideRegeneration)', () => {
     const arts = preparedFromSourceData(sd({ body: 'Here is the report.', attachment: OLD_FILE }) as never);
     stampTruth(arts, { text: 'x', anchorIso: null, obligationOpen: false, baseFileIds: ['f-old'] });

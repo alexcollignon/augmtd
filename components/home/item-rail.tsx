@@ -37,8 +37,9 @@ import { THREAD_CARD_W } from '@/components/thread/kit-width';
 import { chatCardsOfComponent, chatCardsOfPayload, hasChatCards, widgetOfProgress, type ChatCards, type DeedItemKind } from '@/lib/present/turn-card';
 import type { StageVerb } from '@/lib/present/behaviour';
 import { useArtifactViewer } from '@/components/shared/artifact-viewer';
+import { cardHeaderOf, cardLineOf } from '@/components/shared/card-header';
 import { CardStack, CardTargetProvider, ReplyingChip, ReplyQuote } from '@/components/shared/card-stack';
-import { ITEM_ARTIFACT_BEHAVIOUR, summaryTitleOf, type BehaviourKind, type CardDescriptor } from '@/lib/present/behaviour';
+import { ITEM_ARTIFACT_BEHAVIOUR, type BehaviourKind, type CardDescriptor } from '@/lib/present/behaviour';
 import { resolveCardReference, type CardTarget } from '@/lib/present/card-target';
 import { docCardTypeOf } from '@/lib/documents/doc-card';
 import { chatCardNodes } from '@/components/home/chat-cards';
@@ -1004,14 +1005,14 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     // REPLY TO A CARD: the pinned card, else an obvious reference to one of this room's cards; an
     // ambiguous reference is answered with ONE short question (nothing is sent).
     let target: CardTarget | null = !reask && cardTarget
-      ? { kind: cardTarget.kind, ref: cardTarget.ref, title: cardTarget.title ?? null, recipient: cardTarget.recipient ?? null } : null;
+      ? { kind: cardTarget.kind, ref: cardTarget.ref, title: cardHeaderOf(cardTarget).title, recipient: cardTarget.recipient ?? null } : null;
     if (!target && !reask) {
       const r = resolveCardReference(t, seenCardsRef.current);
       if (r && 'ask' in r) { setTurns((prev) => [...prev, { role: 'user', text: t }, { role: 'system', text: r.ask }]); return; }
       if (r) target = r.target;
     }
     if (!reask) setCardTarget(null);
-    const replyTo = target ? summaryTitleOf(target) : null;
+    const replyTo = target ? cardLineOf(target) : null;
     const gen = genOf(roomKey);
     // ── THE ANSWER IS SAVED (W19.B — app/api/items/steer/answer-door.ts) ────────────────────────────
     // The steer door writes BOTH halves now: the question (keyed `ask:<reqId>`, exactly once) and —

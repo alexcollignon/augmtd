@@ -127,7 +127,9 @@ async function main(): Promise<void> {
     const missing = lanes.filter((l) => !/decideRegeneration\(/.test(laneBody(l)));
     gate('A5 every regenerating lane asks THE ONE DECISION (reply · nudge · invite · forward · decision brief · deliverable)', !missing.length, missing.join(', '));
     gate('A6 prepareNudge asks it on BOTH halves (inbox + commitment) and prepareInviteDraft on BOTH (commitment pool + inbox)',
-      (laneBody('prepareNudge').match(/decideRegeneration\(/g) ?? []).length === 2 && (laneBody('prepareInviteDraft').match(/decideRegeneration\(/g) ?? []).length === 2);
+      // ⟲ RE-POINTED (W43): the commitment half is THE ONE commitment-email lane (prepareCommitmentMessage).
+      (laneBody('prepareNudge').match(/decideRegeneration\(/g) ?? []).length === 1 && (laneBody('prepareCommitmentMessage').match(/decideRegeneration\(/g) ?? []).length === 1
+      && (laneBody('prepareInviteDraft').match(/decideRegeneration\(/g) ?? []).length === 2);
     const pp = src('lib/prepare/paste-pack.ts');
     gate('A7 the paste pack lost its freshHours clock and asks the decision', !/freshHours|3_600_000/.test(pp) && /decideRegeneration\(/.test(pp));
     const nudgeRoute = src('app/api/commitments/[id]/nudge/route.ts');
@@ -160,7 +162,9 @@ async function main(): Promise<void> {
     gate('B1 a hand-held artifact is NEVER regenerated — all 32 signal combinations (moved → mark; law/truth alone → keep)', never);
     const laneHand: Array<[string, RegExp, number]> = [
       ['prepareReplyDraft', /handHeld: isHandHeld\('reply_draft', existing\)/, 1],
-      ['prepareNudge', /handHeld: isHandHeld\('nudge_draft', existing\)|handHeld: isPoolRowHandHeld\('nudge_draft', existing\)/g, 2],
+      // ⟲ RE-POINTED (W43): the commitment half moved into prepareCommitmentMessage (hand kind by direction).
+      ['prepareNudge', /handHeld: isHandHeld\('nudge_draft', existing\)/g, 1],
+      ['prepareCommitmentMessage', /handHeld: isPoolRowHandHeld\(handKind, existing\)/g, 1],
       ['prepareInviteDraft', /handHeld: isPoolRowHandHeld\('invite', prior\)|handHeld: isHandHeld\('invite', existing\)/g, 2],
       ['prepareForwardDraft', /handHeld: isHandHeld\('forward', existing\)/, 1],
       ['prepareDecisionBrief', /handHeld: isPoolRowHandHeld\('deliverable', prior\)/, 1],
@@ -172,7 +176,7 @@ async function main(): Promise<void> {
     gate('B3 the docsend lane never writes over the user\'s words (commitment: never shadows a hand-held message; inbox: never replaces a hand-held draft)',
       /if \(isPoolRowHandHeld\('reply_draft', prior\)\) return/.test(ds) && /if \(isHandHeld\('reply_draft', existingDraft\)\) return/.test(ds));
     gate('B4 the pool lanes never read a ledger row as "the" artifact (version_of filtered: nudge · brief · deliverable · docsend · pack)',
-      /filter\('metadata->>version_of', 'is', null\)/.test(laneBody('prepareNudge'))
+      /filter\('metadata->>version_of', 'is', null\)/.test(laneBody('prepareCommitmentMessage')) // ⟲ W43: the commitment message lane
       && /filter\('metadata->>version_of', 'is', null\)/.test(laneBody('prepareDecisionBrief'))
       && /filter\('metadata->>version_of', 'is', null\)/.test(laneBody('delegatePrepare'))
       && /filter\('metadata->>version_of', 'is', null\)/.test(ds)

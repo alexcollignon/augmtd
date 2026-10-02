@@ -19,6 +19,7 @@
  *   npx tsx scripts/smoke-ask-lifecycle.ts
  * ════════════════════════════════════════════════════════════════════════════════════════════════
  */
+import { DRAFT_RULES_VERSION } from '../lib/prepare/draft-rules';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { fakePostgrest } from '../tests/fixtures/fake-postgrest';
@@ -258,7 +259,7 @@ const judgment = (key: string, verdict: Record<string, unknown>) => ({ id: `j-${
       served.length === 0 && db.writes.length === 0);
     const dbLive = fakePostgrest({
       room_turns: [], item_deliverables: [], commitments: [],
-      inbox_items: [{ id: ITEM, user_id: U, status: 'pending', source: 'gmail', source_data: { subject: 'Hello', from: 'sam@acme-example.com', draft: { body: 'Hi Sam, Tuesday at 10 works for me. Best', generated_at: '2026-09-23T10:00:00Z' } } }],
+      inbox_items: [{ id: ITEM, user_id: U, status: 'pending', source: 'gmail', source_data: { subject: 'Hello', from: 'sam@acme-example.com', draft: { body: 'Hi Sam, Tuesday at 10 works for me. Best', generated_at: '2026-09-23T10:00:00Z', rules_version: DRAFT_RULES_VERSION } } }],
     });
     gate('D3b · …and a narration whose item holds a LIVE draft is served (the floor never hides true words)',
       (await N.servedNarrationTurns(dbLive.client, U, turns.slice(0, 1))).length === 1);

@@ -152,8 +152,11 @@ console.log('\nC · TRUE ADDRESSEES — one ladder, stamped at production, withd
     && /const addr = await resolveCommitmentAddressee\(supabase, user\.id, c as never\);/.test(src('app/api/compose/draft/route.ts')));
   gate('C4 the commit nudge lane never greets the spine\'s `blockedOn` (the field that named the user) — its title is the resolved greeting or "recipient to confirm"',
     !/Nudge — \$\{\(w\.blockedOn \|\| ''\)/.test(pass_)
-    && /title: `Nudge — \$\{greet \? greet\.split\('<'\)\[0\]\.trim\(\) : 'recipient to confirm'\}`/.test(pass_)
-    && /const direction: 'you' \| 'them' = dirRow\?\.direction === 'you_owe' \? 'you' : 'them';/.test(pass_));
+    // ⟲ RE-POINTED (W43): THE ONE commitment-email lane titles by direction — "Nudge — X" (a chase) or
+    // "Message — X" (a delivery) — over the same resolved greeting.
+    && /title: `\$\{lead\} — \$\{greet \? greet\.split\('<'\)\[0\]\.trim\(\) : 'recipient to confirm'\}`/.test(pass_)
+    && /const lead = direction === 'you' \? 'Message' : 'Nudge';/.test(pass_)
+    && /direction = c\?\.direction === 'you_owe' \? 'you' : 'them';/.test(pass_));
   gate('C5 inbox drafts are stamped too (a reply → the sender; a nudge → the party chased)',
     /via: 'sender' \} \} : \{\}\),/.test(pass_) && /\.\.\.\(inboxAddressee \? \{ addressee: inboxAddressee \} : \{\}\),/.test(pass_));
   gate('C6 nothing ships a placeholder address as if addressed — the compose card ASKS and offers the ladder\'s candidates',

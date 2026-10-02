@@ -51,8 +51,8 @@ export const CALL_SITES: Record<string, CoverageEntry> = {
   'lib/commitments/expiry.ts': { pending: 'judgment.expiry (J9, stage 1a follow-up)', sites: 1 },
   'lib/inbox/reactivate-on-reply.ts': { pending: 'judgment.reactivate (J10) — rides the J8/J9 fixtures', sites: 1 },
   // ── stage 1b: what the user acts on and sends ──
-  'lib/inbox/draft-reply.ts': { adapters: ['draft.reply', 'draft.language'], pending: 'artifact.nudge-draft (A2) — the nudge path has no surface case yet', sites: 4 },
-  'lib/prepare/pass.ts': { adapters: ['decision.options'], pending: 'prep narration (N10)', sites: 1 },
+  'lib/inbox/draft-reply.ts': { adapters: ['draft.reply', 'draft.language', 'prep.commitment'], pending: 'artifact.nudge-draft (A2) — the chase nudge path has no surface case yet (W43 prep.commitment measures the owed-message path)', sites: 4 },
+  'lib/prepare/pass.ts': { adapters: ['decision.options', 'prep.commitment'], pending: 'prep narration (N10)', sites: 1 },
   'lib/briefing/compose.ts': { adapters: ['briefing.home'], sites: 1 },
   'app/api/home/brief/route.ts': { inPath: ['home.synthesis'], pending: 'the route-embedded input assembly (the synthesis itself is measured over stated inputs by home.synthesis, W36)', sites: 1 },
   'lib/home/synthesize-brief.ts': { adapters: ['home.synthesis'], sites: 1 },

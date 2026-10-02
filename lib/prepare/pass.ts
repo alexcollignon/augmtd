@@ -23,6 +23,7 @@ import type { TaskRoute } from '@/lib/prepare/route-suggestion';
 import type { PreparedKind } from '@/lib/prepare/read';
 import { evaluateDeliverable, type EvalVerdict } from '@/lib/prepare/evaluate';
 import { chaseInvertsObligation, CHASE_INVERSION_REFUSAL } from '@/lib/prepare/truth';
+import { draftRulesStamp } from '@/lib/prepare/draft-rules';
 import { aiCall } from '@/lib/ai/call';
 
 // ── O4: the CoS EVALUATOR wraps every generated draft — review, ONE capped revision on a substantive
@@ -84,14 +85,72 @@ export type PrepareOneResult = {
   why?: string;      // the JUDGE's reason a delegation happened (provenance for the room narration)
 };
 
+type PrepareOneOpts = {
+  route?: TaskRoute;
+  /** W13.2 · the pass's shared re-verify budget (items with stale staging it may re-verify this
+   *  run). Absent → this one item may (a single on-demand prepare). */
+  reverify?: { left: number; deferred: number };
+};
+
 export async function prepareOneItem(
-  admin: SupabaseClient, userId: string, w: WorkItem,
-  opts?: {
-    route?: TaskRoute;
-    /** W13.2 · the pass's shared re-verify budget (items with stale staging it may re-verify this
-     *  run). Absent → this one item may (a single on-demand prepare). */
-    reverify?: { left: number; deferred: number };
-  },
+  admin: SupabaseClient, userId: string, w: WorkItem, opts?: PrepareOneOpts,
+): Promise<PrepareOneResult> {
+  const seen = { rulesStale: false };
+  const r = await prepareOneItemCore(admin, userId, w, opts, seen);
+  // ── W43 · A WITHDRAWAL FOR OLDER DRAFTING RULES IS RETIRED, NOT KEPT: the lane had its chance to
+  // re-draft under today's rules; a machine pool draft it did not replace (the work moved to another
+  // kind, another channel, or nothing) is FILED into the version chain (never deleted, never the
+  // user's hand), so the next open is not due another trip for it. An honest retry keeps it. ──
+  if (seen.rulesStale && !isRetryableOutcome(r)) {
+    const filed = await retireRulesStaleDrafts(admin, userId, w).catch(() => 0);
+    if (filed) console.log(`[prepare] ${w.id}: retired ${filed} draft(s) written under older drafting rules (${r.did}${r.reason ? `: ${r.reason}` : ''})`);
+  }
+  return r;
+}
+
+/** W43 · file every MACHINE pool draft on the item that THE ONE READER withdraws ONLY for older drafting
+ *  rules (`superseded:rules`). Returns how many were filed. Non-fatal. */
+async function retireRulesStaleDrafts(admin: SupabaseClient, userId: string, w: WorkItem): Promise<number> {
+  const { preparedState, withdrawnReasonOf } = await import('@/lib/prepare/read');
+  const kind = w.id.startsWith('commit:') ? 'commitment' as const : 'inbox_item' as const;
+  const st = await preparedState(admin, userId, { kind, id: w.entityId });
+  const targets = st.all.filter((a) => a.rulesStale && !a.hand && a.payload?.store === 'pool' && !!a.payload.rowId
+    && (a.kind === 'reply_draft' || a.kind === 'nudge_draft' || a.kind === 'paste_pack'));
+  let filed = 0;
+  // W43.2 · a draft that PASSED today's floors and that the lane did not replace stands as today's draft: it
+  // is re-stamped (never withdrawn, never re-tripped forever). The user's hand is never touched.
+  const { DRAFT_RULES_VERSION } = await import('@/lib/prepare/draft-rules');
+  for (const a of st.all.filter((x) => x.refreshDue && !x.hand)) {
+    if (a.payload?.store === 'pool' && a.payload.rowId) {
+      const { data: row, error } = await admin.from('item_deliverables').select('id, metadata').eq('id', a.payload.rowId).eq('user_id', userId).maybeSingle();
+      const m = (row?.metadata ?? {}) as Record<string, unknown>;
+      if (!error && row && !m.version_of && !m.sent_at) await admin.from('item_deliverables').update({ metadata: { ...m, rules_version: DRAFT_RULES_VERSION } }).eq('id', a.payload.rowId).eq('user_id', userId);
+    } else if (a.payload?.store === 'source_data' && (a.payload.field === 'draft' || a.payload.field === 'nudge_draft')) {
+      const field = a.payload.field;
+      const { data: it, error } = await admin.from('inbox_items').select('source_data').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
+      const sd = (it?.source_data ?? {}) as Record<string, Record<string, unknown> | undefined>;
+      const cur = sd[field];
+      // Only the very words the reader judged (a concurrent rewrite wins).
+      if (!error && cur && String(cur.body ?? '') === a.content && !cur.sent_at) {
+        await admin.from('inbox_items').update({ source_data: { ...sd, [field]: { ...cur, rules_version: DRAFT_RULES_VERSION } } }).eq('id', w.entityId).eq('user_id', userId);
+      }
+    }
+  }
+  for (const a of targets) {
+    const rowId = (a.payload as { rowId: string }).rowId;
+    const { data: row, error } = await admin.from('item_deliverables').select('id, metadata').eq('id', rowId).eq('user_id', userId).maybeSingle();
+    const m = (row?.metadata ?? {}) as Record<string, unknown>;
+    if (error || !row || m.version_of || m.sent_at) continue;
+    const { error: upErr } = await admin.from('item_deliverables')
+      .update({ metadata: { ...m, version_of: 'superseded:rules', withdrawn: { at: new Date().toISOString(), why: withdrawnReasonOf(a) } } })
+      .eq('id', rowId).eq('user_id', userId);
+    if (!upErr) filed++;
+  }
+  return filed;
+}
+
+async function prepareOneItemCore(
+  admin: SupabaseClient, userId: string, w: WorkItem, opts: PrepareOneOpts | undefined, seen: { rulesStale: boolean },
 ): Promise<PrepareOneResult> {
   try {
     const done = (r: PrepareOneResult) => narratePrepare(admin, userId, w, r);
@@ -169,7 +228,9 @@ export async function prepareOneItem(
     let nonLive: Set<PreparedKind> = new Set();
     try {
       const { preparedState, nonLiveKindsOf } = await import('@/lib/prepare/read');
-      nonLive = nonLiveKindsOf(await preparedState(admin, userId, { kind: w.id.startsWith('commit:') ? 'commitment' : 'inbox_item', id: w.entityId }));
+      const st = await preparedState(admin, userId, { kind: w.id.startsWith('commit:') ? 'commitment' : 'inbox_item', id: w.entityId });
+      nonLive = nonLiveKindsOf(st);
+      seen.rulesStale = st.all.some((a) => (!!a.rulesStale || !!a.refreshDue) && !a.hand);
     } catch { /* the lanes' own guards stand */ }
     // ── W20.B · THE SCHEDULE OFFER, BESIDE THE VERDICT'S WORK (lib/prepare/schedule-offer.ts): one
     // verdict per item cannot carry a thread with two live moves — when the newest inbound states a
@@ -196,7 +257,12 @@ export async function prepareOneItem(
         const { getWorkspaceFeatures } = await import('@/lib/workspace/features');
         features = (await getWorkspaceFeatures(userId, admin)) as unknown as Record<string, boolean>;
       } catch { /* unknown features never pack — the ordinary lanes stand */ }
-      const elig = pastePackEligibility({ work: verdict.work, itemKind, features });
+      // W43 · WHERE DOES THIS CONVERSATION LIVE? (lib/prepare/channel — THE ONE CHANNEL DECISION): asked only
+      // for a words-shaped verdict on a commitment (an inbox item is always its email thread).
+      const channel = itemKind === 'commitment' && (verdict.work === 'reply' || verdict.work === 'chase')
+        ? await (await import('@/lib/prepare/channel')).channelForItem(admin, userId, { kind: 'commitment', id: w.entityId }, { features }).catch(() => null)
+        : null;
+      const elig = pastePackEligibility({ work: verdict.work, itemKind, features, channel });
       if (elig.eligible && elig.reason) {
         const { preparePastePack } = await import('@/lib/prepare/paste-pack');
         let material: string | null = null;
@@ -227,6 +293,10 @@ export async function prepareOneItem(
           : 'could not write the words for this yet — it will retry' };
       }
     }
+    // ── W43 · AN EMAIL CONVERSATION GETS AN EMAIL: a `reply` verdict on a commitment whose conversation is
+    // email (the channel decision above declined the pack) is prepared as an email to the counterparty —
+    // on the thread when the source message is known — never as words to paste. ──
+    if (verdict.work === 'reply' && w.id.startsWith('commit:')) return await done(await prepareCommitmentMessage(admin, userId, w, 'deliver', nonLive));
     if (verdict.work === 'send_file') return await done(await prepareDocSend(admin, userId, w, verdict, nonLive));
     // ── W11.1 · THE DIRECTION FLOOR, at the lane (belt to the judge's own floor): a chase on work the
     // USER owes is refused here, never written — a hand-routed or pre-floor verdict cannot reach the
@@ -530,17 +600,20 @@ async function prepareReplyDraft(admin: SupabaseClient, userId: string, w: WorkI
     if (kbHave?.file) stagedAttachment = { fileId: kbHave.file.id, filename: kbHave.file.filename, source: kbHave.file.source };
   }
   const truthInstruction = artifactTruth ? `\n${artifactTruth}` : null;
-  const raw = await generateReplyDraft(userId, sd as Record<string, never>, admin, truthInstruction);
+  // W43 · THE ONE VET's facts (inside the drafter): what is staged with the words, and whether the user owes it.
+  const { inboxTruthFacts } = await import('@/lib/prepare/read');
+  const replyVet = { obligationOpen: inboxTruthFacts(sd)?.obligationOpen ?? false, staged: !!stagedAttachment };
+  const raw = await generateReplyDraft(userId, sd as Record<string, never>, admin, truthInstruction, null, replyVet);
   if (!raw) return { did: 'none', reason: 'could not draft this' };
   // O4: the CoS review before it reaches the desk (one capped revision on a substantive objection).
   const sender = [String(sd.from_name || ''), sd.from_address ? `<${sd.from_address}>` : ''].filter(Boolean).join(' ') || String(sd.from || '') || null;
   const { body, review } = await reviewAndRevise(admin, userId,
     { body: raw, task: w.title, recipient: sender, entityId: w.entity?.id ?? null, kind: 'reply' },
-    (objection) => generateReplyDraft(userId, sd as Record<string, never>, admin, `${truthInstruction ?? ''}\nREVIEWER'S OBJECTION — fix this in the reply: ${objection}`));
+    (objection) => generateReplyDraft(userId, sd as Record<string, never>, admin, `${truthInstruction ?? ''}\nREVIEWER'S OBJECTION — fix this in the reply: ${objection}`, null, replyVet));
   // O3a: ambient work is ATTRIBUTED — the assistant coworker drafted this (her skills shaped it).
   const pa = await getDraftingAssistant(admin, userId);
   await admin.from('inbox_items')
-    .update({ source_data: { ...sd, draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', prepared_from: currentGround, law_version: DRAFT_LAW_VERSION,
+    .update({ source_data: { ...sd, draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', prepared_from: currentGround, law_version: DRAFT_LAW_VERSION, ...draftRulesStamp(),
       // TRUE ADDRESSEES (W7.3): a reply is addressed to the thread's sender — stamped, so the reader
       // can refuse one that greets the user (their own sent mail as the item).
       ...(sd.from_address || sd.from_name ? { addressee: { name: (sd.from_name as string | undefined) ?? null, email: (sd.from_address as string | undefined) ?? null, via: 'sender' } } : {}),
@@ -603,77 +676,118 @@ async function prepareNudge(admin: SupabaseClient, userId: string, w: WorkItem, 
       (objection) => generateNudgeDraft(userId, { counterparty: w.blockedOn, description: w.title, ageDays, mirrorText, threadId: nudgeThread, instructions: `REVIEWER'S OBJECTION — fix this: ${objection}` }, admin));
     const pa = await getDraftingAssistant(admin, userId); // O3a attribution
     await admin.from('inbox_items')
-      .update({ source_data: { ...sd, nudge_draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', prepared_from: currentGround, ...(inboxAddressee ? { addressee: inboxAddressee } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) } })
+      .update({ source_data: { ...sd, nudge_draft: { body, generated_at: new Date().toISOString(), prepared: 'pass', prepared_from: currentGround, ...draftRulesStamp(), ...(inboxAddressee ? { addressee: inboxAddressee } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa ? { prepared_by: { worker: pa.name, at: new Date().toISOString() } } : {}) } })
       .eq('id', it.id);
     if (movedPast) await narrateGroundMove(admin, userId, w, currentGround, 'nudge_draft', existing?.generated_at ?? null);
     return { did: 'nudge', worker: pa?.name };
   }
-  if (w.id.startsWith('commit:')) {
-    // Commitments have no source_data — the nudge lands in the item_deliverables pool (type 'draft'),
-    // which the deep-dive + downstream steps already read.
-    // W9.1: the ledger's `version_of` rows (a kept edit, a superseded nudge) are never "the" draft.
-    const { data: existing } = await admin.from('item_deliverables').select('id, created_at, content, metadata')
-      .eq('user_id', userId).eq('kind', 'commitment').eq('entity_id', w.entityId).eq('type', 'draft')
-      .filter('metadata->>version_of', 'is', null)
-      .order('created_at', { ascending: false }).limit(1).maybeSingle();
-    // THE GROUND LAW: the counterparty's newer message supersedes the prepared nudge — fresh by
-    // clock is not fresh by ground.
-    const { groundOf, groundMoved } = await import('@/lib/prepare/ground');
-    const currentGround = await groundOf(admin, userId, { kind: 'commitment', id: w.entityId });
-    const priorMeta = (existing?.metadata ?? {}) as { prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null };
-    const movedPast = !!existing && groundMoved(priorMeta.prepared_from ?? null, currentGround);
-    const decision = decideRegeneration({
-      exists: !!existing, sent: !!(existing?.metadata as { sent_at?: string } | null)?.sent_at,
-      handHeld: isPoolRowHandHeld('nudge_draft', existing), groundMoved: movedPast, nonLive: untrueNudge,
-    });
-    if (decision.action === 'mark_stale_under_edit') return await markStaleUnderEdit(admin, userId, w, currentGround, 'nudge_draft', decision.reason);
-    if (decision.action === 'keep') return { did: 'none', reason: decision.reason };
-    // THE LANGUAGE MIRROR: the counterparty's last inbound message on the commitment's thread.
-    let mirrorText: string | null = null;
-    let commitThreadId: string | null = null; // W11.1: the conversation's MAILBOX scopes voice + signature
-    try {
-      const { data: c } = await admin.from('commitments').select('thread_id').eq('id', w.entityId).maybeSingle();
-      commitThreadId = (c?.thread_id as string | null) ?? null;
-      if (c?.thread_id) {
-        const { data: last } = await admin.from('emails').select('body, received_at').eq('user_id', userId)
-          .eq('thread_id', c.thread_id as string).eq('is_from_user', false)
-          .order('received_at', { ascending: false }).limit(1).maybeSingle();
-        mirrorText = String(last?.body || '').slice(0, 1200) || null;
-      }
-    } catch { /* non-fatal */ }
-    // ── TRUE ADDRESSEES (W7.3): WHO this nudge greets comes from THE ONE LADDER (counterparty →
-    // the source email's other party → the meeting's attendees minus the user → the project's one
-    // external person) — never the spine's `blockedOn`, which carried the USER's own name before the
-    // self-party repair ("Nudge — <user>", "Dear <user>…", To empty — found live). Nothing resolves ⇒
-    // the words greet no one by name and the card ASKS who it goes to. The OWED DIRECTION rides too:
-    // a message about the user's own obligation is never written as a chase. ──
-    const { resolveCommitmentAddressee, recipientsLabel, addresseeStamp } = await import('@/lib/prepare/addressee');
-    const addr = await resolveCommitmentAddressee(admin, userId, w.entityId);
-    const greet = recipientsLabel(addr.recipients);
-    const { data: dirRow } = await admin.from('commitments').select('direction').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
-    const direction: 'you' | 'them' = dirRow?.direction === 'you_owe' ? 'you' : 'them';
-    const raw = await generateNudgeDraft(userId, { counterparty: greet, description: w.title, ageDays, mirrorText, direction, threadId: commitThreadId }, admin);
-    if (!raw) return { did: 'none', reason: 'could not draft the nudge' };
-    const { body, review } = await reviewAndRevise(admin, userId, // O4 review
-      { body: raw, task: w.title, recipient: greet, entityId: w.entity?.id ?? null, kind: 'nudge' },
-      (objection) => generateNudgeDraft(userId, { counterparty: greet, description: w.title, ageDays, mirrorText, direction, threadId: commitThreadId, instructions: `REVIEWER'S OBJECTION — fix this: ${objection}` }, admin));
-    const pa = await getDraftingAssistant(admin, userId); // O3a attribution
-    // The superseded nudge FILES into the version chain (the reader skips `version_of` rows) —
-    // the past folds, never deletes.
-    if ((movedPast || untrueNudge) && existing) {
-      await admin.from('item_deliverables')
-        .update({ metadata: { ...priorMeta, version_of: movedPast ? 'superseded:ground-move' : 'superseded:truth' } })
-        .eq('id', existing.id).then(() => {}, () => {});
-    }
-    await admin.from('item_deliverables').insert({
-      user_id: userId, kind: 'commitment', entity_id: w.entityId, type: 'draft',
-      title: `Nudge — ${greet ? greet.split('<')[0].trim() : 'recipient to confirm'}`.slice(0, 100), content: body, ref: null,
-      metadata: { ...(pa ? { agentName: pa.name } : {}), prepared_from: currentGround, ...addresseeStamp(addr), ...(review.verdict !== 'pass' ? { review } : {}) },
-    }).then(() => {}, () => {});
-    if (movedPast) await narrateGroundMove(admin, userId, w, currentGround, 'nudge_draft', (existing?.created_at as string | undefined) ?? null);
-    return { did: 'nudge', worker: pa?.name };
-  }
+  if (w.id.startsWith('commit:')) return await prepareCommitmentMessage(admin, userId, w, 'chase', nonLive);
   return { did: 'none', reason: 'not a preparable item' };
+}
+
+// ── W43 · THE COMMITMENT'S EMAIL — ONE LANE for every message about a commitment whose conversation is email
+// (lib/prepare/channel): a CHASE (they owe — "Nudge — X") or a DELIVERY (the user owes — "Message — X",
+// the reader's reply_draft). Commitments have no source_data — the message lands in the item_deliverables
+// pool (type 'draft'), which every reader already serves. Written by the ONE drafter (generateNudgeDraft —
+// the thread's language mirror, its mailbox's voice + signature, THE ONE VET inside it), addressed by THE
+// ONE LADDER, stamped with the ground + the drafting rules. A machine paste pack standing for the same
+// item is retired once the email lands (the channel moved it; a user-edited pack is never touched). ──
+async function prepareCommitmentMessage(
+  admin: SupabaseClient, userId: string, w: WorkItem, mode: 'chase' | 'deliver', nonLive?: Set<PreparedKind>,
+): Promise<PrepareOneResult> {
+  // W5c: an untrue draft (a false claim, a superseded ground, older drafting rules) is never "fresh".
+  const untrue = !!nonLive && (nonLive.has('nudge_draft') || nonLive.has('reply_draft'));
+  const ageDays = Math.max(0, Math.round((Date.now() - Date.parse(w.startAt)) / 86_400_000));
+  // W9.1: the ledger's `version_of` rows (a kept edit, a superseded nudge) are never "the" draft.
+  const { data: existing } = await admin.from('item_deliverables').select('id, created_at, content, metadata')
+    .eq('user_id', userId).eq('kind', 'commitment').eq('entity_id', w.entityId).eq('type', 'draft')
+    .filter('metadata->>version_of', 'is', null)
+    .order('created_at', { ascending: false }).limit(1).maybeSingle();
+  // THE GROUND LAW: the counterparty's newer message supersedes the prepared message — fresh by clock is
+  // not fresh by ground.
+  const { groundOf, groundMoved } = await import('@/lib/prepare/ground');
+  const currentGround = await groundOf(admin, userId, { kind: 'commitment', id: w.entityId });
+  const priorMeta = (existing?.metadata ?? {}) as { prepared_from?: { emailId?: string | null; receivedAt?: string | null } | null };
+  const movedPast = !!existing && groundMoved(priorMeta.prepared_from ?? null, currentGround);
+  const handKind: HandKind = mode === 'deliver' ? 'reply_draft' : 'nudge_draft';
+  const decision = decideRegeneration({
+    exists: !!existing, sent: !!(existing?.metadata as { sent_at?: string } | null)?.sent_at,
+    handHeld: isPoolRowHandHeld(handKind, existing), groundMoved: movedPast, nonLive: untrue,
+  });
+  if (decision.action === 'mark_stale_under_edit') return await markStaleUnderEdit(admin, userId, w, currentGround, handKind, decision.reason);
+  if (decision.action === 'keep') return { did: 'none', reason: decision.reason };
+  // THE CONVERSATION: the commitment's own thread, else its source email's (the channel's facts) — the
+  // MAILBOX scopes voice + signature (W11.1) and the counterparty's last inbound is the language mirror.
+  let mirrorText: string | null = null;
+  let commitThreadId: string | null = null;
+  let direction: 'you' | 'them' = 'them';
+  let obligationOpen = false;
+  try {
+    const { data: c } = await admin.from('commitments').select('thread_id, source, source_id, direction, status').eq('id', w.entityId).eq('user_id', userId).maybeSingle();
+    commitThreadId = (c?.thread_id as string | null) ?? null;
+    direction = c?.direction === 'you_owe' ? 'you' : 'them';
+    obligationOpen = c?.direction === 'you_owe' && String(c?.status ?? 'open') === 'open';
+    if (!commitThreadId && c?.source === 'email' && c?.source_id && /^[0-9a-f-]{36}$/i.test(String(c.source_id))) {
+      const { data: se } = await admin.from('emails').select('thread_id').eq('id', c.source_id as string).eq('user_id', userId).maybeSingle();
+      commitThreadId = (se?.thread_id as string | null) ?? null;
+    }
+    if (commitThreadId) {
+      const { data: last } = await admin.from('emails').select('body, received_at').eq('user_id', userId)
+        .eq('thread_id', commitThreadId).eq('is_from_user', false)
+        .order('received_at', { ascending: false }).limit(1).maybeSingle();
+      mirrorText = String(last?.body || '').slice(0, 1200) || null;
+    }
+  } catch { /* non-fatal */ }
+  // A DELIVERY is the user's own obligation by definition; a CHASE on work the user owes inverts it.
+  if (mode === 'chase' && direction === 'you') return { did: 'none', reason: CHASE_INVERSION_REFUSAL };
+  if (mode === 'deliver') direction = 'you';
+  // ── TRUE ADDRESSEES (W7.3): WHO this message greets comes from THE ONE LADDER (counterparty → the source
+  // email's other party → the meeting's attendees minus the user → the project's one external person) —
+  // never the spine's `blockedOn`. Nothing resolves ⇒ the words greet no one by name and the card ASKS. ──
+  const { resolveCommitmentAddressee, recipientsLabel, addresseeStamp } = await import('@/lib/prepare/addressee');
+  const addr = await resolveCommitmentAddressee(admin, userId, w.entityId);
+  const greet = recipientsLabel(addr.recipients);
+  const vet = { obligationOpen: direction === 'you' && obligationOpen, staged: false };
+  const draftOnce = (instructions?: string) => generateNudgeDraft(userId, { counterparty: greet, description: w.title, ageDays, mirrorText, direction, threadId: commitThreadId, vet, ...(instructions ? { instructions } : {}) }, admin);
+  const raw = await draftOnce();
+  if (!raw) return { did: 'none', reason: mode === 'deliver' ? 'could not draft the message' : 'could not draft the nudge' };
+  const { body, review } = await reviewAndRevise(admin, userId, // O4 review
+    { body: raw, task: w.title, recipient: greet, entityId: w.entity?.id ?? null, kind: 'nudge' },
+    (objection) => draftOnce(`REVIEWER'S OBJECTION — fix this: ${objection}`));
+  const pa = await getDraftingAssistant(admin, userId); // O3a attribution
+  // The superseded message FILES into the version chain (the reader skips `version_of` rows) — the past
+  // folds, never deletes.
+  if ((movedPast || untrue) && existing) {
+    await admin.from('item_deliverables')
+      .update({ metadata: { ...priorMeta, version_of: movedPast ? 'superseded:ground-move' : 'superseded:truth' } })
+      .eq('id', existing.id).then(() => {}, () => {});
+  }
+  const lead = direction === 'you' ? 'Message' : 'Nudge';
+  const { error: insErr } = await admin.from('item_deliverables').insert({
+    user_id: userId, kind: 'commitment', entity_id: w.entityId, type: 'draft',
+    title: `${lead} — ${greet ? greet.split('<')[0].trim() : 'recipient to confirm'}`.slice(0, 100), content: body, ref: null,
+    metadata: { ...(pa ? { agentName: pa.name } : {}), prepared_from: currentGround, ...draftRulesStamp(), ...addresseeStamp(addr), ...(review.verdict !== 'pass' ? { review } : {}) },
+  });
+  if (insErr) return { did: 'none', reason: 'could not store the message — it will retry' };
+  await retireMachinePastePack(admin, userId, w.entityId, 'superseded:channel');
+  if (movedPast) await narrateGroundMove(admin, userId, w, currentGround, handKind, (existing?.created_at as string | undefined) ?? null);
+  return { did: mode === 'deliver' ? 'draft' : 'nudge', worker: pa?.name };
+}
+
+/** W43 · a MACHINE paste pack standing for this commitment is FILED (version chain, never deleted) once an
+ *  email lane prepared the item — the pack was the old channel's answer. A user-edited pack stands. */
+async function retireMachinePastePack(admin: SupabaseClient, userId: string, commitmentId: string, why: string): Promise<void> {
+  try {
+    const { PASTE_PACK_TASK } = await import('@/lib/prepare/paste-pack');
+    const { data: packs, error } = await admin.from('item_deliverables').select('id, content, metadata')
+      .eq('user_id', userId).eq('kind', 'commitment').eq('entity_id', commitmentId).eq('task_id', PASTE_PACK_TASK)
+      .filter('metadata->>version_of', 'is', null);
+    if (error) return;
+    for (const p of (packs ?? []) as Array<{ id: string; content: unknown; metadata: Record<string, unknown> | null }>) {
+      if (isPoolRowHandHeld('paste_pack', p)) continue;
+      await admin.from('item_deliverables').update({ metadata: { ...(p.metadata ?? {}), version_of: why } }).eq('id', p.id).eq('user_id', userId);
+    }
+  } catch { /* the reader still withholds a stale pack */ }
 }
 
 // ── W1 · the INVITE branch — a `schedule` verdict prepares a GROUNDED, editable calendar invite
@@ -1281,7 +1395,16 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
         await supersedeWithdrawnDrafts(admin, userId, { kind: 'commitment', id: w.entityId }, reason);
       } catch { /* non-fatal — the reader still withholds it */ }
     };
-    const cCands = await resolveFileUniversal(admin, { userId, entityId: w.entity?.id ?? null }, w.title, 4).catch(() => []);
+    // ── W43 · A FILE ONLY FOR A FILE ASK (lib/prepare/input-kind fileAskLabels): the work's own requirements
+    // must name a FILE-KIND input (else a send-a-file title that names one); the search and the verifier
+    // read THAT requirement, never the bare title. A task whose ask is not a file gets no attachment. ──
+    const { fileAskLabels } = await import('@/lib/prepare/input-kind');
+    const cAsk = fileAskLabels(verdict?.requires ?? null, w.title);
+    if (!cAsk.length) {
+      await retireWithdrawn('withdrawn send — this work asks for no file');
+      return { did: 'none', reason: 'this work asks for no file — nothing to attach' };
+    }
+    const cCands = await resolveFileUniversal(admin, { userId, entityId: w.entity?.id ?? null }, cAsk[0], 4).catch(() => []);
     const cTop = cCands.find((c) => c.source === 'kb');
     if (!cTop || cTop.score < 0.7) { await retireWithdrawn('withdrawn send — no file found for it now'); await askForFile(admin, userId, w, docSendAskLabels(verdict)); return { did: 'none', reason: 'could not find the document — asked in the room' }; }
     // W6 — the ONE evidence-quoting verifier (cross-entity rejected structurally; the quote is
@@ -1290,20 +1413,21 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
     // the verifier — a file that predates an ask for NEW work is its base, never the send.
     const { verifyArtifactMatch: verifyC, requestFactsOf: reqFactsC } = await import('@/lib/prepare/requirements');
     const reqC = await reqFactsC(admin, userId, { kind: 'commitment', id: w.entityId });
-    const cJudge = await verifyC(admin, userId, { task: w.title, candidate: cTop, entityId: w.entity?.id ?? null, emailExcerpt: reqC.excerpt, requestAt: reqC.requestAt, requestText: reqC.requestText });
+    const cJudge = await verifyC(admin, userId, { task: cAsk[0] === w.title ? w.title : `${w.title} — the file asked for: "${cAsk[0]}"`, candidate: cTop, entityId: w.entity?.id ?? null, emailExcerpt: reqC.excerpt, requestAt: reqC.requestAt, requestText: reqC.requestText });
     if (!cJudge.match && cJudge.role === 'base') { await retireWithdrawn('withdrawn send — the file is the base of new work, not the deliverable'); return await offerBase(admin, userId, w, 'commitment', cTop, reqC.requestAt, verdict); }
     if (!cJudge.match) { await retireWithdrawn('withdrawn send — its file is not proven to be the deliverable'); await askForFile(admin, userId, w, docSendAskLabels(verdict)); return { did: 'none', reason: 'no confident file match — asked in the room' }; }
     // TRUE ADDRESSEES (W7.3): the send is addressed by THE ONE LADDER and stamped with it.
     const { resolveCommitmentAddressee: resolveC, recipientsLabel: labelC, addresseeStamp: stampC } = await import('@/lib/prepare/addressee');
     const cAddr = await resolveC(admin, userId, w.entityId);
-    const cBody = await generateNudgeDraft(userId, { counterparty: labelC(cAddr.recipients), description: `${w.title} — the document "${cTop.filename}" will be attached.`, direction: 'you', threadId: cAddr.row?.thread_id ?? null }, admin).catch(() => null);
+    const cBody = await generateNudgeDraft(userId, { counterparty: labelC(cAddr.recipients), description: `${w.title} — the document "${cTop.filename}" will be attached.`, direction: 'you', threadId: cAddr.row?.thread_id ?? null,
+      vet: { obligationOpen: true, staged: true, stagedIsWork: true } }, admin).catch(() => null);
     if (!cBody) return { did: 'none', reason: 'could not draft the send' };
     const { writeDeliverable } = await import('@/lib/home/deliverable-pool');
     const paC = await getDraftingAssistant(admin, userId); // O3a attribution
     await writeDeliverable(admin, userId, {
       kind: 'commitment', entityId: w.entityId, taskId: 'prepare-pass-docsend', type: 'draft',
       title: `Send ${cTop.filename}`.slice(0, 100), content: cBody, gist: `send draft with ${cTop.filename}`,
-      metadata: { source: 'preparation_pass', ...(paC ? { agentName: paC.name } : {}), ...stampC(cAddr), attachment: { fileId: cTop.id, filename: cTop.filename, source: cTop.source }, ...(await import('@/lib/prepare/requirements')).stagingStamp(), provenance: { item: w.title.slice(0, 100), ...(w.entity ? { entity: w.entity.name } : {}) } },
+      metadata: { source: 'preparation_pass', ...(paC ? { agentName: paC.name } : {}), ...draftRulesStamp(), ...stampC(cAddr), attachment: { fileId: cTop.id, filename: cTop.filename, source: cTop.source }, ...(await import('@/lib/prepare/requirements')).stagingStamp(), provenance: { item: w.title.slice(0, 100), ...(w.entity ? { entity: w.entity.name } : {}) } },
     }).catch(() => {});
     return { did: 'docsend', worker: paC?.name };
   }
@@ -1327,8 +1451,10 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
       entityId: w.entity?.id ?? null, requires: verdict.requires, work: verdict.work,
     });
     const kbHave = reqs.have.find((h) => h.file?.source === 'kb');
+    const { inboxTruthFacts: factsOfInbox } = await import('@/lib/prepare/read');
     const body2 = await generateReplyDraft(userId, sd as Record<string, never>, admin,
-      `${reqs.artifactTruth || ''}\nThe reply responds to this request${kbHave ? `; the document "${kbHave.file!.filename}" will be attached` : ''}.`).catch(() => null);
+      `${reqs.artifactTruth || ''}\nThe reply responds to this request${kbHave ? `; the document "${kbHave.file!.filename}" will be attached` : ''}.`,
+      null, { obligationOpen: factsOfInbox(sd)?.obligationOpen ?? false, staged: !!kbHave?.file }).catch(() => null);
     if (body2) {
       const { review } = await reviewAndRevise(admin, userId,
         { body: body2, task: w.title, recipient: (sd.from_name as string) ?? (sd.from_address as string) ?? null, entityId: w.entity?.id ?? null, kind: 'reply' },
@@ -1337,7 +1463,7 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
       await admin.from('inbox_items').update({
         // W14.1 · the inbox doc-send's file match carries the staging law it was verified under (the
         // one reader re-proves an unstamped machine attachment — lib/prepare/read.ts draftStagingStale).
-        source_data: { ...sd, draft: { body: body2, generated_at: new Date().toISOString(), prepared: 'pass', law_version: DRAFT_LAW_VERSION_C, ...(kbHave?.file ? { attachment: { fileId: kbHave.file.id, filename: kbHave.file.filename, source: kbHave.file.source }, ...(await import('@/lib/prepare/requirements')).stagingStamp() } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa2 ? { prepared_by: { worker: pa2.name, at: new Date().toISOString() } } : {}) },
+        source_data: { ...sd, draft: { body: body2, generated_at: new Date().toISOString(), prepared: 'pass', law_version: DRAFT_LAW_VERSION_C, ...draftRulesStamp(), ...(kbHave?.file ? { attachment: { fileId: kbHave.file.id, filename: kbHave.file.filename, source: kbHave.file.source }, ...(await import('@/lib/prepare/requirements')).stagingStamp() } : {}), ...(review.verdict !== 'pass' ? { review } : {}) }, ...(pa2 ? { prepared_by: { worker: pa2.name, at: new Date().toISOString() } } : {}) },
       }).eq('id', it.id);
       // W39b · only a FILE in hand makes this a doc-send ("found the file and drafted the send"); a typed
       // answer is in hand too, but nothing was found or attached — that is a drafted reply.
@@ -1346,7 +1472,11 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
     // Could not draft — the checklist ask (written by resolveRequirements) still stands in the room.
     return { did: 'none', reason: reqs.missing.length ? `waiting on ${reqs.missing.length} artifact(s) from you` : 'could not draft the send' };
   }
-  const cands = await resolveFileUniversal(admin, { userId, entityId: w.entity?.id ?? null }, w.title, 4).catch(() => []);
+  // W43 · A FILE ONLY FOR A FILE ASK — the inventory-less send stages only when its title names a file.
+  const { fileAskLabels: fileAskOf } = await import('@/lib/prepare/input-kind');
+  const iAsk = fileAskOf(null, w.title);
+  if (!iAsk.length) return { did: 'none', reason: 'this work asks for no file — nothing to attach' };
+  const cands = await resolveFileUniversal(admin, { userId, entityId: w.entity?.id ?? null }, iAsk[0], 4).catch(() => []);
   // Only attach on a CONFIDENT KB hit (bytes we hold → previewable + attachable); drive-catalog
   // candidates surface in the deep-dive picker instead of silently auto-attaching.
   const top = cands.find((c) => c.source === 'kb');
@@ -1367,15 +1497,17 @@ async function prepareDocSend(admin: SupabaseClient, userId: string, w: WorkItem
   if (!judge.match) return { did: 'none', reason: 'no confident file match' };
   // W13.2: a withdrawn draft's words are never reused as the send's body.
   const reusedDraft = !!existingDraft?.body && !sendWithdrawn;
+  const { inboxTruthFacts: factsOfInboxI } = await import('@/lib/prepare/read');
   const body = (reusedDraft ? existingDraft?.body : null)
-    || (await generateReplyDraft(userId, sd as Record<string, never>, admin, `The reply should send the document "${top.filename}" (it will be attached).`).catch(() => null));
+    || (await generateReplyDraft(userId, sd as Record<string, never>, admin, `The reply should send the document "${top.filename}" (it will be attached).`,
+      null, { obligationOpen: factsOfInboxI(sd)?.obligationOpen ?? false, staged: true, stagedIsWork: true }).catch(() => null));
   if (!body) return { did: 'none', reason: 'could not draft the send' };
   // Stamp the drafting law ONLY on words this run actually authored — a reused body keeps whatever
   // law it was written under, so a stale one is still caught by the serve gates.
   const lawStamp = reusedDraft
     ? ((existingDraft as { law_version?: number } | null)?.law_version !== undefined
         ? { law_version: (existingDraft as { law_version?: number }).law_version } : {})
-    : { law_version: DRAFT_LAW_VERSION_C };
+    : { law_version: DRAFT_LAW_VERSION_C, ...draftRulesStamp() };
   const pa = await getDraftingAssistant(admin, userId); // O3a attribution
   await admin.from('inbox_items').update({
     // W14.1 · stamped with the staging law this match was just verified under (see above).

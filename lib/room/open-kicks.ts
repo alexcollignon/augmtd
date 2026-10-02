@@ -49,7 +49,8 @@ export async function recognizeOnOpen(client: SupabaseClient, uid: string, linkK
  *  superseded/outside-window/misaddressed artifact, or an expired one. ONE predicate for both open
  *  paths (the view door and the joined-warm kick). Pure. */
 export function needsReprepareTrip(arts: PreparedArtifact[]): boolean {
-  return arts.some((a) => !isLiveArtifact(a));
+  // W43.2 · + a live draft written under older rules (refreshDue): re-prepared quietly, served until replaced.
+  return arts.some((a) => !isLiveArtifact(a) || (!!a.refreshDue && !a.hand));
 }
 
 /** THE TRIP'S BUDGET (W13.5): at most ONE re-prepare per item per window, in-process (the crons and

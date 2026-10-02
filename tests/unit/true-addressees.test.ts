@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { DRAFT_RULES_VERSION } from '@/lib/prepare/draft-rules';
 import {
   resolveAddressee, addresseeWithdrawn, addresseeFromNudgeTitle, addresseeOfStamp, recipientsLabel, isUserForm,
 } from '@/lib/prepare/addressee';
@@ -87,7 +88,8 @@ describe('THE WITHDRAWAL PREDICATE — a draft greeting the wrong person is not 
 
 describe('THE ONE READER withdraws misaddressed drafts (stampAddressees)', () => {
   const pool = (title: string, meta: Record<string, unknown> = {}) =>
-    poolRowsToArtifacts([{ id: 'r1', type: 'draft', title, content: 'Hi — following up on the walkthrough.', metadata: meta, created_at: '2026-09-23T07:00:00Z' }], 'commitment');
+    // W43 · a fresh draft carries the current drafting-rules stamp (an unstamped one is withdrawn as older rules).
+    poolRowsToArtifacts([{ id: 'r1', type: 'draft', title, content: 'Hi — following up on the walkthrough.', metadata: { rules_version: DRAFT_RULES_VERSION, ...meta }, created_at: '2026-09-23T07:00:00Z' }], 'commitment');
   it('the live class: a legacy "Nudge — <user>" is misaddressed → not live → its kind re-prepares', () => {
     const arts = stampAddressees(pool('Nudge — Sam'), { counterparty: null, user: USER });
     expect(arts[0].misaddressed).toBe(true);

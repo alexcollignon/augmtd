@@ -63,7 +63,9 @@ ok('T2h a payment-detail CHANGE request mints no payment work: the write door dr
   && /const notes = boardRowNotes\(board, /.test(grounding) && /changeRequest: asksPaymentDetailChange\(/.test(grounding));
 const dr = code('lib/inbox/draft-reply.ts');
 ok('T2i the reply is signed with the user\'s derived name and an honorific takes the surname',
-  (dr.match(/const userName = await signNameOf\(client, userId\);/g) ?? []).length === 2 && /checked\.body = fixHonorificName\(checked\.body, fromName\);/.test(dr)
+  // ⟲ RE-POINTED (W43): the sign-off finisher (draftFinisher) every drafter runs carries the honorific fix.
+  (dr.match(/const userName = await signNameOf\(client, userId\);/g) ?? []).length === 2 && /return recipientName \? fixHonorificName\(out, recipientName\) : out;/.test(dr)
+  && /draftFinisher\(client, userId, userName, mailbox, fromName\)/.test(dr)
   && /placeholder = \/\^\\\[/.test(code('lib/inbox/sign-off.ts')));
 
 ok('T2j every remaining path reads the one rule: the reprocessed meeting keeps only the user\'s tasks; a declared task derives its owner; the answer names its board rows',
