@@ -10,7 +10,7 @@ import { detectLanguage } from '@/lib/inbox/detect-language';
 import { coerceUnderstanding, languageName } from '@/lib/inbox/item-understanding';
 import { readItemAttachments, renderAttachedDocumentsBlock } from '@/lib/inbox/attachment-context';
 import { clipForPrompt, EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
-import { draftInLanguage, exemplarRule } from '@/lib/context/draft-language';
+import { draftInLanguage, exemplarRule, addressRegisterOf, fixHonorificName } from '@/lib/context/draft-language';
 import { plainBody } from '@/lib/core/text';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -164,11 +164,7 @@ ${clipForPrompt(body, 1200)}
     // what makes the "{assistant} drafted this" attribution causal, not cosmetic.
     buildAssistantSkillsBlock(client, userId),
   ]);
-  let userName = 'me';
-  try {
-    const { data: prof } = await client.from('profiles').select('full_name').eq('id', userId).maybeSingle();
-    if (prof?.full_name) userName = String(prof.full_name);
-  } catch { /* keep default */ }
+  const userName = await signNameOf(client, userId);
 
   // The voice block governs TONE only — never the language, never the greeting or sign-off words.
   // The guidance above (a direction, a steer) never changes the language either.
@@ -246,6 +242,10 @@ ${clipForPrompt(body, 1200)}
         // THE COMPLETION RULE (W5a): the reply may claim only deeds the facts above (staged
         // attachments, the artifact truth) support.
         `${COMPLETION_HONESTY_RULE} ` +
+        // W42 · ASKED FOR THE USER'S OWN FACTS: supplied as a named placeholder, never deferred, never invented.
+        `Only when the sender asks for the user's OWN BANK DETAILS (IBAN / RIB / account holder) and they appear nowhere here: write them in ` +
+        `as named placeholders the user fills before sending (e.g. "IBAN: [IBAN]") — never promise to send them later, never invent them. ` +
+        `Anything the thread or context already states (an amount, a date, a name) is written as stated, never as a placeholder. ` +
         `${riskyAsk ? `${RISKY_CHANGE_REPLY} ` : ''}` +
         `Return ONLY the reply body — no subject line, no preamble, no ` +
         `surrounding quotes. Keep it appropriately concise and ready to send.\n\n` +
@@ -263,12 +263,13 @@ ${clipForPrompt(body, 1200)}
     });
     return res.choices?.[0]?.message?.content?.trim() || '';
   };
-  let checked = await draftInLanguage(writeReply, detected);
+  const frameRegister = addressRegisterOf(body); // W42: the frame follows the thread's register
+  let checked = await draftInLanguage(writeReply, detected, frameRegister);
   if (riskyAsk && checked.body) {
     const agreed = riskyAgreementIn(checked.body);
     if (agreed) {
       riskFix = `REVIEWER'S OBJECTION — fix this: ${riskyAgreementObjection(agreed)}`;
-      const again = await draftInLanguage(writeReply, detected);
+      const again = await draftInLanguage(writeReply, detected, frameRegister);
       checked = { ...again, body: dropRiskyAgreement(again.body || checked.body) };
     }
   }
@@ -288,6 +289,7 @@ ${clipForPrompt(body, 1200)}
     }
     const { enforceUserSignOff } = await import('@/lib/inbox/sign-off');
     checked.body = enforceUserSignOff(checked.body, userName, await coworkerNames(client, userId));
+    checked.body = fixHonorificName(checked.body, fromName); // W42: an honorific takes the surname
   }
   return checked.body;
 }
@@ -333,11 +335,7 @@ export async function generateNudgeDraft(
     renderBrainContext(client, userId, { personEmail: recipientEmail, personName: recipientEmail ? null : opts.counterparty }).catch(() => ''),
     buildAssistantSkillsBlock(client, userId), // O3a — the assistant's skills shape nudges too
   ]);
-  let userName = 'me';
-  try {
-    const { data: prof } = await client.from('profiles').select('full_name').eq('id', userId).maybeSingle();
-    if (prof?.full_name) userName = String(prof.full_name);
-  } catch { /* keep default */ }
+  const userName = await signNameOf(client, userId);
 
   const who = opts.counterparty || 'the recipient';
   const aged = typeof opts.ageDays === 'number' && opts.ageDays > 0 ? ` It has been about ${opts.ageDays} day${opts.ageDays === 1 ? '' : 's'} without a response.` : '';
@@ -380,6 +378,23 @@ export async function generateNudgeDraft(
         (languageFix ? `\n\n${languageFix}` : '') }],
     });
     return res.choices?.[0]?.message?.content?.trim() || '';
-  }, mirrorLang);
+  }, mirrorLang, mirrorText ? addressRegisterOf(mirrorText) : null);
   return checked.body;
+}
+
+
+/** W42 · THE DRAFT IS SIGNED WITH THE USER'S NAME: the profile's full name, else the identity the house derives
+ *  from the user's own mailbox (lib/prepare/addressee loadUserForms) — a draft once signed "[Ihr Name]" / "me"
+ *  on an account whose profile name was empty. 'me' only when nothing names them. */
+async function signNameOf(client: DBClient, userId: string): Promise<string> {
+  try {
+    const { data: prof, error } = await client.from('profiles').select('full_name').eq('id', userId).maybeSingle();
+    if (!error && prof?.full_name && String(prof.full_name).trim()) return String(prof.full_name).trim();
+  } catch { /* fall through */ }
+  try {
+    const { loadUserForms } = await import('@/lib/prepare/addressee');
+    const forms = await loadUserForms(client as never, userId);
+    if (forms.name && forms.name.trim()) return forms.name.trim();
+  } catch { /* fall through */ }
+  return 'me';
 }

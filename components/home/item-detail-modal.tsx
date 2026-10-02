@@ -67,7 +67,7 @@ export function ItemDetailModal({ id }: { id: string }) {
     // Anchored right of the app nav sidebar (w-14) — covers the Home content, sidebar stays.
     // left-[212px] = the one-sidebar's width (Arc 3) — the modal docks flush to its edge; the
     // `left-14` it shipped with was the OLD 56px icon rail, so it half-buried the new sidebar.
-    <div className="fixed inset-y-0 right-0 left-[212px] z-40 flex flex-col pointer-events-none">
+    <div className="fixed inset-y-0 right-0 lg:right-[var(--viewer-w,0px)] left-[212px] z-40 flex flex-col pointer-events-none">
       {/* Soft page-bg wash so the Home behind reads as "backgrounded", not a boxed modal. */}
       <div
         onClick={close}

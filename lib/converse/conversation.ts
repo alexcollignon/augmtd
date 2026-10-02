@@ -57,10 +57,13 @@ export function pushActivity(log: TurnActivity[], label: string, atMs: number): 
 }
 
 /** The answer's receipt as a door stores and serves it (absent fields stay absent). Pure. */
-export type AnswerMeta = { activity?: TurnActivity[]; durationMs?: number; stopped?: boolean };
-export function answerMetaOf(t: { activity?: TurnActivity[]; durationMs?: number; stopped?: boolean } | null | undefined): AnswerMeta | null {
+/** W42 · `boardRefs`: the board rows ('commit:<id>' | 'inbox:<id>') the answer's words NAME, in board order —
+ *  the data a surface needs to mount a card only for a row the text names (and to know which rows it named). */
+export type AnswerMeta = { activity?: TurnActivity[]; durationMs?: number; stopped?: boolean; boardRefs?: string[] };
+export function answerMetaOf(t: { activity?: TurnActivity[]; durationMs?: number; stopped?: boolean; boardRefs?: string[] } | null | undefined): AnswerMeta | null {
   if (!t) return null;
   const out: AnswerMeta = {};
+  if (Array.isArray(t.boardRefs) && t.boardRefs.length) out.boardRefs = t.boardRefs.filter((r) => /^(commit|inbox):[\w-]+$/.test(String(r))).slice(0, 60);
   if (Array.isArray(t.activity) && t.activity.length) out.activity = t.activity.slice(0, TURN_ACTIVITY_MAX);
   if (typeof t.durationMs === 'number' && Number.isFinite(t.durationMs) && t.durationMs >= 0) out.durationMs = Math.round(t.durationMs);
   if (t.stopped === true) out.stopped = true;

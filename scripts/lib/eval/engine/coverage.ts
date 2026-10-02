@@ -45,13 +45,13 @@ export const CALL_SITES: Record<string, CoverageEntry> = {
   'lib/inbox/deixis.ts': { adapters: ['extraction.commitments'], sites: 2 },
   'lib/utils/user-time.ts': { adapters: ['judgment.invite', 'extraction.commitments'], sites: 2 },
   'lib/work/conversation-delta.ts': { adapters: ['extraction.commitments'], pending: 'judgment.conversation-delta (J7, stage 1a follow-up) — its own labels', sites: 2 },
-  'lib/converse/index.ts': { adapters: ['conversation.home-chat', 'room.chat', 'handoff.result'], sites: 5 },
+  'lib/converse/index.ts': { adapters: ['conversation.home-chat', 'room.chat', 'room.catchup', 'handoff.result'], sites: 5 },
   // ── stage 1a follow-ups (pending) ──
   'lib/inbox/conversation-identity.ts': { pending: 'judgment.same-conversation (J8, stage 1a follow-up)', sites: 1 },
   'lib/commitments/expiry.ts': { pending: 'judgment.expiry (J9, stage 1a follow-up)', sites: 1 },
   'lib/inbox/reactivate-on-reply.ts': { pending: 'judgment.reactivate (J10) — rides the J8/J9 fixtures', sites: 1 },
   // ── stage 1b: what the user acts on and sends ──
-  'lib/inbox/draft-reply.ts': { adapters: ['draft.reply'], pending: 'artifact.nudge-draft (A2) — the nudge path has no surface case yet', sites: 4 },
+  'lib/inbox/draft-reply.ts': { adapters: ['draft.reply', 'draft.language'], pending: 'artifact.nudge-draft (A2) — the nudge path has no surface case yet', sites: 4 },
   'lib/prepare/pass.ts': { adapters: ['decision.options'], pending: 'prep narration (N10)', sites: 1 },
   'lib/briefing/compose.ts': { adapters: ['briefing.home'], sites: 1 },
   'app/api/home/brief/route.ts': { inPath: ['home.synthesis'], pending: 'the route-embedded input assembly (the synthesis itself is measured over stated inputs by home.synthesis, W36)', sites: 1 },

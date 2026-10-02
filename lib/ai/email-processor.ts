@@ -1102,6 +1102,18 @@ export async function computeUnderstanding(email: EmailData, supabase: SupabaseC
   const u0 = coerceUnderstanding(parseModelJSON(res.choices?.[0]?.message?.content || '', {}));
   // W28 · AN OBEYED INJECTION IS NOT AN ASK (invariant 2, the code half — lib/utils/inbound-data).
   const u = u0 ? coldPitchFloor(injectionFloor(u0, ownWords)) : u0;
+  // W42 · THE BILL HAS ONE PAYER at the understanding's birth (lib/commitments/quote-actor): a payment move the
+  // SENDER'S side makes is never stored as the user's ownership. Forms only when the probe fires (one read).
+  if (u?.ownership === 'you_owe' && !isFromUserMail(email)) {
+    const { ownershipPayerFloor } = await import('@/lib/commitments/quote-actor');
+    const words = `${email.subject ?? ''}\n${ownWords}`;
+    if (ownershipPayerFloor(u, { ownWords: words, user: { name: null, aliases: email.user_addresses ?? [] } })) {
+      const { loadUserForms } = await import('@/lib/prepare/addressee');
+      const forms = await loadUserForms(supabase as never, email.user_id!).catch(() => ({ name: null, aliases: [] as string[] }));
+      const floored = ownershipPayerFloor(u, { ownWords: words, user: { name: forms.name, aliases: [...(forms.aliases ?? []), ...(email.user_addresses ?? [])] }, others: [email.from_name ?? null] });
+      if (floored) u.ownership = floored;
+    }
+  }
   // ── THE SERVED-WORDS LAW, write seam 2 of 3 (proactive-reach LAW 3) ───────────────────────────
   // `understanding.ask` is the FIRST thing the deck's whisper speaks (the ask→title precedence), and
   // it is a frozen ingest snapshot: a "Confirm lunch tomorrow" stored on a Wednesday is a lie every
@@ -1124,4 +1136,10 @@ export async function computeUnderstanding(email: EmailData, supabase: SupabaseC
     body: email.body, received_at: email.received_at ?? null, thread_id: (email as { thread_id?: string | null }).thread_id ?? null,
     user_name: email.user_name ?? null, user_addresses: mine,
   }, opts.signals ?? null);
+}
+
+/** W42: the mail is the user's own (sent from one of their addresses). */
+function isFromUserMail(email: EmailData): boolean {
+  const from = String(email.from_address ?? '').toLowerCase();
+  return !!from && (email.user_addresses ?? []).some((a) => String(a).toLowerCase() === from);
 }

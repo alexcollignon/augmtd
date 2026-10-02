@@ -73,6 +73,16 @@ world: {
   others and `cc: ['me']`.
 - Messages in a thread must be in time order. Keys must be unique across the world. Links must name
   items that exist. The resolver throws on any violation.
+- **W42 · state and deeds.** A commitment takes `status: 'open' | 'done'` (default open) and `history:
+  [{ at, action: 'done' | 'restored' }]`, seeded as the activity rows the product logs (`commitment_done` /
+  `restored`). "Marked done, then restored" = `history: [done, restored]` with `status: 'open'`; the
+  resolver refuses a status that contradicts the last deed. A thread takes `preparedInvite: { title, start,
+  minutes, attendees }` — a STAGED invite (prepared on the item, not sent). The neutral renderer shows all
+  three to the plain columns ([DONE]/[OPEN] + history, "prepared but NOT sent").
+- **W42 · real-world complexity.** The anonymised live-room classes live in the `delegated-payment`,
+  `bank-details`, `mixed-language` and `restored` groups (extraction + work verdict) and in the surfaces
+  `room.catchup` and `draft.language` (scripts/lib/eval-surfaces). Add a case there when a live room shows
+  a new failure shape: many records, both directions, several languages, a deed that was undone.
 - Teammates and team rosters cannot be seeded yet: the roster comes from company membership. Write
   an internal colleague as a person on the user's own domain (`@northwind.test`).
 - Meeting transcripts have no world kind yet. The extraction surface's meeting group is marked PENDING.

@@ -25,6 +25,34 @@ export function asksPaymentDetailChange(text: string | null | undefined): boolea
   return ASK.test(String(text ?? ''));
 }
 
+const DETAILS_RE = new RegExp(DETAILS, 'iu');
+/** W42 · the text is ABOUT payment details (bank details / IBAN / RIB …) — an update/pay-the-new-account task
+ *  on a change request names them. Pure. */
+export function mentionsPaymentDetails(text: string | null | undefined): boolean {
+  return DETAILS_RE.test(String(text ?? ''));
+}
+
+/** W42 · THE CHANGE REQUEST MINTS NO PAYMENT TASK (pure): on words that ask to change where payments go, a
+ *  candidate task that would pay, update or act on the payment details is never the user's obligation —
+ *  the only safe work is the user's own verification via a contact they already hold (RISKY_CHANGE_REPLY). */
+export function changeRequestMintsNothing(inbound: string | null | undefined, task: { description?: string | null; quote?: unknown; steps?: unknown }): boolean {
+  if (!asksPaymentDetailChange(inbound)) return false;
+  const text = [task.description, typeof task.quote === 'string' ? task.quote : '', Array.isArray(task.steps) ? task.steps.join(' ') : ''].join(' ');
+  return mentionsPaymentDetails(text) || /\b(pay|paid|payment|transfer|wire|überweis\w*|zahl\w*|virement|payer|régler|pagar|pagamento|transfer[eê]ncia|pago|transferencia)\b/iu.test(text);
+}
+
+/** W42 · the catch-up/room answer legitimises a payment-detail change: tells the user to pay / use / update
+ *  to the new account, or to "acknowledge" the change — without a negation. Returns the sentence or null. Pure. */
+export function legitimisesDetailChange(answer: string | null | undefined): string | null {
+  for (const sentence of String(answer ?? '').split(/(?<=[.!?])\s+|\n+/)) {
+    const s = sentence.trim();
+    if (!s || /\b(not|never|don'?t|do not|nicht|kein\w*|ne |jamais|não|nunca|no)\b/i.test(s)) continue;
+    if (/\b(pay|use|send|transfer|wire|überweis\w*|zahl\w*|virement|payer|pagar|usar|utiliser)\b[^.!?\n]{0,60}\b(new|neue[nrs]?|nouveau|nouvelle|novo|nova|nuevo|nueva)\s+(iban|account|konto|bank\w*|compte|conta|cuenta|details)/i.test(s)) return s;
+    if (/\b(acknowledge|confirm|accept|update|register|record)\b[^.!?\n]{0,40}\b(new|changed|change|neue|nouveau|nouvelle)\b[^.!?\n]{0,30}\b(account|bank|iban|konto|details|bankverbindung|compte|rib)\b/i.test(s)) return s;
+  }
+  return null;
+}
+
 const NEG = /\b(not|never|won'?t|can'?t|cannot|no|nothing|neither|nor|without)\b|n't\b/i;
 const AGREEMENT: RegExp[] = [
   // a commitment to update / switch / route / proceed (now or "once verified")

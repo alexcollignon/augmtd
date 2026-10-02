@@ -258,6 +258,7 @@ export async function refreshUnderstandingForArrival(params: {
     // TRUE FACTS OR NO FACTS: a failed pass leaves the PRIOR understanding and the PRIOR stamp in
     // place — so the serve floor still knows the claim is behind, and degrades rather than lies.
     if (!fresh) return 'failed';
+    // (W42: THE BILL HAS ONE PAYER is floored inside computeUnderstanding — the one birth of every understanding.)
     params.onDerived?.(fresh);
     if (params.dryRun) return 'refreshed';
 

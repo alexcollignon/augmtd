@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { announceDeed } from '@/lib/room/deed-echo';
 import { ThreadCardView, type ThreadCard } from '@/components/thread';
 // W18.A · ONE WIDTH — the reply card's own frames wear the kit's one card token.
@@ -20,6 +19,7 @@ import {
 } from '@/lib/prepare/email-card';
 // W13 · the ONE attachment claim (pure, client-safe) — the card re-vets the words against its chips.
 import { claimsUnstagedAttachment } from '@/lib/prepare/truth';
+import { useArtifactViewer } from '@/components/shared/artifact-viewer';
 import { draftReadinessOf, mayClaimReady, EMPTY_DRAFT_NOTE } from '@/lib/prepare/card-readiness'; // W15.2
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -90,7 +90,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
    *  assistant's address), carrying what we prepared for the outcome ledger. When nothing resolves
    *  a recipient the card is `needs_recipient`: it ASKS who the message goes to and offers the
    *  candidates the ladder saw — it never ships a placeholder address. */
-  compose?: { kind: 'commitment'; id: string };
+  compose?: { kind: 'commitment' | 'meeting'; id: string };
   /** WHAT CAME WITH THE MESSAGE BEING ANSWERED (owner walk, Sep 10: "wasn't considered in the
    *  email context… nor to open/see the document"). The source thread's own attachments, which the
    *  host already holds — read in the email context, not only in the drawer's Files tab. They are
@@ -110,17 +110,23 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
    *  the conversation in place (a default would hop to the very page it sits on). */
   onOpenThread?: (() => void) | null;
   onSent?: () => void;
-  /** W17 · NO WAITING (item lane only) — the prepared words the host ALREADY holds (the item view
+  /** W17 · NO WAITING (item lane, and the compose lane when a chat already drafted the words — the
+   *  meeting chat's follow-up) — the prepared words the host ALREADY holds (the item view
    *  serves THE ONE READER's live reply draft). The card paints them at once instead of a skeleton;
    *  the draft door's answer still lands (hand flags · staged files · a correction if the door
    *  regenerated), and never over words the user typed. Absent → the card reads for itself. */
   preparedBody?: string | null;
 }) {
-  const router = useRouter();
   // THE DOOR ALWAYS RENDERS ON THE ITEM LANE — the host's handler when it has one (it knows where
   // its own thread reads), the item's own address when it doesn't. A card that is answering a real
   // mail thread can never be mounted without a way back to it.
-  const openThread = onOpenThread === null ? undefined : (onOpenThread ?? (item ? () => router.push(`/item/${item.id}?kind=email`) : undefined));
+  // ONE DOOR, ONE BEHAVIOUR (law `one-component-one-behaviour`): the default "Open thread" raises THE
+  // ONE VIEWER with the thread beside the conversation — on every surface — instead of navigating the
+  // reader out of the chat they are in. A host that holds its own read (the project room) overrides.
+  const threadViewer = useArtifactViewer();
+  const openThread = onOpenThread === null ? undefined : (onOpenThread ?? (item
+    ? () => { void threadViewer.open({ kind: 'email_thread', itemId: item.id, title: subject || 'Conversation' }); }
+    : undefined));
   const features = useFeatures();
   // THE TIER LAW: the mailbox reply lane exists only where the workspace has email. The COWORKER
   // lane (Resend, `compose_email`'s own channel) is feature-null and works everywhere — a sovereign
@@ -132,7 +138,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
   // must never render that field (the card never wears a control its send would drop).
   const itemLane = !!item && !coworker && !standalone;
   const composeLane = !!compose && !item && !coworker && !standalone;
-  const seededBody = !coworker && !standalone && !!item && !!preparedBody?.trim() ? preparedBody : null;
+  const seededBody = !coworker && !standalone && (!!item || !!compose) && !!preparedBody?.trim() ? preparedBody : null;
   const [loading, setLoading] = useState(!coworker && !standalone && !seededBody);
   // THE COMPOSE LANE's honest ask: who the ladder could not choose between (offered, never sent),
   // and the name it resolved without an address.
@@ -287,7 +293,8 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
   useEffect(() => {
     if (!composeLane || !compose) return;
     let alive = true;
-    setLoading(true);
+    // The meeting chat's own drafted words paint at once (seeded); the door fills the to-row.
+    if (!seededBody) setLoading(true);
     fetch('/api/compose/draft', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kind: compose.kind, entityId: compose.id }),
@@ -305,7 +312,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
           setRecipientName(d.recipientName ?? null);
           setSuggestions((d.suggestions ?? []).filter((x) => !!x.email));
         }
-        if (words && !typedRef.current) {
+        if (words && !typedRef.current && !seededBody) {
           setBody(words); setVariantBodies({ [EMAIL_BASE_VARIANT]: words });
           servedRef.current = words; setBodyRev((n) => n + 1);
           readHand(d as { edited?: boolean; staleUnderEdit?: boolean } | null);
@@ -549,7 +556,7 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
   // ground move ever replaces it. Debounced; content-compared at the door (a click is not an edit);
   // the coworker and standalone lanes own their own stores and are not engine-prepared.
   useEffect(() => {
-    if (userEdit === null || sent || (!itemLane && !composeLane)) return;
+    if (userEdit === null || sent || (!itemLane && !(composeLane && compose?.kind === 'commitment'))) return;
     const words = emailBodyText(userEdit).trim();
     if (!words) return;
     const t = setTimeout(() => {
@@ -861,6 +868,8 @@ export function EmailCard({ item, coworker, standalone, compose, sourceFiles, on
           onIndex={setSourceOpenAt} onClose={() => setSourceOpenAt(null)}
         />
       )}
+      {/* "Open thread" — the thread reads in THE ONE VIEWER beside the conversation. */}
+      {threadViewer.node}
     </>
   );
 }

@@ -197,7 +197,7 @@ export async function executeCreateTaskItem(
   const r = await createManualTask(client, userId, { description: text, dueDate: args.dueDate ?? null, entityId }, { inline: true });
   if (!r.ok) return { ok: false, message: "I couldn't create that task." };
   const where = r.entityName ?? entityName;
-  return { ok: true, message: `Added: "${text.slice(0, 60)}"${where ? ` on ${where}` : ''}${args.dueDate ? `, due ${args.dueDate}` : ''}. It's on your plate now.` };
+  return { ok: true, message: `Added: "${text.slice(0, 60)}"${where ? ` on ${where}` : ''}${args.dueDate ? `, due ${args.dueDate}` : ''}.${r.direction === 'awaiting' ? ` Tracked as waiting on ${r.counterparty ?? 'them'}.` : " It's on your plate now."}` };
 }
 
 // ── OpenAI-schema definitions (the converse loop's toolset). ──

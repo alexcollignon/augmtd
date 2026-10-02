@@ -131,10 +131,14 @@ console.log('\nB · the commitment room renders');
     && /\.\.\.\(inviteArt \? \[\{/.test(commitSeg)
     && !/\(inviteArt \|\| view\?\.inviteTaskId \|\| verdict\?\.work === 'schedule'\)/.test(commitSeg)
     && /node: <InviteCard kind="commitment" entityId=\{id\} taskId=\{view\?\.inviteTaskId \?\? undefined\}\s*verdictLevel=\{!view\?\.inviteTaskId\}/.test(commitSeg)
-    && /key: 'nudge'/.test(commitSeg) && /node: <PreparedLead prepared=\{leadArts\} \/>/.test(commitSeg));
-  gate('B2 the in-stage invite affordances survive ONLY embedded (the loose door mounts the card on the rail — one seat)',
-    /\{embedded && inviteArt && !inviteOpen && \(/.test(commitSeg)
-    && /\{embedded && inviteOpen && \(inviteArt \|\| view\?\.inviteTaskId\) && \(/.test(commitSeg));
+    // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the lead strip split by CLASS — a paste
+    // pack is a DEED (its own inline card, Copy), a deliverable an ARTIFACT (the compact card → viewer).
+    && /key: 'nudge'/.test(commitSeg) && /node: <PastePackCard title=\{p\.title\}/.test(commitSeg)
+    && /node: <ArtifactCard title=/.test(commitSeg));
+  // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): EMBEDDED IS A READ — the in-stage "Review
+  // invite" second door and its second card are gone; the invite's one seat is the conversation card.
+  gate('B2 no in-stage invite affordance survives anywhere (the card in the conversation is the one seat)',
+    !/Review invite/.test(commitSeg) && !/\{embedded && inviteOpen/.test(commitSeg) && !/\{embedded && inviteArt/.test(commitSeg));
   gate('B3 the served view type carries the invite payload + sendReady (what the card mounts from)',
     // ⟲ RE-POINTED (W16): + the served counterparty flag (an invite with only the user on it never mounts).
     /invite\?: \{ title: string \| null; startISO: string \| null; proposed: boolean; [^}]*withCounterparty\?: boolean \} \| null;/.test(detail)
@@ -164,7 +168,8 @@ console.log('\nC · the prep anchor key');
     !/anchorKey: `prep:\$\{id\}`/.test(detail) && !/anchorKey: `prep:\$\{boardRowItemId\(r\)\}`/.test(room)
     && (detail.match(/anchorKey: prepAnchorKey\(/g) ?? []).length >= 5
     && (detail.match(/prepAnchorKey\('commitment', id\)/g) ?? []).length >= 3
-    && /anchorKey: prepAnchorKey\(r\.id\.startsWith\('commit:'\) \? 'commitment' : 'inbox', boardRowItemId\(r\)\)/.test(room));
+    // ⟲ RE-POINTED (one-component-one-behaviour): the row's kind + raw id, named once per row.
+    && /anchorKey: prepAnchorKey\(isCommit \? 'commitment' : 'inbox', rid\)/.test(room) && /const rid = boardRowItemId\(r\);/.test(room));
   gate('C4 the consequence modules already key on the writer\'s shape (apply-verdict · membership) — the readers now agree with them',
     /`prep:\$\{input\.kind\}:\$\{input\.id\}`/.test(src('lib/work/apply-verdict.ts'))
     && /`prep:commit:\$\{args\.id\}`/.test(src('lib/entities/membership.ts')));

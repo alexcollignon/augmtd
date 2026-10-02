@@ -138,6 +138,154 @@ export function exemplarRule(target: string | null | undefined): string {
       `write the greeting and sign-off in the language of the message you are writing.`;
 }
 
+// ── W42 · THE FRAME FOLLOWS THE BODY (owner walk, Oct 2) ────────────────────────────────────────
+// A French draft opened "Hi <name>," and closed "Best regards," around a French body — a model copying a
+// template's frame. The greeting and sign-off are the body's language and the thread's register, IN CODE:
+// a line that is ONLY a greeting (+ name) or ONLY a closing, in another language than the body, is
+// rewritten to the body's own. Body sentences are never touched. Pure.
+
+type Frame = { hi: { formal: string; informal: string }; bye: { formal: string; informal: string } };
+const FRAMES: Record<string, Frame> = {
+  English: { hi: { formal: 'Dear', informal: 'Hi' }, bye: { formal: 'Kind regards,', informal: 'Best,' } },
+  French: { hi: { formal: 'Bonjour', informal: 'Bonjour' }, bye: { formal: 'Cordialement,', informal: 'Bien à toi,' } },
+  German: { hi: { formal: 'Guten Tag', informal: 'Hallo' }, bye: { formal: 'Mit freundlichen Grüßen', informal: 'Viele Grüße' } },
+  Portuguese: { hi: { formal: 'Bom dia', informal: 'Olá' }, bye: { formal: 'Com os melhores cumprimentos,', informal: 'Abraço,' } },
+  Spanish: { hi: { formal: 'Buenos días', informal: 'Hola' }, bye: { formal: 'Saludos cordiales,', informal: 'Un saludo,' } },
+  Italian: { hi: { formal: 'Buongiorno', informal: 'Ciao' }, bye: { formal: 'Cordiali saluti,', informal: 'A presto,' } },
+};
+/** A whole-line greeting: the greeting words, then an optional name, then , or ! (per language). */
+const GREETING_LINE: Record<string, RegExp> = {
+  English: /^(hi|hello|hey|dear|good (morning|afternoon|evening))\b\s*([^,!:.\n]{0,60}?)\s*[,!:]?$/i,
+  French: /^(bonjour|bonsoir|salut|cher|chère|chers|madame|monsieur)\b\s*([^,!:.\n]{0,60}?)\s*[,!:]?$/i,
+  German: /^(hallo|hi|liebe|lieber|guten (tag|morgen|abend)|sehr geehrte[r]?)\b\s*([^,!:.\n]{0,60}?)\s*[,!:]?$/i,
+  Portuguese: /^(olá|ola|oi|bom dia|boa tarde|boa noite|caro|cara|prezado|prezada)\b\s*([^,!:.\n]{0,60}?)\s*[,!:]?$/i,
+  Spanish: /^(hola|buenos días|buenos dias|buenas tardes|buenas noches|estimado|estimada|querido|querida)\b\s*([^,!:.\n]{0,60}?)\s*[,!:]?$/i,
+  Italian: /^(ciao|buongiorno|buonasera|salve|gentile|caro|cara)\b\s*([^,!:.\n]{0,60}?)\s*[,!:]?$/i,
+};
+/** A whole-line closing (per language). */
+const CLOSING_LINE: Record<string, RegExp> = {
+  English: /^((best|kind|warm|many)( regards| wishes)?|regards|cheers|sincerely|yours sincerely|yours truly|thanks|thank you|many thanks|thanks again|all the best|talk soon)[,.!]?$/i,
+  French: /^(cordialement|bien cordialement|bien à (vous|toi)|bien a (vous|toi)|amicalement|merci|merci beaucoup|bonne journée|bonne journee|salutations|sincères salutations|à bientôt|a bientot)[,.!]?$/i,
+  German: /^(viele grüße|viele gruesse|beste grüße|liebe grüße|mit freundlichen grüßen|freundliche grüße|grüße|gruß|danke|vielen dank|bis bald)[,.!]?$/i,
+  Portuguese: /^(cumprimentos|com os melhores cumprimentos|melhores cumprimentos|atenciosamente|abraço|abraços|um abraço|obrigado|obrigada|até breve|saudações)[,.!]?$/i,
+  Spanish: /^(saludos|saludos cordiales|un saludo|atentamente|un abrazo|gracias|muchas gracias|hasta pronto)[,.!]?$/i,
+  Italian: /^(cordiali saluti|distinti saluti|saluti|a presto|grazie|un saluto)[,.!]?$/i,
+};
+
+/** The body's language with the frame lines left out (so the frame cannot vote for itself). */
+function bodyLanguageOf(lines: string[]): string | null {
+  const inner = lines.filter((l) => {
+    const t = l.trim();
+    return t && !Object.values(GREETING_LINE).some((re) => re.test(t)) && !Object.values(CLOSING_LINE).some((re) => re.test(t));
+  });
+  return detectLanguage(inner.join('\n'));
+}
+
+/**
+ * THE FRAME FLOOR (pure): rewrite a greeting/closing LINE written in another language than `target`
+ * (or, with no target, than the body's own detected language) into that language's natural equivalent,
+ * in the given register. The name after a greeting is kept. Returns the text unchanged when nothing
+ * is foreign or the language is unknown.
+ */
+export function alignDraftFrame(text: string, target?: string | null, register?: 'formal' | 'informal' | null): string {
+  const raw = String(text ?? '');
+  if (!raw.trim()) return raw;
+  const lines = raw.split('\n');
+  const lang = (target && FRAMES[target]) ? target : bodyLanguageOf(lines);
+  if (!lang || !FRAMES[lang]) return raw;
+  const frame = FRAMES[lang];
+  const reg = register === 'informal' ? 'informal' : register === 'formal' ? 'formal' : null;
+  const filled = lines.map((l, i) => ({ l, i })).filter(({ l }) => l.trim());
+  if (!filled.length) return raw;
+  // The greeting: the first non-empty line only.
+  const g = filled[0];
+  const gt = g.l.trim();
+  if (!GREETING_LINE[lang].test(gt)) {
+    for (const [other, re] of Object.entries(GREETING_LINE)) {
+      if (other === lang) continue;
+      const m = re.exec(gt);
+      if (!m) continue;
+      const name = (m[m.length - 1] ?? '').trim();
+      // "Dear" reads formal, "Hi/Hey/Hallo/Ciao/Olá/Hola" informal, unless the thread's register says.
+      const formalWord = /^(dear|cher|chère|chers|madame|monsieur|sehr geehrte|liebe|lieber|caro|cara|prezad|estimad|gentile|guten|bom dia|buenos|buongiorno)/i.test(m[1]);
+      const word = frame.hi[reg ?? (formalWord ? 'formal' : 'informal')];
+      lines[g.i] = g.l.replace(gt, `${word}${name ? ` ${name}` : ''},`);
+      break;
+    }
+  }
+  // The closing: any of the last four non-empty lines that is ONLY a closing, in another language.
+  for (const { l, i } of filled.slice(-4)) {
+    if (i === g.i) continue;
+    const t = l.trim();
+    if (CLOSING_LINE[lang].test(t)) continue;
+    const foreign = Object.entries(CLOSING_LINE).some(([other, re]) => other !== lang && re.test(t));
+    if (!foreign) continue;
+    const warm = /^(best|cheers|thanks|talk soon|abraço|abraços|um abraço|un abrazo|a presto|à bientôt|a bientot|bis bald|liebe grüße|viele grüße|ciao)/i.test(t);
+    lines[i] = l.replace(t, frame.bye[reg ?? (warm ? 'informal' : 'formal')]);
+  }
+  // The register: a FORMAL thread never gets an informal frame in its own language ("Hallo …" / "Viele Grüße"
+  // answering "Mit freundlichen Grüßen"), and a bare-name greeting ("Ana,") gets its formal opener.
+  if (reg === 'formal') {
+    const informalHi = INFORMAL_HI[lang];
+    const g2 = filled[0];
+    const t2 = lines[g2.i].trim();
+    const m = informalHi?.exec(t2);
+    if (m) lines[g2.i] = lines[g2.i].replace(t2, `${frame.hi.formal}${m[2]?.trim() ? ` ${m[2].trim()}` : ''},`);
+    else if (!Object.values(GREETING_LINE).some((re) => re.test(t2)) && /^\p{Lu}[\p{L}'-]+(?:\s+\p{Lu}[\p{L}'-]+){0,2}\s*,$/u.test(t2)) lines[g2.i] = lines[g2.i].replace(t2, `${frame.hi.formal} ${t2.replace(/\s*,$/, '')},`);
+    for (const { i } of filled.slice(-4)) {
+      if (i === g2.i) continue;
+      const t3 = lines[i].trim();
+      if (INFORMAL_BYE[lang]?.test(t3)) lines[i] = lines[i].replace(t3, frame.bye.formal);
+    }
+  }
+  return lines.join('\n');
+}
+
+const INFORMAL_HI: Record<string, RegExp> = {
+  German: /^(hallo|hi|hey|moin)\b\s*([^,!:.\n]{0,60}?)\s*[,!:]?$/i,
+  French: /^(salut|coucou|hello|hi)\b\s*([^,!:.\n]{0,60}?)\s*[,!:]?$/i,
+  Portuguese: /^(oi|olá|ola|hi)\b\s*([^,!:.\n]{0,60}?)\s*[,!:]?$/i,
+  Spanish: /^(hola|hey)\b\s*([^,!:.\n]{0,60}?)\s*[,!:]?$/i,
+  Italian: /^(ciao|hey)\b\s*([^,!:.\n]{0,60}?)\s*[,!:]?$/i,
+  English: /^(hey|hiya)\b\s*([^,!:.\n]{0,60}?)\s*[,!:]?$/i,
+};
+const INFORMAL_BYE: Record<string, RegExp> = {
+  German: /^(viele grüße|viele gruesse|liebe grüße|beste grüße|lg|vg|bis bald|gruß|grüße)[,.!]?$/i,
+  French: /^(bien à toi|bien a toi|bises|à bientôt|a bientot|à plus|a\+)[,.!]?$/i,
+  Portuguese: /^(abraço|abraços|um abraço|beijos|beijinhos|até breve|até já|cumprimentos)[,.!]?$/i,
+  Spanish: /^(un abrazo|abrazos|besos|hasta pronto|saludos)[,.!]?$/i,
+  Italian: /^(a presto|un abbraccio|ciao)[,.!]?$/i,
+  English: /^(cheers|best|talk soon|thanks|xx)[,.!]?$/i,
+};
+
+/**
+ * W42 · AN HONORIFIC TAKES THE SURNAME (pure): "Sehr geehrter Herr Jonas" — a courtesy title before a FIRST
+ * name. With the recipient's full name known the first name becomes the surname; with only a first name the
+ * honorific goes and the formal opener of that language greets by first name. Untouched otherwise.
+ */
+export function fixHonorificName(text: string, recipientName: string | null | undefined): string {
+  const raw = String(text ?? '');
+  const name = String(recipientName ?? '').replace(/<[^>]*>/g, '').replace(/["']/g, '').trim();
+  if (!raw.trim() || !name || name.includes('@')) return raw;
+  const toks = name.split(/\s+/).filter(Boolean);
+  const first = toks[0];
+  const lines = raw.split('\n');
+  const gi = lines.findIndex((l) => l.trim());
+  if (gi < 0) return raw;
+  const line = lines[gi].trim();
+  const m = /^((?:sehr geehrte[r]?|liebe[r]?|dear|cher|chère|caro|cara|prezad[oa]|estimad[oa]|exm[oa]\.?)\s+)?(herr|frau|mr\.?|mrs\.?|ms\.?|monsieur|madame|senhor|senhora|sr\.?|sra\.?|señor|señora|signor|signora)\s+(\p{Lu}[\p{L}'-]+)\s*([,!:]?)$/iu.exec(line);
+  if (!m || m[3].localeCompare(first, undefined, { sensitivity: 'base' }) !== 0) return raw;
+  if (toks.length >= 2) {
+    lines[gi] = lines[gi].replace(m[3], toks[toks.length - 1]);
+    return lines.join('\n');
+  }
+  const hon = m[2].toLowerCase();
+  const lang = /herr|frau/.test(hon) ? 'German' : /monsieur|madame/.test(hon) ? 'French' : /senhor|senhora/.test(hon) ? 'Portuguese'
+    : /señor|señora|^sr|^sra/.test(hon) ? 'Spanish' : /signor/.test(hon) ? 'Italian' : 'English';
+  lines[gi] = lines[gi].replace(line, `${FRAMES[lang].hi.formal} ${first},`);
+  return lines.join('\n');
+}
+
 /**
  * THE LANGUAGE-CHECKED GENERATION — generate; a draft with positive evidence of another language
  * gets ONE revise pass (the generator receives the hard instruction); still wrong → NOT served
@@ -148,12 +296,16 @@ export function exemplarRule(target: string | null | undefined): string {
 export async function draftInLanguage(
   generate: (languageFix: string | null) => Promise<string>,
   target: string | null | undefined,
+  register?: 'formal' | 'informal' | null,
 ): Promise<{ body: string; verified: boolean; refused: LanguageMiss | null; attempts: number }> {
-  const first = String(await generate(null) ?? '').trim();
+  // W42: every generation passes THE FRAME FLOOR first — a foreign greeting/sign-off around a body in the
+  // target language is rewritten in code (no revise pass spent, never refused for its frame alone);
+  // with no target, the frame follows the body's own detected language.
+  const first = alignDraftFrame(String(await generate(null) ?? '').trim(), target, register);
   if (!first || !target) return { body: first, verified: false, refused: null, attempts: 1 };
   const m1 = draftLanguageMiss(first, target);
   if (!m1) return { body: first, verified: draftLanguageVerified(first, target), refused: null, attempts: 1 };
-  const second = String(await generate(languageRevision(target, m1)).catch(() => '') ?? '').trim();
+  const second = alignDraftFrame(String(await generate(languageRevision(target, m1)).catch(() => '') ?? '').trim(), target, register);
   const m2 = second ? draftLanguageMiss(second, target) : m1;
   if (second && !m2) return { body: second, verified: draftLanguageVerified(second, target), refused: null, attempts: 2 };
   return { body: '', verified: false, refused: m2 ?? m1, attempts: 2 };

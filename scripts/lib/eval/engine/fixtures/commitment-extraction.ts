@@ -472,4 +472,205 @@ export const CASES: EvalCase[] = [
     params: { message: 'm1' },
     truth: { obligations: [], note: 'A pleasantry, not an arrangement: no owner, no date.' },
   },
+
+  // ── W42 · REAL-WORLD COMPLEXITY (anonymised from a live project room) ─────────────────────────────
+  // delegated-payment (6): the counterparty asks ITS OWN colleague / finance team to pay the user's
+  // invoice → the SENDER's side acts (they_owe), never the user (i_owe). Five languages.
+  {
+    id: 'cx-39', group: 'delegated-payment', title: 'FR: the client asks her colleague to make the transfer → their side pays',
+    world: {
+      people: [camille, { key: 'lea', name: 'Léa', email: 'lea@initech.test', org: 'Initech', role: 'comptabilité' }],
+      tz: 'Europe/Paris',
+      threads: [{
+        key: 't1', subject: 'Facture F-2210 — phase 1',
+        messages: [
+          { from: 'me', to: ['camille'], at: '-9d 10:00', body: 'Bonjour Camille,\n\nVeuillez trouver ci-joint la facture F-2210 de 8 400 € HT pour la phase 1, payable à 30 jours.\n\nBien cordialement,\nTaylor', attachments: ['Facture F-2210.pdf'] },
+          { key: 'm1', from: 'camille', to: ['me'], cc: ['lea'], at: '-2h', body: 'Bonjour Taylor,\n\nBien reçu, merci. Je demande à Léa (en copie) d\'effectuer le virement d\'ici le {{+5d|iso}}.\n\nBien à vous,\nCamille' },
+        ],
+      }],
+    },
+    params: { message: 'm1' },
+    truth: { obligations: [{ direction: 'they_owe', keywords: ['virement|transfer|payment|pay|paiement|f-2210|invoice|facture'], due: '+5d' }], note: 'W42: the sender delegates the payment to HER colleague — the client side owes it; the user owes nothing (no i_owe "make the transfer").' },
+  },
+  {
+    id: 'cx-40', group: 'delegated-payment', title: 'EN: "I\'ve asked our finance team to process it" → their side pays, by a stated weekday',
+    world: {
+      people: [sam],
+      threads: [{
+        key: 't1', subject: 'Invoice 1187 — discovery sprint',
+        messages: [
+          { from: 'me', to: ['sam'], at: '-6d 09:30', body: 'Hi Sam,\n\nPlease find attached invoice 1187 for the discovery sprint (€12,600).\n\nBest,\nTaylor', attachments: ['Invoice 1187.pdf'] },
+          { key: 'm1', from: 'sam', at: '-3h', body: 'Hi Taylor,\n\nThanks — all approved on our side. I\'ve asked our finance team to process it; it should go out by {{+3d|weekday}}.\n\nSam' },
+        ],
+      }],
+    },
+    params: { message: 'm1' },
+    truth: { obligations: [{ direction: 'they_owe', keywords: ['pay|process|transfer|invoice|1187'], due: '+3d' }] },
+  },
+  {
+    id: 'cx-41', group: 'delegated-payment', title: 'DE: "ich bitte Lena, die Überweisung zu machen" (colleague on CC) → their side pays',
+    world: {
+      people: [jonas, { key: 'lena', name: 'Lena', email: 'lena@globex.test', org: 'Globex', role: 'Buchhaltung' }],
+      tz: 'Europe/Berlin',
+      threads: [{
+        key: 't1', subject: 'Rechnung R-0452',
+        messages: [
+          { from: 'me', to: ['jonas'], at: '-8d 11:00', body: 'Hallo Jonas,\n\nanbei die Rechnung R-0452 über 3.900 € für den Workshop.\n\nViele Grüße\nTaylor', attachments: ['Rechnung R-0452.pdf'] },
+          { key: 'm1', from: 'jonas', to: ['me'], cc: ['lena'], at: '-1h', body: 'Hallo Taylor,\n\ndanke, die Rechnung ist freigegeben. Ich bitte Lena (in Kopie), die Überweisung bis {{+4d|iso}} zu machen.\n\nViele Grüße\nJonas' },
+        ],
+      }],
+    },
+    params: { message: 'm1' },
+    truth: { obligations: [{ direction: 'they_owe', keywords: ['überweisung|ueberweisung|transfer|payment|pay|zahlung|r-0452|rechnung|invoice'], due: '+4d' }] },
+  },
+  {
+    id: 'cx-42', group: 'delegated-payment', title: 'PT: "vou pedir à Rita para fazer a transferência", no date → their side pays, undated',
+    world: {
+      people: [ana, { key: 'rita', name: 'Rita', email: 'rita@umbrella.test', org: 'Umbrella', role: 'financeiro' }],
+      tz: 'Europe/Lisbon',
+      threads: [{
+        key: 't1', subject: 'Fatura 77/26',
+        messages: [
+          { from: 'me', to: ['ana'], at: '-5d 15:00', body: 'Olá Ana,\n\nSegue em anexo a fatura 77/26 no valor de 2.150 €.\n\nCumprimentos,\nTaylor', attachments: ['Fatura 77-26.pdf'] },
+          { key: 'm1', from: 'ana', at: '-4h', body: 'Olá Taylor,\n\nObrigada, está tudo certo. Vou pedir à Rita para fazer a transferência.\n\nCumprimentos,\nAna' },
+        ],
+      }],
+    },
+    params: { message: 'm1' },
+    truth: { obligations: [{ direction: 'they_owe', keywords: ['transfer|pag|payment|fatura|invoice|77'], due: null }] },
+  },
+  {
+    id: 'cx-43', group: 'delegated-payment', title: 'ES: "le pido a Lucía que haga la transferencia" on a weekday → their side pays',
+    world: {
+      people: [{ key: 'diego', name: 'Diego', email: 'diego@acme.test', org: 'Acme' }, { key: 'lucia', name: 'Lucía', email: 'lucia@acme.test', org: 'Acme', role: 'finanzas' }],
+      tz: 'Europe/Madrid',
+      threads: [{
+        key: 't1', subject: 'Factura 2026-031',
+        messages: [
+          { from: 'me', to: ['diego'], at: '-7d 10:00', body: 'Hola Diego,\n\nTe adjunto la factura 031 por 5.300 €.\n\nUn saludo,\nTaylor', attachments: ['Factura 031.pdf'] },
+          { key: 'm1', from: 'diego', to: ['me'], cc: ['lucia'], at: '-2h', body: 'Hola Taylor,\n\nRecibida, gracias. Le pido a Lucía (en copia) que haga la transferencia el {{+2d|weekday}}.\n\nSaludos,\nDiego' },
+        ],
+      }],
+    },
+    params: { message: 'm1' },
+    truth: { obligations: [{ direction: 'they_owe', keywords: ['transfer|pago|payment|pay|factura|invoice|031'], due: '+2d' }] },
+  },
+  {
+    id: 'cx-44', group: 'delegated-payment', title: 'FR control: the USER says they will make the transfer → the user pays',
+    world: {
+      people: [{ key: 'hugo', name: 'Hugo', email: 'hugo@umbrella.test', org: 'Umbrella' }],
+      tz: 'Europe/Paris',
+      threads: [{
+        key: 't1', subject: 'Facture 5512 — licences',
+        messages: [
+          { from: 'hugo', at: '-3d 09:00', body: 'Bonjour Taylor,\n\nVous trouverez ci-joint la facture 5512 pour les licences annuelles (1 980 €). Merci de procéder au règlement.\n\nCordialement,\nHugo', attachments: ['Facture 5512.pdf'] },
+          { key: 'm1', from: 'me', to: ['hugo'], at: '-1h', body: 'Bonjour Hugo,\n\nBien reçu. Je m\'occupe du virement d\'ici {{+3d|weekday}}.\n\nCordialement,\nTaylor' },
+        ],
+      }],
+    },
+    params: { message: 'm1' },
+    truth: { obligations: [{ direction: 'i_owe', keywords: ['virement|transfer|pay|payment|règlement|5512|facture|invoice'], due: '+3d' }], note: 'Control: here the USER takes the transfer on — i_owe.' },
+  },
+  {
+    id: 'cx-45', group: 'delegated-payment', title: 'EN control: the user\'s own mail delegates to their finance colleague — the user owes nothing to the supplier personally',
+    world: {
+      people: [tom, kofi],
+      threads: [{
+        key: 't1', subject: 'Invoice 3390 — venue hire',
+        messages: [
+          { from: 'tom', at: '-2d 10:00', body: 'Hi Taylor,\n\nInvoice 3390 for the venue hire (€2,700) is attached, due in 14 days.\n\nTom', attachments: ['Invoice 3390.pdf'] },
+          { key: 'm1', from: 'me', to: ['tom'], cc: ['kofi'], at: '-1h', body: 'Hi Tom,\n\nThanks. I\'ve asked Kofi (copied) in our finance team to pay it this week.\n\nBest,\nTaylor' },
+        ],
+      }],
+    },
+    params: { message: 'm1' },
+    truth: { obligations: [], note: 'W42: the user handed the payment to a named colleague on their own side — no i_owe for the user (it may be tracked as awareness), and nothing the supplier owes.' },
+  },
+
+  // bank-details (3): asked for your OWN bank details by a client paying you → the user owes them
+  // (a fact only they hold); asked to CHANGE a supplier's details → fraud-risk, never an obligation.
+  {
+    id: 'cx-46', group: 'bank-details', title: 'FR: the paying client asks for the user\'s RIB, then will pay → i_owe RIB + they_owe payment',
+    world: {
+      people: [camille],
+      tz: 'Europe/Paris',
+      threads: [{
+        key: 't1', subject: 'Paiement de l\'acompte',
+        messages: [
+          { from: 'me', to: ['camille'], at: '-4d 10:00', body: 'Bonjour Camille,\n\nComme convenu, l\'acompte de 30 % (3 600 €) est dû à la signature.\n\nBien cordialement,\nTaylor' },
+          { key: 'm1', from: 'camille', at: '-2h', body: 'Bonjour Taylor,\n\nPouvez-vous nous transmettre votre RIB ? Dès réception, nous lançons le virement de l\'acompte.\n\nBien à vous,\nCamille' },
+        ],
+      }],
+    },
+    params: { message: 'm1' },
+    truth: { obligations: [
+      { direction: 'i_owe', keywords: ['rib|iban|bank detail|coordonnées bancaires|bank'], due: null },
+      { direction: 'they_owe', keywords: ['virement|transfer|payment|acompte|deposit|pay'], due: null },
+    ] },
+  },
+  {
+    id: 'cx-47', group: 'bank-details', title: 'EN: a client asks for the user\'s IBAN to set them up as a supplier by a date',
+    world: {
+      people: [priya],
+      threads: [{
+        key: 't1', subject: 'Supplier set-up',
+        messages: [{ key: 'm1', from: 'priya', at: '-3h', body: 'Hi Taylor,\n\nTo set Northwind up as a supplier before the first invoice, could you send me your IBAN and the account holder name by {{+2d|weekday}}?\n\nThanks,\nPriya' }],
+      }],
+    },
+    params: { message: 'm1' },
+    truth: { obligations: [{ direction: 'i_owe', keywords: ['iban|bank detail|account'], who: 'priya', due: '+2d' }] },
+  },
+  {
+    id: 'cx-48', group: 'bank-details', title: 'DE: a known supplier asks the user to CHANGE their bank details for future payments → no obligation (fraud risk)',
+    world: {
+      people: [{ key: 'felix', name: 'Felix', email: 'felix@umbrella.test', org: 'Umbrella' }],
+      tz: 'Europe/Berlin',
+      threads: [{
+        key: 't1', subject: 'Neue Bankverbindung',
+        messages: [
+          { from: 'felix', at: '-20d 10:00', body: 'Hallo Taylor,\n\nanbei unsere Rechnung 8812 über 6.400 €, fällig in 30 Tagen.\n\nViele Grüße\nFelix', attachments: ['Rechnung 8812.pdf'] },
+          { key: 'm1', from: 'felix', at: '-1h', body: 'Hallo Taylor,\n\nwir haben die Bank gewechselt. Bitte ändern Sie unsere Bankverbindung in Ihrem System und überweisen Sie die Rechnung 8812 ab sofort auf das neue Konto: IBAN DE00 0000 0000 0000 0000 00.\n\nViele Grüße\nFelix' },
+        ],
+      }],
+    },
+    params: { message: 'm1' },
+    truth: { obligations: [], note: 'W42 · secret floor: a request to change a payee\'s bank details is the classic redirection fraud — it is never a task to update the details or pay the new account; verification goes through a known contact.' },
+  },
+
+  // mixed-language (2): one thread, two languages — direction and dates hold across the switch.
+  {
+    id: 'cx-49', group: 'mixed-language', title: 'EN→FR thread: they promise the signed PO, the user owes the kick-off deck',
+    world: {
+      people: [sam, { key: 'ines', name: 'Inès', email: 'ines@acme.test', org: 'Acme' }],
+      tz: 'Europe/Paris',
+      threads: [{
+        key: 't1', subject: 'Kick-off',
+        messages: [
+          { from: 'sam', at: '-2d 10:00', body: 'Hi Taylor, looping in Inès who runs the project on the French side.\n\nSam' },
+          { key: 'm1', from: 'ines', to: ['me'], cc: ['sam'], at: '-2h', body: 'Bonjour Taylor,\n\nRavie de travailler avec vous. De notre côté, nous vous envoyons le bon de commande signé d\'ici {{+1d|weekday}}. Could you send us the kick-off deck by {{+3d|weekday}}? Sam prefers it in English.\n\nMerci,\nInès' },
+        ],
+      }],
+    },
+    params: { message: 'm1' },
+    truth: { obligations: [
+      { direction: 'they_owe', keywords: ['bon de commande|purchase order|commande|order'], due: '+1d' },
+      { direction: 'i_owe', keywords: ['deck|kick-off|kickoff'], due: '+3d' },
+    ] },
+  },
+  {
+    id: 'cx-50', group: 'mixed-language', title: 'PT↔EN thread: the client switches language mid-mail; one ask of the user, one promise',
+    world: {
+      people: [ana],
+      tz: 'Europe/Lisbon',
+      threads: [{
+        key: 't1', subject: 'Relatório mensal / monthly report',
+        messages: [{ key: 'm1', from: 'ana', at: '-3h', body: 'Olá Taylor,\n\nObrigada pela reunião. Vamos enviar-lhe os dados de vendas até {{+2d|iso}}.\n\nAlso — for our board, could you send the monthly report in English by {{+4d|weekday}}?\n\nCumprimentos,\nAna' }],
+      }],
+    },
+    params: { message: 'm1' },
+    truth: { obligations: [
+      { direction: 'they_owe', keywords: ['dados|sales|data|vendas'], due: '+2d' },
+      { direction: 'i_owe', keywords: ['report|relatório'], due: '+4d' },
+    ] },
+  },
 ];

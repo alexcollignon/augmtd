@@ -33,6 +33,7 @@ import { collectionHasRows, isCollectionKind, isCollectionSpec, type CollectionS
 import { isEventSpec, type EventProposal, type EventSpec } from '@/lib/present/event';
 import { changeTurnComponent, isChangeSpec, type ChangeSpec } from '@/lib/present/change';
 import { collectionTurnComponent, eventTurnComponent } from '@/lib/present/pointer';
+import type { StageVerb } from '@/lib/present/behaviour';
 
 // ── THE ONE TABLE ─────────────────────────────────────────────────────────────────────────────
 
@@ -91,11 +92,13 @@ export function cardTurnOf(turn: CardFields): CardTurn | null {
       }
       case 'emailDraft': {
         // A matched item rides as a POINTER; a standalone draft carries its first-paint payload.
-        const ed = v as NonNullable<ConverseTurn['emailDraft']>;
+        const ed = v as NonNullable<ConverseTurn['emailDraft']> & { compose?: { kind: 'commitment' | 'meeting'; id: string } };
         return {
           field, dedupeKey: `email:${ed.id}`,
           component: { key: CARD_COMPONENT_KEY.emailDraft, refId: ed.id,
-            state: { ...(ed.itemId ? { itemId: ed.itemId } : {}), ...(ed.draft ? { draft: ed.draft } : {}) } },
+            state: { ...(ed.itemId ? { itemId: ed.itemId } : {}), ...(ed.draft ? { draft: ed.draft } : {}),
+              // A REVISED commitment message (reply-to-a-card) is the compose lane's card.
+              ...(ed.compose ? { compose: ed.compose } : {}) } },
         };
       }
     }
@@ -121,16 +124,36 @@ export function cardPayloadOf(turn: CardFields): CardFields {
 export type ChatCards = {
   invites?: Array<{ inviteId: string; invite: PreparedInviteLike }>;
   bulkDeeds?: Array<{ deedId: string; deed?: BulkDeed }>;
-  emailDrafts?: Array<{ emailId: string; itemId?: string; draft?: StandaloneEmailDraft }>;
+  emailDrafts?: Array<{ emailId: string; itemId?: string; draft?: StandaloneEmailDraft;
+    /** A commitment / meeting message (the compose lane) — a reply-to-a-card revision's own card. */
+    compose?: { kind: 'commitment' | 'meeting'; id: string } }>;
   collections?: Array<{ collectionId: string; spec?: CollectionSpec; pointer?: { kind: CollectionSpec['kind']; params?: Record<string, string | number | boolean> } }>;
   events?: Array<{ eventId: string; spec?: EventSpec; pointer?: { eventId: string; proposal?: EventProposal | null } }>;
   changes?: Array<{ changeId: string; spec?: ChangeSpec; pointer?: { changeId: string } }>;
+  /** ONE COMPONENT, ONE BEHAVIOUR (lib/present/behaviour.ts): a stage verb an answer raised
+   *  (`openStage` — reply / forward / invite) mounts the deed's OWN inline card on the turn that
+   *  asked for it, never a split pane and never a page away. Live only (a verb is not a record). */
+  stageDeeds?: Array<{ stage: StageVerb; itemKind: DeedItemKind; itemId: string;
+    /** A REVISED VERSION of a card the reader replied to — always posts as a new card (never folded
+     *  into the card already showing that deed). */
+    revises?: boolean }>;
+  /** A coworker's drafted LinkedIn post (`cardArtifact.type === 'linkedin_post'`). */
+  posts?: Array<{ variants: Array<{ text: string; hashtags?: string[] }>; by?: string | null }>;
 };
+
+/** The object kind a stage deed is prepared on (decides its card's lane). */
+export type DeedItemKind = 'email' | 'commitment' | 'meeting';
 
 export const hasChatCards = (c: ChatCards | null | undefined): boolean =>
   !!c && Object.values(c).some((v) => Array.isArray(v) && v.length > 0);
 
 type StoredComponent = { key?: string; refId?: string; state?: Record<string, unknown> | null } | null | undefined;
+
+/** A served/stored compose pointer, guarded. */
+function composeOf(x: unknown): { kind: 'commitment' | 'meeting'; id: string } | null {
+  const o = (x ?? null) as { kind?: unknown; id?: unknown } | null;
+  return o && (o.kind === 'commitment' || o.kind === 'meeting') && typeof o.id === 'string' && o.id ? { kind: o.kind, id: o.id } : null;
+}
 
 /** CLIENT · a stored turn's component → its cards (the ONE hydrator). Unknown keys → {}. */
 export function chatCardsOfComponent(c: StoredComponent): ChatCards {
@@ -161,7 +184,8 @@ export function chatCardsOfComponent(c: StoredComponent): ChatCards {
     case CARD_COMPONENT_KEY.emailDraft:
       return ref ? { emailDrafts: [{ emailId: ref,
         ...(typeof st.itemId === 'string' ? { itemId: st.itemId } : {}),
-        ...(st.draft && typeof st.draft === 'object' ? { draft: st.draft as StandaloneEmailDraft } : {}) }] } : {};
+        ...(st.draft && typeof st.draft === 'object' ? { draft: st.draft as StandaloneEmailDraft } : {}),
+        ...(composeOf(st.compose) ? { compose: composeOf(st.compose)! } : {}) }] } : {};
     default:
       return {};
   }
@@ -175,9 +199,10 @@ export function chatCardsOfPayload(d: Record<string, unknown> | null | undefined
   if (iv?.id) out.invites = [{ inviteId: String(iv.id), invite: (iv.invite ?? {}) as PreparedInviteLike }];
   const bd = d.bulkDeed as { id?: string; deed?: BulkDeed } | undefined;
   if (bd?.id) out.bulkDeeds = [{ deedId: String(bd.id), ...(bd.deed ? { deed: bd.deed } : {}) }];
-  const ed = d.emailDraft as { id?: string; itemId?: string; draft?: StandaloneEmailDraft } | undefined;
-  if (ed?.id && (ed.itemId || ed.draft)) {
-    out.emailDrafts = [{ emailId: String(ed.id), ...(ed.itemId ? { itemId: String(ed.itemId) } : {}), ...(ed.draft ? { draft: ed.draft } : {}) }];
+  const ed = d.emailDraft as { id?: string; itemId?: string; draft?: StandaloneEmailDraft; compose?: unknown } | undefined;
+  if (ed?.id && (ed.itemId || ed.draft || composeOf(ed.compose))) {
+    out.emailDrafts = [{ emailId: String(ed.id), ...(ed.itemId ? { itemId: String(ed.itemId) } : {}), ...(ed.draft ? { draft: ed.draft } : {}),
+      ...(composeOf(ed.compose) ? { compose: composeOf(ed.compose)! } : {}) }];
   }
   const col = d.collection as { id?: string; spec?: unknown } | undefined;
   if (col?.id && isCollectionSpec(col.spec)) out.collections = [{ collectionId: String(col.id), spec: col.spec }];
@@ -185,6 +210,12 @@ export function chatCardsOfPayload(d: Record<string, unknown> | null | undefined
   if (ev && isEventSpec(ev.spec)) out.events = [{ eventId: String(ev.id ?? ev.spec.id), spec: ev.spec }];
   const ch = d.change as { id?: string; spec?: unknown } | undefined;
   if (ch && isChangeSpec(ch.spec)) out.changes = [{ changeId: String(ch.spec.id), spec: ch.spec }];
+  // A STAGE VERB → the deed's own inline card (the core's stages are inbox-scoped by construction).
+  const os = d.openStage as { stage?: unknown; itemId?: unknown; itemKind?: unknown; revises?: unknown } | undefined;
+  if (os && (os.stage === 'reply' || os.stage === 'forward' || os.stage === 'invite') && typeof os.itemId === 'string' && os.itemId) {
+    const itemKind: DeedItemKind = os.itemKind === 'commitment' || os.itemKind === 'meeting' ? os.itemKind : 'email';
+    out.stageDeeds = [{ stage: os.stage, itemKind, itemId: os.itemId, ...(os.revises === true ? { revises: true } : {}) }];
+  }
   return out;
 }
 
@@ -247,4 +278,22 @@ export function claimFloorSay(turn: Partial<ConverseTurn> & { say: string }): st
   const claim = artifactClaimIn(turn.say);
   if (!claim || turnHasSurface(turn) || carriesBodyInline(turn.say, claim)) return turn.say;
   return CLAIM_WITHOUT_CARD_LINE;
+}
+
+// ── A COWORKER'S TYPED CARD (the render registry: `cardArtifact` / `[[card:…]]`) ─────────────────
+
+/** The LinkedIn posts a turn's card artifacts carry (live `artifact` events or a reloaded message's
+ *  `metadata.artifacts`) — the ONE reader both the live paint and the reload use. Pure. */
+export function postsOfCardArtifacts(arts: unknown, by?: string | null): NonNullable<ChatCards['posts']> {
+  const list = Array.isArray(arts) ? arts : arts ? [arts] : [];
+  const out: NonNullable<ChatCards['posts']> = [];
+  for (const a of list) {
+    const o = (a ?? {}) as { type?: unknown; variants?: unknown };
+    if (o.type !== 'linkedin_post' || !Array.isArray(o.variants)) continue;
+    const variants = (o.variants as Array<{ text?: unknown; hashtags?: unknown }>)
+      .map((v) => ({ text: String(v?.text ?? '').trim(), hashtags: Array.isArray(v?.hashtags) ? (v.hashtags as unknown[]).map(String) : [] }))
+      .filter((v) => v.text);
+    if (variants.length) out.push({ variants, ...(by ? { by } : {}) });
+  }
+  return out;
 }

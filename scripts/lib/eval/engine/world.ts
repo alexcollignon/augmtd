@@ -53,6 +53,9 @@ export type WorldThread = {
   item?: boolean | { key?: string; anchor?: string };
   /** Automated-sender signals the sync would have stamped (bulk / notifications). */
   signals?: { isAutomatedSender?: boolean; isNotification?: boolean };
+  /** W42 · A STAGED INVITE: a calendar invite the preparation pass already prepared on this item and the
+   *  user has NOT sent (source_data.prepared_invite, unsent). Attendees are person keys / 'me'. */
+  preparedInvite?: { title: string; start: When; minutes?: number; attendees: string[]; description?: string; at?: When };
 };
 
 export type WorldCommitment = {
@@ -66,6 +69,11 @@ export type WorldCommitment = {
   thread?: string;
   createdAt?: When;
   source?: 'email' | 'manual' | 'meeting';
+  /** W42 · the row's CURRENT status (default 'open'). 'done' seeds resolved_at = the last 'done' deed. */
+  status?: 'open' | 'done';
+  /** W42 · the deeds the user took on it, oldest first, seeded as activity_events rows
+   *  (commitment_done / restored) — "marked done, then restored" is history [done, restored] + status open. */
+  history?: Array<{ at: When; action: 'done' | 'restored' }>;
 };
 
 export type WorldEvent = {
@@ -253,8 +261,9 @@ export type ResolvedWorld = {
     /** W27.C — the message the item's ENVELOPE (source_data) carries: a real sync re-stamps it on the thread's
      *  NEWEST inbound message (lib/email-sync/sync-emails.ts, "only update source_data if this email is
      *  newer"); an explicit `item.anchor` pins it. The anchor stays the FOUNDING message (created_at). */
-    envelopeKey: string | null; signals?: WorldThread['signals'] }>;
-  commitments: Array<Omit<WorldCommitment, 'due' | 'createdAt' | 'counterparty'> & { due: string | null; createdAt: Date; counterparty: ResolvedParty | { key: string; name: string; email: string; me: false; free: true } | null }>;
+    envelopeKey: string | null; signals?: WorldThread['signals'];
+    preparedInvite?: { title: string; start: Date; end: Date; attendees: ResolvedParty[]; description?: string; at: Date } }>;
+  commitments: Array<Omit<WorldCommitment, 'due' | 'createdAt' | 'counterparty' | 'status' | 'history'> & { status: 'open' | 'done'; history: Array<{ at: Date; action: 'done' | 'restored' }>; due: string | null; createdAt: Date; counterparty: ResolvedParty | { key: string; name: string; email: string; me: false; free: true } | null }>;
   events: Array<{ key: string; title: string; start: Date; end: Date; attendees: ResolvedParty[]; description?: string; location?: string }>;
   projects: WorldProject[];
   kb: WorldDoc[];
@@ -299,13 +308,25 @@ export function resolveWorld(w: World, now: Date): ResolvedWorld {
     if (anchorKey && !messages.some((m) => m.key === anchorKey)) throw new Error(`world: thread "${t.key}" item anchor "${anchorKey}" is not one of its messages`);
     const itemKey = wantItem ? (itemOpt.key ?? t.key) : null;
     const envelopeKey = !wantItem ? null : itemOpt.anchor ?? inbound[inbound.length - 1].key;
-    return { key: t.key, subject: fill(t.subject), messages, itemKey, anchorKey, envelopeKey, signals: t.signals };
+    let preparedInvite: { title: string; start: Date; end: Date; attendees: ResolvedParty[]; description?: string; at: Date } | undefined;
+    if (t.preparedInvite) {
+      if (!itemKey) throw new Error(`world: thread "${t.key}" has a preparedInvite but no inbox item to carry it`);
+      const pi = t.preparedInvite;
+      const start = resolveWhen(pi.start, now, tz);
+      preparedInvite = { title: fill(pi.title), start, end: new Date(start.getTime() + (pi.minutes ?? 30) * 60_000), attendees: pi.attendees.map(party), description: pi.description == null ? undefined : fill(pi.description), at: resolveWhen(pi.at ?? '-1h', now, tz) };
+    }
+    return { key: t.key, subject: fill(t.subject), messages, itemKey, anchorKey, envelopeKey, signals: t.signals, ...(preparedInvite ? { preparedInvite } : {}) };
   });
   const commitments = (w.commitments ?? []).map((c) => {
     uniq(c.key, 'commitment');
     if (c.thread && !threads.some((t) => t.key === c.thread)) throw new Error(`world: commitment "${c.key}" names unknown thread "${c.thread}"`);
     const cp = c.counterparty == null ? null : byKey.get(c.counterparty) ?? { key: c.counterparty, name: c.counterparty, email: '', me: false as const, free: true as const };
-    return { ...c, description: fill(c.description), due: c.due ? localDate(resolveWhen(c.due, now, tz), tz) : null, createdAt: resolveWhen(c.createdAt ?? '-1d', now, tz), counterparty: cp };
+    const history = (c.history ?? []).map((h) => ({ at: resolveWhen(h.at, now, tz), action: h.action }));
+    for (let i = 1; i < history.length; i++) if (history[i].at.getTime() < history[i - 1].at.getTime()) throw new Error(`world: commitment "${c.key}" history is not in time order`);
+    const status = c.status ?? 'open';
+    const last = history[history.length - 1];
+    if (last && (last.action === 'done') !== (status === 'done')) throw new Error(`world: commitment "${c.key}" status "${status}" contradicts its last deed "${last.action}"`);
+    return { ...c, status, history, description: fill(c.description), due: c.due ? localDate(resolveWhen(c.due, now, tz), tz) : null, createdAt: resolveWhen(c.createdAt ?? '-1d', now, tz), counterparty: cp };
   });
   const events = (w.events ?? []).map((e) => {
     uniq(e.key, 'event');
@@ -533,6 +554,12 @@ export async function seedWorld(ctx: WorldCtx, world: World): Promise<SeededWorl
             thread_id: threadId, message_id: `<eval-${tag}-${env.key}@fixture.test>`, email_id: out.ids[env.key], provider: 'fixture',
             ...(env.attachments.length ? { attachments: env.attachments.map((f) => ({ filename: f })) } : {}),
             ...(t.signals ? { signals: t.signals } : {}),
+            // W42 · a STAGED invite (prepared by the pass, unsent) — the shape lib/prepare/read.ts reads.
+            ...(t.preparedInvite ? { prepared_invite: {
+              title: t.preparedInvite.title, startISO: t.preparedInvite.start.toISOString(), endISO: t.preparedInvite.end.toISOString(),
+              attendees: t.preparedInvite.attendees.map(addr), description: t.preparedInvite.description ?? '', timezone: rw.tz,
+              generated_at: t.preparedInvite.at.toISOString(),
+            } } : {}),
             eval_run: tag,
           },
         }).select('id').single(), `inbox_items(${t.itemKey})`) as { id: string };
@@ -546,11 +573,21 @@ export async function seedWorld(ctx: WorldCtx, world: World): Promise<SeededWorl
         user_id: uid, direction: c.direction, description: c.description,
         counterparty: cp ? ('free' in cp ? cp.name : named(cp as ResolvedParty)) : null,
         due_date: c.due, source: c.source ?? 'email', source_id: `eval:${tag}:${c.key}`,
-        thread_id: c.thread ? out.threadIds[c.thread] : null, status: 'open', project_locked: false,
-        created_at: c.createdAt.toISOString(), updated_at: c.createdAt.toISOString(),
+        thread_id: c.thread ? out.threadIds[c.thread] : null, status: c.status, project_locked: false,
+        ...(c.status === 'done' ? { resolved_at: lastDone(c.history)?.toISOString() ?? c.createdAt.toISOString(), resolved_reason: 'user_marked' } : {}),
+        created_at: c.createdAt.toISOString(), updated_at: (c.history[c.history.length - 1]?.at ?? c.createdAt).toISOString(),
       }).select('id').single(), `commitments(${c.key})`) as { id: string };
       out.ids[c.key] = row.id;
       led('commitments', row.id);
+      // W42 · the user's deeds on it (the activity log the room's grounding reads), as the product logs them.
+      for (const h of c.history) {
+        const ev = must(await sb.from('activity_events').insert({
+          user_id: uid, type: h.action === 'done' ? 'commitment_done' : 'restored',
+          title: `${h.action === 'done' ? 'Marked done' : 'Restored'}: ${c.description}`,
+          entity_type: 'commitment', entity_id: row.id, metadata: { eval_run: tag }, created_at: h.at.toISOString(),
+        }).select('id').single(), `activity_events(${c.key})`) as { id: string };
+        led('activity_events', ev.id);
+      }
     }
     for (const e of rw.events) {
       const row = must(await sb.from('calendar_events').insert({
@@ -728,7 +765,7 @@ export async function teardownWorld(ctx: WorldCtx, s: SeededWorld): Promise<{ de
     await del('person_state', sb.from('person_state').delete({ count: 'exact' }).eq('user_id', uid).gte('updated_at', since).ilike('person_key', `%${email}%`));
   }
   // The rows themselves, children first.
-  const order = ['knowledge_chunks', 'knowledge_files', 'knowledge_sources', 'calendar_events', 'inbox_items', 'emails', 'work_entities'];
+  const order = ['activity_events', 'knowledge_chunks', 'knowledge_files', 'knowledge_sources', 'calendar_events', 'inbox_items', 'emails', 'work_entities'];
   for (const table of order) {
     const rows = s.ledger.filter((l) => l.table === table).map((l) => l.id);
     for (const chunk of chunks(rows, 50)) await del(table, sb.from(table).delete({ count: 'exact' }).eq('user_id', uid).in('id', chunk));
@@ -738,6 +775,11 @@ export async function teardownWorld(ctx: WorldCtx, s: SeededWorld): Promise<{ de
   // Mail a producer wrote onto a seeded thread (e.g. a stored draft) goes with it.
   for (const tid of threadIds) await del('emails(thread)', sb.from('emails').delete({ count: 'exact' }).eq('user_id', uid).eq('thread_id', tid));
   return { deleted, errors };
+}
+
+function lastDone(h: Array<{ at: Date; action: string }>): Date | undefined {
+  for (let i = h.length - 1; i >= 0; i--) if (h[i].action === 'done') return h[i].at;
+  return undefined;
 }
 
 function chunks<T>(xs: T[], n: number): T[][] {

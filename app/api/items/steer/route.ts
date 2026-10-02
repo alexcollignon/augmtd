@@ -21,6 +21,7 @@ import {
   type SteerKind,
 } from './answer-door';
 import { cardPayloadOf, cardTurnOf, normalizeTurnCards } from '@/lib/present/turn-card';
+import { sanitizeTarget, targetedQuestion, targetItemOf } from '@/lib/present/card-target';
 import { converseStreamResponse, turnAbortFor } from '@/lib/present/converse-stream';
 // W23.B — the answer's receipt (activity + duration + stopped), the same companion idiom as W21's skills.
 import { recordAnswerMeta } from '@/lib/converse/answer-meta';
@@ -65,6 +66,8 @@ export async function POST(request: NextRequest) {
       stream?: boolean;
       /** W21 — this message's skills pick ({ add?, skip? } skill ids; this message only). */
       skills?: unknown;
+      /** REPLY TO A CARD (law `one-component-one-behaviour`): the card this message is about. */
+      target?: unknown;
     };
     const kind = body.kind && VALID.includes(body.kind) ? body.kind : null;
     const id = body.id?.trim();
@@ -107,7 +110,8 @@ export async function POST(request: NextRequest) {
     if (answerKey && chatRoomKey) {
       const reaskTurnId = typeof body.reaskTurnId === 'string' && /^[0-9a-f-]{36}$/i.test(body.reaskTurnId) ? body.reaskTurnId : null;
       const reask = reaskTurnId ? { turnId: reaskTurnId, priorKey: validAnswerKey(body.reaskKey) } : null;
-      claim = await writeAskTurn(supabase, user.id, chatRoomKey, answerKey, text, reask);
+      const tq = sanitizeTarget(body.target);
+      claim = await writeAskTurn(supabase, user.id, chatRoomKey, answerKey, text, reask, tq ? (tq.title ?? null) : null);
     }
     // ── THE ANSWER, ONE BODY FOR BOTH TRANSPORTS (W20.B) ────────────────────────────────────────
     // JSON (every non-chat caller) or THE ONE STREAM (the rail's composer: `stream: true`), the same
@@ -130,7 +134,22 @@ export async function POST(request: NextRequest) {
     };
     const answer = async (onProgress?: (label: string) => void, onToken?: (t: string) => void): Promise<Record<string, unknown>> => {
       const skills = await skillsPromise;
-      const turn = await converse(supabase, user.id, scope, text, { ...(onProgress ? { onProgress } : {}), skills, ...door, ...(onToken ? { onToken } : {}) });
+      // REPLY TO A CARD: the core reads ONE instruction about THAT card; the room records the user's words.
+      const cardTarget = sanitizeTarget(body.target);
+      const coreText = cardTarget && !body.decision?.option ? targetedQuestion(text, cardTarget) : text;
+      // …and a card ON AN ITEM (a reply · a nudge) is revised through THAT item's own lane — the one
+      // redraft path that versions it — never the room's general scope (lib/present/card-target.ts).
+      const tItem = cardTarget ? targetItemOf(cardTarget) : null;
+      const coreScope: ConverseScope = tItem && scope.kind === 'entity' ? { kind: 'item', itemKind: tItem.itemKind, itemId: tItem.id } : scope;
+      const turn = await converse(supabase, user.id, coreScope, coreText, { ...(onProgress ? { onProgress } : {}), skills, ...door, ...(onToken ? { onToken } : {}) });
+      // THE NEW VERSION POSTS BELOW: a revised message lands as its card on THIS answer (the painted one
+      // stays as it was) — the email card of that item, re-read with its new words.
+      // It rides THE ONE TABLE's email-draft card (durable: the room re-reads it as a pointer), so the
+      // revision is a NEW card on this answer — the painted one is never the one that changes.
+      if (tItem && !turn.openStage && !cardTurnOf(turn)) {
+        (turn as { emailDraft?: unknown }).emailDraft = { id: `rev-${tItem.id}-${Date.now().toString(36)}`, revises: true,
+          ...(tItem.itemKind === 'email' ? { itemId: tItem.id } : { compose: { kind: 'commitment', id: tItem.id } }) };
+      }
       // …and THE RESET WINS: a question a New chat archived while the reasoning ran gets no answer.
       const claimed = claim === 'claimed' && !!answerKey && !!chatRoomKey
         && await questionStillLive(supabase, user.id, chatRoomKey, answerKey);

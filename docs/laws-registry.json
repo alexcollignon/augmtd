@@ -5641,11 +5641,13 @@
    ],
    "tier": 2,
    "domain": "workflows",
-   "statement": "A parked run takes paste, pin, attach or a spoken supply as the station's own output through one implementation; a supply resolves the run and never fires the door seam.",
+   "statement": "A parked run takes paste, pin, attach or a spoken supply as the station's own output through one implementation; a supply resolves the run and never fires the door seam. A file handed to a run (the station's attach or the Run-with-material sheet) rides ONE ingest: its text is real at return or the door refuses by name, and the run door reads it from the caller's own row.",
    "homes": [
     "components/workflows/input-supply-form.tsx",
     "lib/workflows/input-station.ts",
-    "app/api/workflows/runs/[id]/supply-upload/route.ts"
+    "app/api/workflows/runs/[id]/supply-upload/route.ts",
+    "lib/workflows/material-ingest.ts",
+    "app/api/workflows/[id]/material-upload/route.ts"
    ],
    "gates": [
     {
@@ -9244,7 +9246,10 @@
    "aliases": [
     "EXEMPLARS IN THE TARGET LANGUAGE ONLY",
     "SHAPE NOT WORDS",
-    "THE LANGUAGE POST-CHECK"
+    "THE LANGUAGE POST-CHECK",
+    "THE FRAME FOLLOWS THE BODY",
+    "THE FORMAL THREAD KEEPS ITS REGISTER",
+    "AN HONORIFIC TAKES THE SURNAME"
    ],
    "tier": 2,
    "domain": "judge · prepare · deck",
@@ -9257,7 +9262,8 @@
     "lib/converse/index.ts",
     "components/home/email-card.tsx",
     "lib/prepare/read.ts",
-    "components/thread/types.ts"
+    "components/thread/types.ts",
+    "app/api/assistant/chat/route.ts"
    ],
    "gates": [
     {
@@ -9293,6 +9299,26 @@
       "G9-G10"
      ],
      "note": "W18.B: every drafter model call sits inside draftInLanguage; the footer claims no unverified language"
+    },
+    {
+     "suite": "smoke-w42-truth-floors",
+     "ids": [
+      "T1",
+      "T2f"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "alignDraftFrame: a greeting/sign-off line in another language than the body is rewritten in the body's language and the thread's register"
+    },
+    {
+     "suite": "smoke-w42-truth-floors",
+     "ids": [
+      "T1",
+      "T2i"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "alignDraftFrame(formal) lifts an informal in-language frame; fixHonorificName; a localized name placeholder is signed with the user's name"
     }
    ],
    "fn": "selectExemplars · draftLanguageMiss · draftLanguageVerified · draftInLanguage (lib/context/draft-language.ts) · stampTruth / inboxTruthFacts (lib/prepare/read.ts)",
@@ -9498,14 +9524,17 @@
     "THE QUOTE SEPARATES",
     "quoteDirectionFloor",
     "mergeableByQuote",
-    "A SUGGESTION OWNS NOTHING"
+    "A SUGGESTION OWNS NOTHING",
+    "THE DELEGATION READS THROUGH"
    ],
    "tier": 2,
    "domain": "judge-prepare-deck",
    "statement": "An extracted commitment whose VERIFIED quote (it exists in the message’s own words) names its actor unambiguously takes its direction from that grammar, over the model’s doer: a first-person commissive (I/we will …, nous allons, wir werden, vamos enviar, enviaremos) is the AUTHOR’s; a request, a first-person need (I need, we are still waiting for) or a second-person obligation is the ADDRESSEE’s; a named subject with an assignment/future marker (“<Name> to send …”, “<Name> will …”) is the user when the name denotes the user, else that party; a first-person-plural SUGGESTION (we should, on devrait, wir sollten, deveríamos, deberíamos) has no owner and mints nothing; on received mail a request the sender addresses BY NAME to someone other than the user (“<Name>, please send …”) is theirs and mints nothing. A clause with no subject, a subordinate clause or disagreeing clauses change nothing. On a mail where the user only sits in CC and is not named, the sender’s own promise is made to the To: party and mints nothing (the seat law’s sibling). THE QUOTE SEPARATES: a mail’s asks quoted from different sentences or list lines never merge in the G1 consolidation (each keeps its own due and its own done); the meeting path keeps its reasoned check. Grammar (pronouns, auxiliaries, modals, request forms) in EN/FR/DE/PT/ES — never the vocabulary of a case.",
    "homes": [
     "lib/commitments/quote-actor.ts",
-    "lib/commitments/extract.ts"
+    "lib/commitments/extract.ts",
+    "lib/commitments/manual.ts",
+    "lib/integrations/meeting-bot/bot-manager.ts"
    ],
    "gates": [
     {
@@ -9519,6 +9548,26 @@
      "cost": "zero-ai",
      "fn": "quoteActor · quoteDirectionFloor · mergeableByQuote",
      "note": "W28 (uncommitted): tests/unit/w28-extraction-and-move-floors — the actor over EN/FR/DE/PT/ES commissives, requests, needs, named subjects, suggestions and the unknowns (offers, subordinate clauses, mixed clauses); the direction mapping by authorship; the extraction wires it before the seat law; asks in different lines never merge. Measured by the eval (extraction.commitments, AUGMTD vs same/sonnet55/gpt56)."
+    },
+    {
+     "suite": "smoke-w42-truth-floors",
+     "ids": [
+      "T1",
+      "T2b"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "a delegation (\"je demande à X de…\", \"I've asked X to…\", \"ich bitte X\", \"vou pedir ao X\", \"le pido a X\") is the writer's side; the delegate who is the user is the user"
+    },
+    {
+     "suite": "smoke-w42-truth-floors",
+     "ids": [
+      "T1",
+      "T2j"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "every path: manualTaskDirection, the reprocessed meeting keeps only the user's tasks, the sender-commits gate"
     }
    ],
    "fn": "quoteDirectionFloor",
@@ -9543,15 +9592,20 @@
    "aliases": [
     "PAYMENT_REQUEST_RULE",
     "addressedNoticeDebt",
-    "THE PAYMENT-REQUEST LAW"
+    "THE PAYMENT-REQUEST LAW",
+    "PAYMENT TO THE USER IS NEVER A USER DEBT",
+    "THE DELEGATED PAYER"
    ],
    "tier": 2,
    "domain": "judge-prepare-deck",
-   "statement": "A payment request (an invoice, a payment reminder, a dunning notice, in any language) is the user's commitment ONLY when it asks the user to pay: addressed to them, not yet paid, not collected automatically, not CC-only — then exactly one you_owe \"Pay invoice …\" with its stated due (an overdue bill stays owed). Paid, a receipt, or auto-collected (direct debit, auto-pay, the card on file) → nothing owed, awareness (work none). When the message's own words name SOMEONE ELSE as the one who pays or processes it (a colleague, their finance or accounts team), it is not the user's debt: the work is the heads-up/forward to that person (the judge's forward verb), prepared for the user to send. The extraction gate lets a NOTICE the understanding reads as the user's own move (you_owe, addressed, not CC-only, never an unsolicited kind, never a broadcast footer) reach the extraction, whose prompt carries the ONE rule text; the judge states the same law in verbs.",
+   "statement": "A payment request (an invoice, a payment reminder, a dunning notice, in any language) is the user's commitment ONLY when it asks the user to pay: addressed to them, not yet paid, not collected automatically, not CC-only — then exactly one you_owe \"Pay invoice …\" with its stated due (an overdue bill stays owed). Paid, a receipt, or auto-collected (direct debit, auto-pay, the card on file) → nothing owed, awareness (work none). When the message's own words name SOMEONE ELSE as the one who pays or processes it (a colleague, their finance or accounts team), it is not the user's debt: the work is the heads-up/forward to that person (the judge's forward verb), prepared for the user to send. The extraction gate lets a NOTICE the understanding reads as the user's own move (you_owe, addressed, not CC-only, never an unsolicited kind, never a broadcast footer) reach the extraction, whose prompt carries the ONE rule text; the judge states the same law in verbs. W42: a payment act on a message whose own words make the sender's side the payer (\"je demande à <colleague> d'effectuer le virement\") is never a you_owe commitment nor a you_owe inbox ownership — one actor reader (quote-actor payerFloor/ownershipPayerFloor) on the commitment write door and the inbox lane.",
    "homes": [
     "lib/commitments/extract.ts",
     "lib/work/judge.ts",
-    "lib/work/surface-registry.ts"
+    "lib/work/surface-registry.ts",
+    "lib/commitments/quote-actor.ts",
+    "lib/inbox/refresh-understanding.ts",
+    "lib/ai/email-processor.ts"
    ],
    "gates": [
     {
@@ -9564,9 +9618,29 @@
      "kind": "pure",
      "cost": "zero-ai",
      "note": "W35 (uncommitted): tests/unit/w35-bill-inputs-figures — the gate's exception and its refusals (unsolicited kinds, a notice nobody owes, CC-only, footer, no understanding); the rule names every branch; the judge's clause + forward meaning. scripts/smoke-conversation-delta K5/K5b. Measured by the eval (extraction.commitments cx-15/36/37/38, judgment.work-verdict wv-45/46)."
+    },
+    {
+     "suite": "smoke-w42-truth-floors",
+     "ids": [
+      "T1",
+      "T2a",
+      "T2c"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "payerOf/payerFloor/ownershipPayerFloor: the incident mail floors to awaiting; a request to pay stays the user's; both sides named → no floor"
+    },
+    {
+     "suite": "smoke-w42-truth-floors",
+     "ids": [
+      "T1"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "their awaited payment: overdue → chase, not yet due → none (judge directionFloor theirPayment)"
     }
    ],
-   "fn": "addressedNoticeDebt · PAYMENT_REQUEST_RULE",
+   "fn": "addressedNoticeDebt · PAYMENT_REQUEST_RULE · payerFloor · ownershipPayerFloor",
    "version_key": "COMMITMENT_EXTRACTION_VERSION",
    "status": "holding-uncommitted",
    "broken_by": null,
@@ -9579,6 +9653,10 @@
     {
      "law": "seat-law",
      "precedence": "CC-only never mints a bill; the seat law runs first and this law never re-opens it"
+    },
+    {
+     "law": "quote-names-its-actor",
+     "precedence": "the payer law reads THROUGH the actor reader (one grammar); it only ever moves a you_owe payment act to awaiting, never the reverse"
     }
    ]
   },
@@ -10198,6 +10276,270 @@
     {
      "law": "human-in-the-loop",
      "precedence": "a receipt never claims an external send that did not happen — the send word is reserved for the commit door's own deeds"
+    }
+   ]
+  },
+  {
+   "id": "room-answer-coherent",
+   "name": "THE ANSWER IS COHERENT WITH ITSELF AND ITS BOARD",
+   "aliases": [
+    "ONE LIST FOR WHO OWES WHAT",
+    "THE ROOM ANSWER COHERENCE FLOOR"
+   ],
+   "tier": 2,
+   "domain": "rooms",
+   "statement": "A room answer's 'who owes what' is the live board's rows (each line states its owner; the older synthesis lists speak only without a board; a reopened row is stated once as open); it never asserts a state and its negation about one row (waiting vs settled/moving, staged vs to-do), never calls an unprepared row staged, never says 'nothing blocking' over overdue work, and on a catch-up names every carded row — a conflict earns one tokenless re-ask naming it, adopted only when better.",
+   "homes": [
+    "lib/room/answer-coherence.ts",
+    "lib/room/grounding.ts",
+    "lib/converse/index.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w42-truth-floors",
+     "ids": [
+      "T1",
+      "T2d",
+      "T2e"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "answerConflicts on the incident answer trips all four kinds; a coherent answer trips none"
+    }
+   ],
+   "fn": "answerConflicts · whoOwesWords",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W42.2",
+   "collides_with": [
+    {
+     "law": "one-grounding",
+     "precedence": "the floor reads the SAME board the grounding states — it adds no second list; the board wins over the synthesis"
+    }
+   ]
+  },
+  {
+   "id": "chip-says-name-once",
+   "name": "THE CHIP SAYS THE NAME ONCE",
+   "aliases": [
+    "A NAME IS SAID ONCE"
+   ],
+   "tier": 2,
+   "domain": "chat",
+   "statement": "A name is rendered once: prose that ends with the very name a resolved chip shows drops its copy (the one ref resolver), and a room answer's project name followed by its own copy (plain, bracketed or as a link's text) collapses to one.",
+   "homes": [
+    "lib/home/ask-refs.ts",
+    "lib/room/answer-coherence.ts",
+    "lib/converse/index.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w42-truth-floors",
+     "ids": [
+      "T1",
+      "T2e",
+      "T2g"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "resolveAskRefs drops \"Acme [E1]\" → \"[E1]\"; collapseRepeatedNames collapses \"Acme ACME\"; word-bounded"
+    }
+   ],
+   "fn": "dropEchoedName · collapseRepeatedNames",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W42.4",
+   "collides_with": [
+    {
+     "law": "row-tag-and-room-door",
+     "precedence": "identity stays by tag and door; only the prose copy of a resolved chip's label is removed, never a chip"
+    }
+   ]
+  },
+  {
+   "id": "one-component-one-behaviour",
+   "name": "ONE COMPONENT, ONE BEHAVIOUR",
+   "aliases": [
+    "ONE BEHAVIOUR EVERYWHERE",
+    "THE BEHAVIOUR TABLE",
+    "THE ONE VIEWER",
+    "DEEDS INLINE, ARTIFACTS IN THE VIEWER",
+    "ONE DOOR PER DEED",
+    "THE CARD STACK",
+    "REPLY TO A CARD"
+   ],
+   "tier": 2,
+   "domain": "surfaces",
+   "statement": "Every component kind has ONE row in the behaviour table (lib/present/behaviour.ts): its class, its renderer and its one door. A DEED (reply, nudge, compose, invite, forward, decision, ask, approval gate, input station, LinkedIn post, paste pack, collection, workflow draft, event, bulk deed, change, confirm) renders as its full inline editable component in the conversation — the same component in the Home chat, a coworker DM, an item room, a loose task room, a project room, the meeting chat and the workflow surfaces — and the card is its only door (a verb that summons it stands only while it is absent; the drawer inventories without acting). An ARTIFACT (document, frame, spreadsheet, deck, meeting notes, a full email thread) is a compact card whose Open raises THE ONE VIEWER (components/shared/artifact-viewer.tsx): beside the conversation on desktop, a full-screen sheet on a phone, never opened by an arrival, never a navigation out of the room. No surface mounts a docked or split pane for a deed (the RoomShell aside, the summoned StageOverlay, the item doors' composers and the Home's docked artifact pane are retired), and nothing mounted in the viewer is a deed. STACKS + TARGETING (owner, Oct 2): a message carrying more than one card (or several cards in a row) renders as ONE stack (components/shared/card-stack.tsx) — every card folded to its header row (the kind's noun and glyph from the table's CARD_SUMMARY, title, recipient, state), the first open, one open at a time, remembered per conversation for the session, reduced-motion honoured; a single card is never folded. Every card carries a reply affordance: it rings the card, a chip above the composer names it, the message travels with the target and is quoted in the transcript, and the door hands the core ONE instruction to produce a REVISED version of THAT card as a new card (the painted one is never mutated); with no target an obvious reference ('the second one', 'that invite', 'the Sam email') resolves against the conversation's cards (lib/present/card-target.ts) and an ambiguous one is answered with one short question.",
+   "homes": [
+    "lib/present/behaviour.ts",
+    "components/shared/artifact-viewer.tsx",
+    "components/home/chat-cards.tsx",
+    "lib/present/turn-card.ts",
+    "components/prepared/linkedin-post-card.tsx",
+    "components/room/room-shell.tsx",
+    "components/home/item-detail.tsx",
+    "components/home/item-rail.tsx",
+    "components/entities/entity-room.tsx",
+    "components/home/home-ask.tsx",
+    "components/meetings/meeting-chat-sidebar.tsx",
+    "components/workflows/deliverable-door.tsx",
+    "components/home/email-card.tsx",
+    "app/(main)/layout.tsx",
+    "components/shared/card-stack.tsx",
+    "lib/present/card-target.ts",
+    "app/api/home/ask/route.ts",
+    "app/api/items/steer/route.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-one-behaviour",
+     "ids": [
+      "A1",
+      "A2",
+      "A3",
+      "A4",
+      "A5",
+      "A6",
+      "A7",
+      "A8",
+      "A9"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "the table is total over every producer vocabulary (chat card keys, turn fields, the emitters' coworker card types scanned from source, THE ONE READER's prepared kinds, the item page's artifact kinds); every renderer resolves; the LinkedIn post and a stage verb's deed RENDER through the one chat renderer (tests/unit/behaviour-table.test.ts holds the pure half too)"
+    },
+    {
+     "suite": "smoke-one-behaviour",
+     "ids": [
+      "B1",
+      "B2",
+      "B3",
+      "B4",
+      "B5",
+      "B6",
+      "B7",
+      "B8",
+      "B9",
+      "C1",
+      "C2",
+      "C3",
+      "C4",
+      "C5",
+      "C6",
+      "C7",
+      "C8",
+      "C9",
+      "C10",
+      "C11",
+      "C12",
+      "D1",
+      "D2",
+      "D3",
+      "D4",
+      "D5",
+      "D6",
+      "D7",
+      "D8",
+      "D9"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "every surface renders deeds through the one inline component; no docked/split pane for a deed; artifacts only in the one viewer, never on arrival; one door per deed"
+    },
+    {
+     "suite": "smoke-one-behaviour",
+     "ids": [
+      "E1",
+      "E2",
+      "E3",
+      "E4",
+      "E9"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "a two-card message RENDERS as one stack with exactly one open; a single card never folds; every card carries the reply affordance; reference resolution (ordinal · recipient · title words · kind; ambiguity asks; a general message is never routed) — tests/unit/card-target.test.ts holds the pure tier"
+    },
+    {
+     "suite": "smoke-one-behaviour",
+     "ids": [
+      "E5",
+      "E6",
+      "E7",
+      "E8"
+     ],
+     "kind": "source",
+     "cost": "zero-ai",
+     "note": "every surface stacks through the one CardStack; provider + chip + transcript quote on both chat surfaces; both doors accept the target and hand the core one instruction while the room records the user's own words"
+    }
+   ],
+   "fn": "BEHAVIOUR_TABLE · behaviourOf · chatCardNodes · deedCardFor · postsOfCardArtifacts · chatCardsOfPayload · resolveCardReference · targetedQuestion · sanitizeTarget · CARD_SUMMARY",
+   "version_key": null,
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "ONE-BEHAVIOUR (Oct 2, owner-approved)",
+   "collides_with": [
+    {
+     "law": "no-mutation-and-address",
+     "precedence": "NO MUTATION WINS where they meet: the viewer opens only on the reader's click (an arrival that opened a pane was a mutation after paint), a summoned deed card APPENDS to the conversation and never replaces a painted widget, and a deed card already painted is never swapped for another rendering of the same deed; the address law is untouched — the viewer never navigates, so the room's URL keeps owning the thread"
+    },
+    {
+     "law": "a-claim-renders",
+     "precedence": "this law is how the claim renders on every surface: a stage verb the core raises ('Opening the forward…') now reaches the Home door and every room as its deed's own inline card, and a coworker's typed card (a LinkedIn post) renders as itself — a claim with no table row is a build failure (A3), never a silent link"
+    },
+    {
+     "law": "presentation-law",
+     "precedence": "the presentation law's 'one card, one renderer' is the per-OBJECT half; this law adds the per-PLACE half — the same renderer and the same door in every surface — and wins on WHERE a deed renders (always inline, never a stage)"
+    },
+    {
+     "law": "the-item-page-is-a-few-widgets",
+     "precedence": "the item page still shows AT MOST ONE machine-chosen action widget; a deed the READER summons (a header verb) is their own exchange and renders beneath it — the one-widget law governs what the machine offers, never what the reader asked for"
+    },
+    {
+     "law": "one-stage",
+     "precedence": "one-stage's 'a commitment's message is the ONE EmailCard in the conversation' is generalised to every deed and every door; the meeting door's ComposePanel exception is retired (its follow-up is the EmailCard compose lane)"
+    }
+   ]
+  },
+  {
+   "id": "change-request-mints-no-payment",
+   "name": "A PAYMENT-DETAIL CHANGE MINTS NO PAYMENT WORK",
+   "aliases": [
+    "THE REDIRECTION FLOOR"
+   ],
+   "tier": 2,
+   "domain": "judge-prepare-deck",
+   "statement": "Words asking to change where payments go (new bank details / IBAN / account) never become a commitment to update details or pay the new account, never a payment/decision verb (a verify-first reply at most — the drafter's risky-asks contract holds it), and never an instruction in a room answer to pay, use, update or acknowledge the new account; the only safe work is the user's own verification via a contact they already hold.",
+   "homes": [
+    "lib/prepare/risky-asks.ts",
+    "lib/commitments/extract.ts",
+    "lib/work/judge.ts",
+    "lib/room/grounding.ts",
+    "lib/room/answer-coherence.ts"
+   ],
+   "gates": [
+    {
+     "suite": "smoke-w42-truth-floors",
+     "ids": [
+      "T1",
+      "T2h"
+     ],
+     "kind": "pure",
+     "cost": "zero-ai",
+     "note": "changeRequestMintsNothing drops the update/pay task; directionFloor(changeRequest) floors decide→reply; legitimisesDetailChange catches 'pay the new IBAN' / 'acknowledge the new account'"
+    }
+   ],
+   "fn": "changeRequestMintsNothing · legitimisesDetailChange",
+   "version_key": "COMMITMENT_EXTRACTION_VERSION",
+   "status": "holding-uncommitted",
+   "broken_by": null,
+   "fixed_by": "W42.5",
+   "collides_with": [
+    {
+     "law": "sent-in-the-users-name",
+     "precedence": "this law decides WHETHER work exists (none, or a verify-first reply); the sent-words law decides what that reply may say"
     }
    ]
   }

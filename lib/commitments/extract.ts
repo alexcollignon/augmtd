@@ -65,7 +65,8 @@ import { topMessageOf, splitTopMessage } from '@/lib/inbox/top-message';
 import { EXCERPT_RULE } from '@/lib/utils/clip-for-prompt';
 import { INBOUND_DATA_RULE, inboundBlock, quoteAddressesTheMachine } from '@/lib/utils/inbound-data';
 import { conversationDelta, quoteInText, type ConversationKey, type DeltaJudge, type ApplyDeps } from '@/lib/work/conversation-delta';
-import { quoteActor, quoteDirectionFloor, mergeableByQuote, type QuoteActor } from '@/lib/commitments/quote-actor';
+import { quoteActor, quoteDirectionFloor, mergeableByQuote, payerFloor, ownWordsCommit, type QuoteActor } from '@/lib/commitments/quote-actor';
+import { changeRequestMintsNothing } from '@/lib/prepare/risky-asks';
 
 // ── EXTRACTION TRUTH floors (W8.2 · ONE CONVERSATION, ONE LIVE ITEM) ─────────────────────────────
 // Pure, zero AI. The write door (writeCommitments) and the repair (scripts/repair-conversation-hoard.ts)
@@ -122,12 +123,12 @@ export function dueFloorAgainstSource(
 //    to pay (addressed, unpaid, not auto-collected, not CC-only); a bill whose own words name someone
 //    else as its payer/processor is theirs (the judge's `forward`). The gate lets an addressed notice the
 //    understanding reads as you_owe reach extraction (`addressedNoticeDebt`, the kind floor's mirror).
-export const COMMITMENT_EXTRACTION_VERSION = 5;
+export const COMMITMENT_EXTRACTION_VERSION = 6; // W42: the payee side of the bill rule + the change-request rule
 
 /** THE BILL HAS ONE PAYER (W35, owner decision) — ONE wording, read by the extraction prompt; the work
  *  judge states the same law in its own verb terms. Multilingual by construction (no vocabulary). */
 export const PAYMENT_REQUEST_RULE = (who: string): string =>
-  `A BILL OR PAYMENT REQUEST (an invoice, a payment reminder, a dunning or overdue notice — in any language) is ${who}'s commitment ONLY when it asks ${who} to pay: addressed to ${who}, not yet paid, and not collected automatically. Then extract exactly ONE "you_owe" — "Pay invoice <its number or what it is for>" — with its stated due date (a due date already past stays: an overdue bill is still owed) and the party to be paid as counterparty. It is NOT ${who}'s commitment — extract nothing for it — when the payment is already made or confirmed (a receipt, "payment received"), when it is collected automatically (direct debit, auto-pay, the card on file, "no action needed"), when ${who} is only copied, or when the message's own words name SOMEONE ELSE as the one who pays or processes it ("your finance team will process it", "accounts payable handles this") — passing it on to them is ${who}'s move, not ${who}'s debt.`;
+  `A BILL OR PAYMENT REQUEST (an invoice, a payment reminder, a dunning or overdue notice — in any language) is ${who}'s commitment ONLY when it asks ${who} to pay: addressed to ${who}, not yet paid, and not collected automatically. Then extract exactly ONE "you_owe" — "Pay invoice <its number or what it is for>" — with its stated due date (a due date already past stays: an overdue bill is still owed) and the party to be paid as counterparty. It is NOT ${who}'s commitment — extract nothing for it — when the payment is already made or confirmed (a receipt, "payment received"), when it is collected automatically (direct debit, auto-pay, the card on file, "no action needed"), when ${who} is only copied, or when the message's own words name SOMEONE ELSE as the one who pays or processes it ("your finance team will process it", "accounts payable handles this") — passing it on to them is ${who}'s move, not ${who}'s debt. This rule is about bills ${who} would pay. The REVERSE is a commitment: when the SENDER's side says THEY will pay ${who} (they approve ${who}'s invoice and say they — or a colleague, their accounting or finance team — will make the transfer), extract ONE "awaiting" (their side owes the payment) with its stated date, the doer being that person; never a "you_owe". A request to CHANGE where payments go (new bank details, a new IBAN/account) is never a commitment to update details or pay the new account — extract nothing for it.`;
 /** The longest quote the store keeps (quoteInText refuses a longer one anyway). */
 export const QUOTE_MAX_CHARS = 400;
 export type QuoteFloorReason = 'no-quote' | 'quote-not-in-own-words' | 'not-first-person' | 'addressed-to-machine';
@@ -472,6 +473,13 @@ export async function writeCommitments(
       userForms, other && !denotesUser(other, userForms) ? other : null,
     );
     if (floor.direction !== c.direction) c = { ...c, direction: floor.direction };
+    // W42 · THE BILL HAS ONE PAYER (lib/commitments/quote-actor.ts payerFloor): on mail whose own words make
+    // the other side the payer ("je demande à <colleague> d'effectuer le virement"), a payment act is
+    // never the user's debt — every email path (extraction, promise-on-reply) passes this one door.
+    if (meta.source === 'email' && quoteWords) {
+      const paid = payerFloor(c, { ownWords: quoteWords, user: userForms, others: [c.counterparty ?? null, other], authoredByUser });
+      if (paid) c = { ...c, direction: paid, doer: c.counterparty || other || 'counterparty' };
+    }
     const fixed = repairSelfParty(
       { description: c.description.trim(), counterparty: c.counterparty ?? null, direction: c.direction }, userForms,
       other && !denotesUser(other, userForms) ? other : null,
@@ -479,6 +487,13 @@ export async function writeCommitments(
     return fixed.changed
       ? { ...c, description: fixed.description, counterparty: fixed.counterparty, direction: (fixed.direction as ExtractedCommitment['direction']) ?? c.direction }
       : c;
+  }).filter((c) => {
+    // W42 · THE CHANGE REQUEST MINTS NO PAYMENT TASK (lib/prepare/risky-asks): received words asking to change
+    // where payments go never become "update the bank details / pay the new account" — redirection fraud's
+    // exact shape. The safe work (verify via a contact the user already holds) is the reply drafter's contract.
+    if (meta.source !== 'email' || authoredByUser || !changeRequestMintsNothing(quoteWords, c)) return true;
+    console.log(`[commitments] change-request floor ${meta.sourceId.slice(0, 8)}: dropped "${c.description.slice(0, 60)}"`);
+    return false;
   }).flatMap((c): ExtractedCommitment[] => {
     // W15.4 THE QUOTE FLOOR — a promise is quoted or it isn't a promise. Mail: the quote must exist in
     // the message's OWN words; a user-authored you_owe must be judged an explicit first-person
@@ -889,6 +904,17 @@ export function addressedNoticeDebt(f: Pick<ExtractionFacts, 'isFromUser' | 'und
   return u.ownership === 'you_owe' && u.role === 'addressed';
 }
 
+/** W42 · the sender's own words commit their side to a deed the user is owed (pure): addressed (never a
+ *  bystander/CC seat), never bulk, never an unsolicited kind, and a first-person future promise or a hand-off
+ *  on their side in the message's OWN words (quote-actor ownWordsCommit). */
+function senderCommitsTo(f: ExtractionFacts, u: Partial<GateUnderstanding> | null): boolean {
+  // A "bystander" reading is overruled by STRUCTURE when the seat says the user is a direct To: recipient
+  // (the seat law: a direct recipient is never silently hidden).
+  if (f.isFromUser || f.bulkFooter || f.ccOnly === true || !u || (u.role === 'bystander' && f.ccOnly !== false) || u.bulk === true) return false;
+  if (u.mailKind && UNSOLICITED_KINDS.has(u.mailKind)) return false;
+  return ownWordsCommit(topMessageOf(String(f.text ?? '')));
+}
+
 /** THE GATE (pure, zero AI): does this message reach the conversation delta, and does it get a NEW
  *  extraction call? Order = precedence; the first floor that answers wins. */
 export function extractionGate(f: ExtractionFacts): ExtractionGate {
@@ -906,14 +932,19 @@ export function extractionGate(f: ExtractionFacts): ExtractionGate {
     // (you_owe, addressed to them) — a payment request, a dunning notice — reaches the extraction, whose
     // prompt decides whether it is a debt (the kind floor's mirror: lib/work/kind-floor.ts NOTICE_KINDS).
     if (addressedNoticeDebt(f)) return { delta, extract: true, basis: 'addressed-notice-debt' };
+    // W42: a person's own reply read as a receipt/notification ("Bien reçu — je demande à Léa d'effectuer le
+    // virement") still carries what they owe the user — never for a broadcast or an unsolicited kind.
+    if (senderCommitsTo(f, u)) return { delta, extract: true, basis: 'sender-commits' };
     return { delta, extract: false, basis: 'noise-kind' };
   }
   if (!f.isFromUser && f.campaignEcho) return { delta, extract: false, basis: 'campaign-echo' };
   if (f.isFromUser) return { delta, extract: true, basis: 'user-authored' };
   if (u) {
-    return understandingIndicatesObligation(u)
-      ? { delta, extract: true, basis: 'understanding' }
-      : { delta, extract: false, basis: 'understanding-no-obligation' };
+    if (understandingIndicatesObligation(u)) return { delta, extract: true, basis: 'understanding' };
+    // W42: "no move for the user" is not "nobody owes anything" — the sender's own promise or hand-off on
+    // their side ("je demande à <colleague> d'effectuer le virement") is what the user is OWED.
+    if (senderCommitsTo(f, u)) return { delta, extract: true, basis: 'sender-commits' };
+    return { delta, extract: false, basis: 'understanding-no-obligation' };
   }
   if (f.ccOnly !== true) return { delta, extract: true, basis: 'addressed-unjudged' };
   return COMMITMENT_HINT.test(text)
@@ -1168,7 +1199,7 @@ Return ONLY JSON — {"commitments":[]} when there are no real commitments:
       if (!isFromUser && seatStripsObligation(`${subject || ''}\n${text}`, seat)) {
         // W28: the sibling half — the sender's own promise on a mail the user only sits in CC on is made
         // to the To: party ("Hi Sam, I will send you…"); the user is not owed a stranger's deliverable.
-        list = list.filter((c) => c.direction !== 'you_owe' && actors.get(c) !== 'author');
+        list = list.filter((c) => c.direction !== 'you_owe' && actors.get(c) !== 'author' && actors.get(c) !== 'delegated');
       }
       // THE DEIXIS LAW, structural belt (T-class): a title carrying a relative time word decays into
       // a lie ("tomorrow" is only true for a day) — detection is lexical, the REWRITE is reasoned

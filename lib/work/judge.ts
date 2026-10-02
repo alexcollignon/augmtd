@@ -17,6 +17,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { aiCall } from '@/lib/ai/call';
 import { coerceUnderstanding, type ItemUnderstanding } from '@/lib/inbox/item-understanding';
+import { isPaymentAct } from '@/lib/commitments/quote-actor';
 import { isBystanderSeat } from '@/lib/inbox/recipient-role';
 import { isNoMoveNotice, isAutomatedSenderStrong, rawMailKindOf, listMailOf } from '@/lib/inbox/notice-demotion';
 import { isOwnCoworkerSender, ownCoworkerLocals, SELF_ECHO_REASON } from '@/lib/inbox/self-echo';
@@ -260,8 +261,26 @@ function fallbackVerdict(reason: string, resolution?: 'expired' | 'answered'): W
 export { DIRECTION_FLOOR_REASON } from '@/lib/work/direction-floor-word'; // W18: one home, zero imports (the machine reads it)
 export function directionFloor(
   v: WorkVerdict,
-  facts: { kind: 'inbox' | 'commitment'; direction?: string | null; ownership?: string | null },
+  facts: { kind: 'inbox' | 'commitment'; direction?: string | null; ownership?: string | null; changeRequest?: boolean; theirPayment?: 'overdue' | 'pending' | null },
 ): WorkVerdict {
+  if (facts.theirPayment && v.work !== 'none' && v.work !== 'chase') {
+    if (facts.theirPayment === 'overdue') {
+      const component = (componentForWork('chase') ?? 'chase_composer') as WorkComponentKey;
+      return { work: 'chase', component, executor: v.executor.kind === 'coworker' ? v.executor : { kind: 'user' }, gate: gateOf(component),
+        reason: `their payment is past its date — the move is a nudge to them, never a payment by the user. (${clipLabel(v.reason, 110)})` };
+    }
+    return { work: 'none', component: 'message_only', executor: { kind: 'user' }, gate: null,
+      reason: `their payment is not due yet — nothing for the user to do. (${clipLabel(v.reason, 110)})` };
+  }
+  // W42 · A PAYMENT-DETAIL CHANGE REQUEST MOUNTS NO PAYMENT/UPDATE WORK (lib/prepare/risky-asks): the only safe
+  // work is the user's own verification — `none`, or the verify-first reply the drafter's risky-asks floor holds.
+  if (facts.changeRequest && v.work !== 'none' && v.work !== 'reply') {
+    const component = (componentForWork('reply') ?? 'reply_composer') as WorkComponentKey;
+    return {
+      work: 'reply', component, executor: { kind: 'user' }, gate: gateOf(component),
+      reason: `a request to change payment details — never paid or updated from the mail; the reply only says it will be verified via a contact the user already holds. (${clipLabel(v.reason, 110)})`,
+    };
+  }
   if (v.work !== 'chase') return v;
   if (facts.kind === 'commitment' && String(facts.direction ?? '') === 'you_owe') {
     const out: WorkVerdict = {
@@ -558,6 +577,20 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
       who = (sd.from_name as string) || (sd.from_address as string) || null;
       whoEmail = (sd.from_address as string) || null;
       u = coerceUnderstanding(sd.understanding);
+      // W42 · THE BILL HAS ONE PAYER on the inbox lane: the understanding's ownership is a model's word; a
+      // payment ask on mail whose own words make the SENDER'S side the payer is never the user's move.
+      if (u?.ownership === 'you_owe') {
+        const { ownershipPayerFloor } = await import('@/lib/commitments/quote-actor');
+        const { topMessageOf } = await import('@/lib/inbox/top-message');
+        const ownWords = `${String(sd.subject || '')}\n${topMessageOf(String(sd.body || ''))}`;
+        const needsForms = ownershipPayerFloor({ ownership: u.ownership, ask: u.ask ?? title }, { ownWords, user: { name: null, aliases: [] } }) !== null;
+        if (needsForms) {
+          const { loadUserForms } = await import('@/lib/prepare/addressee');
+          const forms = await loadUserForms(client as never, userId).catch(() => ({ name: null, aliases: [] }));
+          const floored = ownershipPayerFloor({ ownership: u.ownership, ask: u.ask ?? title }, { ownWords, user: forms, others: [String(sd.from_name ?? '')] });
+          if (floored) u = { ...u, ownership: floored };
+        }
+      }
       dueDate = u?.deadline ?? null;
       rawKind = rawMailKindOf(sd);
       reasonedKind = String(sd.kind_override ?? '').toLowerCase() || u?.mailKind || null;
@@ -734,7 +767,13 @@ export async function judgeWork(client: SupabaseClient, userId: string, input: J
     // chase on work the user owes) is coerced HERE and written back under the same sig, so every raw
     // reader of the judgment cache (the machine, the room board, the deck) reads the corrected verb
     // on the next read — zero AI, no re-judgment, no JUDGE_VERSION bump (the prompt is unchanged).
-    const dirFacts = { kind: input.kind, direction: commitDirection, ownership: u?.ownership ?? null } as const;
+    const { asksPaymentDetailChange } = await import('@/lib/prepare/risky-asks');
+    const dirFacts = { kind: input.kind, direction: commitDirection, ownership: u?.ownership ?? null,
+      changeRequest: input.kind === 'inbox' ? asksPaymentDetailChange(body) || asksPaymentDetailChange(title) : asksPaymentDetailChange(title),
+      // W42 · THE BILL HAS ONE PAYER in verbs: THEIR payment (an awaiting payment commitment) is never the user's
+      // reply/produce — it is chased once its date has passed, otherwise there is nothing to do yet.
+      theirPayment: input.kind === 'commitment' && commitDirection === 'awaiting' && isPaymentAct(title)
+        ? ((dueDate && dueDate < todayStr) ? 'overdue' as const : 'pending' as const) : null } as const;
     if (cached) {
       const floored = directionFloor(cached, dirFacts);
       if (floored !== cached) await writeCache(client, userId, input, sig, floored, priorEv, priorMat);

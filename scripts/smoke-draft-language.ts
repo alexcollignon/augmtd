@@ -140,7 +140,7 @@ console.log('\nE · every drafter producer passes the one check');
   const dr = src('lib/inbox/draft-reply.ts');
   const calls = (dr.match(/\baiCreate\(/g) ?? []).length;
   // (W36: the reply's writer is a named function so the risky-ask floor can re-run it through the same check.)
-  const checks = (dr.match(/await draftInLanguage\(async \(languageFix\) =>/g) ?? []).length + (/const writeReply = async \(languageFix: string \| null\): Promise<string> => \{/.test(dr) && /await draftInLanguage\(writeReply, detected\)/.test(dr) ? 1 : 0);
+  const checks = (dr.match(/await draftInLanguage\(async \(languageFix\) =>/g) ?? []).length + (/const writeReply = async \(languageFix: string \| null\): Promise<string> => \{/.test(dr) && /await draftInLanguage\(writeReply, detected, frameRegister\)/.test(dr) ? 1 : 0);
   gate('E1 draft-reply.ts: every model call (reply + nudge) sits inside draftInLanguage and returns its checked body',
     calls === 2 && checks === 2 && (dr.match(/return checked\.body;/g) ?? []).length === 2, `aiCreate ${calls} · checks ${checks}`);
   gate('E2 both drafters resolve the language BEFORE the voice block and filter the exemplars to it',
@@ -150,10 +150,10 @@ console.log('\nE · every drafter producer passes the one check');
   gate('E3 the check\'s target is the drafter\'s own language (reply: detected · nudge: the mirror)',
     // W28.10 — the reply's commitment floor may sit between (it only swaps unsupported spans for slots).
     // W36 — the risky-ask floor re-runs the same writer through the same check before the commitment floor.
-    /let checked = await draftInLanguage\(writeReply, detected\);[\s\S]{0,800}?const again = await draftInLanguage\(writeReply, detected\);[\s\S]{0,2400}?COMMITMENT_OR_AVAILABILITY[\s\S]{0,900}?\s+return checked\.body;/.test(dr) && /\}, mirrorLang\);\n\s+return checked\.body;/.test(dr));
+    /let checked = await draftInLanguage\(writeReply, detected, frameRegister\);[\s\S]{0,800}?const again = await draftInLanguage\(writeReply, detected, frameRegister\);[\s\S]{0,2400}?COMMITMENT_OR_AVAILABILITY[\s\S]{0,1200}?\s+return checked\.body;/.test(dr) && /\}, mirrorLang, mirrorText \? addressRegisterOf\(mirrorText\) : null\);\n\s+return checked\.body;/.test(dr));
   const cr = src('app/api/compose/draft/route.ts');
   gate('E4 compose: its one model call is wrapped — every generation the truth vet asks for is language-checked',
-    (cr.match(/\baiCreate\(/g) ?? []).length === 1 && /draftInLanguage\(\(languageFix\) => generateOnce\(objection, languageFix\), target\)/.test(cr)
+    (cr.match(/\baiCreate\(/g) ?? []).length === 1 && /draftInLanguage\(\(languageFix\) => generateOnce\(objection, languageFix\), target, register\)/.test(cr)
     && /buildVoiceBlock\(user\.id, voiceRecipient, supabase, mailbox, \{ language: target \}\)/.test(cr)
     && /draftThroughVet\(generate, vetFacts\)/.test(cr));
   gate('E5 compose: the reply lane goes through generateReplyDraft (checked inside)', /draftThroughVet\(async \(objection\) => generateReplyDraft\(/.test(cr));

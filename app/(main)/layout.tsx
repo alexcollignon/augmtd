@@ -54,7 +54,10 @@ export default async function MainLayout({ children, modal }: { children: React.
     <WorkspaceProvider workspace={workspace ?? null} isSuperAdmin={isSuperAdmin}>
       <UserZoneProvider zone={userZone}>
       {/* Phone width stacks the sidebar's slim top bar over the page (the sidebar is a drawer there). */}
-      <div className="flex flex-col md:flex-row h-[100dvh] md:h-screen bg-neutral-50 overflow-hidden">
+      {/* THE ONE VIEWER MAKES ROOM (law `one-component-one-behaviour`): while an artifact is open on
+          desktop the page pads by the viewer's width (components/shared/artifact-viewer.tsx sets
+          --viewer-w), so the conversation stays beside it — never under it. Phone: a full sheet. */}
+      <div className="flex flex-col md:flex-row h-[100dvh] md:h-screen bg-neutral-50 overflow-hidden lg:pr-[var(--viewer-w,0px)]">
         <SidebarNav
           userEmail={user.email}
           avatarUrl={avatarUrl}

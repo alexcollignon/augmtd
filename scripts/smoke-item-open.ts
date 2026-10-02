@@ -82,7 +82,8 @@ async function main() {
     gate('A4 the held name comes ONLY from the deep-dive\'s own instant-load keys (never composed; unknown → a ghost bar)',
       /aug-item-commitment-\$\{id\}/.test(frame) && /aug-item-thread-\$\{id\}/.test(frame)
       && /animate-pulse/.test(frame));
-    const geometry = 'fixed inset-y-0 right-0 left-[212px] z-40 flex flex-col pointer-events-none';
+    // ⟲ RE-POINTED (one-component-one-behaviour): the modal yields THE ONE VIEWER's width on desktop.
+    const geometry = 'fixed inset-y-0 right-0 lg:right-[var(--viewer-w,0px)] left-[212px] z-40 flex flex-col pointer-events-none';
     gate('A5 the frame stands in the MODAL\'s own geometry (the deep-dive lands as a fill, never a re-layout)',
       frame.includes(geometry) && src(MODAL).includes(geometry));
     gate('A6 the deep-dive\'s modal mounts ALREADY ENTERED after a frame (no second entrance from transparent)',

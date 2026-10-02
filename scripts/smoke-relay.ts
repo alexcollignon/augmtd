@@ -1325,8 +1325,11 @@ async function main() {
     {
       const runRoute = stripComments(readFileSync('app/api/workflows/[id]/run/route.ts', 'utf8'));
       ok('POST /run accepts `{ material: { text, name? } }` and blocks it through materialBlock',
-        /material\?:\s*\{\s*text\?: string;\s*name\?: string\s*\}/.test(runRoute)
-        && /const material = materialBlock\(body\.material\);/.test(runRoute));
+        /material\?:\s*\{\s*text\?: string;\s*name\?: string;\s*files\?:/.test(runRoute)
+        && /const material = materialBlock\(body\.material, attached\);/.test(runRoute));
+      ok('…attached files are RESOLVED from the caller\'s own rows BEFORE a run exists (honest refusal, never an empty run)',
+        /resolveMaterialFiles\(admin, user\.id, fileIds\)/.test(runRoute)
+        && runRoute.indexOf('resolveMaterialFiles(admin') < runRoute.indexOf(".from('workflow_runs')\n    .insert"));
       ok('…and it rides as triggerContext, only when there is something (never an empty context)',
         /\.\.\.\(material \? \{ triggerContext: material \} : \{\}\)/.test(runRoute));
     }
@@ -5932,8 +5935,11 @@ async function main() {
     console.log('\nSU — THE ATTACH DOOR: AN ANSWER, NOT AN ARRIVAL (mode: source):');
     {
       const upPath = 'app/api/workflows/runs/[id]/supply-upload/route.ts';
-      const upSrc = stripComments(readFileSync(upPath, 'utf8'));
-      const upRaw = readFileSync(upPath, 'utf8');
+      // THE ONE RUN-TIME INGEST: the route's file laws now live in lib/workflows/material-ingest.ts
+      // (shared with the Run-with-material sheet's file door) — the gate reads the route + its ingest.
+      const ingestPaths = ['lib/workflows/material-ingest.ts', 'lib/workflows/material-files.ts'];
+      const upSrc = [upPath, ...ingestPaths].map((p) => stripComments(readFileSync(p, 'utf8'))).join('\n');
+      const upRaw = [upPath, ...ingestPaths].map((p) => readFileSync(p, 'utf8')).join('\n');
 
       ok('A SUPPLY IS AN ANSWER, NOT AN ARRIVAL — no door seam is reachable from this route',
         !/checkSourceReactions/.test(upSrc) && !/reactions/.test(upSrc) && !/onIndexed/.test(upSrc));
@@ -5946,23 +5952,23 @@ async function main() {
         && !/from\('workflows'\)[\s\S]{0,120}\.eq\('user_id'/.test(upSrc));
       ok('THE TEXT IS REAL AT RETURN — extraction is AWAITED, then verified on the row itself',
         /await indexUploadedFile\(/.test(upSrc)
-        && /\.select\('id, filename, extracted_text'\)/.test(upSrc)
-        && upSrc.indexOf('await indexUploadedFile(') < upSrc.indexOf("extracted_text'"));
+        && /\.select\('id, filename, extracted_text(?:, storage_path)?'\)/.test(upSrc)
+        && upSrc.indexOf('await indexUploadedFile(') < upSrc.indexOf(".select('id, filename, extracted_text"));
       ok('…and an unreadable file is an HONEST 422 that names the remedy — never a hollow KB row',
         /status: 422/.test(upSrc) && /no readable text in/.test(upSrc) && /try pasting it instead/.test(upSrc)
-        && /await cleanUp\(kbFileId\);/.test(upSrc));
+        && /await cleanUp\((?:created \? )?kbFileId(?: : null)?\);/.test(upSrc));
       ok('…with the storage object AND the row removed on every refusal path (nothing left behind)',
         /storage\.from\('drive-uploads'\)\.remove\(\[storagePath\]\)/.test(upSrc)
         && /from\('knowledge_chunks'\)\.delete\(\)\.eq\('file_id', fileId\)/.test(upSrc)
         && /from\('knowledge_files'\)\.delete\(\)\.eq\('id', fileId\)/.test(upSrc));
       ok('THE SIZE CEILING IS THE CHAT-ATTACH GUARD\'S CLASS, and it refuses in a human sentence',
-        /const MAX_SUPPLY_BYTES = 4 \* 1024 \* 1024;/.test(upSrc)
+        /export const MATERIAL_FILE_MAX_BYTES = 4 \* 1024 \* 1024;/.test(upSrc)
         && /status: 413/.test(upSrc) && /Upload it in Knowledge instead/.test(upSrc));
       ok('THE FILE IS USER-SCOPED AND MARKED AS WHAT IT IS (a supply for this run)',
-        /`\$\{user\.id\}\/supply\/\$\{runId\}\//.test(upSrc)
+        /`\$\{user\.id\}\/supply\/\$\{runId\}`/.test(upSrc)
         && /ref: `run:\$\{runId\}`/.test(upSrc));
       ok('THE CONTRACT — the client gets { kbFileId, name } and hands it to the EXISTING resume door',
-        /kbFileId,\s*\n\s*name: String\(/.test(upSrc)
+        /kbFileId: res\.kbFileId,\s*\n\s*name: res\.name/.test(upSrc)
         && !/resume/.test(upSrc.replace(/canResumeRun/g, '')));
       ok('THE ALLOWLIST NEVER DRIFTS BELOW THE EXTRACTOR (the Aug 10 class: pptx/xlsx/csv/doc)',
         ['presentationml', 'spreadsheetml', 'text/csv', 'msword', 'application/pdf']

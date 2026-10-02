@@ -865,3 +865,30 @@ describe('W27.C engine follow-ups', () => {
     expect(estimateRun({ ...base, augmtdEffort: { classification: 'minimal' } }).total).toBe(off);
   });
 });
+
+// ── W42 · state, deeds and staged invites in the world DSL ─────────────────────────────────────
+describe('W42 world: status, history, staged invite', () => {
+  const now = new Date('2026-10-02T10:00:00Z');
+  const base = {
+    people: [{ key: 'sam', name: 'Sam', email: 'sam@acme.test' }],
+    threads: [{ key: 't1', subject: 'Workshop', messages: [{ from: 'sam', at: '-1d 10:00', body: 'Can you send the invite?' }], preparedInvite: { title: 'Workshop 2', start: '+3d 10:00', minutes: 60, attendees: ['sam', 'me'] } }],
+  };
+  it('a done-then-restored task resolves open with its deeds; the plain view shows state, history and the unsent invite', () => {
+    const w = { ...base, commitments: [
+      { key: 'c1', direction: 'you_owe' as const, description: 'Send Sam the annex', counterparty: 'sam', thread: 't1', status: 'open' as const, history: [{ at: '-2d', action: 'done' as const }, { at: '-1d', action: 'restored' as const }] },
+      { key: 'c2', direction: 'you_owe' as const, description: 'Send Sam the report', counterparty: 'sam', status: 'done' as const, history: [{ at: '-3d', action: 'done' as const }] },
+    ] };
+    const rw = resolveWorld(w, now);
+    expect(rw.commitments[0].status).toBe('open');
+    expect(rw.commitments[0].history.map((h) => h.action)).toEqual(['done', 'restored']);
+    expect(rw.threads[0].preparedInvite?.attendees.map((p) => p.key)).toEqual(['sam', 'me']);
+    const txt = renderWorld(w, now);
+    expect(txt).toMatch(/Send Sam the annex.*\[OPEN\] — history: marked done .*, then restored/);
+    expect(txt).toMatch(/Send Sam the report.*\[DONE\]/);
+    expect(txt).toMatch(/prepared on this thread but NOT sent yet: "Workshop 2"/);
+  });
+  it('refuses a status that contradicts the last deed, and a staged invite with no item', () => {
+    expect(() => resolveWorld({ ...base, commitments: [{ key: 'c1', direction: 'you_owe', description: 'x', status: 'open', history: [{ at: '-1d', action: 'done' }] }] }, now)).toThrow(/contradicts/);
+    expect(() => resolveWorld({ threads: [{ key: 't1', subject: 's', item: false, messages: [{ from: 'me', to: ['a@b.test'], at: '-1d', body: 'b' }], preparedInvite: { title: 'x', start: '+1d', attendees: [] } }] }, now)).toThrow(/no inbox item/);
+  });
+});

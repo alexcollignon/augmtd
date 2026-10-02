@@ -111,9 +111,11 @@ async function main() {
     && stageDoorHref('x1', [], null) === '/item/x1?kind=email');
   const room = src('components/entities/entity-room.tsx');
   const portfolio = src('components/entities/portfolio-view.tsx');
-  const onStage = room.slice(room.indexOf('onStage={(stage, itemId) => {'), room.indexOf('onStage={(stage, itemId) => {') + 900);
-  ok('K3 the room\'s stage door resolves the address through stageDoorHref — no hard-coded `?kind=email` for an id, and both room ref producers are the ONE producer',
-    /stageDoorHref\(itemId, laneRows\.map/.test(onStage) && !/\?kind=email`/.test(onStage)
+  // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the room has NO stage door any more — a deed is
+  // its inline card (deedCardFor) and a read opens through the row's OWN kind-carrying href (openHref)
+  // in the one viewer — so no id can be re-invented as a mail thread anywhere in the room.
+  ok('K3 the room raises no stage door — reads open through the row\'s own kind-carrying href, never a hard-coded `?kind=email`; both room ref producers are the ONE producer',
+    !/onStage=\{/.test(room) && !/\?kind=email`/.test(room) && /onOpen: \(\) => openHref\(r\.href, false\)/.test(room)
     && /const refHref = \(ref: string \| null\): string \| null => refDoorHref\(ref\);/.test(room)
     && /const refHref = \(ref: string \| null\): string \| null => refDoorHref\(ref\);/.test(portfolio));
 
@@ -148,7 +150,7 @@ async function main() {
   const untouched = moveForLane({ label: 'Review the reply', ref: 'inbox:i1' }, () => 'todo', () => true);
   ok('N2 the CTA on a waiting nudge reads "Review nudge"; any other move keeps its words; the room renders both from its served rows',
     relabeled?.label === NUDGE_MOVE_LABEL && untouched?.label === 'Review the reply'
-    && /label: preparedCardLabel\(lane, r, clipLabel\(r\.title, 52\)\)/.test(room)
+    && /const label = preparedCardLabel\(lane, r, clipLabel\(r\.title, 52\)\);/.test(room)
     && /const next = moveForLane\(mv, laneOf, preparedOf\);/.test(room)
     && /view=\{railView \?\? rail\}/.test(room));
 

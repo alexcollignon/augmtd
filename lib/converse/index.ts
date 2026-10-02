@@ -361,6 +361,9 @@ const isToolData = (o: ConverseTurn | ToolData | null): o is ToolData =>
 
 export type ConverseTurn = {
   say: string;
+  /** W42 · the board rows the answer NAMES (room scope) — rides the answer's receipt (lib/converse/answer-meta),
+   *  so a surface mounts a card only for a row the text names. */
+  boardRefs?: string[];
   /** THE REF IS ITS TAG (Sep 21): a ref the ask lane resolved carries the grounding tag it was
    *  resolved FROM, so the exit floor below can keep the notation that earned a chip and strip only
    *  the notation nobody resolved. Optional — most lanes serve refs with no tags at all. */
@@ -1210,7 +1213,9 @@ async function dispatchCommand(
     const text = packed?.text ?? '';
     const { recordingSpec } = await import('@/lib/present/build');
     return {
-      modelText: text || 'No matching meetings found.',
+      // W42: an empty recordings read is about RECORDINGS ONLY — a catch-up once opened "Nothing recorded
+      // in the last 7 days" as if the work itself had stood still.
+      modelText: text || `No recorded meetings in this window (${since}). This is about RECORDINGS ONLY — it says nothing about emails, tasks or other activity; never present it as "nothing happened" or "nothing recorded" about the work.`,
       ...(read ? { present: recordingSpec(read.meetings.filter((m) => packed!.seen.has(m.id)), { since }) } : {}),
     };
   }
@@ -2318,12 +2323,17 @@ async function converseInner(
   // own page — ONE OBJECT, ONE DOOR (W7.2): an item door on its item, the entity door on its entity,
   // the Home on the user's world (with the focused project's page when the message names one).
   let grounding = '';
+  // W42 · THE ONE LIST: the board the grounding states is the list the answer is checked against.
+  let roomBoard: import('@/lib/room/grounding').BoardEntry[] = [];
+  let roomNames: Array<string | null> = [];
   if (scope.kind === 'entity' || scope.kind === 'item') {
     try {
       const { assembleRoomGrounding } = await import('@/lib/room/grounding');
       const g = await assembleRoomGrounding(client, userId,
         scope.kind === 'entity' ? { kind: 'entity', entityId: scope.entityId } : { kind: 'item', itemKind: linkKindOf(scope) === 'inbox_item' ? 'inbox' : linkKindOf(scope) === 'commitment' ? 'commitment' : 'meeting', itemId: scope.itemId });
       grounding = g.text;
+      roomBoard = Array.isArray(g.board) ? g.board : [];
+      roomNames = [g.entity?.name ?? null];
     } catch { /* fall through to the item/global fallbacks below */ }
   }
   if (!grounding && scope.kind === 'item') {
@@ -2399,6 +2409,45 @@ async function converseInner(
         `you are doing instead.\n\n${packedContext}`,
     }).catch(() => null);
     if (retry?.say && !repeatsTheQuestion(lastAssistant, retry.say)) loopTurn = retry;
+  }
+  // W42 · THE COHERENCE FLOOR (lib/room/answer-coherence.ts): a room answer that asserts a state and its
+  // negation about one board row, calls an unprepared row staged, says "nothing blocking" over overdue
+  // work, or (on a catch-up) leaves a carded row unnamed earns ONE tokenless re-ask naming the conflict;
+  // the retry is adopted only when it has fewer conflicts.
+  if (roomBoard.length && loopTurn.say && !loopTurn.empty && !opts.signal?.aborted) {
+    try {
+      const { answerConflicts, coherenceDirective, isCatchUpAsk, ALWAYS_CHECKED } = await import('@/lib/room/answer-coherence');
+      const { userTimezone } = await import('@/lib/calendar/schedule-window');
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: await userTimezone(client, userId).catch(() => 'UTC') }).format(new Date());
+      const { boardRowNotes } = await import('@/lib/room/grounding');
+      const notes = boardRowNotes(roomBoard);
+      const rows = roomBoard.map((b) => {
+        const staged = !!notes.get(b.ref)?.staged;
+        return { ref: b.ref, title: b.title, who: b.who, due: notes.get(b.ref)?.noDue ? null : b.due, direction: b.direction ?? null, prepared: b.prepared, changeRequest: !!b.changeRequest, staged };
+      });
+      const carded = rows.filter((r) => r.prepared.length);
+      const copts = { today, catchUp: isCatchUpAsk(text), cards: carded.length <= 4 ? carded : [] };
+      // A catch-up is held to the whole floor; any other room answer only to the truth-critical kinds.
+      const held = (say: string) => answerConflicts(say, rows, copts).filter((c) => copts.catchUp || ALWAYS_CHECKED.has(c.kind));
+      const first = held(loopTurn.say);
+      if (first.length) {
+        console.log(`[converse] coherence floor: ${first.map((c) => c.kind).join(',')} — one re-ask`);
+        const retry = await agentLoop(client, userId, scope, text, {
+          ...loopOpts, onToken: undefined, partial: undefined,
+          contextPage: `${coherenceDirective(first, loopTurn.say)}\n\n${packedContext}`,
+        }).catch(() => null);
+        if (retry?.say && !retry.empty && held(retry.say).length < first.length) loopTurn = retry;
+      }
+    } catch { /* the floor is a check; a failure keeps the first answer */ }
+  }
+  if (roomBoard.length && loopTurn.say) {
+    const { namesRow } = await import('@/lib/room/answer-coherence');
+    const named = roomBoard.filter((b) => namesRow(loopTurn.say, { ref: b.ref, title: b.title, who: b.who })).map((b) => b.ref);
+    if (named.length) loopTurn = { ...loopTurn, boardRefs: named };
+  }
+  if (roomNames.some(Boolean) && loopTurn.say) {
+    const { collapseRepeatedNames } = await import('@/lib/room/answer-coherence');
+    loopTurn = { ...loopTurn, say: collapseRepeatedNames(loopTurn.say, roomNames) };
   }
   if (loopTurn.empty) return { say: EMPTY_LINE, refs: [], failure: { kind: 'empty', retry: true } };
   return loopTurn;

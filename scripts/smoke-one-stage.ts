@@ -79,14 +79,19 @@ console.log('\nA · ONE STAGE — a commitment\'s message is the ONE EmailCard i
     /label: data\?\.counterparty \? `Draft email → [^`]+` : 'Draft an email', onClick: \(\) => \{ setDraftSummoned\(true\); setInviteOpen\(false\); \}/.test(commitSeg));
   gate('A5 the commitment\'s SOURCE reads in the drawer (the email door\'s Thread idiom), read-only',
     /threadLabel: 'Source',/.test(commitSeg) && /<CommitmentSourceSection src=\{src \?\? null\} meeting=\{view\?\.sourceMeeting \?\? null\}(?: laterItemId=\{view\?\.sourceItemId \?\? null\})? \/>/.test(commitSeg) /* ⟲ RE-POINTED (W11.1): the drawer carries the source message THEN the rest of the conversation (laterItemId) */
-    && /drawerSignal: drawerReq,/.test(commitSeg));
+    // ⟲ RE-POINTED (one-component-one-behaviour): no card on this door raises the drawer any more (the
+    // lead strip's "open in Prepared" door became the artifact card's own Open → the one viewer).
+    && /drawerSignal: null,/.test(commitSeg));
   gate('A6 the EmailCard\'s COMPOSE lane: one fill read (/api/compose/draft) + one approve-before-commit send (/api/compose/send) carrying what we prepared',
     /const composeLane = !!compose && !item && !coworker && !standalone;/.test(host)
     && (code('components/home/email-card.tsx').match(/fetch\('\/api\/compose\/draft'/g) ?? []).length === 1
     && (code('components/home/email-card.tsx').match(/fetch\('\/api\/compose\/send'/g) ?? []).length === 1
     && /prepared: servedRef\.current\.trim\(\)\s*\n?\s*\? \{ itemKind: compose!\.kind, itemId: compose!\.id/.test(host));
-  gate('A7 the old ComposePanel survives ONLY on the meeting door (one mount)',
-    (detail.match(/<ComposePanel /g) ?? []).length === 1 && /<ComposePanel kind="meeting"/.test(detail));
+  // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the meeting door's ComposePanel retired too — its
+  // follow-up is THE ONE EmailCard's compose lane (kind 'meeting'), inline in the conversation.
+  gate('A7 no ComposePanel survives anywhere; the meeting follow-up is the EmailCard compose lane',
+    !/<ComposePanel /.test(detail) && !/function ComposePanel/.test(detail)
+    && /<EmailCard compose=\{\{ kind: 'meeting', id \}\}/.test(detail));
   gate('A8 the send offers the next deed in words (Mark this done) instead of a stage-bound button',
     /toast\('Sent\.', \{ action: \{ label: 'Mark this done'/.test(commitSeg));
 }

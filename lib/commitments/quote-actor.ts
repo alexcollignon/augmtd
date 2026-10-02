@@ -30,7 +30,10 @@ import { denotesUser, type UserForms } from '@/lib/commitments/extraction-truth'
 import { nameTokens } from '@/lib/projects/identity';
 
 /** 'named-addressee' = a request whose vocative names someone who is NOT the user ("<Name>, please send…"). */
-export type QuoteActor = 'author' | 'addressee' | 'user' | 'other' | 'suggestion' | 'named-addressee';
+/** 'delegated' = the writer hands the act to a third party on THEIR OWN side ("je demande à <colleague> de…",
+ *  "<colleague> will…"): on received mail the sender's side owes it; on the user's own mail it is a colleague's
+ *  task — the user owes nothing personally and the other party owes nothing either. */
+export type QuoteActor = 'author' | 'addressee' | 'user' | 'other' | 'suggestion' | 'named-addressee' | 'delegated';
 
 const low = (s: string) => s.toLowerCase().replace(/[‘’`´]/g, "'");
 const fold = (s: string) => low(s).normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -96,6 +99,82 @@ function tokens(seg: string, keepCase = false): string[] {
 
 type SegCtx = { user: UserForms; others: string[] };
 
+// ── W42 · THE DELEGATION READS THROUGH (owner walk, Oct 2) ───────────────────────────────────────
+// "je demande à <colleague> d'effectuer le virement" was read as a first-person DESIRE ("demande") →
+// the ADDRESSEE (the user) acts → "Arrange payment transfer…", "You owe <sender>". But an ask verb whose
+// OBJECT is a third party is a DELEGATION: the writer hands the act to someone on their own side — the
+// writer's side acts (or the user, when the delegate IS the user; the reader, when the object is "you").
+/** Ask/delegate verbs (any tense) — the verb of "I ask/asked/will ask X to…" in EN/FR/DE/PT/ES. */
+const DELEGATE_VERB = /^(ask|asked|asking|demande|demandé|demander|demandons|demandais|charge|chargé|charger|bitte|bitten|gebeten|pedir|pedi|peço|pedimos|pedirei|pedirlhe|pido|pedí|pediré|pedirle|pedimos|pedido|pidiendo|pedindo)$/;
+/** A second-person object: the ask is addressed to the reader, not delegated. */
+const SECOND_OBJ = /^(you|u|vous|te|t'|toi|sie|ihnen|dich|dir|euch|lhe|lhes|você|vocês|voce|usted|ustedes|os|vos|ti)$/;
+/** Words between the verb and its object (prepositions/articles/possessives) that carry no person. */
+const OBJ_LEAD = /^(à|a|ao|à|aos|au|aux|al|to|the|my|our|mon|ma|mes|notre|nos|meu|minha|nosso|nossa|mi|mis|nuestro|nuestra|meinen|meine|unseren|unsere|herrn|frau|mr|mrs|ms|m|mme|sr|sra|dr|le|la|el|o|de|der|die|den|dem)$/;
+/** The infinitive/complement link after the delegate ("to", "de/d'", "que", "para", "pour", "zu"). */
+const DELEGATE_LINK = /^(to|de|d'.*|que|qu'.*|para|pour|zu|um|that|if|si|se|whether)$/;
+/** First-person auxiliaries/clitics that may sit between the subject and the ask verb. */
+const FP_AUX = /^(will|'ll|have|'ve|had|am|'m|was|did|just|already|also|vais|ai|avons|allons|viens|venons|suis|lui|leur|werde|werden|habe|haben|hab|vou|vamos|já|ja|voy|he|hemos|le|les|ya|also)$/;
+
+/** Is a delegation in this clause? → who acts: the user (the delegate denotes them), the reader
+ *  ("I ask you to…"), the named counterparty ('other'), else the WRITER'S side ('author'). null = none. */
+function delegationActor(t: string[], cased: string[], ctx: SegCtx): QuoteActor | null {
+  const w0 = t[0];
+  const firstPerson = FIRST.has(w0) || /^j'/.test(w0) || /^(le|lhe)$/.test(w0) && DELEGATE_VERB.test(t[1] ?? '');
+  // Pro-drop delegators open the clause with the verb itself ("Pedi ao X…", "Le pido a X…", "Peço ao X…").
+  const proDropAux = /^(vou|vamos|voy|vais)$/.test(w0) && DELEGATE_VERB.test(t[1] ?? '');
+  const proDrop = /^(pedi|peço|pedimos|pido|pedí|pediré|pedirei|bitte)$/.test(w0) && !REQUEST_OPEN.some((re) => re.test(t.join(' ')));
+  if (!firstPerson && !proDrop && !proDropAux) return null;
+  let k = proDrop ? 0 : proDropAux ? 1 : -1;
+  // German perfect: "ich habe X gebeten" — the participle closes the clause.
+  if (k < 0 && /^(habe|haben|hab|hatte|hatten)$/.test(t[1] ?? '') && t.includes('gebeten')) k = 1;
+  if (k < 0) {
+    for (let i = /^j'/.test(w0) && t[0].length > 2 ? 0 : 1; i < Math.min(t.length, 5); i++) {
+      const x = i === 0 ? t[0].slice(2) : t[i];
+      if (DELEGATE_VERB.test(x)) { k = i; break; }
+      if (!FP_AUX.test(x) && !/^j'/.test(x)) break;
+    }
+  }
+  if (k < 0) return null;
+  // The object: skip leads, collect up to 3 person tokens, then a link (or, in German, the clause end /
+  // "gebeten" — "ich bitte X, …" splits the clause on its comma; "ich habe X gebeten").
+  let i = k + 1;
+  while (i < t.length && OBJ_LEAD.test(t[i]) && !SECOND_OBJ.test(t[i])) i++;
+  if (i >= t.length) return null;
+  // An ask whose object is the reader ("I ask you to…", "je vous demande de…" reads earlier) is a request.
+  if (SECOND_OBJ.test(t[i])) return DELEGATE_LINK.test(t[i + 1] ?? '') ? 'addressee' : null;
+  if (/^(me|moi|mich|mir|us|nous|uns|nos)$/.test(t[i])) return null; // to ourselves: not a delegation
+  const obj: string[] = [];
+  const objCased: string[] = [];
+  // The delegate's name leads; a short apposition may follow before the link ("Kofi (copied) in our finance
+  // team to pay…", "Léa (en copie) d'effectuer…") — the link is looked for within 8 words.
+  let j = i;
+  while (j < t.length && j - i < 8 && !DELEGATE_LINK.test(t[j]) && t[j] !== 'gebeten') j++;
+  const end = j < t.length && j - i < 8 ? j : Math.min(t.length, i + 3);
+  for (let k2 = i; k2 < Math.min(end, i + 3); k2++) { obj.push(t[k2]); objCased.push(cased[k2] ?? t[k2]); }
+  i = end;
+  if (!obj.length) return null;
+  const linked = i < t.length && (DELEGATE_LINK.test(t[i]) || t[i] === 'gebeten');
+  const german = /^(bitte|bitten|gebeten)$/.test(t[k]) || t.includes('gebeten');
+  // A bare noun after "ask" with no link is an ask FOR a thing ("I ask for the invoice", "je demande un
+  // devis") — a desire, never a delegation. A delegate is a person: linked, or a capitalised name in German.
+  if (!linked && !(german && /^\p{Lu}/u.test(objCased[0] ?? '') && obj.length <= 3 && i >= t.length)) return null;
+  if (/^(for|um|un|une|des|du|uma|um|una|unos|the|a|an|que|if)$/.test(obj[0])) return null;
+  const name = objCased.join(' ');
+  if (denotesUser(name, ctx.user) || objCased.some((w) => denotesUser(w, ctx.user))) return 'user';
+  // (No 'other' here: the delegate is on the WRITER's side by construction — a model-named counterparty that
+  // happens to be the delegate is no evidence they are the mail's other party.)
+  return 'delegated';
+}
+
+/** Capitalised words that open a clause but name no person (time words, determiners, pronouns). */
+const NOT_A_NAME = new Set(['this', 'that', 'it', 'there', 'everything', 'nothing', 'which', 'the', 'a', 'an', 'each', 'all', 'today', 'tomorrow', 'next', 'payment', 'delivery',
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
+  'ce', 'cela', 'ça', 'ca', 'il', 'elle', 'tout', 'rien', 'le', 'la', 'les', 'un', 'une', 'demain', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche',
+  'das', 'es', 'dies', 'alles', 'er', 'sie', 'der', 'die', 'morgen', 'montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag',
+  'isso', 'isto', 'tudo', 'ele', 'ela', 'amanhã', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'eso', 'esto', 'todo', 'él', 'ella', 'mañana', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes']);
+/** A copula/passive after the future marker: "X will be …" describes a state, not an actor's deed. */
+const COPULA = /^(be|être|etre|sein|ser|estar|been|get|have|avoir|haben|ter|tener|happen|work)$/;
+
 /** The actor ONE clause names, or null (unknown). */
 function segmentActor(seg: string, ctx: SegCtx): QuoteActor | null {
   const raw = seg.trim();
@@ -107,6 +186,9 @@ function segmentActor(seg: string, ctx: SegCtx): QuoteActor | null {
   if (!t.length) return null;
   const head = t.join(' ');
   if (OFFER_OPEN.test(head)) return null;
+  // W42: a delegation ("je demande à X de…", "I've asked X to…") is read before the desire/request forms.
+  const delegated = delegationActor(t, cased, ctx);
+  if (delegated) return delegated;
   // Requests addressed to the reader.
   if (REQUEST_OPEN.some((re) => re.test(head)) || REQUEST_OPEN.some((re) => re.test(l))) return 'addressee';
   if (SUBORDINATOR.test(head) || SUBORDINATOR.test(cased.join(' '))) return null;
@@ -161,6 +243,19 @@ function segmentActor(seg: string, ctx: SegCtx): QuoteActor | null {
     if (denotesUser(original, ctx.user)) return 'user';
     const tok = fold(original);
     if (ctx.others.some((o) => nameTokens(o).map(fold).includes(tok))) return 'other';
+    // W42: an unknown named subject with a FUTURE marker ("<Name> va effectuer le virement", "<Name> will
+    // send…") is someone on the writer's side doing it — never the reader's deed. ("<Name> to …" in an
+    // action list stays unknown: a note-taker's list names no side.)
+    if (t[1] !== 'to' && !NOT_A_NAME.has(tok) && t[2] && !COPULA.test(t[2]) && original.length >= 2) return 'delegated';
+  }
+  // "<First> <Last> will/va …" — a two-word name before the future marker.
+  if (t.length >= 3 && /^(will|'ll|va|vai|wird|irá|fera|fará)$/.test(t[2]) && /^\p{Lu}/u.test(cased[0] ?? '') && /^\p{Lu}/u.test(cased[1] ?? '')
+    && !NOT_A_NAME.has(fold(cased[0])) && t[3] && !COPULA.test(t[3])) {
+    const full = `${cased[0]} ${cased[1]}`;
+    if (denotesUser(full, ctx.user)) return 'user';
+    const toks = [fold(cased[0]), fold(cased[1])];
+    if (ctx.others.some((o) => nameTokens(o).map(fold).some((n) => toks.includes(n)))) return 'other';
+    return 'delegated';
   }
   return null;
 }
@@ -211,7 +306,7 @@ export function quoteActor(
 export type QuoteDirectionVerdict =
   | { kind: 'keep' }
   | { kind: 'direction'; direction: 'you_owe' | 'awaiting'; actor: QuoteActor }
-  | { kind: 'drop'; actor: 'suggestion' | 'named-addressee' };
+  | { kind: 'drop'; actor: 'suggestion' | 'named-addressee' | 'delegated' };
 
 /**
  * THE QUOTE DIRECTION FLOOR (pure): what the quote's own grammar demands of a candidate's direction.
@@ -225,6 +320,9 @@ export function quoteDirectionFloor(
   const actor = quoteActor(typeof c.quote === 'string' ? c.quote : null, { user: ctx.user, others: [c.counterparty ?? null, ctx.other ?? null], ownWords: ctx.ownWords });
   if (!actor) return { kind: 'keep' };
   if (actor === 'suggestion') return { kind: 'drop', actor };
+  // W42: the user's own hand-off to a colleague is the colleague's task (no personal debt, nothing owed back);
+  // a sender's hand-off on their own side is THEIR side's debt.
+  if (actor === 'delegated') return ctx.authoredByUser ? { kind: 'drop', actor } : (c.direction === 'awaiting' ? { kind: 'keep' } : { kind: 'direction', direction: 'awaiting', actor });
   // A request the sender addresses BY NAME to someone else, on mail the user received: between others.
   if (actor === 'named-addressee' && !ctx.authoredByUser) return { kind: 'drop', actor };
   if (actor === 'named-addressee') return c.direction === 'awaiting' ? { kind: 'keep' } : { kind: 'direction', direction: 'awaiting', actor };
@@ -252,4 +350,85 @@ export function mergeableByQuote(quotes: ReadonlyArray<string | null | undefined
     if (i >= 0) where.add(i);
   }
   return where.size <= 1;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// W42 · THE BILL HAS ONE PAYER (owner walk, Oct 2). A message in which the SENDER'S side pays ("je
+// demande à <colleague> d'effectuer le virement", "our finance team will process the payment") minted a
+// task the USER owes ("Arrange payment transfer…") and a draft promising the user would pay. One bill,
+// one payer: when the message's own words name the writer's side as the payer and nowhere ask the reader
+// to pay, a payment act is never the reader's debt. Grammar from the one actor reader above; pure.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** A payment act (pay / transfer / wire / settle / refund) in EN/FR/DE/PT/ES — word-bounded stems. */
+const PAYMENT = /(^|[^\p{L}])(pay|pays|paid|paying|payment|payments|wire|wired|transfer|transfers|remit|remittance|settle|settlement|reimburse|refund|virement|virements|virer|paiement|paiements|payer|paye|payons|réglement|règlement|régler|regler|rembourser|remboursement|versement|überweisung|überweisen|zahlung|zahlen|bezahlen|begleichen|erstatten|pagamento|pagar|pago|pagamos|transferência|transferencia|transferir|liquidar|reembolso|reembolsar|abonar)(?=$|[^\p{L}])/iu;
+/** Bank-details / invoice-document objects: sending THESE is a document act, never the payment itself. */
+const PAYMENT_DOCUMENT = /(bank details|banking details|iban|swift|rib|coordonnées bancaires|coordonnees bancaires|relevé d'identité|bankverbindung|bankdaten|dados bancários|dados bancarios|datos bancarios|nib\b|invoice|facture|rechnung|fatura|factura|receipt|reçu|quittung|recibo)/i;
+
+/** Handling verbs that, on a bill thread, ARE the payment ("process it", "traiter", "bearbeiten", "tramitar"). */
+const HANDLING = /(^|[^\p{L}])(process|processed|processing|handle|handled|release|traiter|traité|bearbeiten|bearbeitet|freigeben|anweisen|processar|tramitar|procesar|gestionar)(?=$|[^\p{L}])/iu;
+
+/** Is this task text a payment ACT (the deed of paying), not a document about one? Pure. */
+export function isPaymentAct(text: string | null | undefined): boolean {
+  const s = String(text ?? '');
+  if (!PAYMENT.test(s)) return false;
+  // "Pay the invoice" is a payment act; "Send the invoice for the transfer" is a document act.
+  const leadPay = PAYMENT.test(s.split(/\s+/).slice(0, 4).join(' '));
+  return leadPay || !PAYMENT_DOCUMENT.test(s);
+}
+
+/** Who pays, by the message's own words: 'writer' (the author's side), 'reader' (the addressee), or
+ *  null (no payment sentence, or both sides named — then the floor says nothing). Pure. */
+export function payerOf(ownWords: string | null | undefined, ctx: { user: UserForms; others?: Array<string | null | undefined>; authoredByUser: boolean }): 'user' | 'other' | null {
+  const text = String(ownWords ?? '');
+  // On a bill thread (an invoice/facture/Rechnung named anywhere in the words), "process / handle / settle /
+  // release it" is the payment too ("I've asked our finance team to process it").
+  const billThread = PAYMENT_DOCUMENT.test(text);
+  const paySentence = (x: string) => PAYMENT.test(x) || (billThread && HANDLING.test(x));
+  if (!paySentence(text)) return null;
+  const sides = new Set<'user' | 'other'>();
+  for (const sentence of text.split(/(?<=[.!?;])\s+|\n+/)) {
+    if (!paySentence(sentence)) continue;
+    const a = quoteActor(sentence, { user: ctx.user, others: ctx.others });
+    if (!a || a === 'suggestion') continue;
+    const userPays = a === 'user' || ((a === 'author' || a === 'delegated') && ctx.authoredByUser) || ((a === 'addressee') && !ctx.authoredByUser);
+    sides.add(userPays ? 'user' : 'other');
+  }
+  return sides.size === 1 ? [...sides][0] : null;
+}
+
+/** THE BILL HAS ONE PAYER (pure): a you_owe PAYMENT act on a message whose words make the other side the
+ *  payer is theirs — 'awaiting'. Anything else (no payment, the user asked to pay, both sides) → unchanged. */
+export function payerFloor(
+  c: { direction?: string | null; description?: string | null },
+  ctx: { ownWords: string | null | undefined; user: UserForms; others?: Array<string | null | undefined>; authoredByUser: boolean },
+): 'you_owe' | 'awaiting' | null {
+  if (c.direction !== 'you_owe' || !isPaymentAct(c.description)) return null;
+  return payerOf(ctx.ownWords, ctx) === 'other' ? 'awaiting' : null;
+}
+
+/** The same law on the inbox lane (pure): an understanding that says the user owes a PAYMENT move on a
+ *  RECEIVED message whose words make the sender's side the payer → 'awaiting'. null = unchanged. */
+export function ownershipPayerFloor(
+  u: { ownership?: string | null; ask?: string | null },
+  ctx: { ownWords: string | null | undefined; user: UserForms; others?: Array<string | null | undefined> },
+): 'awaiting' | null {
+  if (u.ownership !== 'you_owe' || !isPaymentAct(u.ask)) return null;
+  return payerOf(ctx.ownWords, { ...ctx, authoredByUser: false }) === 'other' ? 'awaiting' : null;
+}
+
+/** W42 · THE SENDER'S OWN PROMISE IS A COMMITMENT (pure): does any sentence of the message's own words have
+ *  the writer's side commit to a deed — a first-person commissive ("we will send…", "nous allons…") or a
+ *  delegation on their side ("je demande à <colleague> de…")? The extraction gate reads this so an
+ *  understanding of "no move for the user" never hides what the OTHER side owes them. */
+export function ownWordsCommit(ownWords: string | null | undefined): boolean {
+  const text = String(ownWords ?? '');
+  if (text.trim().length < 12) return false;
+  const none = { name: null, aliases: [] as string[] };
+  return text.split(/(?<=[.!?;])\s+|\n+/).some((s) => {
+    const a = quoteActor(s, { user: none });
+    if (a === 'delegated') return true;
+    // A first-person deed counts only in a FUTURE form (a past "cancelámos…" / "we sent…" is a report, not a promise).
+    return a === 'author' && tokens(s).some((x) => COMMISSIVE.test(x) || SYNTH_FUTURE.test(x) || /'ll$/.test(x));
+  });
 }

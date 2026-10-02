@@ -354,9 +354,12 @@ async function main() {
     gate('EM6 the rooms mount a reply / follow-up card only over WORDS (never a "drafted — ready" label over an empty draft)',
       // ⟲ RE-POINTED (W16): the follow-up's nudge is now the kit EMAIL widget, mounted over the LIVE pooled
       // nudge — the served list is THE ONE READER's live set, and an empty draft is never live (EM3).
-      /\.\.\.\(!sent && !!draft\?\.trim\(\) && verdict\?\.work !== 'decide'/.test(detail)
+      // ⟲ RE-POINTED (one-component-one-behaviour): a card the READER summons (Reply / Follow up — the
+      // retired composer's doors) mounts too, and wears no "drafted" claim when no words stand behind it.
+      /\.\.\.\(!sent && objectKind === 'email_thread' && \(\(!!draft\?\.trim\(\) && verdict\?\.work !== 'decide'\) \|\| replySummoned\)/.test(detail)
+      && /key: 'reply', label: draft\?\.trim\(\) \? 'Reply drafted — ready to review' : 'Your reply'/.test(detail)
       && /const followNudgeLive = \(view\?\.prepared \?\? \[\]\)\.some\(\(p\) => p\.kind === 'nudge_draft' \|\| p\.kind === 'reply_draft'\);/.test(detail)
-      && /\.\.\.\(followNudgeLive \? \[\{\s*key: 'nudge', label: 'Follow-up drafted/.test(detail));
+      && /\.\.\.\(followNudgeLive \|\| nudgeSummoned \? \[\{\s*key: 'nudge', label: followNudgeLive \? 'Follow-up drafted/.test(detail));
   }
 
   console.log(`\n${failures.length ? '❌' : '✅'} smoke-item-actions: ${pass} passed, ${failures.length} failed`);

@@ -282,10 +282,25 @@ console.log('\nF · W5c: hidden artifacts re-prepare, leave the brief, and never
   const detail = src('components/home/item-detail.tsx');
   const card = src('components/home/invite-card.tsx');
   // Every artifact-card spread (`...(<cond> ? [{ key: 'invite'`) in the deep-dive, with its condition.
-  const inviteMounts = [...detail.matchAll(/\.\.\.\(([^\n]*?) \? \[\{\s*(?:\/\/[^\n]*\n\s*)*key: 'invite'/g)].map((m) => m[1]);
+  // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the summoned STAGE became a SUMMONED CARD — a
+  // reader's own verb (Invite / Review invite) mounts the same card inline, prepared on demand exactly
+  // as the stage did ("the user's own door keeps its on-demand build"). So: every PREPARED invite card
+  // mounts from a live invite only; a reader-summoned one is gated on the reader's own flag and says so
+  // (`summoned`). Verb rows (`label: 'Review invite', onClick`) are doors, not cards — excluded.
+  const inviteSpreads = [...detail.matchAll(/\.\.\.\(([^\n]*?) \? \[\{\s*(?:\/\/[^\n]*\n\s*)*key: 'invite'([\s\S]{0,420})/g)]
+    .filter((m) => !/^, label: 'Review invite', onClick/.test(m[2]));
+  const inviteMounts = inviteSpreads.map((m) => m[1]);
+  const preparedOnly = (c: string) => c.replace(/\s*\|\|\s*inviteOpen$/, '');
   gate('F8 NO HOLLOW INVITE CARD: every invite ARTIFACT card (email · commitment · follow-up) mounts from a LIVE invite ONLY — never the bare schedule verdict, never a plan step; the card itself renders one quiet line (not an empty shell) when the preparer hands back no invite or a hollow partial',
-    inviteMounts.length === 3
-    && inviteMounts.every((c) => !/verdict\?\.work === 'schedule'|inviteTaskId/.test(c) && /inviteArt|p\.kind === 'invite'/.test(c))
+    inviteSpreads.length === 4
+    && inviteSpreads.every((m) => {
+      const c = m[1];
+      const summonedOnly = /inviteSummoned/.test(c);
+      if (summonedOnly) return /summoned: true/.test(m[2]) && !/verdict\?\.work === 'schedule'/.test(c);
+      const live = preparedOnly(c);
+      const ok = !/verdict\?\.work === 'schedule'|inviteTaskId/.test(live) && /inviteArt|p\.kind === 'invite'/.test(live);
+      return ok && (live === c || /summoned: true/.test(m[2]));
+    })
     && /const hollowInvite = !partial\?\.title\?\.trim\(\) && !partial\?\.startISO && !\(Array\.isArray\(partial\?\.attendees\)/.test(card)
     && /\} else \{\s*setHollow\(true\);/.test(card) && /if \(hollow\) \{\s*return <p/.test(card),
     inviteMounts.join(' | '));
@@ -308,7 +323,9 @@ console.log('\nF · W5c: hidden artifacts re-prepare, leave the brief, and never
     // ⟲ RE-POINTED (W7.3): + the meeting source object (`sourceMeeting`) rides the same mount.
     // ⟲ RE-POINTED (W11.1): + the commitment's OWN source message (`sourceEmail`) rides it too.
     && /<ItemRail kind="commitment"[^>]*artifacts=\{commitArtifacts\}[\s\S]{0,400}?sourceItemId=\{view\?\.sourceItemId \?\? null\}[\s\S]{0,200}?sourceMeeting=\{view\?\.sourceMeeting \?\? null\}[\s\S]{0,600}?decision=\{commitDecision \?/.test(commitSeg)
-    && /\(p\.kind === 'deliverable' \|\| p\.kind === 'paste_pack'\) && p\.content && !p\.decision/.test(commitSeg));
+    // ⟲ RE-POINTED (one-component-one-behaviour): the lead strip split by class — the deliverable
+    // half still filters decision artifacts (the decision's ONE surface is the DecisionCard).
+    && /const docArts = prepArts\.filter\(\(p\) => p\.kind === 'deliverable' && p\.content && !p\.decision\)/.test(commitSeg));
   const label = 'paste_pack (group allocation redistribution prepared by Clara)';
   gate('F9 MOOT BY CODE: a requires label naming OUR OWN artifact kind is never the user\'s input (rule 4) — at the render predicate AND the resolver',
     namesOurArtifact(label) && namesOurArtifact('the calendar invite') && namesOurArtifact('decision brief') && namesOurArtifact('follow-up nudge')

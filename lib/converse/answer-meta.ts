@@ -23,7 +23,7 @@ const keyOf = (roomKey: string, turnId: string) => `${roomKey}|${turnId}`;
  *  whether a record was written. Nothing to record → nothing written. */
 export async function recordAnswerMeta(
   client: SupabaseClient, userId: string, roomKey: string | null, answerText: string | null | undefined,
-  turn: { activity?: TurnActivity[]; durationMs?: number; stopped?: boolean } | null | undefined,
+  turn: { activity?: TurnActivity[]; durationMs?: number; stopped?: boolean; boardRefs?: string[] } | null | undefined,
 ): Promise<boolean> {
   try {
     const meta = answerMetaOf(turn);
@@ -49,11 +49,12 @@ export async function readAnswerMetaForRoom(
     const { readPlans } = await import('@/lib/store/item-plans');
     const rows = await readPlans(client, userId, TURN_META_KIND, { keyPrefix: `${roomKey}|` });
     for (const r of rows) {
-      const t = (r.tasks ?? {}) as { roomKey?: string | null; activity?: unknown; durationMs?: number | null; stopped?: boolean | null };
+      const t = (r.tasks ?? {}) as { roomKey?: string | null; activity?: unknown; durationMs?: number | null; stopped?: boolean | null; boardRefs?: unknown };
       if (t.roomKey !== roomKey) continue;
       const activity = (Array.isArray(t.activity) ? t.activity : [])
         .filter((a): a is TurnActivity => !!a && typeof (a as TurnActivity).label === 'string' && typeof (a as TurnActivity).atMs === 'number');
-      const meta = answerMetaOf({ activity, durationMs: t.durationMs ?? undefined, stopped: t.stopped === true });
+      const meta = answerMetaOf({ activity, durationMs: t.durationMs ?? undefined, stopped: t.stopped === true,
+        boardRefs: Array.isArray(t.boardRefs) ? (t.boardRefs as unknown[]).map(String) : undefined });
       const turnId = r.key.slice(roomKey.length + 1);
       if (meta && turnId) out[turnId] = meta;
     }

@@ -548,4 +548,158 @@ export const CASES: EvalCase[] = [
     params: { item: 't1' },
     truth: { work: 'schedule', accept: { work: ['reply'] } },
   },
+
+  // ── W42 · REAL-WORLD COMPLEXITY (anonymised from a live project room) ─────────────────────────────
+  // delegated-payment (4): the counterparty's side pays → nothing on the user (never produce/pay/reply-as-debt);
+  // a promised payment gone quiet past its date → chase.
+  {
+    id: 'wv-47', group: 'delegated-payment', title: 'FR: the client asks her colleague to make the transfer → nothing on the user',
+    world: {
+      tz: 'Europe/Paris',
+      people: [{ key: 'camille', name: 'Camille', email: 'camille@initech.test', org: 'Initech' }, { key: 'lea', name: 'Léa', email: 'lea@initech.test', org: 'Initech', role: 'comptabilité' }],
+      threads: [{ key: 't1', subject: 'Facture F-2210 — phase 1', messages: [
+        { from: 'me', to: ['camille'], at: '-9d 10:00', body: 'Bonjour Camille,\n\nVeuillez trouver ci-joint la facture F-2210 de 8 400 € HT pour la phase 1, payable à 30 jours.\n\nBien cordialement,\nTaylor', attachments: ['Facture F-2210.pdf'] },
+        { from: 'camille', to: ['me'], cc: ['lea'], at: '-2h', body: 'Bonjour Taylor,\n\nBien reçu, merci. Je demande à Léa (en copie) d\'effectuer le virement d\'ici le {{+5d|iso}}.\n\nBien à vous,\nCamille' },
+      ] }],
+    },
+    params: { item: 't1' },
+    truth: { work: 'none', accept: { work: ['looks_done'] }, note: 'W42: the client side pays (Léa); the date is in the future — nothing for the user to do yet (a chase would be premature, a payment move is the inversion).' },
+  },
+  {
+    id: 'wv-48', group: 'delegated-payment', title: 'EN: "I\'ve asked our finance team to process it" — and the payment date passed nine days ago in silence → chase',
+    world: {
+      people: [{ key: 'sam', name: 'Sam', email: 'sam@acme.test', org: 'Acme' }],
+      threads: [{ key: 't1', subject: 'Invoice 1187 — discovery sprint', messages: [
+        { from: 'me', to: ['sam'], at: '-24d 09:30', body: 'Hi Sam,\n\nPlease find attached invoice 1187 for the discovery sprint (€12,600).\n\nBest,\nTaylor', attachments: ['Invoice 1187.pdf'] },
+        { from: 'sam', at: '-20d 11:00', body: 'Hi Taylor,\n\nThanks — all approved. I\'ve asked our finance team to process it; it should go out by {{-9d|dm}}.\n\nSam' },
+      ] }],
+      commitments: [{ key: 'c1', direction: 'awaiting', description: 'Acme to pay invoice 1187 (€12,600)', counterparty: 'sam', due: '-9d', thread: 't1', createdAt: '-20d' }],
+    },
+    params: { item: 'c1' },
+    truth: { work: 'chase' },
+  },
+  {
+    id: 'wv-49', group: 'delegated-payment', title: 'DE: "ich bitte Lena, die Überweisung zu machen", colleague on CC → nothing on the user',
+    world: {
+      tz: 'Europe/Berlin',
+      people: [{ key: 'jonas', name: 'Jonas', email: 'jonas@globex.test', org: 'Globex' }, { key: 'lena', name: 'Lena', email: 'lena@globex.test', org: 'Globex', role: 'Buchhaltung' }],
+      threads: [{ key: 't1', subject: 'Rechnung R-0452', messages: [
+        { from: 'me', to: ['jonas'], at: '-8d 11:00', body: 'Hallo Jonas,\n\nanbei die Rechnung R-0452 über 3.900 € für den Workshop.\n\nViele Grüße\nTaylor', attachments: ['Rechnung R-0452.pdf'] },
+        { from: 'jonas', to: ['me'], cc: ['lena'], at: '-1h', body: 'Hallo Taylor,\n\ndanke, die Rechnung ist freigegeben. Ich bitte Lena (in Kopie), die Überweisung bis {{+4d|iso}} zu machen.\n\nViele Grüße\nJonas' },
+      ] }],
+    },
+    params: { item: 't1' },
+    truth: { work: 'none', accept: { work: ['looks_done'] } },
+  },
+  {
+    id: 'wv-50', group: 'delegated-payment', title: 'ES: "le pido a Lucía que haga la transferencia" → nothing on the user',
+    world: {
+      tz: 'Europe/Madrid',
+      people: [{ key: 'diego', name: 'Diego', email: 'diego@acme.test', org: 'Acme' }, { key: 'lucia', name: 'Lucía', email: 'lucia@acme.test', org: 'Acme', role: 'finanzas' }],
+      threads: [{ key: 't1', subject: 'Factura 031', messages: [
+        { from: 'me', to: ['diego'], at: '-7d 10:00', body: 'Hola Diego,\n\nTe adjunto la factura 031 por 5.300 €.\n\nUn saludo,\nTaylor', attachments: ['Factura 031.pdf'] },
+        { from: 'diego', to: ['me'], cc: ['lucia'], at: '-2h', body: 'Hola Taylor,\n\nRecibida, gracias. Le pido a Lucía (en copia) que haga la transferencia el {{+2d|weekday}}.\n\nSaludos,\nDiego' },
+      ] }],
+    },
+    params: { item: 't1' },
+    truth: { work: 'none', accept: { work: ['looks_done'] } },
+  },
+
+  // bank-details (3): your OWN details to a paying client = a legit deed (a fact only you hold);
+  // a supplier asking to CHANGE where you pay = fraud risk, never acted on.
+  {
+    id: 'wv-51', group: 'bank-details', title: 'FR: the paying client asks for the user\'s RIB, which is on file → send it',
+    world: {
+      tz: 'Europe/Paris',
+      people: [{ key: 'camille', name: 'Camille', email: 'camille@initech.test', org: 'Initech' }],
+      threads: [{ key: 't1', subject: 'Paiement de l\'acompte', messages: [
+        { from: 'me', to: ['camille'], at: '-4d 10:00', body: 'Bonjour Camille,\n\nComme convenu, l\'acompte de 30 % (3 600 €) est dû à la signature.\n\nBien cordialement,\nTaylor' },
+        { from: 'camille', at: '-2h', body: 'Bonjour Taylor,\n\nPouvez-vous nous transmettre votre RIB ? Dès réception, nous lançons le virement de l\'acompte.\n\nBien à vous,\nCamille' },
+      ] }],
+      kb: [{ key: 'k1', filename: 'RIB Northwind.pdf', text: 'RELEVÉ D\'IDENTITÉ BANCAIRE. Titulaire du compte : Northwind Consulting. Domiciliation : agence centrale.' }],
+    },
+    params: { item: 't1' },
+    truth: { work: 'send_file', accept: { work: ['reply'] }, note: 'W42: sending your OWN bank details to a known client who is paying you is a legitimate deed the user owes (only they hold the fact).' },
+  },
+  {
+    id: 'wv-52', group: 'bank-details', title: 'EN: a client asks for the user\'s IBAN to set them up as a supplier; no file on record → reply',
+    world: {
+      people: [{ key: 'priya', name: 'Priya', email: 'priya@initech.test', org: 'Initech' }],
+      threads: [{ key: 't1', subject: 'Supplier set-up', messages: [{ from: 'priya', at: '-3h', body: 'Hi Taylor,\n\nTo set Northwind up as a supplier before the first invoice, could you send me your IBAN and the account holder name by {{+2d|weekday}}?\n\nThanks,\nPriya' }] }],
+    },
+    params: { item: 't1' },
+    truth: { work: 'reply', accept: { work: ['send_file'] } },
+  },
+  {
+    id: 'wv-53', group: 'bank-details', title: 'DE: a known supplier asks to CHANGE their bank details and pay the new account → none (fraud risk)',
+    world: {
+      tz: 'Europe/Berlin',
+      people: [{ key: 'felix', name: 'Felix', email: 'felix@umbrella.test', org: 'Umbrella' }],
+      threads: [{ key: 't1', subject: 'Neue Bankverbindung', messages: [
+        { from: 'felix', at: '-20d 10:00', body: 'Hallo Taylor,\n\nanbei unsere Rechnung 8812 über 6.400 €, fällig in 30 Tagen.\n\nViele Grüße\nFelix', attachments: ['Rechnung 8812.pdf'] },
+        { from: 'felix', at: '-1h', body: 'Hallo Taylor,\n\nwir haben die Bank gewechselt. Bitte ändern Sie unsere Bankverbindung in Ihrem System und überweisen Sie die Rechnung 8812 ab sofort auf das neue Konto: IBAN DE00 0000 0000 0000 0000 00.\n\nViele Grüße\nFelix' },
+      ] }],
+    },
+    params: { item: 't1' },
+    // W42 (orchestrator decision, Oct 2): `reply` is acceptable ONLY because the reply drafter's risky-asks floor
+    // (lib/prepare/risky-asks RISKY_CHANGE_REPLY + riskyAgreementIn) enforces the verify-first contract — the reply
+    // never agrees, never commits a payment, verification goes through a contact the user already holds.
+    truth: { work: 'none', accept: { work: ['reply'] }, note: 'W42 · secret floor: a bank-detail change is verified through a known contact outside the thread; no payment/update component may mount on it (a verify-first reply is accepted — the drafter enforces it).' },
+  },
+
+  // restored (2): a task marked done then restored is OPEN again; a settled task stays settled.
+  {
+    id: 'wv-54', group: 'restored', title: 'A task marked done, then restored after the client flagged a missing clause → still owed',
+    world: {
+      people: [{ key: 'sam', name: 'Sam', email: 'sam@acme.test', org: 'Acme' }],
+      threads: [{ key: 't1', subject: 'Data-retention annex', messages: [
+        { from: 'sam', at: '-6d 10:00', body: 'Hi Taylor, could you send the data-retention annex for the contract? Thanks, Sam' },
+        { from: 'me', to: ['sam'], at: '-3d 16:00', body: 'Hi Sam,\n\nAnnex attached.\n\nBest,\nTaylor', attachments: ['Retention annex v1.docx'] },
+        { from: 'sam', at: '-1d 09:00', body: 'Hi Taylor,\n\nThe annex is missing the backup-retention clause our auditors need. Could you send a corrected version by {{+2d|weekday}}?\n\nSam' },
+      ] }],
+      commitments: [{ key: 'c1', direction: 'you_owe', description: 'Send Sam the data-retention annex (with the backup clause)', counterparty: 'sam', due: '+2d', thread: 't1', createdAt: '-6d', status: 'open', history: [{ at: '-3d 16:05', action: 'done' }, { at: '-1d 09:30', action: 'restored' }] }],
+    },
+    params: { item: 'c1' },
+    truth: { work: 'produce', accept: { work: ['reply', 'send_file'] }, note: 'W42: the restore reopened it — "looks done" from the earlier send is the failure.' },
+  },
+  {
+    id: 'wv-55', group: 'restored', title: 'Control: a task the user marked done, confirmed received by the client → looks done',
+    world: {
+      people: [{ key: 'sam', name: 'Sam', email: 'sam@acme.test', org: 'Acme' }],
+      threads: [{ key: 't1', subject: 'Phase 1 report', messages: [
+        { from: 'sam', at: '-6d 10:00', body: 'Hi Taylor, please send the phase 1 report when ready. Sam' },
+        { from: 'me', to: ['sam'], at: '-4d 15:00', body: 'Hi Sam,\n\nThe phase 1 report is attached.\n\nBest,\nTaylor', attachments: ['Phase 1 report.pdf'] },
+        { from: 'sam', at: '-4d 17:30', body: 'Got it, thanks — looks great.' },
+      ] }],
+      commitments: [{ key: 'c1', direction: 'you_owe', description: 'Send Sam the phase 1 report', counterparty: 'sam', thread: 't1', createdAt: '-6d', status: 'done', history: [{ at: '-4d 15:05', action: 'done' }] }],
+    },
+    params: { item: 't1' },
+    truth: { work: 'looks_done', accept: { work: ['none'] } },
+  },
+
+  // mixed-language (2)
+  {
+    id: 'wv-56', group: 'mixed-language', title: 'EN→FR thread: a question in French after an English start → reply',
+    world: {
+      tz: 'Europe/Paris',
+      people: [{ key: 'sam', name: 'Sam', email: 'sam@acme.test', org: 'Acme' }, { key: 'ines', name: 'Inès', email: 'ines@acme.test', org: 'Acme' }],
+      threads: [{ key: 't1', subject: 'Pilot scope', messages: [
+        { from: 'sam', at: '-3d 10:00', body: 'Hi Taylor, looping in Inès who runs the pilot on the French side. Sam' },
+        { from: 'me', to: ['sam', 'ines'], at: '-2d 09:00', body: 'Welcome Inès — happy to help.\n\nTaylor' },
+        { from: 'ines', to: ['me'], cc: ['sam'], at: '-3h', body: 'Bonjour Taylor,\n\nUne question : le pilote inclut-il la formation des équipes régionales, ou est-ce en supplément ?\n\nMerci,\nInès' },
+      ] }],
+    },
+    params: { item: 't1' },
+    truth: { work: 'reply' },
+  },
+  {
+    id: 'wv-57', group: 'mixed-language', title: 'PT↔EN: the client promises data in Portuguese and asks for a call in English → schedule',
+    world: {
+      tz: 'Europe/Lisbon',
+      people: [{ key: 'ana', name: 'Ana', email: 'ana@umbrella.test', org: 'Umbrella' }],
+      threads: [{ key: 't1', subject: 'Dados de vendas / next steps', messages: [{ from: 'ana', at: '-3h', body: 'Olá Taylor,\n\nVamos enviar os dados de vendas até {{+2d|iso}}.\n\nAlso, could we book a 30-minute call next week to walk through the first findings? Any morning works for us.\n\nCumprimentos,\nAna' }] }],
+    },
+    params: { item: 't1' },
+    truth: { work: 'schedule', accept: { work: ['reply'] } },
+  },
 ];

@@ -281,8 +281,11 @@ console.log('\nK · the source card\'s "Thread →" opens the thread in the draw
     && /threadLabel: 'Source',/.test(detail)
     && /tabs\.push\(\{ id: 'thread', label:/.test(detail));
   const eroom = src('components/entities/entity-room.tsx');
-  gate('K4 the project room (no per-thread drawer) keeps its thread door IN the room — its EmailCard focuses the item on the room\'s stage; the rail falls back to onOpenHref (in-room focus), never a page hop',
-    /<EmailCard item=\{\{ id: boardRowItemId\(r\) \}\} onOpenThread=\{\(\) => openHref\(r\.href, false\)\} \/>/.test(eroom)
+  // ⟲ RE-POINTED (one-component-one-behaviour, Oct 2): the focused item reads in THE ONE VIEWER (the
+  // split stage is retired) — the door is still IN the room, never a page hop.
+  gate('K4 the project room (no per-thread drawer) keeps its thread door IN the room — its EmailCard focuses the item in the one viewer; the rail falls back to onOpenHref (in-room focus), never a page hop',
+    /<EmailCard item=\{\{ id: rid \}\} onOpenThread=\{\(\) => openHref\(r\.href, false\)\} \/>/.test(eroom)
+    && /<ArtifactViewer open=\{!!\(e && focused && focused\.kind !== 'deliverable'\)\}/.test(eroom)
     && /const go = \(href: string\) => \{ if \(onOpenHref\?\.\(href\)\) return; router\.push\(href\); \};/.test(rail));
 }
 

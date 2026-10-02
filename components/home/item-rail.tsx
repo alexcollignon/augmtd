@@ -34,7 +34,13 @@ import { PreparingSlot, PreparingShape } from '@/components/thread/preparing-slo
 import { THREAD_CARD_W } from '@/components/thread/kit-width';
 // W20.B · A CLAIM RENDERS IN EVERY CHAT — the ONE card table/hydrator, the ONE renderer and the ONE
 // stream reader the Home chat uses.
-import { chatCardsOfComponent, chatCardsOfPayload, hasChatCards, widgetOfProgress, type ChatCards } from '@/lib/present/turn-card';
+import { chatCardsOfComponent, chatCardsOfPayload, hasChatCards, widgetOfProgress, type ChatCards, type DeedItemKind } from '@/lib/present/turn-card';
+import type { StageVerb } from '@/lib/present/behaviour';
+import { useArtifactViewer } from '@/components/shared/artifact-viewer';
+import { CardStack, CardTargetProvider, ReplyingChip, ReplyQuote } from '@/components/shared/card-stack';
+import { ITEM_ARTIFACT_BEHAVIOUR, summaryTitleOf, type BehaviourKind, type CardDescriptor } from '@/lib/present/behaviour';
+import { resolveCardReference, type CardTarget } from '@/lib/present/card-target';
+import { docCardTypeOf } from '@/lib/documents/doc-card';
 import { chatCardNodes } from '@/components/home/chat-cards';
 import { isConverseStream, readConverseStream } from '@/components/home/ask-stream-read';
 import { useCosSeat } from '@/hooks/use-cos-seat';
@@ -162,6 +168,8 @@ type Turn =
   /** W19.B · `reqId` = the per-question key the steer door wrote the question under (`ask:<reqId>`);
    *  `turnId` = its durable row. "Ask again" on an orphan re-keys THAT row through the same door. */
   | { role: 'user'; text: string; reqId?: string; turnId?: string;
+      /** REPLY TO A CARD — the card (its header title) this message was explicitly about. */
+      replyTo?: string;
       /** W39c · the reader's DEED on an ask (a typed answer `supply:*`, a go-ahead `proceed:*`) — the
        *  work answers it (the action card), never a chat reply, so it is never an orphan question. */
       deed?: true;
@@ -202,6 +210,9 @@ type Turn =
        *  one carries the POINTER and each card's host re-reads its truth (a frozen copy would offer a
        *  door that stopped being true). */
       cards?: ChatCards;
+      /** ONE COMPONENT, ONE BEHAVIOUR: a document a coworker delivered INTO this room — a compact doc
+       *  card whose Open raises THE ONE VIEWER here (never a chip that leaves the room). */
+      docs?: Array<{ threadId: string; id: string; title: string; type?: string | null }>;
       /** SKILLS IN CHAT (W21) — the skills this answer followed (its muted receipt) and, at most once,
        *  the quiet offer to save the exchange as a skill. Live and reloaded through ONE reader. */
       skillsFollowed?: SkillFollowed[]; skillOffer?: SkillOffer;
@@ -211,7 +222,10 @@ type Turn =
        *  payload or the stored row carries it, else this tab's own record) and the answer's duration. */
       activity?: ActivityStep[]; durationMs?: number;
       /** W23.A · a stopped answer (the stored row's own mark). */
-      stopped?: true };
+      stopped?: true;
+      /** W42 · the board rows this answer's words NAME (`commit:<id>` · `inbox:<id>`) — a room answer
+       *  mounts row cards only for these (lib/present/behaviour.ts NON_CARD_TURN_FIELDS). */
+      boardRefs?: string[] };
 
 // THE ROOM (P7c-c1 → one-room R1): the conversation is PER-DEAL, not per-item — navigating between
 // a deal's artifacts keeps the chat. The module store is now only the LIVE RENDER CACHE; the durable
@@ -295,7 +309,7 @@ type ServerTurnRow = {
   id?: string; key?: string; role: 'user' | 'system'; text: string; createdAt?: string;
   refs?: Array<{ label: string; href: string | null; tag?: string }>;
   author?: { name: string; role?: string | null } | null;
-  component?: { key?: string; refId?: string; state?: { targetId?: string; options?: Array<{ label: string; sourceId: string }>; items?: string[]; proceeded?: boolean;
+  component?: { key?: string; refId?: string; state?: { title?: string; targetId?: string; options?: Array<{ label: string; sourceId: string }>; items?: string[]; proceeded?: boolean;
     /** THE PRESENTED POINTER (W4-C) — `lib/present/pointer.ts` writes both of these shapes. */
     kind?: string; params?: Record<string, string | number | boolean>; eventId?: string; proposal?: EventProposal } } | null;
 };
@@ -306,6 +320,8 @@ function mapServerTurns(rows: ServerTurnRow[]): Turn[] {
   // data write.
   return rows.filter((t) => !isPersistedOpener(t)).map((t) => {
     const turn: Turn = { role: t.role, text: t.text, refs: t.refs ?? undefined, author: t.author ?? undefined } as Turn;
+    // REPLY TO A CARD — the question's own row records the card it was about (the quote survives reload).
+    if (turn.role === 'user' && t.component?.key === 'reply_to' && typeof t.component.state?.title === 'string') turn.replyTo = t.component.state.title;
     if (turn.role === 'system' && t.key) turn.dkey = t.key;
     // THE RECEIPT SURVIVES THE RELOAD (W21) — the same reader the live answer goes through.
     if (turn.role === 'system') Object.assign(turn, skillTurnFields(t), t.id ? { rowId: t.id } : {});
@@ -316,6 +332,8 @@ function mapServerTurns(rows: ServerTurnRow[]): Turn[] {
       if (activity) turn.activity = activity;
       if (durationMs !== undefined) turn.durationMs = durationMs;
       if ((t as { stopped?: unknown }).stopped === true) turn.stopped = true;
+      const br = (t as { boardRefs?: unknown }).boardRefs;
+      if (Array.isArray(br) && br.length) turn.boardRefs = br.map(String);
     }
     // The reader's question carries its door key (`ask:<reqId>`) and its row id, so an orphan's
     // "Ask again" re-answers the SAME question row instead of writing it twice.
@@ -419,7 +437,7 @@ function Chip({ icon, label, onClick }: { icon?: React.ReactNode; label: string;
   );
 }
 
-export function ItemRail({ kind, id, view, pending = false, onDraft, decision: decisionIn, artifacts: artifactsIn, onOpenHref, onStage, onHistory, onSeat, onUnseatedClaim, sourceItemId, sourceMeeting, sourceEmail, gate, sourceEvent, slot }: {
+export function ItemRail({ kind, id, view, pending = false, onDraft, decision: decisionIn, artifacts: artifactsIn, onOpenHref, onHistory, onSeat, onUnseatedClaim, sourceItemId, sourceMeeting, sourceEmail, gate, sourceEvent, slot }: {
   kind: RailKind; id: string; view: RailView;
   /** THE STRUCTURAL FRAME (UX arc): true while the view is still loading — the rail mounts its
    *  shell (header, turns, composer) immediately and shows a quiet shimmer instead of anchor
@@ -462,15 +480,19 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     /** W16 · which ARTIFACT this card renders on an item page (a prepared kind, a document, a frame,
      *  the looks-done evidence…). The item door's ONE table (components/thread/item-page.ts) maps it to
      *  its kit widget and picks at most one, by the machine's state. */
-    artifactKind?: ItemArtifactKind }> | null;
+    artifactKind?: ItemArtifactKind;
+    /** A deed the READER summoned (a header verb — Reply · Forward · Follow up · Draft): it renders
+     *  in the conversation on every door, item pages included (it is the reader's own exchange, not
+     *  the machine's one widget). */
+    summoned?: boolean }> | null;
   /** THE ONE-NAVIGATION LAW (Aug 4): inside a room, a rail link must open IN the room (the host's
    *  focus/summoned-stage opener), never page-navigate away — clicking Clara's draft from the EG
    *  Bank room dumped the user on a separate item page. Return true = handled; false = fall
    *  through to normal navigation (non-item hrefs). */
   onOpenHref?: (href: string) => boolean;
-  /** THE PARITY LAW (Aug 4): a chat verb whose review lives on a stage ("forward this to Rita")
-   *  summons it through the host. Absent → the rail falls back to navigation. */
-  onStage?: (stage: 'forward' | 'invite' | 'reply', itemId: string) => boolean;
+  /** (THE STAGE HOOK IS RETIRED — law `one-component-one-behaviour`: a chat verb whose deed is a
+   *  reply / forward / invite mounts that deed's OWN inline card in this conversation (or leads to
+   *  the one already mounted), on every door — never a host stage, never a navigation away.) */
   /** HISTORY LEAVES THE STREAM (owner, Sep 14, twice: "the 'earlier' things… looks odd"). The room
    *  still decides WHAT is history — the same brief-watermark rules, untouched — but the record no
    *  longer sits in the conversation behind a handle. The rail REPORTS it and the host files it in
@@ -783,6 +805,38 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     });
     window.setTimeout(() => setPulseCard((cur) => (cur === key ? null : cur)), 1600);
   };
+  // ══ ONE COMPONENT, ONE BEHAVIOUR (lib/present/behaviour.ts) — THE DEED'S ONE DOOR ═════════════
+  // A stage verb (reply · forward · invite) is a DEED: its card mounts INLINE in this conversation,
+  // the same card on every door (components/home/chat-cards.tsx deedCardFor). When this conversation
+  // already shows that deed's card, the verb leads TO it instead — one door per deed, never two.
+  const doorDeedKind: DeedItemKind = kind === 'commitment' || kind === 'followup' ? 'commitment' : kind === 'meeting' ? 'meeting' : 'email';
+  const mountedDeedCard = (stage: StageVerb, itemId: string) => {
+    const kinds: ItemArtifactKind[] = stage === 'reply' ? ['reply_draft', 'nudge_draft'] : [stage];
+    return (artifacts ?? []).find((a) => !!a.node && !!a.artifactKind && kinds.includes(a.artifactKind)
+      && (`${a.anchorKey ?? ''}|${a.key}`.includes(itemId) || (!inRoom && itemId === id))) ?? null;
+  };
+  const stageDeedsHere = (c: ChatCards): ChatCards => {
+    if (!c.stageDeeds?.length) return c;
+    const keep: NonNullable<ChatCards['stageDeeds']> = [];
+    for (const sd of c.stageDeeds) {
+      const hit = sd.revises ? null : mountedDeedCard(sd.stage, sd.itemId);
+      if (hit) { focusCard(hit.key); continue; }
+      keep.push({ ...sd, itemKind: !inRoom && sd.itemId === id ? doorDeedKind : sd.itemKind });
+    }
+    return { ...c, stageDeeds: keep.length ? keep : undefined };
+  };
+  const summonDeed = (stage: StageVerb, itemId: string) => {
+    const hit = mountedDeedCard(stage, itemId);
+    if (hit) { focusCard(hit.key); return; }
+    setTurns((prev) => [...prev, { role: 'system', text: '',
+      cards: { stageDeeds: [{ stage, itemKind: !inRoom && itemId === id ? doorDeedKind : 'email', itemId }] } }]);
+  };
+  // THE ONE VIEWER — a document delivered into this room opens beside it (never a navigation).
+  const viewer = useArtifactViewer();
+  // REPLY TO A CARD (law `one-component-one-behaviour`): the card the next message is about, and the
+  // cards this conversation shows (oldest → newest) for resolving "the second one" / "that invite".
+  const [cardTarget, setCardTarget] = useState<CardDescriptor | null>(null);
+  const seenCardsRef = useRef<CardDescriptor[]>([]);
   // THE CONTINUOUS WORK RECORD (owner, Aug 13 — "there is no new session of reality"): a room's
   // conversation IS the work record — judgments, preparations, decisions, dialogue, one unbroken
   // ledger. It is never sessioned and never cleared from here; FOLDING ("earlier (N)") is the
@@ -947,6 +1001,17 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   const send = async (raw: string, reask?: Extract<Turn, { role: 'user' }>, skills?: SkillPick) => {
     const t = raw.trim();
     if (!t || busy) return;
+    // REPLY TO A CARD: the pinned card, else an obvious reference to one of this room's cards; an
+    // ambiguous reference is answered with ONE short question (nothing is sent).
+    let target: CardTarget | null = !reask && cardTarget
+      ? { kind: cardTarget.kind, ref: cardTarget.ref, title: cardTarget.title ?? null, recipient: cardTarget.recipient ?? null } : null;
+    if (!target && !reask) {
+      const r = resolveCardReference(t, seenCardsRef.current);
+      if (r && 'ask' in r) { setTurns((prev) => [...prev, { role: 'user', text: t }, { role: 'system', text: r.ask }]); return; }
+      if (r) target = r.target;
+    }
+    if (!reask) setCardTarget(null);
+    const replyTo = target ? summaryTitleOf(target) : null;
     const gen = genOf(roomKey);
     // ── THE ANSWER IS SAVED (W19.B — app/api/items/steer/answer-door.ts) ────────────────────────────
     // The steer door writes BOTH halves now: the question (keyed `ask:<reqId>`, exactly once) and —
@@ -958,7 +1023,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     const reqId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     if (reask) setTurns((prev) => prev.map((x) => (x === reask ? { ...x, reqId, stopped: undefined } : x)));
-    else setTurns((prev) => [...prev, { role: 'user', text: t, reqId }]);
+    else setTurns((prev) => [...prev, { role: 'user', text: t, reqId, ...(replyTo ? { replyTo } : {}) }]);
     follow.pin(); // a send lands the reader on their own words
     setBusy(true);
     // W23.A · STOP + "WORKED FOR": one controller the Stop button aborts; every progress label, timed.
@@ -974,7 +1039,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
       const res = await fetch('/api/items/steer', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         signal: ctl.signal,
-        body: JSON.stringify({ kind, id, text: t, answerKey: reqId, stream: true,
+        body: JSON.stringify({ kind, id, text: t, answerKey: reqId, stream: true, ...(target ? { target } : {}),
           ...(reask?.turnId ? { reaskTurnId: reask.turnId, ...(reask.reqId ? { reaskKey: reask.reqId } : {}) } : {}),
           ...skillsBody(skills) }),
       });
@@ -1019,16 +1084,16 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
           } catch { addTurn({ role: 'system', text: "Couldn't send — open the draft and send from there." }); }
           setBusy(false); return;
         }
-        if (d.openStage?.stage && d.openStage.itemId) {
-          const handled = onStage?.(d.openStage.stage, d.openStage.itemId);
-          if (!handled) go(`/item/${d.openStage.itemId}?kind=email`); // the stage lives on the item view
-        }
-        // ARTIFACTS-INTO-ORIGIN (Aug 9): a dispatched deliverable rides back as a chip on THIS
-        // turn — the room that asked holds the door to the document, never a bare pointer.
-        const artRef = d.artifact?.id && d.artifact?.threadId
-          ? [{ label: `📄 ${String(d.artifact.title ?? 'Document').slice(0, 60)}`, href: `/home?chat=worker:${encodeURIComponent(String(d.artifact.threadId))}:${encodeURIComponent(String(d.delegated?.agentId ?? ''))}` }]
+        // ONE COMPONENT, ONE BEHAVIOUR (lib/present/behaviour.ts): a stage verb the answer raised
+        // (reply · forward · invite) mounts the deed's OWN inline card on this turn — or, when this
+        // conversation already shows that deed's card, the answer leads TO it (one door per deed).
+        // Never a host stage, never a navigation away (the old fallback left the room for /item).
+        const liveCards = stageDeedsHere(chatCardsOfPayload(d));
+        // ARTIFACTS-INTO-ORIGIN (Aug 9): a dispatched deliverable rides back on THIS turn as a compact
+        // doc card whose Open raises THE ONE VIEWER here — never a chip that leaves the room.
+        const liveDocs = d.artifact?.id && d.artifact?.threadId
+          ? [{ threadId: String(d.artifact.threadId), id: String(d.artifact.id), title: String(d.artifact.title ?? 'Document'), type: d.artifact.type ?? null }]
           : [];
-        const liveCards = chatCardsOfPayload(d);
         const activity = activityOf(d.activity) ?? (steps.length ? steps : undefined);
         const durationMs = durationOf(d.durationMs) ?? Math.round(performance.now() - t0);
         setTurns((prev) => [...prev, {
@@ -1039,13 +1104,15 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
           // chip and strips the rest (components/home/ask-answer.tsx). The text is the door's own
           // stored text (`answerTextOf`), so the live turn and the saved row are the same words.
           text: String(d.say || 'Done.'),
-          refs: [...artRef, ...(Array.isArray(d.refs) ? d.refs.map((r: { label?: string; href?: string | null; tag?: string }) => ({ label: String(r.label ?? ''), href: r.href ?? null, ...(typeof r.tag === 'string' && r.tag ? { tag: r.tag } : {}) })) : [])],
+          ...(liveDocs.length ? { docs: liveDocs } : {}),
+          refs: [...(Array.isArray(d.refs) ? d.refs.map((r: { label?: string; href?: string | null; tag?: string }) => ({ label: String(r.label ?? ''), href: r.href ?? null, ...(typeof r.tag === 'string' && r.tag ? { tag: r.tag } : {}) })) : [])],
           files: Array.isArray(d.files) ? d.files : undefined,
           ...(d.workflowDraft ? { workflowDraft: d.workflowDraft as WorkflowDraft } : {}),
           // THE CARDS PAINT AT ONCE (W4-C → W20.B): every served card rides the answer through the ONE
           // payload reader, so the live card needs no round-trip. The DURABLE copy is the component
           // turn the steer door wrote server-side — the next open re-reads it as a pointer.
           ...(hasChatCards(liveCards) ? { cards: liveCards } : {}),
+          ...(Array.isArray(d.boardRefs) && d.boardRefs.length ? { boardRefs: (d.boardRefs as unknown[]).map(String) } : {}),
           ...skillTurnFields(d),
         }]);
       }
@@ -1352,7 +1419,8 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
         if (cardForMove) { focusCard(cardForMove.key); return; }
         // The merged card's click carries the STAGE INTENT — Open lands on the prepared thing (the
         // host raises the stage), never the bare thread.
-        if (mergedArt && respMoveTargetId && onStage?.(stageOfArtifactKey(mergedArt.key), respMoveTargetId)) return;
+        // A merged (card-less) artifact is an ARTIFACT — its door is its own Open (the one viewer).
+        if (mergedArt) { mergedArt.onOpen(); return; }
         // ── THE FALLBACK NEVER RAISES A REPLY COMPOSER (Sep 18) ──────────────────────────────────
         // The two branches below were the ladder's last rungs, and both ended in the old split-screen
         // stage: a self-targeting move asked the host for a 'reply' stage outright, and a mail move
@@ -1369,7 +1437,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
             { key: 'move-without-card', ephemeral: true });
           return;
         }
-        if (selfTarget) { if (!onStage?.('reply', id)) { /* the stage host isn't mounted — nothing to do */ } return; }
+        if (selfTarget) { summonDeed('reply', id); return; }
         if (moveHref) go(moveHref);
       }
     : null;
@@ -1617,7 +1685,14 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     // only untagged refs (a produced document's chip, a legacy row) keep the quiet link row here.
     const shownRefs = (t.refs ?? []).filter((r) => !r.tag && (inRoom || !r.href?.includes(`/item/${id}`)));
     const cardNodes = chatCardNodes(t.cards, `turn-${t.turnId ?? t.dkey ?? 'live'}`, { onAsk: (text) => setComposerPrefill(text), onSuggestAnother: () => setComposerPrefill('How about ') });
-    const has = !!(t.checklist?.length || t.workflowDraft || t.standingSpec || t.approval || cardNodes.length || t.actions?.length || shownRefs.length || t.files?.length);
+    // ARTIFACTS ARE COMPACT CARDS (law `one-component-one-behaviour`): Open raises THE ONE VIEWER.
+    const docCards: ThreadCard[] = (t.docs ?? []).map((doc, j) => {
+      const dk = docCardTypeOf(doc.type ?? null, null);
+      return { kind: 'doc', id: `doc-${doc.id}-${j}`, title: doc.title, docType: dk.type, typeLabel: dk.label,
+        onReview: () => { void viewer.open({ kind: 'thread', threadId: doc.threadId, artifactId: doc.id }); } };
+    });
+    seenCards.push(...docCards.map((dc, j) => ({ id: dc.id ?? `doc-${j}`, kind: 'document' as const, title: (dc as { title?: string }).title ?? null, ref: (t.docs ?? [])[j]?.id ?? `doc-${j}` })), ...cardNodes.map((c) => c.d));
+    const has = !!(t.checklist?.length || t.workflowDraft || t.standingSpec || t.approval || cardNodes.length || docCards.length || t.actions?.length || shownRefs.length || t.files?.length);
     if (!has) return null;
     return (
       <div className="min-w-0 space-y-1.5 text-[13px] text-neutral-800 leading-relaxed">
@@ -1631,7 +1706,15 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
             confirm card, each the SAME kit host every surface mounts; every deed is its own click
             through its own door. "Ask about it" / "suggest another time" speak through THIS room's
             composer (clicks are words). */}
-        {cardNodes.map((c) => <div key={c.id} className="mt-1.5">{c.node}</div>)}
+        {/* THE ONE STACK — the turn's cards (deeds + delivered documents), folded when several. */}
+        {(cardNodes.length + docCards.length) > 0 && (
+          <div className="mt-1.5">
+            <CardStack stackKey={`${roomKey}:turn-${t.turnId ?? t.dkey ?? 'live'}`} items={[
+              ...docCards.map((dc, j) => ({ d: { id: dc.id ?? `doc-${j}`, kind: 'document' as const, title: (dc as { title?: string }).title ?? null, ref: (t.docs ?? [])[j]?.id ?? dc.id ?? `doc-${j}` }, node: <ThreadCardView card={dc} /> })),
+              ...cardNodes.map((c) => ({ d: c.d, node: c.node })),
+            ]} />
+          </div>
+        )}
         {/* THE SPEC CARD: the standing-task proposal — explicit fields, ONE Confirm. Saying prepared
             it; only this click creates anything. Confirmed → the card flips in place as the record. */}
         {t.standingSpec && (
@@ -1752,6 +1835,21 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
 
   // ── THE TIMELINE, DERIVED ────────────────────────────────────────────────────────────────────
   const items: ThreadItem[] = [];
+  // The cards this render shows, oldest → newest (THE STACK records them; a reference resolves on them).
+  const seenCards: CardDescriptor[] = [];
+  const userBubble = (t: Extract<Turn, { role: 'user' }>, key: string): ThreadItem => ({
+    type: 'user_bubble', id: key, text: t.text,
+    ...(t.replyTo ? { cards: [{ kind: 'custom' as const, id: `${key}-replyto`, node: <ReplyQuote title={t.replyTo} /> }] } : {}),
+  });
+  // A GROUP OF ARTIFACT CARDS → THE ONE STACK (a single one keeps the plain card).
+  const descOfArt = (a: NonNullable<typeof artifacts>[number]): CardDescriptor => ({
+    id: `art-${a.key}`, kind: (a.artifactKind && ITEM_ARTIFACT_BEHAVIOUR[a.artifactKind]) as BehaviourKind || 'document',
+    title: a.label ?? null, ref: (a.anchorKey ?? '').replace(/^prep:/, '') || a.key,
+  });
+  const artStack = (arts: NonNullable<typeof artifacts>, key: string): ThreadCard[] => {
+    seenCards.push(...arts.map(descOfArt));
+    return [{ kind: 'custom', id: `${key}-stack`, node: <CardStack stackKey={`${roomKey}:${key}`} items={arts.map((a) => ({ d: descOfArt(a), node: <ThreadCardView card={artCard(a)} /> }))} /> }];
+  };
 
   // ══ W16 · THE ITEM PAGE IS A FEW KIT WIDGETS (law `the-item-page-is-a-few-widgets`) ═════════════
   // An ITEM door is: Clara's ONE sentence · the SOURCE widget · AT MOST ONE action widget chosen by
@@ -1868,7 +1966,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     const seated = seatKindsOf(items.some((x) => x.id === 'action') && !plan.pending ? plan.artifact : null);
     itemExchange.forEach((t, i) => {
       const key = `x${i}`;
-      if (t.role === 'user') { items.push({ type: 'user_bubble', id: key, text: t.text }); return; }
+      if (t.role === 'user') { items.push(userBubble(t, key)); return; }
       const net = t.text ? dropUnseatedClaims(t.text, seated) : null;
       let said = t;
       if (net?.dropped.length) {
@@ -1881,6 +1979,15 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
       items.push(speechBubble(said, key)); pushSkillLines(said, key);
     });
     pushOrphanLine(itemExchange);
+    // ONE COMPONENT, ONE BEHAVIOUR: a deed the READER summoned (a header verb) is their own exchange —
+    // its inline card renders here even when the page's one widget is something else.
+    (artifacts ?? []).filter((a) => a.summoned && !!a.node && a.key !== card?.key).forEach((art) => {
+      items.push({
+        type: 'actor_bubble', id: `summoned-${art.key}`, actorId: art.by ?? seatId,
+        actorName: art.by ? art.by.split(' ')[0] : seatName, ...(art.by ? {} : seatLabel ? { actorRoleLabel: seatLabel } : {}),
+        cards: [artCard(art)],
+      });
+    });
     // W39c · THE ANSWER FOLLOWS ITS QUESTION (components/home/room-chat.ts actionFollowsExchange): the
     // work the reader's own deed produced moves below their words — same seat id, so it stays ONE card.
     if (actionFollowsExchange(plan.artifact, itemExchange)) {
@@ -1994,7 +2101,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   // EVENT LINE. A `prep:*` narration FOLDS entirely when its artifact card is on the rail.
   if (!itemPage) visibleTail.forEach((t, i) => {
     const key = `t${i}`;
-    if (t.role === 'user') { items.push({ type: 'user_bubble', id: key, text: t.text }); return; }
+    if (t.role === 'user') { items.push(userBubble(t, key)); return; }
     // A COMPONENT IS A TURN: the anchor turn IS the card — its moment in the story, its words
     // folded into the label. The card's byline is the face that speaks it.
     if (t.dkey && anchoredByKey.has(t.dkey)) {
@@ -2004,7 +2111,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
         type: 'actor_bubble', id: key,
         actorId: by ?? seatId, actorName: by ? by.split(' ')[0] : seatName,
         ...(by ? {} : { actorRoleLabel: seatLabel }),
-        cards: arts.map(artCard),
+        cards: artStack(arts, key),
       });
       return;
     }
@@ -2029,14 +2136,28 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
   if (!itemPage) pushOrphanLine(visibleTail);
 
   // Cards without a visible anchor turn — the stream's end (never above later talk).
-  if (!itemPage) endArtifacts.forEach((art, i) => {
+  // SEVERAL CARDS IN A ROW ARE ONE STACK (owner, Oct 2 — two full drafts back-to-back are long and hard
+  // to scan): the stream's end-cards ride ONE bubble, folded to their header rows, the first open. One
+  // speaker when they share one; the seat otherwise.
+  // W42 · A CARD ONLY FOR A ROW THE TEXT NAMES: when the room's latest answer names board rows, its row
+  // cards are exactly those rows' (the rest stay in Details) — never a card the words did not mention.
+  const lastNamed = (() => {
+    for (let i = turns.length - 1; i >= 0; i--) { const x = turns[i]; if (x.role === 'system' && isAnswerTurn(x)) return x.boardRefs ?? null; }
+    return null;
+  })();
+  if (inRoom && lastNamed?.length) {
+    const named = new Set(lastNamed);
+    for (let i = endArtifacts.length - 1; i >= 0; i--) if (!named.has(descOfArt(endArtifacts[i]).ref)) endArtifacts.splice(i, 1);
+  }
+  if (!itemPage && endArtifacts.length) {
+    const by = endArtifacts.every((a) => a.by && a.by === endArtifacts[0].by) ? endArtifacts[0].by ?? null : null;
     items.push({
-      type: 'actor_bubble', id: `end-${art.key}-${i}`,
-      actorId: art.by ?? seatId, actorName: art.by ? art.by.split(' ')[0] : seatName,
-      ...(art.by ? {} : { actorRoleLabel: seatLabel }),
-      cards: [artCard(art)],
+      type: 'actor_bubble', id: `end-${endArtifacts.map((a) => a.key).join('+')}`,
+      actorId: by ?? seatId, actorName: by ? by.split(' ')[0] : seatName,
+      ...(by ? {} : { actorRoleLabel: seatLabel }),
+      cards: artStack(endArtifacts, 'end'),
     });
-  });
+  }
 
   // HEAVY WORK IN FLIGHT — the avatar carries the state; one quiet line, no spinner in the stream.
   // THE WORK SHOWS (W20.B): the line speaks THE ONE STREAM's live label ("Putting the invite
@@ -2070,6 +2191,8 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     <div className="relative flex w-full flex-col gap-2.5">
       {/* W23.A · FOLLOW THE STREAM — the "↓" stands above the composer once the reader scrolls up. */}
       <JumpToLatest show={follow.showJump} onClick={follow.jumpToLatest} />
+      {/* REPLY TO A CARD — the reader always sees which card their next message is about. */}
+      <ReplyingChip target={cardTarget} onClear={() => setCardTarget(null)} />
       <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
         <WorkerMentionInput
           frameless
@@ -2095,6 +2218,7 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
     </div>
   );
 
+  seenCardsRef.current = seenCards;
   return (
     <div ref={scrollRef} className="flex-1 flex flex-col rounded-2xl bg-white shadow-sm overflow-hidden min-h-0">
       {/* ONE CHROME BAND PER ROOM (owner walk, Sep 10: "confusing to have 2 elements… like a header
@@ -2114,13 +2238,16 @@ export function ItemRail({ kind, id, view, pending = false, onDraft, decision: d
       {/* THE ONE THREAD COMPONENT — a project thread inside the room, a loose room's thread on the
           deep-dive. The kind is CONFIGURATION (placeholder + defaults), never a fork; the embedded
           variant is the same data in a narrower host. */}
+      <CardTargetProvider target={cardTarget} setTarget={setCardTarget}>
       <ThreadShell
         kind={inRoom ? 'project' : 'item'}
         className="min-h-0 !bg-white"
         items={items}
         composerNode={composerBlock}
       />
+      </CardTargetProvider>
       {skillDraft.node}
+      {viewer.node}
     </div>
   );
 }
